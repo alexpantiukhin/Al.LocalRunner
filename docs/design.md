@@ -116,6 +116,7 @@ An agent must be able to tell which jobs are its own and stop them before they f
   - Already finished: a no-op that reports the final state.
 - The cancel reason is written to the job log header: who cancelled (label), when, and `--reason <text>` if given.
 - `wait` is only an observer: interrupting `wait` (Ctrl+C, an agent tool timeout) does not cancel the job. The job is cancelled by `cancel`, by its timeout, or by the dead-submitter rule below.
+- The submitter process is the process that called the CLI (the parent of the short-lived `al-localrunner` process, recorded with its start time), not the CLI itself; otherwise every job would die when `submit` returns. `submit` tells the daemon it is done with `Bye` right after it got the job id, and `wait` always uses its own connection, so an interrupted `wait` can never cancel anything. *(Author's call.)*
 - Dead submitter: when the submitter process is gone, its queued jobs are dropped and its running jobs are killed to free the machine. `submit --detach` opts out for a running job that must outlive the caller; a detached job is still visible and cancellable by its label.
 - A `github` job is cancelled by cancelling the workflow run or with `cancel <job-id>` by an operator using `--force`.
 
