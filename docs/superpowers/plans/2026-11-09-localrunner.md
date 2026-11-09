@@ -241,6 +241,24 @@ Inserted after Tasks 1-13 were built with a closed `Level` enum; this task remov
 - [ ] **Step 3:** Implement the refactor; every existing test keeps passing with the default set; probes of one `up` run in parallel with a total time limit.
 - [ ] **Step 4:** Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check`. Commit `refactor(core): уровни задаются снаружи, характеристики уровня`.
 
+### Task 13c: Runner as a separate role
+
+Inserted after Tasks 1-13b: the runner leaves the hub process. Design: "Roles", the strict separation rule.
+
+**Files:**
+- Create: `crates/lr-runner/src/{agent.rs,buffer.rs,local.rs}` (agent core over any `Dial`, `Outbox`, local dial through `IpcEndpoint`), `crates/lr-cli/src/cmd/runner_proc.rs` (`al-localrunner runner` foreground runner process)
+- Modify: `crates/lr-daemon/src/{ipc_conn.rs,actor.rs,reports.rs,local.rs}` (a session whose `Hello` role is `runner` becomes a `RunnerLink`; `LocalRunner` and every direct call of `run_job` leave `lr-daemon`), `crates/lr-daemon/Cargo.toml` (no dependency on `lr-exec`), `crates/lr-proto/src/messages.rs` (`Register` carries the list of jobs the runner still runs with their last acked seq; `PROTOCOL_MINOR` bumped), `crates/lr-cli/src/cmd/{up.rs,down.rs}` (`up` starts the hub, then a runner process per configured runner; `down` drains or cancels through the runner first, then stops the hub)
+- Test: `crates/lr-runner/tests/agent.rs`, `crates/lr-daemon/tests/separation.rs`, `crates/lr-cli/tests/lifecycle.rs`
+
+**Interfaces:**
+- Produces: `trait Dial {async fn connect(&self) -> io::Result<Conn>}`, `async fn run_agent(cfg: AgentCfg, dial: impl Dial) -> io::Result<()>` (register, heartbeat every 15 s, run `Assign` through `run_job`, stream chunks with seq numbers through `Outbox`, deliver buffered results after reconnect, kill running jobs after `hub_lost_grace`), `struct LocalDial(IpcEndpoint)`; the hub reconciles `Register.running` with `hub.db`: a job whose runner re-registers keeps running, a job whose runner does not return within `hub_lost_grace` becomes `failed` with reason `runner lost`. The submitter-directory log file of local jobs is written by the runner process.
+- Consumes: Tasks 9-13b. Task 15 adds only the TLS dial, the registry and the join flow on top of this agent.
+
+- [ ] **Step 1: Write failing tests:** `crates/lr-daemon/tests/separation.rs`: `hub_has_no_dependency_on_lr_exec` (cargo metadata of `lr-daemon`), `hub_with_no_runner_connected_leaves_job_queued_with_reason`; `crates/lr-runner/tests/agent.rs`: `local_runner_connects_over_ipc_with_runner_hello`, `job_runs_through_runner_process_and_result_reaches_hub`, `hub_restart_keeps_running_job_when_runner_reregisters`, `runner_gone_beyond_grace_fails_its_jobs_with_reason`, `outbox_resends_in_order_and_hub_dedups_by_seq`, `log_file_in_submitter_dir_written_by_runner`; `crates/lr-cli/tests/lifecycle.rs`: `up_starts_hub_and_runner_and_down_stops_both`, `down_drain_waits_for_job_on_runner`, `down_cancel_reaches_runner_and_kills_tree`. Existing engine tests keep a fake runner link; every other existing test keeps passing.
+- [ ] **Step 2:** Run `cargo test --workspace`; expected FAIL on the new tests.
+- [ ] **Step 3:** Implement the move; Windows kill-on-close now ties job processes to the runner process, not to the hub; the Task 10 rule 'running at restart becomes failed' applies only to jobs whose runner did not re-register.
+- [ ] **Step 4:** Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check`. Commit `refactor: раннер — отдельная роль и процесс, hub не исполняет джобы`.
+
 ### Task 14: TLS identity, join codes, keys, registry
 
 **Files:**
@@ -258,11 +276,11 @@ Inserted after Tasks 1-13 were built with a closed `Level` enum; this task remov
 ### Task 15: Hub listener and runner agent
 
 **Files:**
-- Create: `crates/lr-daemon/src/hub.rs`, `crates/lr-runner/src/{agent.rs,buffer.rs}`, `crates/lr-cli/src/cmd/{runner.rs,client.rs}`
+- Create: `crates/lr-daemon/src/hub.rs`, `crates/lr-runner/src/tls_dial.rs`, `crates/lr-cli/src/cmd/{runner.rs,client.rs}` (the agent core, `Outbox` and local dial already exist from Task 13c)
 - Test: `crates/lr-runner/tests/agent.rs`
 
 **Interfaces:**
-- Consumes: Tasks 9, 10, 14.
+- Consumes: Tasks 9, 10, 13c, 14.
 - Produces: `async fn serve_hub(engine: Arc<Engine>, cfg: &HubCfg, registry: Registry) -> io::Result<()>` (listens only on `cfg.listen`, refuses a wildcard address at startup), `async fn run_agent(cfg: AgentCfg) -> io::Result<()>` (dial, handshake, signed nonce, `Register`, heartbeat every 15 s, run `Assign` through `run_job`, stream `Chunk`s and results), `struct Outbox` (sequence-numbered buffer flushed in order after reconnect), hub marks a runner `offline` after 3 missed heartbeats; an agent whose hub is unreachable for `hub_lost_grace` (default 10 min) kills its running jobs. CLI: `runner add`, `runner join <host:port> <code> --levels --platforms --tags --pool --workers --network`, `runner list`, `runner remove <name>`.
 
 - [ ] **Step 1: Write failing tests** (hub and agent in one process over loopback TLS): `agent_runs_assigned_job_and_hub_records_result`, `chunks_reach_hub_in_order`, `reconnect_resends_outbox_and_hub_dedups_by_seq`, `missed_three_heartbeats_marks_offline`, `hub_lost_beyond_grace_kills_running_job`, `removed_runner_is_refused_at_handshake`, `wildcard_listen_address_rejected_at_start`, `incompatible_major_refused_with_reason`.
