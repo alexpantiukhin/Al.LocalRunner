@@ -222,3 +222,15 @@ fn session_identity_keeps_collected_facts() {
     assert_eq!(id.source, Source::Session);
     assert_eq!(id.branch.as_deref(), Some("b"));
 }
+
+#[test]
+fn origin_case_is_preserved() {
+    assert_eq!(
+        normalize_origin("https://h/Owner/Repo").as_deref(),
+        Some("Owner/Repo")
+    );
+    assert_ne!(
+        normalize_origin("https://h/Owner/Repo"),
+        normalize_origin("https://h/owner/repo")
+    );
+}

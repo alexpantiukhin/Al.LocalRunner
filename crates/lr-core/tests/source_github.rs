@@ -34,28 +34,28 @@ fn gh_env() -> BTreeMap<String, String> {
 
 #[test]
 fn github_env_sets_default_label() {
-    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
+    let id = identity_from_github(&gh_env(), None, None, facts()).unwrap();
     assert_eq!(id.label, "github:ci.yml/rust-test");
     assert_eq!(id.project, "owner/repo");
 }
 
 #[test]
 fn explicit_label_overrides_github_default() {
-    let id = identity_from_github(&gh_env(), Some("  my-ci "), facts()).unwrap();
+    let id = identity_from_github(&gh_env(), Some("  my-ci "), None, facts()).unwrap();
     assert_eq!(id.label, "my-ci");
 }
 
 #[test]
 fn invalid_explicit_label_is_rejected_for_github() {
     assert_eq!(
-        identity_from_github(&gh_env(), Some("a\nb"), facts()).unwrap_err(),
+        identity_from_github(&gh_env(), Some("a\nb"), None, facts()).unwrap_err(),
         IdentityError::LabelInvalid
     );
 }
 
 #[test]
 fn github_env_fills_all_source_fields() {
-    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
+    let id = identity_from_github(&gh_env(), None, None, facts()).unwrap();
     let expected = GithubInfo {
         repository: "owner/repo".into(),
         workflow: "ci.yml".into(),
@@ -76,7 +76,10 @@ fn github_server_url_trailing_slash_is_trimmed() {
         "GITHUB_SERVER_URL".into(),
         "https://ghe.example.com/".into(),
     );
-    let Source::Github(info) = identity_from_github(&env, None, facts()).unwrap().source else {
+    let Source::Github(info) = identity_from_github(&env, None, None, facts())
+        .unwrap()
+        .source
+    else {
         panic!("not github");
     };
     assert_eq!(
@@ -90,7 +93,10 @@ fn github_run_url_without_attempt_and_default_server() {
     let mut env = gh_env();
     env.remove("GITHUB_RUN_ATTEMPT");
     env.remove("GITHUB_SERVER_URL");
-    let Source::Github(info) = identity_from_github(&env, None, facts()).unwrap().source else {
+    let Source::Github(info) = identity_from_github(&env, None, None, facts())
+        .unwrap()
+        .source
+    else {
         panic!("not github");
     };
     assert_eq!(info.attempt, None);
@@ -105,12 +111,12 @@ fn github_requires_actions_flag() {
     let mut env = gh_env();
     env.insert("GITHUB_ACTIONS".into(), "false".into());
     assert_eq!(
-        identity_from_github(&env, None, facts()).unwrap_err(),
+        identity_from_github(&env, None, None, facts()).unwrap_err(),
         IdentityError::NotGithubActions
     );
     env.remove("GITHUB_ACTIONS");
     assert_eq!(
-        identity_from_github(&env, None, facts()).unwrap_err(),
+        identity_from_github(&env, None, None, facts()).unwrap_err(),
         IdentityError::NotGithubActions
     );
 }
@@ -126,7 +132,7 @@ fn github_requires_core_variables() {
         let mut env = gh_env();
         env.remove(name);
         assert_eq!(
-            identity_from_github(&env, None, facts()).unwrap_err(),
+            identity_from_github(&env, None, None, facts()).unwrap_err(),
             IdentityError::MissingEnv(name.into()),
             "{name}"
         );
@@ -134,7 +140,7 @@ fn github_requires_core_variables() {
     let mut env = gh_env();
     env.insert("GITHUB_RUN_ID".into(), "abc".into());
     assert_eq!(
-        identity_from_github(&env, None, facts()).unwrap_err(),
+        identity_from_github(&env, None, None, facts()).unwrap_err(),
         IdentityError::MissingEnv("GITHUB_RUN_ID".into())
     );
 }
@@ -143,19 +149,39 @@ fn github_requires_core_variables() {
 fn github_default_label_is_sanitized() {
     let mut env = gh_env();
     env.insert("GITHUB_WORKFLOW".into(), "w".repeat(150));
-    let label = identity_from_github(&env, None, facts()).unwrap().label;
+    let label = identity_from_github(&env, None, None, facts())
+        .unwrap()
+        .label;
     assert_eq!(label.chars().count(), 100);
     env.insert("GITHUB_WORKFLOW".into(), "a\nb\u{1b}c".into());
-    let label = identity_from_github(&env, None, facts()).unwrap().label;
+    let label = identity_from_github(&env, None, None, facts())
+        .unwrap()
+        .label;
     assert_eq!(label, "github:a b c/rust-test");
 }
 
 #[test]
 fn github_project_is_repository_without_origin_and_origin_wins() {
-    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
+    let id = identity_from_github(&gh_env(), None, None, facts()).unwrap();
     assert_eq!(id.project, "owner/repo");
     let mut f = facts();
     f.origin = Some("https://github.com/other/thing.git".into());
-    let id = identity_from_github(&gh_env(), None, f).unwrap();
+    let id = identity_from_github(&gh_env(), None, None, f).unwrap();
     assert_eq!(id.project, "other/thing");
+}
+
+#[test]
+fn github_note_is_kept_trimmed_and_validated() {
+    let id = identity_from_github(&gh_env(), None, Some(" why "), facts()).unwrap();
+    assert_eq!(id.note.as_deref(), Some("why"));
+    assert_eq!(
+        identity_from_github(&gh_env(), None, Some(&"x".repeat(201)), facts()).unwrap_err(),
+        IdentityError::NoteTooLong
+    );
+    assert_eq!(
+        identity_from_github(&gh_env(), None, Some("  "), facts())
+            .unwrap()
+            .note,
+        None
+    );
 }

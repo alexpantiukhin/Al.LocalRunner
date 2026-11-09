@@ -47,7 +47,7 @@ fn session_collects_process_facts() {
         .unwrap()
         .as_millis() as u64;
     assert!(
-        start <= now + 2000 && now - start < 24 * 3600 * 1000,
+        start <= now + 2000 && now.saturating_sub(start) < 24 * 3600 * 1000,
         "{start} vs {now}"
     );
 }

@@ -280,9 +280,10 @@ pub fn collect_session(
 pub fn collect_github(
     env: &BTreeMap<String, String>,
     label: Option<&str>,
+    note: Option<&str>,
     cwd: &Path,
 ) -> Result<Identity, IdentityError> {
-    identity_from_github(env, label, collect_facts(cwd))
+    identity_from_github(env, label, note, collect_facts(cwd))
 }
 
 #[cfg(test)]

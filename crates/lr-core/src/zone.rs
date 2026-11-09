@@ -2,7 +2,9 @@ use crate::model::Zone;
 use ipnet::IpNet;
 use std::net::IpAddr;
 
-/// Zone of a connection as the broker sees it (spec 3.12).
+/// Zone of ONE endpoint as the broker sees it (spec 3.12), judged against the flat `networks`
+/// list. This is not the pairwise client-to-runner relation of spec 3.12 (both addresses in the
+/// same named network); that rule belongs to the scheduler and routing.
 ///
 /// `addr` is the source address of the connection, `None` for local IPC of the broker's own
 /// OS user. IPC from another OS user of the machine is reported by the broker as the host's own

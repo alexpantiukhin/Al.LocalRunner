@@ -1,6 +1,6 @@
 use crate::identity::{
-    build_identity, sanitize_label, validate_label, GithubInfo, Identity, IdentityError,
-    SenderFacts, Source,
+    build_identity, sanitize_label, validate_label, validate_note, GithubInfo, Identity,
+    IdentityError, SenderFacts, Source,
 };
 use std::collections::BTreeMap;
 
@@ -20,11 +20,12 @@ fn optional(env: &BTreeMap<String, String>, name: &str) -> String {
 }
 
 /// Collects the identity of a GitHub Actions job from its environment. An explicit `label`
-/// (`--as`) is validated; without it the label is `github:<workflow>/<job>`. Requires
+/// (`--as`) and optional `note` is validated; without it the label is `github:<workflow>/<job>`. Requires
 /// `GITHUB_ACTIONS=true`.
 pub fn identity_from_github(
     env: &BTreeMap<String, String>,
     label: Option<&str>,
+    note: Option<&str>,
     facts: SenderFacts,
 ) -> Result<Identity, IdentityError> {
     if env.get("GITHUB_ACTIONS").map(|v| v.trim()) != Some("true") {
@@ -52,6 +53,7 @@ pub fn identity_from_github(
     if let Some(attempt) = attempt {
         run_url.push_str(&format!("/attempts/{attempt}"));
     }
+    let note = validate_note(note)?;
     let label = match label {
         Some(explicit) => validate_label(explicit)?,
         None => sanitize_label(&format!("github:{workflow}/{job}")),
@@ -68,7 +70,7 @@ pub fn identity_from_github(
     };
     Ok(build_identity(
         label,
-        None,
+        note,
         facts,
         Source::Github(info),
         Some(&repository),

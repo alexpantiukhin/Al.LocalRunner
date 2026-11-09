@@ -74,7 +74,9 @@ pub struct Identity {
     /// agent session that called it. `0` when the parent cannot be determined;
     /// such a submitter is never treated as dead.
     pub sender_pid: u32,
-    /// Start of the submitter process in unix milliseconds, `None` when unobtainable.
+    /// Per-OS fingerprint of the submitter process start, `None` when unobtainable. Comparable
+    /// only on the same machine and only with a value collected the same way (on Linux it is
+    /// relative to boot, not to the unix epoch).
     /// On Unix the value comes from the elapsed time reported by `ps` and is accurate to about a second.
     pub sender_start: Option<u64>,
     /// Working directory of the submitter.
@@ -92,7 +94,7 @@ pub struct Identity {
 }
 
 /// Reduces a remote URL to `owner/repo`, dropping scheme, credentials, host, `.git` and trailing
-/// slashes. Case is preserved. Returns `None` when the text is not a recognisable remote or when
+/// slashes. Case is preserved, so `Owner/Repo` and `owner/repo` are different projects. Returns `None` when the text is not a recognisable remote or when
 /// the result would still contain credentials (`@` or `:` in a path segment).
 pub fn normalize_origin(url: &str) -> Option<String> {
     let url = url.trim();
@@ -181,7 +183,8 @@ pub struct SenderFacts {
     pub host: String,
     /// Submitter process id, `0` when unknown.
     pub sender_pid: u32,
-    /// Submitter process start in unix milliseconds.
+    /// Per-OS fingerprint of the submitter process start; comparable only on the same machine
+    /// and only with a value collected the same way.
     pub sender_start: Option<u64>,
     /// Working directory.
     pub cwd: PathBuf,
