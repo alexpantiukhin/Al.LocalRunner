@@ -3,3 +3,8 @@ name = "lr-core"
 version = "0.1.0"
 edition = "2021"
 publish = false
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
