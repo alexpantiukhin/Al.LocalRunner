@@ -25,6 +25,17 @@ svg .grp{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:5 4}svg 
 svg .ln{stroke:var(--line);stroke-width:1.4;fill:none}svg .lo{stroke:var(--acc);stroke-width:1.6;fill:none}svg .ld{stroke:var(--line);stroke-width:1.2;fill:none;stroke-dasharray:5 4}
 svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 .legend{font-size:14px;color:var(--mut)}
+.gl{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:0;border:1px solid var(--rule);border-radius:8px;overflow:hidden;margin:8px 0 16px}
+.gl dt,.gl dd{margin:0;padding:8px 12px;border-top:1px solid var(--rule)}
+.gl dt:first-of-type,.gl dt:first-of-type+dd{border-top:0}
+.gl dt{background:var(--box);font-weight:600}.gl dd{max-width:none}
+.gl dt:target,.gl dt:target+dd{outline:2px solid var(--acc);outline-offset:-2px}
+@media (max-width:640px){.gl{grid-template-columns:1fr}.gl dt{border-bottom:0}.gl dd{border-top:0}}
+.term{border-bottom:1px dotted var(--acc);cursor:help}
+.term:focus-visible,svg [data-g]:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:2px}
+svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
+#tip{position:fixed;z-index:50;max-width:min(380px,calc(100vw - 16px));background:var(--bg);color:var(--fg);border:1px solid var(--acc);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.45;box-shadow:0 6px 20px rgba(0,0,0,.2);pointer-events:none}
+#tip[hidden]{display:none}#tip b{display:block;margin-bottom:2px}
 </style>
 </head>
 <body>
@@ -35,6 +46,46 @@ svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 <main>
 <h1>Al.LocalRunner — архитектура</h1>
 <p class="lead">Очередь запусков тестов и сборок на нескольких машинах. Документ описывает, как система устроена: окружение, компоненты, данные и потоки. Источники: <code>docs/design.md</code> (что должно быть) и <code>docs/superpowers/plans/2026-11-09-localrunner.md</code> (как строится).</p>
+
+<h2 id="glossary">Глоссарий</h2>
+<p class="lead">Все термины определены здесь один раз. Подчёркнутое точками слово в тексте и на схемах показывает определение из этого раздела при наведении мыши или фокусе с клавиатуры; отдельной копии текста определений нет.</p>
+<h3>Узлы и роли</h3>
+<dl class="gl">
+<dt id="g-computer" data-re="компьютер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Компьютер</dt><dd>Физическая машина, на которой может стоять несколько установок (основная ОС, Docker, виртуалки). Всё, что на ней работает одновременно и делит одну память и один процессор, образует один пул.</dd>
+<dt id="g-install" data-re="установк(?:а|и|у|е|ой|ам|ами|ах)">Установка</dt><dd>Один экземпляр программы со своим каталогом состояния, MachineId и ключами: основная ОС, контейнер Docker или виртуалка. Один компьютер может нести несколько установок.</dd>
+<dt id="g-machineid" data-re="MachineId">MachineId</dt><dd>Случайный идентификатор установки. Создаётся один раз при первом запуске демона и хранится в файле machine-id. По нему определяется, чья это джоба и кто вправе её отменить.</dd>
+<dt id="g-hub" data-re="hub|хаб(?:а|у|е|ом)?">Hub (хаб)</dt><dd>Роль: владеет очередью, планировщиком, историей и дашбордом и решает, какая джоба на какой раннер пойдёт. Сам джобы не исполняет. По умолчанию это машина пользователя; хабом может быть любая.</dd>
+<dt id="g-runner" data-re="раннер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Раннер</dt><dd>Роль и отдельный процесс: исполняет выданные hub джобы и возвращает результаты и логи. На одной установке может работать несколько раннеров, например light и heavy.</dd>
+<dt id="g-client" data-re="клиент(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Клиент</dt><dd>Роль: машина, которая только отправляет джобы и смотрит за ними. Вступает в hub так же, как раннер, и получает свой MachineId и ключ.</dd>
+<dt id="g-daemon" data-re="демон(?:а|у|е|ом|ы|ов)?">Демон</dt><dd>Фоновый процесс al-localrunner на установке, который держит роль hub. Запускается командой up.</dd>
+<dt id="g-ci-runner" data-re="ci-раннер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">ci-раннер</dt><dd>Настоящий self-hosted раннер GitHub Actions с меткой al-ci. Перед запуском берёт ресурсы у планировщика (acquire), чтобы не пересекаться с локальными прогонами. Не путать с нашим раннером.</dd>
+<dt id="g-dashboard" data-re="дашборд(?:а|у|е|ом|ы|ов)?">Дашборд</dt><dd>Страница в браузере: очередь, история, живой лог, статистика, раннеры. Слушает только 127.0.0.1. Сейчас читает демон своей машины, на втором этапе будет читать hub.</dd>
+</dl>
+<h3>Очередь и ресурсы</h3>
+<dl class="gl">
+<dt id="g-job" data-re="джоб(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Джоб</dt><dd>Один запуск профиля: очередь, шаги, результат. Имеет JobId; джобы одной команды по нескольким платформам образуют группу с GroupId.</dd>
+<dt id="g-profile" data-re="профил(?:ь|я|ю|е|ем|и|ей|ям|ями|ях)">Профиль</dt><dd>Описание запуска в .localrunner/profiles.toml проекта: уровень, команда или шаги, таймаут, память, CPU, теги. Это требования джобы, а не настройки машины.</dd>
+<dt id="g-level" data-re="уров(?:ень|ня|ню|не|нем|ни|ней|нями|нях)|level">Уровень</dt><dd>Метка, которая говорит, какие джобы принимает раннер и с каким приоритетом. По умолчанию light, heavy и ci. Владелец определяет уровни в levels.toml вместе с требованиями к машине.</dd>
+<dt id="g-ci" data-re="ci">ci</dt><dd>Уровень по умолчанию с наивысшим приоритетом (100). Его джобы берутся первыми, но уже работающие джобы не вытесняют.</dd>
+<dt id="g-priority" data-re="приоритет(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Приоритет</dt><dd>Порядок выдачи: выше приоритет, раньше джоба. Внутри одного приоритета порядок постановки. Джоба, ждавшая дольше 30 минут, поднимается до высшего приоритета.</dd>
+<dt id="g-pool" data-re="пул(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Пул</dt><dd>Физический компьютер как общий бюджет: лимиты памяти и CPU и набор exclusive-тегов. Лимиты задаёт владелец, а не проект. Раннеры одного пула считают нагрузку вместе.</dd>
+<dt id="g-worker" data-re="воркер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Воркер</dt><dd>Сколько джоб раннер выполняет одновременно. Параллельность ограничена дважды: воркерами раннера и лимитами пула; действует более строгое.</dd>
+<dt id="g-platform" data-re="платформ(?:а|ы|у|е|ой|ам|ами|ах)?">Платформа</dt><dd>Непрозрачная метка владельца (macos, ios, android...). Ядро только сравнивает метки на равенство. Если в профиле несколько платформ, на каждую создаётся своя джоба.</dd>
+<dt id="g-tag" data-re="тег(?:а|у|е|ом|и|ов|ам|ами|ах)?">Тег</dt><dd>Ресурс, который джоба удерживает на время прогона (gradle, emulator). Теги раннера означают заявленные им возможности.</dd>
+<dt id="g-exclusive" data-re="exclusive">exclusive</dt><dd>Тег, который одновременно не может держать никто другой. Действует внутри пула.</dd>
+<dt id="g-zone" data-re="зон(?:а|ы|у|е|ой|ам|ами|ах)">Зона</dt><dd>Расстояние от отправителя до раннера: local, lan или remote. Среди подходящих раннеров предпочитается ближайший, но занятый ближайший не блокирует свободный дальний.</dd>
+<dt id="g-lease" data-re="аренд(?:а|ы|у|е|ой|ам|ами)|acquire|lease">Аренда (acquire)</dt><dd>Захват ресурсов ci-раннером у планировщика перед запуском GitHub-джобы. Освобождается, когда раннер завершился или связь оборвалась.</dd>
+<dt id="g-submitter" data-re="отправител(?:ь|я|ю|ем|и|ей)">Отправитель</dt><dd>Процесс, вызвавший CLI (родитель al-localrunner), вместе с меткой --as и MachineId. По нему определяется право отмены и правило мёртвого отправителя.</dd>
+<dt id="g-dead" data-re="мёртв(?:ый|ого|ому|ым) отправител(?:ь|я|ю|ем)">Мёртвый отправитель</dt><dd>Когда процесс-отправитель завершился, его ожидающие джобы снимаются, а выполняющиеся убиваются. Флаг --detach отключает правило для идущей джобы.</dd>
+</dl>
+<h3>Связь</h3>
+<dl class="gl">
+<dt id="g-join" data-re="код(?:а|у|ом)? подключения">Код подключения</dt><dd>Одноразовый код (живёт 1 час), который выдаёт hub, чтобы раннер или клиент вступил. После вступления машина использует собственную пару ключей.</dd>
+<dt id="g-network" data-re="network">network</dt><dd>Метка сети машины, по ней считается зона lan. Hub выводит её из адреса подключения, владелец может задать вручную.</dd>
+<dt id="g-heartbeat" data-re="heartbeat">Heartbeat</dt><dd>Сигнал живости раннера каждые 15 секунд. После трёх пропусков раннер считается offline.</dd>
+<dt id="g-ipc" data-re="IPC">IPC</dt><dd>Локальный канал между CLI, демоном и раннером на одной установке: именованный канал в Windows, Unix-сокет в других ОС. Доступ только у пользователя ОС.</dd>
+<dt id="g-tls" data-re="TLS">TLS</dt><dd>Шифрованное соединение раннера или клиента с hub по сети. Сертификат hub закреплён отпечатком, который входит в код подключения.</dd>
+</dl>
 
 <h2>1. Принципы</h2>
 <ul>
@@ -263,6 +314,79 @@ svg.appendChild(el("text",{class:"s",x:452,y:566},"1"));
 svg.appendChild(el("line",{class:"ld",x1:940,y1:600,x2:632,y2:600}));
 svg.appendChild(el("text",{class:"s",x:24,y:664},"Пунктир и поля job.runner_id, job.pool_id — логические связи между базами по идентификаторам,"));
 svg.appendChild(el("text",{class:"s",x:24,y:680},"внешних ключей между файлами нет: queue_entry.job_id ↔ job.id, job.runner_id ↔ runner.id, job.pool_id ↔ pool.id."));
+</script>
+<div id="tip" role="tooltip" hidden></div>
+<script>
+(function(){
+var gl=document.getElementById('glossary');if(!gl)return;
+var entries=[].slice.call(gl.parentNode.querySelectorAll('dl.gl dt[data-re]')).map(function(dt){return{id:dt.id,name:dt.textContent.trim(),re:dt.getAttribute('data-re'),def:dt.nextElementSibling.textContent.trim()}});
+var byId={};entries.forEach(function(e){byId[e.id]=e});
+var sorted=entries.slice().sort(function(a,b){return b.re.length-a.re.length});
+var master=new RegExp('(?<![\\p{L}\\p{N}_-])(?:'+sorted.map(function(e,i){return'(?<g'+i+'>'+e.re+')'}).join('|')+')(?![\\p{L}\\p{N}_])','giu');
+function which(m){for(var i=0;i<sorted.length;i++){if(m.groups['g'+i]!==undefined)return sorted[i].id}return null}
+var SKIP='script,style,code,pre,h1,h2,h3,th,a,svg,dt,#tip,.term';
+var BLOCK='p,ul,ol,table';
+var root=document.querySelector('main');
+var seen=new Map();
+var walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:function(n){
+ if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+ var p=n.parentElement;if(!p||p.closest(SKIP)||p.closest('dl.gl'))return NodeFilter.FILTER_REJECT;
+ return NodeFilter.FILTER_ACCEPT}});
+var nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+nodes.forEach(function(n){
+ var block=n.parentElement.closest(BLOCK)||n.parentElement;
+ var set=seen.get(block);if(!set){set=new Set();seen.set(block,set)}
+ var text=n.nodeValue,last=0,frag=null;
+ master.lastIndex=0;var m;
+ while((m=master.exec(text))){
+  var id=which(m);if(!id||set.has(id))continue;
+  set.add(id);
+  if(!frag)frag=document.createDocumentFragment();
+  if(m.index>last)frag.appendChild(document.createTextNode(text.slice(last,m.index)));
+  var s=document.createElement('span');s.className='term';s.tabIndex=0;s.setAttribute('data-g',id);s.textContent=m[0];frag.appendChild(s);
+  last=m.index+m[0].length}
+ if(frag){if(last<text.length)frag.appendChild(document.createTextNode(text.slice(last)));n.parentNode.replaceChild(frag,n)}
+});
+[].slice.call(root.querySelectorAll('code')).forEach(function(c){
+ if(c.closest('dl.gl')||c.closest('h1,h2,h3,th'))return;
+ master.lastIndex=0;var m=master.exec(c.textContent);
+ if(!m||m[0]!==c.textContent.trim())return;
+ var id=which(m);if(!id)return;
+ c.className=(c.className?c.className+' ':'')+'term';c.tabIndex=0;c.setAttribute('data-g',id)});
+[].slice.call(root.querySelectorAll('svg')).forEach(function(svg){
+ var seenS=new Set();
+ [].slice.call(svg.querySelectorAll('text')).forEach(function(t){
+  if(t.childNodes.length!==1||t.firstChild.nodeType!==3)return;
+  var text=t.firstChild.nodeValue,last=0,frag=null,m;master.lastIndex=0;
+  while((m=master.exec(text))){
+   var id=which(m);if(!id||seenS.has(id))continue;seenS.add(id);
+   if(!frag)frag=document.createDocumentFragment();
+   if(m.index>last)frag.appendChild(document.createTextNode(text.slice(last,m.index)));
+   var ts=document.createElementNS('http://www.w3.org/2000/svg','tspan');
+   ts.setAttribute('class','tg');ts.setAttribute('tabindex','0');ts.setAttribute('data-g',id);ts.textContent=m[0];frag.appendChild(ts);
+   last=m.index+m[0].length}
+  if(frag){if(last<text.length)frag.appendChild(document.createTextNode(text.slice(last)));t.replaceChild(frag,t.firstChild)}
+ })});
+var tip=document.getElementById('tip'),cur=null;
+function show(el){
+ var e=byId[el.getAttribute('data-g')];if(!e)return;
+ cur=el;tip.textContent='';
+ var b=document.createElement('b');b.textContent=e.name;var d=document.createElement('span');d.textContent=e.def;
+ tip.appendChild(b);tip.appendChild(d);tip.hidden=false;
+ var r=el.getBoundingClientRect(),w=tip.offsetWidth,h=tip.offsetHeight;
+ var left=Math.max(8,Math.min(r.left+r.width/2-w/2,window.innerWidth-w-8));
+ var top=r.top-h-8;if(top<8)top=r.bottom+8;
+ tip.style.left=left+'px';tip.style.top=top+'px';
+ el.setAttribute('aria-describedby','tip')}
+function hide(){if(cur){cur.removeAttribute('aria-describedby');cur=null}tip.hidden=true}
+document.addEventListener('mouseover',function(ev){var el=ev.target.closest&&ev.target.closest('[data-g]');if(el&&el.closest('main'))show(el)});
+document.addEventListener('mouseout',function(ev){var el=ev.target.closest&&ev.target.closest('[data-g]');if(el&&!el.contains(ev.relatedTarget))hide()});
+document.addEventListener('focusin',function(ev){var el=ev.target.closest&&ev.target.closest('[data-g]');if(el)show(el)});
+document.addEventListener('focusout',hide);
+document.addEventListener('keydown',function(ev){if(ev.key==='Escape')hide()});
+document.addEventListener('click',function(ev){var el=ev.target.closest&&ev.target.closest('[data-g]');if(el&&el!==cur)show(el);else if(!el)hide()});
+window.addEventListener('scroll',hide,{passive:true});
+})();
 </script>
 </body>
 </html>
