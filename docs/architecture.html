@@ -328,6 +328,31 @@ names = ["registry_auth", "signing_key"]
 label = "agent"
 names = ["registry_auth"]
 
+[pool]                                 # общий бюджет пула
+mem_mb = 16384
+cpu = 8
+exclusive_tags = ["android-emulator"] # теги, которые держит одна джоба за раз
+
+[limits]
+max_job_timeout_s = 3600               # потолок таймаута заказа при приёме
+
+[routing]
+runner_zone_order = ["local", "lan", "remote"]  # предпочтение между раннерами одного брокера
+
+[history]
+keep_days = 180                        # хранение истории и логов брокера
+
+[saturation]
+queue_wait_min = 15                    # порог «очередь стоит» для статистики и дашборда
+mem_percent = 90                       # порог загрузки памяти пула
+
+[cache]
+share = "client"                       # client | project: кто видит общий кэш раннера
+
+[[services.allow]]                     # какой ярлык какие сервисы раннеров может запрашивать
+label = "ci"
+names = ["gradle-daemon", "emulator"]
+
 [visibility]
 others_orders = "summary"              # none | summary | full (поля уровней — в разделе 3.2)
 
@@ -983,7 +1008,7 @@ fields = ["command", "env", "token"]
 
 <h2 id="s-data">14. Данные</h2>
 <p class="lead">Одна база SQLite на сторону. У брокера <code>broker.db</code>: история запусков на его раннерах (с клиентом), реестр машин, раннеры, очередь заказов. У hub <code>hub.db</code>: outbox (заказы без <code>Accepted</code> и отмены), активные заказы и список брокеров. У раннера <code>runner.db</code>: outbox, реестр сервисов (для поиска сирот) и индекс кэша. Внутри <code>broker.db</code> связи — обычные внешние ключи; между <code>hub.db</code> и <code>broker.db</code> они логические, по <code>JobId</code>. Пулы и лимиты — в <code>policy.toml</code>, а не в базе. Полные логи — файлы в <code>logs/&lt;job-id&gt;.log</code> брокера.</p>
-<div class="scroll"><svg id="er" viewBox="0 0 1180 910" role="img" aria-label="ER-диаграмма"></svg></div>
+<div class="scroll"><svg id="er" viewBox="0 0 1180 1110" role="img" aria-label="ER-диаграмма"></svg></div>
 <ul>
 <li>Финальное состояние джобы пишется один раз: повторная доставка результата или второе конечное состояние не меняют строку. Для выполнявшейся джобы его определяет только отчёт раннера; отмена ждущего заказа снимает его сразу.</li>
 <li>Запись запуска остаётся на брокере в пределах хранения. Hub хранит только outbox и копию лога: запись из outbox удаляется по <code>Accepted</code> брокера, а брокер не знает, что лежит в outbox hub.</li>
@@ -1131,21 +1156,26 @@ job_spec:{x:470,y:260,w:150,f:["PK/FK job_id","resolved_json","profile_commit"]}
 github_run:{x:470,y:360,w:150,f:["PK/FK job_id","repository","workflow","job_name","run_id","attempt","ref","actor","run_url"]},
 job_log:{x:470,y:540,w:150,f:["PK/FK job_id","path","bytes","updated_at"]},
 machine:{x:680,y:60,w:220,f:["PK name","machine_id","kind","label","public_key","registered_at","last_seen","revoked_at"]},
-join_code:{x:680,y:250,w:220,f:["PK code_hash","kind","uses_left","issued_at","expires_at","redeemed_at","FK machine_name"]},
-runner:{x:940,y:60,w:210,f:["PK name","FK machine_name","programs","platforms","tags","max_timeout_s","cache_max_mb","last_seen","state"]},
-result_outbox:{x:680,y:400,w:220,f:["PK client_machine","PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
+join_code:{x:680,y:250,w:220,f:["PK code_hash","kind","name","label","uses_left","issued_at","expires_at","redeemed_at","FK machine_name"]},
+runner:{x:940,y:60,w:210,f:["PK name","FK machine_name","programs","platforms","tags","max_timeout_s","cache_max_mb","cache_used_mb","free_disk_mb","services","accept","last_seen","state"]},
+result_outbox:{x:680,y:440,w:220,f:["PK client_machine","PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 order:{x:940,y:450,w:210,f:["PK client_key","PK job_id","client_machine","spec_json","platform","same_machine","priority_hint","enqueued_at","state"]},
 outbox:{x:30,y:740,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 active_order:{x:330,y:740,w:260,f:["PK job_id","FK broker","last_seq","label","os_user","submitter_pid","submitter_start","handle_path","detached"]},
-broker_link:{x:630,y:740,w:260,f:["PK broker","address","fingerprint","key_id","machine_id","last_zone"]}
+broker_link:{x:630,y:740,w:260,f:["PK broker","address","fingerprint","key_id","machine_id","last_zone"]},
+runner_outbox:{x:30,y:960,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
+service_registry:{x:330,y:960,w:260,f:["PK name","pid","state","started_at","expires_at","mem_mb"]},
+cache_index:{x:630,y:960,w:260,f:["PK client","PK project","PK name","path","bytes","last_used"]}
 };
 const svg=document.getElementById("er");
 svg.appendChild(el("rect",{class:"grp",x:10,y:30,width:620,height:610,rx:10}));
 svg.appendChild(el("text",{class:"g",x:24,y:50},"broker.db — история запусков"));
 svg.appendChild(el("rect",{class:"grp",x:650,y:30,width:520,height:610,rx:10}));
 svg.appendChild(el("text",{class:"g",x:664,y:50},"broker.db — реестр, очередь"));
-svg.appendChild(el("rect",{class:"grp",x:10,y:700,width:1160,height:190,rx:10}));
+svg.appendChild(el("rect",{class:"grp",x:10,y:700,width:1160,height:215,rx:10}));
 svg.appendChild(el("text",{class:"g",x:24,y:720},"hub.db — у каждого hub"));
+svg.appendChild(el("rect",{class:"grp",x:10,y:925,width:1160,height:170,rx:10}));
+svg.appendChild(el("text",{class:"g",x:24,y:945},"runner.db — у каждого раннера"));
 for(const [name,t] of Object.entries(T)){
  const h=28+t.f.length*15;
  svg.appendChild(el("rect",{class:"b",x:t.x,y:t.y,width:t.w,height:h,rx:5}));
