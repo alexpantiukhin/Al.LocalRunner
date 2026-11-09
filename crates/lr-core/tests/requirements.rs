@@ -279,9 +279,48 @@ fn missing_tag_reported_including_exclusive_ones() {
 
 #[test]
 fn all_mismatches_are_listed_together() {
-    let text =
-        "[profile.p]\ncommand = \"x\"\ntimeout_s = 9999\nmem_mb = 99999\nprograms = [\"nope\"]\n";
-    assert_eq!(reasons(&runner(), &req(text, Some("linux"))).len(), 3);
+    let text = "[profile.p]
+command = \"x\"
+timeout_s = 9999
+mem_mb = 99999
+programs = [\"nope\"]
+";
+    assert_eq!(
+        reasons(&runner(), &req(text, Some("linux"))),
+        [
+            MismatchReason::Memory {
+                needed: 99999,
+                available: 16384
+            },
+            MismatchReason::Program {
+                name: "nope".into()
+            },
+            MismatchReason::Timeout {
+                needed: 9999,
+                ceiling: 3600
+            }
+        ]
+    );
+}
+
+#[test]
+fn no_platform_and_no_client_machine_is_an_error() {
+    let p = one(BASIC);
+    assert!(Requirements::from_profile(&p, None, None).is_err());
+}
+
+#[test]
+fn step_tags_add_to_profile_tags_when_every_step_sets_tags() {
+    let text = r#"
+[profile.p]
+timeout_s = 100
+tags = ["base"]
+steps = [
+  { name = "a", command = "x", timeout_s = 5, tags = ["t1"] },
+  { name = "b", command = "y", timeout_s = 5, tags = ["t2"] },
+]
+"#;
+    assert_eq!(req(text, Some("linux")).tags, set(&["base", "t1", "t2"]));
 }
 
 #[test]

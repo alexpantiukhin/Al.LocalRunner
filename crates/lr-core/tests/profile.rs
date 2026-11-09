@@ -76,13 +76,17 @@ steps = [{ name = "s", command = "b", timeout_s = 5 }]
 
 #[test]
 fn neither_command_nor_steps_rejected() {
-    let text = "[profile.none]\ntimeout_s = 10\n";
+    let text = "[profile.none]
+timeout_s = 10
+";
     assert_eq!(invalid(text), ("none".into(), "command".into()));
 }
 
 #[test]
 fn missing_timeout_rejected() {
-    let text = "[profile.p]\ncommand = \"a\"\n";
+    let text = "[profile.p]
+command = \"a\"
+";
     assert_eq!(invalid(text), ("p".into(), "timeout_s".into()));
 }
 
@@ -98,52 +102,77 @@ steps = [{ name = "a", command = "x", timeout_s = 5 }, { name = "b", command = "
 
 #[test]
 fn zero_timeout_rejected_as_no_unlimited_run() {
-    let text = "[profile.p]\ncommand = \"a\"\ntimeout_s = 0\n";
+    let text = "[profile.p]
+command = \"a\"
+timeout_s = 0
+";
     assert_eq!(invalid(text), ("p".into(), "timeout_s".into()));
 }
 
 #[test]
 fn zero_step_timeout_rejected() {
-    let text =
-        "[profile.p]\ntimeout_s = 9\nsteps = [{ name = \"a\", command = \"x\", timeout_s = 0 }]\n";
+    let text = "[profile.p]
+timeout_s = 9
+steps = [{ name = \"a\", command = \"x\", timeout_s = 0 }]
+";
     assert_eq!(invalid(text), ("p".into(), "steps[0].timeout_s".into()));
 }
 
 #[test]
 fn empty_steps_rejected() {
-    let text = "[profile.p]\ntimeout_s = 9\nsteps = []\n";
+    let text = "[profile.p]
+timeout_s = 9
+steps = []
+";
     assert_eq!(invalid(text), ("p".into(), "steps".into()));
 }
 
 #[test]
 fn empty_command_rejected() {
-    let text = "[profile.p]\ntimeout_s = 9\ncommand = \"  \"\n";
+    let text = "[profile.p]
+timeout_s = 9
+command = \"  \"
+";
     assert_eq!(invalid(text), ("p".into(), "command".into()));
 }
 
 #[test]
 fn unknown_zone_rejected() {
-    let text = "[profile.p]\ntimeout_s = 9\ncommand = \"a\"\nzone = \"moon\"\n";
+    let text = "[profile.p]
+timeout_s = 9
+command = \"a\"
+zone = \"moon\"
+";
     assert_eq!(invalid(text), ("p".into(), "zone".into()));
 }
 
 #[test]
 fn unknown_key_rejected_with_profile_name() {
-    let text = "[profile.p]\ntimeout_s = 9\ncommand = \"a\"\nlevel = \"heavy\"\n";
+    let text = "[profile.p]
+timeout_s = 9
+command = \"a\"
+level = \"heavy\"
+";
     assert_eq!(invalid(text).0, "p");
 }
 
 #[test]
 fn broken_toml_is_a_syntax_error() {
     assert!(matches!(
-        parse_profiles("[profile.p\n"),
+        parse_profiles(
+            "[profile.p
+"
+        ),
         Err(ProfileError::Syntax(_))
     ));
 }
 
 #[test]
 fn single_command_becomes_one_step() {
-    let p = one("[profile.p]\ncommand = \"cargo test\"\ntimeout_s = 900\n");
+    let p = one("[profile.p]
+command = \"cargo test\"
+timeout_s = 900
+");
     assert_eq!(p.steps.len(), 1);
     assert_eq!(p.steps[0].command, "cargo test");
     assert_eq!(p.steps[0].timeout_s, 900);
@@ -152,7 +181,10 @@ fn single_command_becomes_one_step() {
 
 #[test]
 fn profile_without_platforms_resolves_for_any_platform() {
-    let p = one("[profile.p]\ncommand = \"a\"\ntimeout_s = 9\n");
+    let p = one("[profile.p]
+command = \"a\"
+timeout_s = 9
+");
     assert!(resolve_for_platform(&p, "anything").is_ok());
 }
 
@@ -208,8 +240,11 @@ steps = [{ name = "s", command = "c", timeout_s = 1 }]
 
 #[test]
 fn platform_without_override_keeps_profile_command() {
-    let p =
-        one("[profile.p]\ncommand = \"a\"\ntimeout_s = 9\nplatforms = [\"linux\", \"macos\"]\n");
+    let p = one("[profile.p]
+command = \"a\"
+timeout_s = 9
+platforms = [\"linux\", \"macos\"]
+");
     let r = resolve_for_platform(&p, "macos").unwrap();
     assert_eq!(r.steps[0].command, "a");
 }
@@ -228,7 +263,11 @@ fn unsupported_platform_rejected() {
 
 #[test]
 fn listed_platforms_reject_unlisted_platform() {
-    let p = one("[profile.p]\ncommand = \"a\"\ntimeout_s = 9\nplatforms = [\"linux\"]\n");
+    let p = one("[profile.p]
+command = \"a\"
+timeout_s = 9
+platforms = [\"linux\"]
+");
     assert!(resolve_for_platform(&p, "macos").is_err());
 }
 
@@ -319,13 +358,22 @@ mem_mb = 16384
 
 #[test]
 fn needs_set_can_supply_timeout() {
-    let text = "[needs.n]\ntimeout_s = 77\n[profile.a]\nneeds = \"n\"\ncommand = \"x\"\n";
+    let text = "[needs.n]
+timeout_s = 77
+[profile.a]
+needs = \"n\"
+command = \"x\"
+";
     assert_eq!(one(text).timeout_s, 77);
 }
 
 #[test]
 fn unknown_needs_set_rejected() {
-    let text = "[profile.a]\nneeds = \"ghost\"\ncommand = \"x\"\ntimeout_s = 1\n";
+    let text = "[profile.a]
+needs = \"ghost\"
+command = \"x\"
+timeout_s = 1
+";
     assert_eq!(invalid(text), ("a".into(), "needs".into()));
 }
 
@@ -401,4 +449,83 @@ fn running_job_reaches_every_reported_final_state() {
         assert!(Running.can_become(to));
     }
     assert!(!Running.can_become(Queued));
+}
+
+#[test]
+fn override_with_only_timeout_moves_single_step_timeout() {
+    let text = r#"
+[profile.p]
+command = "x"
+timeout_s = 100
+[profile.p.platform.ios]
+timeout_s = 500
+"#;
+    let r = resolve_for_platform(&one(text), "ios").unwrap();
+    assert_eq!(r.timeout_s, 500);
+    assert_eq!(r.steps[0].timeout_s, 500);
+}
+
+#[test]
+fn override_replaces_cpu_and_disk() {
+    let text = r#"
+[profile.p]
+command = "x"
+timeout_s = 100
+cpu = 1
+disk_mb = 10
+[profile.p.platform.ios]
+cpu = 8
+disk_mb = 9000
+"#;
+    let r = resolve_for_platform(&one(text), "ios").unwrap();
+    assert_eq!((r.cpu, r.disk_mb), (Some(8), Some(9000)));
+}
+
+#[test]
+fn zero_timeout_in_platform_override_rejected() {
+    let text = "[profile.p]
+command = \"x\"
+timeout_s = 9
+[profile.p.platform.ios]
+timeout_s = 0
+";
+    assert_eq!(invalid(text), ("p".into(), "platform.ios.timeout_s".into()));
+}
+
+#[test]
+fn unknown_key_in_needs_set_rejected() {
+    let text = "[needs.n]
+level = \"x\"
+[profile.p]
+command = \"x\"
+timeout_s = 1
+";
+    assert_eq!(invalid(text).0, "needs.n");
+}
+
+#[test]
+fn needs_set_supplies_platforms() {
+    let text = "[needs.n]
+platforms = [\"linux\"]
+[profile.p]
+needs = \"n\"
+command = \"x\"
+timeout_s = 1
+";
+    let p = one(text);
+    assert_eq!(p.platforms, ["linux"]);
+    assert!(resolve_for_platform(&p, "macos").is_err());
+}
+
+#[test]
+fn duplicate_step_names_rejected() {
+    let text = r#"
+[profile.p]
+timeout_s = 100
+steps = [
+  { name = "a", command = "x", timeout_s = 5 },
+  { name = "a", command = "y", timeout_s = 5 },
+]
+"#;
+    assert_eq!(invalid(text), ("p".into(), "steps[1].name".into()));
 }

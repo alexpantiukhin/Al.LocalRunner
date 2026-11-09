@@ -46,24 +46,31 @@ impl Requirements {
     ///
     /// With a `platform` the profile is resolved for it and the job is not tied to
     /// a machine. Without one the job runs on the client's machine: `client_machine`
-    /// becomes `same_machine`.
+    /// becomes `same_machine` and is required: without it an error is returned.
     pub fn from_profile(
         profile: &Profile,
         platform: Option<&str>,
         client_machine: Option<MachineRef>,
     ) -> Result<Requirements, ProfileError> {
+        if platform.is_none() && client_machine.is_none() {
+            return Err(ProfileError::Invalid {
+                profile: profile.name.clone(),
+                field: "platform".into(),
+                reason: "a job without a platform needs the client machine".into(),
+            });
+        }
         let p = match platform {
             Some(name) => resolve_for_platform(profile, name)?,
             None => profile.clone(),
         };
         let mut mem_mb = 0;
         let mut cpu = 0;
-        let mut tags = BTreeSet::new();
+        let mut tags: BTreeSet<String> = p.tags.iter().cloned().collect();
         let mut secrets: BTreeSet<String> = p.secrets.iter().cloned().collect();
         for step in &p.steps {
             mem_mb = mem_mb.max(step.mem_mb.or(p.mem_mb).unwrap_or(0));
             cpu = cpu.max(step.cpu.or(p.cpu).unwrap_or(0));
-            tags.extend(step.tags.as_ref().unwrap_or(&p.tags).iter().cloned());
+            tags.extend(step.tags.iter().flatten().cloned());
             secrets.extend(step.secrets.iter().cloned());
         }
         let mut programs: Vec<Program> = Vec::new();

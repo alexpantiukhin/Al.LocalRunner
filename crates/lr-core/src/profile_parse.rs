@@ -279,6 +279,16 @@ fn build_steps(
             "must contain at least one step",
         ));
     }
+    let mut seen = std::collections::BTreeSet::new();
+    for (i, s) in raw.iter().enumerate() {
+        if !seen.insert(s.name.clone()) {
+            return Err(ProfileError::invalid(
+                profile,
+                &format!("{field}[{i}].name"),
+                format!("duplicate step name `{}`", s.name),
+            ));
+        }
+    }
     raw.into_iter()
         .enumerate()
         .map(|(i, s)| {

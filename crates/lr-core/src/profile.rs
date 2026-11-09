@@ -28,7 +28,7 @@ pub struct StepSpec {
     pub mem_mb: Option<u64>,
     /// Overrides the profile CPU count for this step.
     pub cpu: Option<u32>,
-    /// Overrides the profile tags for this step.
+    /// Tags added to the profile tags for this step.
     pub tags: Option<Vec<String>>,
     /// Secrets requested by this step only.
     pub secrets: Vec<String>,
