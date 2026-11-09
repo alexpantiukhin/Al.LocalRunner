@@ -144,3 +144,37 @@ pub fn site() -> Site {
 pub fn job(id: &str) -> JobId {
     JobId(id.into())
 }
+
+pub const SEC: u64 = 1_000;
+
+pub fn plan(
+    p: &RulePolicy,
+    queue: &[QueueEntry],
+    runners: &[RunnerView],
+    run: &[RunningJob],
+    now: u64,
+) -> lr_core::Plan {
+    let served = lr_core::ServeLog::default();
+    let state = lr_core::QueueState {
+        queue,
+        runners,
+        running: run,
+        served: &served,
+    };
+    lr_core::pick_next(p, &site(), &state, Timestamp(now))
+}
+
+pub fn started(p: &lr_core::Plan) -> Vec<(String, String)> {
+    p.assignments
+        .iter()
+        .map(|a| (a.job.0.clone(), a.runner.clone()))
+        .collect()
+}
+
+pub fn wait_of<'a>(p: &'a lr_core::Plan, id: &str) -> Option<&'a lr_core::Wait> {
+    p.waiting.iter().find(|(j, _)| j.0 == id).map(|(_, w)| w)
+}
+
+pub fn pair(a: &str, b: &str) -> (String, String) {
+    (a.to_string(), b.to_string())
+}

@@ -269,7 +269,21 @@ fn reserve_is_kept_from_other_orders_even_when_free() {
     let agent = entry_with("a", "agent", 0, req(1024, 7, 60));
     let err = p.gate(&agent, &[]).unwrap_err();
     assert!(matches!(err, Wait::Reserved { ref rule, cpu: 2, .. } if rule == "ci-reserve"));
-    assert!(err.to_string().contains("правило ci-reserve: 2 из 8 CPU"));
+    assert_eq!(
+        err.to_string(),
+        "правило ci-reserve: 2 из 8 ядер и 4096 из 16384 МБ зарезервированы"
+    );
+    let cpu_only = Wait::Reserved {
+        rule: "ci-reserve".into(),
+        cpu: 2,
+        pool_cpu: 8,
+        mem_mb: 0,
+        pool_mem_mb: 16384,
+    };
+    assert_eq!(
+        cpu_only.to_string(),
+        "правило ci-reserve: 2 из 8 ядер зарезервированы"
+    );
     let ci = entry_with("c", "ci", 0, req(1024, 8, 60));
     assert!(p.gate(&ci, &[]).is_ok());
     let fits = entry_with("b", "agent", 0, req(1024, 6, 60));

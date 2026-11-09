@@ -102,10 +102,16 @@ impl fmt::Display for Wait {
                 pool_cpu,
                 mem_mb,
                 pool_mem_mb,
-            } => write!(
-                f,
-                "правило {rule}: {cpu} из {pool_cpu} CPU и {mem_mb} из {pool_mem_mb} МБ зарезервированы"
-            ),
+            } => {
+                let mut parts = Vec::new();
+                if *cpu > 0 {
+                    parts.push(format!("{cpu} из {pool_cpu} ядер"));
+                }
+                if *mem_mb > 0 {
+                    parts.push(format!("{mem_mb} из {pool_mem_mb} МБ"));
+                }
+                write!(f, "правило {rule}: {} зарезервированы", parts.join(" и "))
+            }
             Self::Quota {
                 rule,
                 running,
@@ -127,7 +133,7 @@ impl fmt::Display for Wait {
             Self::RunnerOffline => write!(f, "подходящие раннеры offline"),
             Self::NoRunner => write!(f, "нет подходящего раннера"),
             Self::HeadReserved { head, at } => {
-                write!(f, "старт зарезервирован для {head} на {}", at.0)
+                write!(f, "старт зарезервирован для {head} на {at}")
             }
         }
     }
@@ -279,8 +285,14 @@ impl Scheduler {
 
     /// Free memory and CPU.
     pub fn free(&self) -> Free {
-        let mem: u64 = self.grants.values().map(|g| g.mem_mb).sum();
-        let cpu: u32 = self.grants.values().map(|g| g.cpu).sum();
+        let mem = self
+            .grants
+            .values()
+            .fold(0u64, |a, g| a.saturating_add(g.mem_mb));
+        let cpu = self
+            .grants
+            .values()
+            .fold(0u32, |a, g| a.saturating_add(g.cpu));
         Free {
             mem_mb: self.limits.mem_mb.saturating_sub(mem),
             cpu: self.limits.cpu.saturating_sub(cpu),

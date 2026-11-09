@@ -289,8 +289,12 @@ impl Policy for RulePolicy {
         }
         Scheduler::new(self.pool.clone()).can_ever_fit(req)?;
         let against = self.reserves_against(order, client);
-        let cpu: u32 = against.iter().map(|(_, r)| r.cpu).sum();
-        let mem: u64 = against.iter().map(|(_, r)| r.mem_mb).sum();
+        let cpu = against
+            .iter()
+            .fold(0u32, |a, (_, r)| a.saturating_add(r.cpu));
+        let mem = against
+            .iter()
+            .fold(0u64, |a, (_, r)| a.saturating_add(r.mem_mb));
         if req.cpu > self.pool.cpu.saturating_sub(cpu)
             || req.mem_mb > self.pool.mem_mb.saturating_sub(mem)
         {
@@ -317,8 +321,12 @@ impl Policy for RulePolicy {
 
     fn gate(&self, entry: &QueueEntry, running: &[&QueueEntry]) -> Result<(), Wait> {
         let req = &entry.order.requirements;
-        let used_cpu: u32 = running.iter().map(|e| e.order.requirements.cpu).sum();
-        let used_mem: u64 = running.iter().map(|e| e.order.requirements.mem_mb).sum();
+        let used_cpu = running
+            .iter()
+            .fold(0u32, |a, e| a.saturating_add(e.order.requirements.cpu));
+        let used_mem = running
+            .iter()
+            .fold(0u64, |a, e| a.saturating_add(e.order.requirements.mem_mb));
         let mut blocked_cpu = 0u32;
         let mut blocked_mem = 0u64;
         let mut first_blocking = None;
@@ -328,8 +336,8 @@ impl Policy for RulePolicy {
                 .filter(|e| self.reserve_rule(&e.order, &e.client) == Some(i));
             let (cpu, mem) = mine.fold((0u32, 0u64), |(c, m), e| {
                 (
-                    c + e.order.requirements.cpu,
-                    m + e.order.requirements.mem_mb,
+                    c.saturating_add(e.order.requirements.cpu),
+                    m.saturating_add(e.order.requirements.mem_mb),
                 )
             });
             let left_cpu = res.cpu.saturating_sub(cpu);
@@ -337,11 +345,17 @@ impl Policy for RulePolicy {
             if (left_cpu > 0 || left_mem > 0) && first_blocking.is_none() {
                 first_blocking = Some(i);
             }
-            blocked_cpu += left_cpu;
-            blocked_mem += left_mem;
+            blocked_cpu = blocked_cpu.saturating_add(left_cpu);
+            blocked_mem = blocked_mem.saturating_add(left_mem);
         }
-        let free_cpu = self.pool.cpu.saturating_sub(used_cpu + blocked_cpu);
-        let free_mem = self.pool.mem_mb.saturating_sub(used_mem + blocked_mem);
+        let free_cpu = self
+            .pool
+            .cpu
+            .saturating_sub(used_cpu.saturating_add(blocked_cpu));
+        let free_mem = self
+            .pool
+            .mem_mb
+            .saturating_sub(used_mem.saturating_add(blocked_mem));
         if let Some(i) = first_blocking {
             if req.cpu > free_cpu || req.mem_mb > free_mem {
                 return Err(Wait::Reserved {
@@ -360,9 +374,13 @@ impl Policy for RulePolicy {
                 .filter(|e| self.group_of(&e.client) == group)
                 .collect();
             let count = mine.len() as u32;
-            let mem: u64 = mine.iter().map(|e| e.order.requirements.mem_mb).sum();
+            let mem = mine
+                .iter()
+                .fold(0u64, |a, e| a.saturating_add(e.order.requirements.mem_mb));
             let over_count = q.max_running.is_some_and(|m| count >= m);
-            let over_mem = q.max_mem_mb.is_some_and(|m| mem + req.mem_mb > m);
+            let over_mem = q
+                .max_mem_mb
+                .is_some_and(|m| mem.saturating_add(req.mem_mb) > m);
             if over_count || over_mem {
                 return Err(Wait::Quota {
                     rule: self.rule_name(i),

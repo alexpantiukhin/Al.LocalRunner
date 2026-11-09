@@ -1,44 +1,13 @@
 mod common;
 
-use common::{entry, entry_with, job, policy, req, runner, running, set, site, MIN};
-use lr_core::{
-    earliest_start, pick_next, Condition, Plan, QueueEntry, Reservation, Reserve, Rule, RulePolicy,
-    RunnerView, RunningJob, ServeLog, Timestamp, Wait,
+use common::{
+    entry, entry_with, job, pair, plan, policy, req, runner, running, set, site, started, wait_of,
+    MIN, SEC,
 };
-
-const SEC: u64 = 1_000;
-
-fn plan(
-    p: &RulePolicy,
-    queue: &[QueueEntry],
-    runners: &[RunnerView],
-    run: &[RunningJob],
-    now: u64,
-) -> Plan {
-    let served = ServeLog::default();
-    let state = lr_core::QueueState {
-        queue,
-        runners,
-        running: run,
-        served: &served,
-    };
-    pick_next(p, &site(), &state, Timestamp(now))
-}
-
-fn started(p: &Plan) -> Vec<(String, String)> {
-    p.assignments
-        .iter()
-        .map(|a| (a.job.0.clone(), a.runner.clone()))
-        .collect()
-}
-
-fn wait_of<'a>(p: &'a Plan, id: &str) -> Option<&'a Wait> {
-    p.waiting.iter().find(|(j, _)| j.0 == id).map(|(_, w)| w)
-}
-
-fn pair(a: &str, b: &str) -> (String, String) {
-    (a.to_string(), b.to_string())
-}
+use lr_core::{
+    earliest_start, Condition, Reservation, Reserve, Rule, RulePolicy, RunnerView, RunningJob,
+    Timestamp, Wait,
+};
 
 #[test]
 fn free_order_starts_on_a_free_runner() {
@@ -101,7 +70,7 @@ fn short_job_fills_hole_before_head_start() {
             free: 4096
         })
     );
-    assert_eq!(out.reservation.unwrap().at, Timestamp(600 * SEC));
+    assert_eq!(out.reservation.as_ref().unwrap().at, Timestamp(600 * SEC));
 }
 
 #[test]
@@ -185,10 +154,97 @@ fn several_hole_fillers_together_do_not_delay_head() {
 #[test]
 fn reservation_recomputed_when_running_job_ends_early() {
     let (p, runners, _) = memory_head_setup();
-    let queue = [entry_with("head", "agent", 1, req(6144, 1, 600))];
-    let out = plan(&p, &queue, &runners, &[], 200 * SEC);
-    assert_eq!(started(&out), [pair("head", "r1")]);
-    assert_eq!(out.reservation, None);
+    let (j1, j2) = two_jobs();
+    let queue = [entry_with("head", "agent", 1, req(7000, 1, 600))];
+    let before = plan(&p, &queue, &runners, &[j1.clone(), j2], 100 * SEC);
+    assert_eq!(
+        before.reservation.as_ref().unwrap().at,
+        Timestamp(600 * SEC)
+    );
+    let after = plan(&p, &queue, &runners, std::slice::from_ref(&j1), 200 * SEC);
+    assert!(after.assignments.is_empty());
+    assert_eq!(after.reservation.as_ref().unwrap().at, Timestamp(300 * SEC));
+    let done = plan(&p, &queue, &runners, &[], 250 * SEC);
+    assert_eq!(started(&done), [pair("head", "r1")]);
+    assert_eq!(done.reservation, None);
+}
+
+fn two_jobs() -> (RunningJob, RunningJob) {
+    (
+        running(entry_with("j1", "agent", 0, req(3072, 1, 300)), "r1", 0),
+        running(entry_with("j2", "agent", 0, req(3072, 1, 600)), "r2", 0),
+    )
+}
+
+#[test]
+fn head_waits_for_every_job_whose_resources_it_needs() {
+    let (p, mut runners, _) = memory_head_setup();
+    runners.push(runner("r4"));
+    let (j1, j2) = two_jobs();
+    let run = [j1, j2];
+    let head = entry_with("head", "agent", 1, req(7000, 1, 600));
+    assert_eq!(
+        earliest_start(&p, &site(), &head, &runners, &run, Timestamp(100 * SEC)),
+        Some(Timestamp(600 * SEC))
+    );
+    let queue = [
+        head,
+        entry_with("between", "agent", 2, req(512, 1, 350)),
+        entry_with("after", "agent", 3, req(1536, 1, 600)),
+    ];
+    let out = plan(&p, &queue, &runners, &run, 100 * SEC);
+    assert_eq!(out.reservation.as_ref().unwrap().at, Timestamp(600 * SEC));
+    assert_eq!(started(&out), [pair("between", "r3")]);
+    assert!(matches!(
+        wait_of(&out, "after"),
+        Some(Wait::HeadReserved { .. })
+    ));
+}
+
+#[test]
+fn hole_filler_ending_one_ms_after_the_reservation_waits() {
+    let (p, runners, run) = memory_head_setup();
+    let queue = [
+        entry_with("head", "agent", 1, req(6144, 1, 600)),
+        entry_with("late", "agent", 2, req(4096, 1, 500)),
+    ];
+    let out = plan(&p, &queue, &runners, &run, 100 * SEC + 1);
+    assert!(out.assignments.is_empty());
+    assert_eq!(
+        wait_of(&out, "late"),
+        Some(&Wait::HeadReserved {
+            head: job("head"),
+            at: Timestamp(600 * SEC)
+        })
+    );
+}
+
+#[test]
+fn filler_wanting_a_tag_the_head_holds_exclusively_waits() {
+    let (p, runners, run) = memory_head_setup();
+    let mut head = req(6144, 1, 600);
+    head.exclusive = set(&["emu"]);
+    let mut long = req(1024, 1, 3600);
+    long.tags = set(&["emu"]);
+    let mut short = req(1024, 1, 60);
+    short.tags = set(&["emu"]);
+    let mut tagged = runners.clone();
+    for r in &mut tagged {
+        r.caps.tags = set(&["emu"]);
+    }
+    let queue = [
+        entry_with("head", "agent", 1, head),
+        entry_with("long", "agent", 2, long),
+    ];
+    let out = plan(&p, &queue, &tagged, &run, 100 * SEC);
+    assert!(out.assignments.is_empty());
+    assert!(matches!(
+        wait_of(&out, "long"),
+        Some(Wait::HeadReserved { .. })
+    ));
+    let queue = [queue[0].clone(), entry_with("short", "agent", 2, short)];
+    let out = plan(&p, &queue, &tagged, &run, 100 * SEC);
+    assert_eq!(started(&out), [pair("short", "r2")]);
 }
 
 #[test]
@@ -199,7 +255,7 @@ fn overdue_running_job_makes_head_reserve_now() {
         entry_with("short", "agent", 2, req(4096, 1, 60)),
     ];
     let out = plan(&p, &queue, &runners, &run, 700 * SEC);
-    assert_eq!(out.reservation.unwrap().at, Timestamp(700 * SEC));
+    assert_eq!(out.reservation.as_ref().unwrap().at, Timestamp(700 * SEC));
     assert!(out.assignments.is_empty());
 }
 
@@ -256,7 +312,7 @@ fn exclusive_tag_holder_is_named_while_waiting() {
             holder: job("a")
         })
     );
-    assert_eq!(out.reservation.unwrap().at, Timestamp(600 * SEC));
+    assert_eq!(out.reservation.as_ref().unwrap().at, Timestamp(600 * SEC));
 }
 
 #[test]

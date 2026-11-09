@@ -151,3 +151,25 @@ fn insert_running_records_without_checks() {
     s.release(&job("a"));
     assert_eq!(s.free().mem_mb, 1024);
 }
+
+#[test]
+fn timestamps_render_as_utc_and_head_reserved_uses_them() {
+    use lr_core::Timestamp;
+    assert_eq!(Timestamp(0).to_string(), "1970-01-01 00:00:00 UTC");
+    assert_eq!(
+        Timestamp(1_700_000_000_999).to_string(),
+        "2023-11-14 22:13:20 UTC"
+    );
+    assert_eq!(
+        Timestamp(951_782_400_000).to_string(),
+        "2000-02-29 00:00:00 UTC"
+    );
+    let w = Wait::HeadReserved {
+        head: job("h"),
+        at: Timestamp(1_700_000_000_000),
+    };
+    assert_eq!(
+        w.to_string(),
+        "старт зарезервирован для h на 2023-11-14 22:13:20 UTC"
+    );
+}
