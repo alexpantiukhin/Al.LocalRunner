@@ -54,21 +54,22 @@ svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 <rect class="b" x="40" y="86" width="430" height="304" rx="8"/><text class="h" x="52" y="106">Windows · установка 1 · hub по умолчанию</text><text class="k" x="360" y="106">ID m-7f3a</text>
 <rect class="b" x="55" y="130" width="118" height="54" rx="6"/><text class="h" x="65" y="152">Сессии агентов</text><text class="s" x="65" y="170">терминал, CLI</text>
 <rect class="b" x="55" y="214" width="118" height="54" rx="6"/><text class="h" x="65" y="236">Браузер</text><text class="s" x="65" y="254">дашборд</text>
-<rect class="ok" x="55" y="300" width="118" height="76" rx="6"/><text class="h" x="65" y="322">Раннер</text><text class="s" x="65" y="340">отдельный процесс</text><text class="s" x="65" y="356">light, heavy</text>
+<rect class="ok" x="55" y="284" width="118" height="46" rx="6"/><text class="h" x="65" y="304">Раннер light</text><text class="s" x="65" y="320">отдельный процесс</text>
+<rect class="ok" x="55" y="338" width="118" height="46" rx="6"/><text class="h" x="65" y="358">Раннер heavy</text><text class="s" x="65" y="374">отдельный процесс</text>
 <rect class="hub" x="190" y="118" width="265" height="226" rx="8"/><text class="g" x="204" y="138">Демон (роль hub)</text>
 <rect class="b" x="204" y="148" width="112" height="30" rx="5"/><text x="214" y="168">IPC-сервер</text>
 <rect class="b" x="204" y="188" width="236" height="44" rx="5"/><text class="h" x="214" y="207">Движок</text><text class="s" x="214" y="223">очередь, планировщик, приоритеты, зоны</text>
 <rect class="b" x="204" y="242" width="124" height="40" rx="5"/><text x="214" y="258">HTTP дашборда</text><text class="s" x="214" y="273">127.0.0.1 и ::1</text>
 <rect class="b" x="338" y="242" width="102" height="40" rx="5"/><text x="348" y="258">Хранилища</text><text class="s" x="348" y="273">history, hub.db</text>
 <rect class="b" x="204" y="292" width="236" height="34" rx="5"/><text x="214" y="313">Слушатель раннеров и клиентов</text>
-<path class="ln" d="M173,152 L204,163" marker-end="url(#ar)"/><path class="ln" d="M173,244 L204,258" marker-end="url(#ar)"/><path class="lo" d="M173,330 L204,312" marker-end="url(#ao)"/>
+<path class="ln" d="M173,152 L204,163" marker-end="url(#ar)"/><path class="ln" d="M173,244 L204,258" marker-end="url(#ar)"/><path class="lo" d="M173,307 L204,304" marker-end="url(#ao)"/><path class="lo" d="M173,361 L204,317" marker-end="url(#ao)"/>
 <rect class="ok" x="40" y="408" width="205" height="96" rx="8"/><text class="h" x="52" y="428">Docker (Linux) · установка 2</text><text class="k" x="52" y="446">ID m-b21c</text><text class="s" x="52" y="464">роль: раннер · пул win-host</text><text class="s" x="52" y="480">платформы: linux, android</text><text class="s" x="52" y="496">файлы хоста не видит</text>
 <rect class="ok" x="265" y="408" width="205" height="96" rx="8"/><text class="h" x="277" y="428">VM Ubuntu · установка 3</text><text class="k" x="277" y="446">ID m-d3e5</text><text class="s" x="277" y="464">роль: раннер · пул win-host</text><text class="s" x="277" y="480">платформы: linux</text><text class="s" x="277" y="496">файлы хоста не видит</text>
 <rect class="nx" x="40" y="516" width="430" height="68" rx="6"/><text class="h" x="52" y="536">Пул win-host: общий бюджет трёх установок</text><text class="s" x="52" y="554">память, CPU и exclusive-теги считаются вместе; лимиты задаёт владелец на hub</text><text class="s" x="52" y="570">Docker и виртуалка проверяют запушенный коммит, а не рабочее дерево</text>
 <path class="lo" d="M142,408 L270,327" marker-end="url(#ao)"/><path class="lo" d="M367,408 L385,327" marker-end="url(#ao)"/>
 
 <rect class="grp" x="520" y="50" width="460" height="138" rx="10"/><text class="g" x="534" y="72">Компьютер 2 · linux-box · пул linux-box</text>
-<rect class="ok" x="540" y="82" width="420" height="94" rx="8"/><text class="h" x="552" y="102">Linux · установка 4 · роль: раннер</text><text class="k" x="860" y="102">ID m-c9d0</text><text class="s" x="552" y="120">уровни light, heavy · платформы linux, android</text><text class="s" x="552" y="138">+ ci-раннер GitHub Actions (метка al-ci)</text><text class="s" x="552" y="156">берёт ресурсы у hub через acquire, в том же пуле</text>
+<rect class="ok" x="540" y="82" width="420" height="94" rx="8"/><text class="h" x="552" y="102">Linux · установка 4 · роль: раннеры</text><text class="k" x="860" y="102">ID m-c9d0</text><text class="s" x="552" y="120">два раннера: light и heavy · платформы linux, android</text><text class="s" x="552" y="138">+ ci-раннер GitHub Actions (метка al-ci)</text><text class="s" x="552" y="156">берёт ресурсы у hub через acquire, в том же пуле</text>
 <rect class="grp" x="520" y="204" width="460" height="92" rx="10"/><text class="g" x="534" y="224">Компьютер 3 · mac-mini · пул mac-mini</text>
 <rect class="ok" x="540" y="234" width="420" height="52" rx="8"/><text class="h" x="552" y="254">macOS · установка 5 · роль: раннер</text><text class="k" x="860" y="254">ID m-4e18</text><text class="s" x="552" y="272">платформы: macos, ios (симулятор)</text>
 <rect class="grp" x="520" y="312" width="460" height="170" rx="10"/><text class="g" x="534" y="334">Компьютер 4 · ноутбук · без пула, ничего не выполняет</text>
@@ -87,6 +88,7 @@ svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 <ul>
 <li><b>Запуск джобов с любого компьютера.</b> Сессии агентов на компьютере 1 говорят с демоном по IPC, на компьютере 4 — через клиентское соединение к hub. Очередь одна, приоритет и учёт ресурсов у hub.</li>
 <li><b>Дашборд с любого компьютера.</b> Сейчас каждый дашборд читает демон своей машины по loopback. Дашборд на ноутбуке, который читает данные hub (живое состояние от hub, история удалённых машин по каналу раннера), — этап 2; для этого нужен только адрес hub.</li>
+<li><b>Несколько раннеров на одной ОС.</b> На Windows и на Linux работают по два отдельных процесса: раннер <code>light</code> и раннер <code>heavy</code>. У каждого своё имя, уровни, воркеры и регистрация на hub; пул у них общий, поэтому память и CPU считаются вместе.</li>
 <li><b>Один компьютер — несколько установок.</b> Windows, Docker и виртуалка на компьютере 1 — три установки с тремя ID, но один пул: память, CPU и <code>exclusive</code>-теги считаются вместе.</li>
 <li><b>Разные ОС.</b> Платформа раннера — метка владельца (<code>windows</code>, <code>linux</code>, <code>macos</code>, <code>ios</code>, <code>android</code>); ядро сравнивает метки на равенство.</li>
 </ul>
@@ -94,6 +96,7 @@ svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 <div class="scroll"><table>
 <tr><th>Идентификатор</th><th>Что обозначает</th><th>Кто выдаёт и когда</th><th>Где хранится</th></tr>
 <tr><td><code>MachineId</code></td><td>одну установку программы: Windows, Docker и виртуалка получают разные</td><td>сама установка, случайное значение при первом запуске демона</td><td>файл <code>machine-id</code> в каталоге состояния; на hub — в реестре машин</td></tr>
+<tr><td>Имя раннера</td><td>один процесс раннера на установке; на одной ОС их может быть несколько (<code>light</code>, <code>heavy</code>)</td><td>владелец в конфигурации, hub проверяет уникальность при регистрации</td><td><code>hub.db</code>, таблица <code>runner</code></td></tr>
 <tr><td>Пара ключей ed25519</td><td>право машины подключаться к hub</td><td>сама машина при вступлении; публичный ключ уходит на hub</td><td>секретный у машины, публичный в <code>hub.db</code></td></tr>
 <tr><td>Код подключения</td><td>разрешение вступить раннеру или клиенту</td><td>hub по команде владельца; одноразовый, живёт 1 час</td><td><code>hub.db</code>, таблица <code>join_code</code></td></tr>
 <tr><td>Имя машины (<code>MachineName</code>)</td><td>запись машины в реестре hub</td><td>hub при вступлении</td><td><code>hub.db</code>, таблица <code>machine</code></td></tr>

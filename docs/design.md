@@ -245,6 +245,7 @@ flowchart LR
 - `tags`: opaque capability labels, as today (`emulator`, `gradle`, ...).
 - `pool`: the resource pool the runner belongs to (next section).
 - `workers`: how many jobs this runner runs at once, per level. Default 1.
+- **Several runners on one installation.** An installation (one OS, Docker container or VM) may run several runner processes at once, for example one `light` and one `heavy`; this is the default (`up` starts one runner per level). Each has its own name (unique on the hub), levels, platforms, tags and workers, and registers separately. They share the pool of the installation unless the owner names different pools, so a `heavy` job and a `light` job on one OS still count against the same memory and CPU. *(Author's call.)*
 
 ### Pools: shared resources
 - A pool is one physical or virtual machine and carries its limits: memory, CPU and the set of exclusive tags. Limits belong to the owner of the machine, in the runner config, never in a project profile. Profiles only say what a job needs.
