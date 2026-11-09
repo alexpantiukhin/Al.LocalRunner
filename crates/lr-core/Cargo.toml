@@ -8,3 +8,10 @@ publish = false
 serde.workspace = true
 toml.workspace = true
 thiserror.workspace = true
+ipnet.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
