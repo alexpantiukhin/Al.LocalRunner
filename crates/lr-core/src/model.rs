@@ -13,6 +13,28 @@ impl fmt::Display for JobId {
     }
 }
 
+/// Wall-clock time in milliseconds since the unix epoch.
+///
+/// Scheduling times are wall-clock values rather than `Instant`, because the hub's enqueue time
+/// travels inside the order to another machine and must survive re-brokering (spec 6).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct Timestamp(pub u64);
+
+impl Timestamp {
+    /// This time plus `secs` seconds, saturating.
+    pub fn plus_secs(self, secs: u64) -> Timestamp {
+        Timestamp(self.0.saturating_add(secs.saturating_mul(1000)))
+    }
+
+    /// Milliseconds from `earlier` to `self`, zero when `earlier` is later.
+    pub fn millis_since(self, earlier: Timestamp) -> u64 {
+        self.0.saturating_sub(earlier.0)
+    }
+}
+
 /// Distance from the sender to a runner, ordered from nearest to farthest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
