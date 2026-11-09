@@ -41,41 +41,66 @@ svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 <li><b>Универсальное ядро.</b> Очередь, планировщик и демон не знают про язык, тестовый фреймворк и платформы. Названия платформ, метки и команды приходят от владельца машины и из профилей проекта.</li>
 <li><b>Один бинарник, три роли.</b> <code>al-localrunner</code> работает как <b>hub</b> (очередь, планировщик, дашборд), <b>раннер</b> (выполняет джобы) и <b>клиент</b> (отправляет и смотрит). По умолчанию каждая машина сама себе hub.</li>
 <li><b>Раннер сам подключается к hub</b>, как у GitHub self-hosted: входящие порты на раннере не нужны.</li>
-<li><b>Ресурсы считаются по пулу</b> (физической или виртуальной машине), а не по раннеру. Docker-раннер на Windows входит в пул хоста.</li>
+<li><b>Ресурсы считаются по пулу</b> — физическому компьютеру как общему бюджету, а не по раннеру. Docker и виртуалки на компьютере остаются отдельными установками со своим ID, но входят в его пул.</li>
 <li><b>Локальный раннер тестирует рабочее дерево, удалённый — запушенный коммит.</b></li>
 <li><b>Ничего не уходит наружу.</b> Дашборд слушает только loopback; телеметрии и загрузок нет.</li>
 </ul>
 
 <h2>2. Архитектура: машины и связи</h2>
 <p class="lead">Этап 1 — всё в одной локальной сети. Раннеры на VPS и за чужим роутером — следующий этап; схема им не мешает.</p>
-<div class="scroll"><svg viewBox="0 0 960 560" role="img" aria-label="Схема машин и связей">
-<rect class="grp" x="20" y="20" width="490" height="420" rx="10"/><text class="g" x="34" y="40">Машина пользователя (Windows) — hub по умолчанию</text>
-<rect class="b" x="40" y="70" width="130" height="56" rx="6"/><text class="h" x="52" y="94">Сессии агентов</text><text class="s" x="52" y="112">и терминал, CLI</text>
-<rect class="b" x="40" y="262" width="130" height="56" rx="6"/><text class="h" x="52" y="286">Браузер</text><text class="s" x="52" y="304">дашборд</text>
-<rect class="hub" x="210" y="60" width="280" height="270" rx="8"/><text class="g" x="224" y="80">Демон (hub)</text>
-<rect class="b" x="225" y="90" width="120" height="34" rx="5"/><text x="235" y="112">IPC-сервер</text>
-<rect class="b" x="225" y="135" width="250" height="44" rx="5"/><text class="h" x="235" y="154">Движок</text><text class="s" x="235" y="170">очередь, планировщик, приоритеты, зоны</text>
-<rect class="b" x="225" y="190" width="250" height="34" rx="5"/><text x="235" y="212">Локальный раннер (light, heavy)</text>
-<rect class="b" x="225" y="235" width="110" height="34" rx="5"/><text x="235" y="250">Хранилища</text><text class="s" x="235" y="263">history.db, hub.db</text>
-<rect class="b" x="345" y="235" width="130" height="34" rx="5"/><text x="355" y="250">Слушатель</text><text class="s" x="355" y="263">раннеров, TLS</text>
-<rect class="b" x="225" y="280" width="170" height="34" rx="5"/><text x="235" y="296">HTTP дашборда</text><text class="s" x="235" y="309">127.0.0.1 и ::1</text>
-<path class="ln" d="M170,98 L225,107" marker-end="url(#ar)"/><text class="s" x="176" y="86">IPC</text>
-<path class="ln" d="M170,290 L225,297" marker-end="url(#ar)"/><text class="s" x="168" y="336">HTTP, SSE</text>
-<rect class="ok" x="210" y="350" width="280" height="76" rx="8"/><text class="h" x="224" y="372">Docker-раннер на этом же хосте</text><text class="s" x="224" y="390">пул A (общий с Windows), платформы: linux, android</text><text class="s" x="224" y="408">ресурсы хоста делятся между всеми раннерами пула</text>
-<path class="lo" d="M450,350 L450,269" marker-end="url(#ao)"/>
-<rect class="grp" x="560" y="20" width="380" height="350" rx="10"/><text class="g" x="574" y="40">Локальная сеть</text>
-<rect class="ok" x="580" y="56" width="340" height="56" rx="6"/><text class="h" x="592" y="78">Раннер Linux</text><text class="s" x="592" y="96">пул B · платформы: linux, android</text>
-<rect class="ok" x="580" y="128" width="340" height="56" rx="6"/><text class="h" x="592" y="150">Раннер macOS</text><text class="s" x="592" y="168">пул C · платформы: macos, ios (симулятор)</text>
-<rect class="ok" x="580" y="200" width="340" height="56" rx="6"/><text class="h" x="592" y="222">Раннер Windows</text><text class="s" x="592" y="240">пул D · платформы: windows</text>
-<rect class="b" x="580" y="272" width="340" height="40" rx="6"/><text class="h" x="592" y="290">Клиент: вторая рабочая машина</text><text class="s" x="592" y="304">отправка джобов, свой дашборд</text>
-<rect class="b" x="580" y="320" width="340" height="40" rx="6"/><text class="h" x="592" y="338">ci-раннер GitHub Actions (метка al-ci)</text><text class="s" x="592" y="352">захват ресурсов через канал, остальные джобы вне очереди</text>
-<path class="lo" d="M580,84 L478,246" marker-end="url(#ao)"/><path class="lo" d="M580,156 L478,248" marker-end="url(#ao)"/><path class="lo" d="M580,228 L478,252" marker-end="url(#ao)"/><path class="lo" d="M580,292 L478,256" marker-end="url(#ao)"/><path class="lo" d="M580,340 L478,260" marker-end="url(#ao)"/>
-<text class="s" x="580" y="384">раннеры и клиенты сами подключаются к hub (TLS)</text>
-<rect class="b" x="580" y="412" width="340" height="44" rx="6"/><text class="h" x="592" y="432">Git-репозиторий (origin)</text><text class="s" x="592" y="448">удалённый раннер делает fetch запушенного коммита</text>
-<path class="ld" d="M750,370 L750,412" marker-end="url(#ar)"/>
-<rect class="nx" x="580" y="484" width="340" height="44" rx="6"/><text class="h" x="592" y="504">VPS и внешние раннеры — этап 2</text><text class="s" x="592" y="520">нужен hub, доступный по адресу, или туннель</text>
+<div class="scroll"><svg viewBox="0 0 1000 640" role="img" aria-label="Схема компьютеров, установок и связей">
+<rect class="grp" x="20" y="50" width="470" height="545" rx="10"/><text class="g" x="34" y="72">Компьютер 1 · рабочий · пул win-host</text>
+<rect class="b" x="40" y="86" width="430" height="304" rx="8"/><text class="h" x="52" y="106">Windows · установка 1 · hub по умолчанию</text><text class="k" x="360" y="106">ID m-7f3a</text>
+<rect class="b" x="55" y="130" width="118" height="54" rx="6"/><text class="h" x="65" y="152">Сессии агентов</text><text class="s" x="65" y="170">терминал, CLI</text>
+<rect class="b" x="55" y="300" width="118" height="54" rx="6"/><text class="h" x="65" y="322">Браузер</text><text class="s" x="65" y="340">дашборд</text>
+<rect class="hub" x="190" y="118" width="265" height="258" rx="8"/><text class="g" x="204" y="138">Демон (роль hub)</text>
+<rect class="b" x="204" y="148" width="112" height="30" rx="5"/><text x="214" y="168">IPC-сервер</text>
+<rect class="b" x="204" y="188" width="236" height="44" rx="5"/><text class="h" x="214" y="207">Движок</text><text class="s" x="214" y="223">очередь, планировщик, приоритеты, зоны</text>
+<rect class="b" x="204" y="242" width="236" height="30" rx="5"/><text x="214" y="262">Локальный раннер (Windows)</text>
+<rect class="b" x="204" y="282" width="124" height="40" rx="5"/><text x="214" y="298">HTTP дашборда</text><text class="s" x="214" y="313">127.0.0.1 и ::1</text>
+<rect class="b" x="338" y="282" width="102" height="40" rx="5"/><text x="348" y="298">Хранилища</text><text class="s" x="348" y="313">history, hub.db</text>
+<rect class="b" x="204" y="332" width="236" height="34" rx="5"/><text x="214" y="353">Слушатель раннеров и клиентов, TLS</text>
+<path class="ln" d="M173,152 L204,163" marker-end="url(#ar)"/><path class="ln" d="M173,328 L204,303" marker-end="url(#ar)"/>
+<rect class="ok" x="40" y="408" width="205" height="96" rx="8"/><text class="h" x="52" y="428">Docker (Linux) · установка 2</text><text class="k" x="52" y="446">ID m-b21c</text><text class="s" x="52" y="464">роль: раннер · пул win-host</text><text class="s" x="52" y="480">платформы: linux, android</text><text class="s" x="52" y="496">файлы хоста не видит</text>
+<rect class="ok" x="265" y="408" width="205" height="96" rx="8"/><text class="h" x="277" y="428">VM Ubuntu · установка 3</text><text class="k" x="277" y="446">ID m-d3e5</text><text class="s" x="277" y="464">роль: раннер · пул win-host</text><text class="s" x="277" y="480">платформы: linux</text><text class="s" x="277" y="496">файлы хоста не видит</text>
+<rect class="nx" x="40" y="516" width="430" height="68" rx="6"/><text class="h" x="52" y="536">Пул win-host: общий бюджет трёх установок</text><text class="s" x="52" y="554">память, CPU и exclusive-теги считаются вместе; лимиты задаёт владелец на hub</text><text class="s" x="52" y="570">Docker и виртуалка проверяют запушенный коммит, а не рабочее дерево</text>
+<path class="lo" d="M142,408 L290,367" marker-end="url(#ao)"/><path class="lo" d="M367,408 L385,367" marker-end="url(#ao)"/>
+
+<rect class="grp" x="520" y="50" width="460" height="138" rx="10"/><text class="g" x="534" y="72">Компьютер 2 · linux-box · пул linux-box</text>
+<rect class="ok" x="540" y="82" width="420" height="94" rx="8"/><text class="h" x="552" y="102">Linux · установка 4 · роль: раннер</text><text class="k" x="860" y="102">ID m-c9d0</text><text class="s" x="552" y="120">уровни light, heavy · платформы linux, android</text><text class="s" x="552" y="138">+ ci-раннер GitHub Actions (метка al-ci)</text><text class="s" x="552" y="156">берёт ресурсы у hub через acquire, в том же пуле</text>
+<rect class="grp" x="520" y="204" width="460" height="92" rx="10"/><text class="g" x="534" y="224">Компьютер 3 · mac-mini · пул mac-mini</text>
+<rect class="ok" x="540" y="234" width="420" height="52" rx="8"/><text class="h" x="552" y="254">macOS · установка 5 · роль: раннер</text><text class="k" x="860" y="254">ID m-4e18</text><text class="s" x="552" y="272">платформы: macos, ios (симулятор)</text>
+<rect class="grp" x="520" y="312" width="460" height="170" rx="10"/><text class="g" x="534" y="334">Компьютер 4 · ноутбук · без пула, ничего не выполняет</text>
+<rect class="b" x="540" y="344" width="420" height="128" rx="8"/><text class="h" x="552" y="364">Windows · установка 6 · роль: клиент</text><text class="k" x="860" y="364">ID m-91aa</text>
+<rect class="b" x="555" y="378" width="130" height="54" rx="6"/><text class="h" x="565" y="400">Сессии агентов</text><text class="s" x="565" y="418">отправка джобов</text>
+<rect class="b" x="700" y="378" width="245" height="54" rx="6"/><text class="h" x="710" y="400">Браузер: свой дашборд</text><text class="s" x="710" y="418">этап 2: данные берёт у hub</text>
+<text class="s" x="555" y="454">джобы с этой машины помечены её MachineId</text>
+<path class="lo" d="M540,250 L441,352" marker-end="url(#ao)"/><path class="lo" d="M540,140 L441,343" marker-end="url(#ao)"/><path class="lo" d="M555,395 L441,358" marker-end="url(#ao)"/>
+<path class="ld" d="M822,432 V470 H505 V362 H441" marker-end="url(#ar)"/>
+<rect class="b" x="520" y="520" width="460" height="44" rx="6"/><text class="h" x="532" y="540">Git-репозиторий (origin)</text><text class="s" x="532" y="556">отправитель пушит коммит; не локальный раннер делает fetch</text>
+<path class="ld" d="M750,482 L750,520" marker-end="url(#ar)"/><text class="s" x="758" y="506">git push</text>
+<rect class="nx" x="520" y="580" width="460" height="44" rx="6"/><text class="h" x="532" y="600">VPS и внешние раннеры — этап 2</text><text class="s" x="532" y="616">нужен hub, доступный по адресу, или туннель</text>
 </svg></div>
-<p class="legend">Синие стрелки — постоянное TLS-соединение раннера или клиента к hub (протокол с проверкой версии, heartbeat 15 с). Серые — локальный IPC, HTTP на loopback и git. Зелёные рамки — раннеры, все они подчиняются одному hub.</p>
+<p class="legend">Сплошные синие стрелки — постоянное TLS-соединение раннера или клиента к hub (проверка версии, heartbeat 15 с). Серые — локальный IPC и HTTP на loopback. Пунктирные рамки — физические компьютеры; каждая рамка внутри — отдельная установка программы со своим ID. Зелёные — установки в роли раннера. Docker и виртуалка стоят на компьютере 1, делят пул <code>win-host</code> с Windows, но остаются отдельными установками.</p>
+<h3>Что где работает</h3>
+<ul>
+<li><b>Запуск джобов с любого компьютера.</b> Сессии агентов на компьютере 1 говорят с демоном по IPC, на компьютере 4 — через клиентское соединение к hub. Очередь одна, приоритет и учёт ресурсов у hub.</li>
+<li><b>Дашборд с любого компьютера.</b> Сейчас каждый дашборд читает демон своей машины по loopback. Дашборд на ноутбуке, который читает данные hub (живое состояние от hub, история удалённых машин по каналу раннера), — этап 2; для этого нужен только адрес hub.</li>
+<li><b>Один компьютер — несколько установок.</b> Windows, Docker и виртуалка на компьютере 1 — три установки с тремя ID, но один пул: память, CPU и <code>exclusive</code>-теги считаются вместе.</li>
+<li><b>Разные ОС.</b> Платформа раннера — метка владельца (<code>windows</code>, <code>linux</code>, <code>macos</code>, <code>ios</code>, <code>android</code>); ядро сравнивает метки на равенство.</li>
+</ul>
+<h3>Какие идентификаторы кто выдаёт</h3>
+<div class="scroll"><table>
+<tr><th>Идентификатор</th><th>Что обозначает</th><th>Кто выдаёт и когда</th><th>Где хранится</th></tr>
+<tr><td><code>MachineId</code></td><td>одну установку программы: Windows, Docker и виртуалка получают разные</td><td>сама установка, случайное значение при первом запуске демона</td><td>файл <code>machine-id</code> в каталоге состояния; на hub — в реестре машин</td></tr>
+<tr><td>Пара ключей ed25519</td><td>право машины подключаться к hub</td><td>сама машина при вступлении; публичный ключ уходит на hub</td><td>секретный у машины, публичный в <code>hub.db</code></td></tr>
+<tr><td>Код подключения</td><td>разрешение вступить раннеру или клиенту</td><td>hub по команде владельца; одноразовый, живёт 1 час</td><td><code>hub.db</code>, таблица <code>join_code</code></td></tr>
+<tr><td>Имя машины (<code>MachineName</code>)</td><td>запись машины в реестре hub</td><td>hub при вступлении</td><td><code>hub.db</code>, таблица <code>machine</code></td></tr>
+<tr><td>Пул</td><td>физический компьютер как общий бюджет ресурсов (в обсуждении: владелец заводит пул на hub, раннер называет его при вступлении)</td><td>владелец</td><td><code>hub.db</code>, таблица <code>pool</code></td></tr>
+<tr><td>Метка <code>network</code></td><td>сеть, в которой стоит машина; по ней считается зона</td><td>hub выводит из адреса подключения или владелец задаёт в конфиге</td><td><code>hub.db</code>, таблица <code>machine</code></td></tr>
+<tr><td><code>JobId</code>, <code>GroupId</code></td><td>один запуск; набор запусков по нескольким платформам</td><td>движок hub при отправке</td><td><code>history.db</code> и <code>hub.db</code> машины, где джоба выполнена</td></tr>
+<tr><td>Идентификатор аренды</td><td>захват ресурсов ci-раннером GitHub Actions</td><td>hub при <code>ci acquire</code></td><td><code>hub.db</code>, таблица <code>lease</code></td></tr>
+</table></div>
 <h3>Ключевые решения</h3>
 <ul>
 <li>Hub выбирает пользователь; по умолчанию это машина, с которой он работает. Любая другая машина тоже может быть hub. Несколько клиентов на одном hub дают общую очередь, раздельные hub — раздельные очереди.</li>
