@@ -118,6 +118,20 @@ An agent must be able to tell which jobs are its own and stop them before they f
 - Dead submitter: when the submitter process is gone, its queued jobs are dropped and its running jobs are killed to free the machine. `submit --detach` opts out for a running job that must outlive the caller; a detached job is still visible and cancellable by its label.
 - A `github` job is cancelled by cancelling the workflow run or with `cancel <job-id>` by an operator using `--force`.
 
+## History
+Finished jobs are kept and can be looked at later, from any session and for any project.
+
+- Storage: a SQLite database `history.db` in the daemon state directory (public-domain library, compatible with the license rule). One row per job with everything known about it: id, project, source, label, note, branch, directories, profile, level, queued/started/finished times, result, exit code, who cancelled and why, and one row per step with state, times, exit code and timeout. A job is written when it is queued and updated on every state change, so a daemon crash loses at most the last update.
+- Logs: the full log stays in `temp/runner/<job-id>.log` of the submitter directory, and the daemon keeps its own copy under `logs/` in the state directory, so the history survives a cleaned worktree. For `github` jobs the run URL is stored as well.
+- Retention: by age and by total size, whichever hits first, default 30 days and 2 GB for logs, 365 days for rows (daemon config). Pruning removes the oldest first and never touches active jobs.
+- CLI:
+  - `al-localrunner history [--project P] [--source session|github] [--as L] [--profile N] [--result R] [--since D] [--limit N]`, newest first, `--json`.
+  - `al-localrunner history show <job-id>` — the full record with steps.
+  - `al-localrunner log <job-id> [--step NAME] [--tail N]` — reads the stored log; for an unfinished job it follows it.
+- Views: `status --html --history` adds a history table to the snapshot; the dashboard has a History tab with the same filters; each row links to its log.
+- Statistics from the same data, `al-localrunner stats [--project P] [--profile N]`: runs, pass rate, wait time and duration (median and 95th percentile) per profile and step, share of timeouts and cancellations. Its purpose is to set honest `timeout_s` values and see where the queue waits.
+- The history is local to the machine and read-only for views; nothing in it is sent anywhere.
+
 ## Viewing the queue
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
 
@@ -129,7 +143,7 @@ What the page shows:
 - Per level: workers up or down, free memory and CPU, held tags.
 - Running jobs: id, project, source (session or github, with the run link), submitter label, profile, directory, level, elapsed against the job timeout, and the step list with state (`queued`, `running`, `passed`, `failed`, `timeout`, `skipped`), per-step elapsed against its timeout, and the last lines of the running step.
 - Queue: position, project, source, submitter label, profile, directory, waiting time, the reason it waits (worker busy, memory, CPU, a held `exclusive` tag and whose).
-- Recent finished jobs with the result per step and a link to the log file.
+- Recent finished jobs with the result per step and a link to the log file; the full list with filters is the History tab (see "History").
 
 The view never changes anything: cancel and control stay in the CLI. Log text is escaped on output. The same data model backs all three forms, so a form added later adds no new source of truth.
 
@@ -157,7 +171,7 @@ The `ci` runner is never a system service on any OS: it must run in the user ses
 | `install-runner` | repository for `ci` (optional), registration token (asked, not stored) | daemon installed; `ci` runner configured if absent; idempotent |
 | `up-runner` | levels (default `light,heavy,ci`), workers per level (default 1) | runners running; prints status |
 | `down-runner` | levels, `--drain` or `--cancel` | runners stopped; queue handled as asked |
-| `status-runner` | optional `--html` or `dashboard` | queue, running jobs with steps, waiting time and reason, free resources; text, JSON, HTML snapshot or live page |
+| `status-runner` | optional `--html`, `dashboard`, `history`, `stats` | queue, running jobs with steps, waiting time and reason, free resources; text, JSON, HTML snapshot or live page |
 | `run` | submitter label (`--as`), optional note, profile, level override, timeout override (lowered only) | job id, log path, exit code, result per step |
 
 ## Out of scope
