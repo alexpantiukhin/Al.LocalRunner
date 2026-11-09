@@ -1,0 +1,16 @@
+{
+  "name": "al-localrunner",
+  "plugins": [
+    {
+      "name": "al-localrunner",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/alexpantiukhin/Al.LocalRunner",
+        "path": "./plugin",
+        "ref": "main"
+      },
+      "category": "workflow",
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }
+    }
+  ]
+}
