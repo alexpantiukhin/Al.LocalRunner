@@ -1,3 +1,5 @@
+use lr_core::{identity_from_github, identity_from_session, Identity, IdentityError, SenderFacts};
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
@@ -67,7 +69,7 @@ fn env_nonempty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
-pub(crate) fn os_user() -> String {
+pub fn os_user() -> String {
     env_nonempty("USERNAME")
         .or_else(|| env_nonempty("USER"))
         .unwrap_or_else(|| "unknown".to_string())
@@ -246,6 +248,41 @@ pub(crate) fn parent_process() -> Option<(u32, Option<u64>)> {
         }
     }
     Some((parent, start))
+}
+
+/// Collects OS and git facts about the submitter running in `cwd`.
+pub fn collect_facts(cwd: &Path) -> SenderFacts {
+    let git = git_facts(cwd);
+    let (sender_pid, sender_start) = parent_process().unwrap_or((0, None));
+    SenderFacts {
+        os_user: os_user(),
+        host: host_name(),
+        sender_pid,
+        sender_start,
+        cwd: cwd.to_path_buf(),
+        branch: git.as_ref().and_then(|g| g.branch.clone()),
+        worktree_root: git.as_ref().map(|g| g.worktree_root.clone()),
+        repo_root: git.as_ref().map(|g| g.repo_root.clone()),
+        origin: git.and_then(|g| g.origin),
+    }
+}
+
+/// Collects the identity of a terminal or agent session. The label is required.
+pub fn collect_session(
+    label: &str,
+    note: Option<&str>,
+    cwd: &Path,
+) -> Result<Identity, IdentityError> {
+    identity_from_session(label, note, collect_facts(cwd))
+}
+
+/// Collects the identity of a GitHub Actions job from an explicit environment map.
+pub fn collect_github(
+    env: &BTreeMap<String, String>,
+    label: Option<&str>,
+    cwd: &Path,
+) -> Result<Identity, IdentityError> {
+    identity_from_github(env, label, collect_facts(cwd))
 }
 
 #[cfg(test)]

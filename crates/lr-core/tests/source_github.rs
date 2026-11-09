@@ -1,8 +1,19 @@
-mod common;
-
-use common::TempDir;
-use lr_core::{collect_github, GithubInfo, IdentityError, Source};
+use lr_core::{identity_from_github, GithubInfo, IdentityError, SenderFacts, Source};
 use std::collections::BTreeMap;
+
+fn facts() -> SenderFacts {
+    SenderFacts {
+        os_user: "u".into(),
+        host: "h".into(),
+        sender_pid: 1,
+        sender_start: None,
+        cwd: std::path::PathBuf::from("/w/plain-dir"),
+        branch: None,
+        worktree_root: None,
+        repo_root: None,
+        origin: None,
+    }
+}
 
 fn gh_env() -> BTreeMap<String, String> {
     [
@@ -23,32 +34,28 @@ fn gh_env() -> BTreeMap<String, String> {
 
 #[test]
 fn github_env_sets_default_label() {
-    let tmp = TempDir::new("d");
-    let id = collect_github(&gh_env(), None, tmp.path()).unwrap();
+    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
     assert_eq!(id.label, "github:ci.yml/rust-test");
     assert_eq!(id.project, "owner/repo");
 }
 
 #[test]
 fn explicit_label_overrides_github_default() {
-    let tmp = TempDir::new("d");
-    let id = collect_github(&gh_env(), Some("  my-ci "), tmp.path()).unwrap();
+    let id = identity_from_github(&gh_env(), Some("  my-ci "), facts()).unwrap();
     assert_eq!(id.label, "my-ci");
 }
 
 #[test]
 fn invalid_explicit_label_is_rejected_for_github() {
-    let tmp = TempDir::new("d");
     assert_eq!(
-        collect_github(&gh_env(), Some("a\nb"), tmp.path()).unwrap_err(),
+        identity_from_github(&gh_env(), Some("a\nb"), facts()).unwrap_err(),
         IdentityError::LabelInvalid
     );
 }
 
 #[test]
 fn github_env_fills_all_source_fields() {
-    let tmp = TempDir::new("d");
-    let id = collect_github(&gh_env(), None, tmp.path()).unwrap();
+    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
     let expected = GithubInfo {
         repository: "owner/repo".into(),
         workflow: "ci.yml".into(),
@@ -64,13 +71,12 @@ fn github_env_fills_all_source_fields() {
 
 #[test]
 fn github_server_url_trailing_slash_is_trimmed() {
-    let tmp = TempDir::new("d");
     let mut env = gh_env();
     env.insert(
         "GITHUB_SERVER_URL".into(),
         "https://ghe.example.com/".into(),
     );
-    let Source::Github(info) = collect_github(&env, None, tmp.path()).unwrap().source else {
+    let Source::Github(info) = identity_from_github(&env, None, facts()).unwrap().source else {
         panic!("not github");
     };
     assert_eq!(
@@ -81,11 +87,10 @@ fn github_server_url_trailing_slash_is_trimmed() {
 
 #[test]
 fn github_run_url_without_attempt_and_default_server() {
-    let tmp = TempDir::new("d");
     let mut env = gh_env();
     env.remove("GITHUB_RUN_ATTEMPT");
     env.remove("GITHUB_SERVER_URL");
-    let Source::Github(info) = collect_github(&env, None, tmp.path()).unwrap().source else {
+    let Source::Github(info) = identity_from_github(&env, None, facts()).unwrap().source else {
         panic!("not github");
     };
     assert_eq!(info.attempt, None);
@@ -97,23 +102,21 @@ fn github_run_url_without_attempt_and_default_server() {
 
 #[test]
 fn github_requires_actions_flag() {
-    let tmp = TempDir::new("d");
     let mut env = gh_env();
     env.insert("GITHUB_ACTIONS".into(), "false".into());
     assert_eq!(
-        collect_github(&env, None, tmp.path()).unwrap_err(),
+        identity_from_github(&env, None, facts()).unwrap_err(),
         IdentityError::NotGithubActions
     );
     env.remove("GITHUB_ACTIONS");
     assert_eq!(
-        collect_github(&env, None, tmp.path()).unwrap_err(),
+        identity_from_github(&env, None, facts()).unwrap_err(),
         IdentityError::NotGithubActions
     );
 }
 
 #[test]
 fn github_requires_core_variables() {
-    let tmp = TempDir::new("d");
     for name in [
         "GITHUB_REPOSITORY",
         "GITHUB_WORKFLOW",
@@ -123,7 +126,7 @@ fn github_requires_core_variables() {
         let mut env = gh_env();
         env.remove(name);
         assert_eq!(
-            collect_github(&env, None, tmp.path()).unwrap_err(),
+            identity_from_github(&env, None, facts()).unwrap_err(),
             IdentityError::MissingEnv(name.into()),
             "{name}"
         );
@@ -131,38 +134,28 @@ fn github_requires_core_variables() {
     let mut env = gh_env();
     env.insert("GITHUB_RUN_ID".into(), "abc".into());
     assert_eq!(
-        collect_github(&env, None, tmp.path()).unwrap_err(),
+        identity_from_github(&env, None, facts()).unwrap_err(),
         IdentityError::MissingEnv("GITHUB_RUN_ID".into())
     );
 }
 
 #[test]
 fn github_default_label_is_sanitized() {
-    let tmp = TempDir::new("d");
     let mut env = gh_env();
     env.insert("GITHUB_WORKFLOW".into(), "w".repeat(150));
-    let label = collect_github(&env, None, tmp.path()).unwrap().label;
+    let label = identity_from_github(&env, None, facts()).unwrap().label;
     assert_eq!(label.chars().count(), 100);
     env.insert("GITHUB_WORKFLOW".into(), "a\nb\u{1b}c".into());
-    let label = collect_github(&env, None, tmp.path()).unwrap().label;
+    let label = identity_from_github(&env, None, facts()).unwrap().label;
     assert_eq!(label, "github:a b c/rust-test");
 }
 
 #[test]
-fn github_project_is_repository_outside_git_and_origin_inside() {
-    let tmp = TempDir::new("plain-dir");
-    let id = collect_github(&gh_env(), None, tmp.path()).unwrap();
+fn github_project_is_repository_without_origin_and_origin_wins() {
+    let id = identity_from_github(&gh_env(), None, facts()).unwrap();
     assert_eq!(id.project, "owner/repo");
-    common::init_repo(tmp.path());
-    common::git(
-        tmp.path(),
-        &[
-            "remote",
-            "add",
-            "origin",
-            "https://github.com/other/thing.git",
-        ],
-    );
-    let id = collect_github(&gh_env(), None, tmp.path()).unwrap();
+    let mut f = facts();
+    f.origin = Some("https://github.com/other/thing.git".into());
+    let id = identity_from_github(&gh_env(), None, f).unwrap();
     assert_eq!(id.project, "other/thing");
 }

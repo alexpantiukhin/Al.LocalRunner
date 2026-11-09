@@ -171,6 +171,7 @@ name = "lr-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "lr-abstractions",
  "lr-broker",
  "lr-core",
@@ -183,6 +184,7 @@ dependencies = [
  "lr-runner",
  "lr-store",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -190,11 +192,9 @@ name = "lr-core"
 version = "0.1.0"
 dependencies = [
  "ipnet",
- "libc",
  "serde",
  "thiserror",
  "toml",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

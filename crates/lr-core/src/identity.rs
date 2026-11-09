@@ -1,4 +1,3 @@
-use crate::identity_facts::{git_facts, host_name, os_user, parent_process};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -173,53 +172,71 @@ pub(crate) fn sanitize_label(raw: &str) -> String {
         .collect()
 }
 
+/// Facts about the submitter collected from the OS and git by the CLI (spec 7.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SenderFacts {
+    /// OS user name.
+    pub os_user: String,
+    /// Host name.
+    pub host: String,
+    /// Submitter process id, `0` when unknown.
+    pub sender_pid: u32,
+    /// Submitter process start in unix milliseconds.
+    pub sender_start: Option<u64>,
+    /// Working directory.
+    pub cwd: PathBuf,
+    /// Current branch, `None` when detached or outside git.
+    pub branch: Option<String>,
+    /// Root of the worktree containing `cwd`, `None` outside git.
+    pub worktree_root: Option<PathBuf>,
+    /// Root of the main repository, `None` outside git.
+    pub repo_root: Option<PathBuf>,
+    /// Raw URL of the `origin` remote, `None` when absent.
+    pub origin: Option<String>,
+}
+
 pub(crate) fn build_identity(
     label: String,
     note: Option<String>,
-    cwd: &Path,
+    facts: SenderFacts,
     source: Source,
     fallback_project: Option<&str>,
 ) -> Identity {
-    let facts = git_facts(cwd);
-    let project = match (&facts, fallback_project) {
-        (Some(f), _) if f.origin.as_deref().and_then(normalize_origin).is_some() => {
-            project_name(f.origin.as_deref(), Some(&f.repo_root), cwd)
-        }
-        (_, Some(name)) => name.to_string(),
-        (Some(f), None) => project_name(None, Some(&f.repo_root), cwd),
-        (None, None) => project_name(None, None, cwd),
+    let has_origin = facts.origin.as_deref().and_then(normalize_origin).is_some();
+    let project = match fallback_project {
+        _ if has_origin => project_name(
+            facts.origin.as_deref(),
+            facts.repo_root.as_deref(),
+            &facts.cwd,
+        ),
+        Some(name) => name.to_string(),
+        None => project_name(None, facts.repo_root.as_deref(), &facts.cwd),
     };
-    let (pid, pid_start) = parent_process().unwrap_or((0, None));
     Identity {
         label,
         note,
-        os_user: os_user(),
-        host: host_name(),
-        sender_pid: pid,
-        sender_start: pid_start,
-        cwd: cwd.to_path_buf(),
-        branch: facts.as_ref().and_then(|f| f.branch.clone()),
-        worktree_root: facts.as_ref().map(|f| f.worktree_root.clone()),
-        repo_root: facts.as_ref().map(|f| f.repo_root.clone()),
+        os_user: facts.os_user,
+        host: facts.host,
+        sender_pid: facts.sender_pid,
+        sender_start: facts.sender_start,
+        cwd: facts.cwd,
+        branch: facts.branch,
+        worktree_root: facts.worktree_root,
+        repo_root: facts.repo_root,
         project,
         source,
     }
 }
 
-/// The OS user name an identity collected now would record.
-pub fn current_os_user() -> String {
-    os_user()
-}
-
-/// Collects the identity of a terminal or agent session. The label is required.
-pub fn collect_session(
+/// Builds the identity of a terminal or agent session from collected facts. The label is required.
+pub fn identity_from_session(
     label: &str,
     note: Option<&str>,
-    cwd: &Path,
+    facts: SenderFacts,
 ) -> Result<Identity, IdentityError> {
     let label = validate_label(label)?;
     let note = validate_note(note)?;
-    Ok(build_identity(label, note, cwd, Source::Session, None))
+    Ok(build_identity(label, note, facts, Source::Session, None))
 }
 
 /// Whether `actor` may cancel a job submitted by `owner` (spec 7.1): the same label and the same

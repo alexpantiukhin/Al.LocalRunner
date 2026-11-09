@@ -1,9 +1,6 @@
-mod common;
-
-use common::{session, TempDir};
 use lr_core::{
-    may_cancel, normalize_origin, project_name, validate_label, validate_note, Identity,
-    IdentityError, Source,
+    identity_from_session, may_cancel, normalize_origin, project_name, validate_label,
+    validate_note, Identity, IdentityError, SenderFacts, Source,
 };
 use std::path::{Path, PathBuf};
 
@@ -22,6 +19,24 @@ fn id(label: &str, user: &str) -> Identity {
         worktree_root: None,
         repo_root: None,
     }
+}
+
+fn facts(cwd: &str, repo_root: Option<&str>, origin: Option<&str>) -> SenderFacts {
+    SenderFacts {
+        os_user: "u".into(),
+        host: "h".into(),
+        sender_pid: 7,
+        sender_start: Some(5),
+        cwd: PathBuf::from(cwd),
+        branch: Some("b".into()),
+        worktree_root: repo_root.map(PathBuf::from),
+        repo_root: repo_root.map(PathBuf::from),
+        origin: origin.map(String::from),
+    }
+}
+
+fn session(label: &str, note: Option<&str>) -> Result<Identity, IdentityError> {
+    identity_from_session(label, note, facts("/w/dir", None, None))
 }
 
 #[test]
@@ -94,16 +109,6 @@ fn project_prefers_origin_then_repo_root_then_dir_name() {
 }
 
 #[test]
-fn non_git_dir_uses_dir_name() {
-    let tmp = TempDir::new("just-a-dir");
-    let id = session("alex", None, tmp.path()).unwrap();
-    assert_eq!(id.project, "just-a-dir");
-    assert_eq!(id.branch, None);
-    assert_eq!(id.worktree_root, None);
-    assert_eq!(id.repo_root, None);
-}
-
-#[test]
 fn windows_paths_with_spaces_and_cyrillic_give_project_name() {
     let root = Path::new(r"C:\Мои проекты\Проект Один");
     let dir = Path::new(r"C:\Мои проекты\Проект Один\под папка");
@@ -121,10 +126,9 @@ fn windows_paths_with_spaces_and_cyrillic_give_project_name() {
 
 #[test]
 fn session_without_label_rejected() {
-    let tmp = TempDir::new("d");
     for label in ["", "   ", "\t\n"] {
         assert_eq!(
-            session(label, None, tmp.path()).unwrap_err(),
+            session(label, None).unwrap_err(),
             IdentityError::MissingLabel
         );
     }
@@ -164,39 +168,8 @@ fn note_over_200_chars_rejected() {
 
 #[test]
 fn session_note_is_kept_on_identity() {
-    let tmp = TempDir::new("d");
-    let id = session("a", Some(" зачем "), tmp.path()).unwrap();
+    let id = session("a", Some(" зачем ")).unwrap();
     assert_eq!(id.note.as_deref(), Some("зачем"));
-}
-
-#[test]
-fn session_collects_process_facts() {
-    let tmp = TempDir::new("d");
-    let id = session("a", None, tmp.path()).unwrap();
-    assert_ne!(
-        id.sender_pid,
-        std::process::id(),
-        "the caller, not this process"
-    );
-    assert_ne!(id.sender_pid, 0, "the test runner has a live parent");
-    assert!(!id.os_user.is_empty());
-    assert!(!id.host.is_empty());
-    assert_eq!(id.source, Source::Session);
-    assert_eq!(id.cwd, tmp.path());
-    let start = id.sender_start.expect("parent process start time");
-    if cfg!(target_os = "linux") {
-        assert!(lr_core::process_start_is_stable());
-        assert_eq!(lr_core::process_start_ms(id.sender_pid), Some(start));
-        return;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    assert!(
-        start <= now + 2000 && now - start < 24 * 3600 * 1000,
-        "{start} vs {now}"
-    );
 }
 
 #[test]
@@ -218,4 +191,34 @@ fn foreign_os_user_cancel_needs_force() {
     let other = id("alex", "u2");
     assert!(!may_cancel(&me, &other, false));
     assert!(may_cancel(&me, &other, true));
+}
+
+#[test]
+fn project_comes_from_origin_then_repo_root_then_dir_in_session_identity() {
+    let with_origin = identity_from_session(
+        "a",
+        None,
+        facts("/r/sub", Some("/r"), Some("git@h:o/r.git")),
+    );
+    assert_eq!(with_origin.unwrap().project, "o/r");
+    let no_origin = identity_from_session("a", None, facts("/r/sub", Some("/r"), None));
+    assert_eq!(no_origin.unwrap().project, "r");
+    let outside = identity_from_session("a", None, facts("/x/just-a-dir", None, None));
+    assert_eq!(outside.unwrap().project, "just-a-dir");
+}
+
+#[test]
+fn session_identity_keeps_collected_facts() {
+    let id = identity_from_session("a", None, facts("/w", Some("/w"), None)).unwrap();
+    assert_eq!(
+        (
+            id.os_user.as_str(),
+            id.host.as_str(),
+            id.sender_pid,
+            id.sender_start
+        ),
+        ("u", "h", 7, Some(5))
+    );
+    assert_eq!(id.source, Source::Session);
+    assert_eq!(id.branch.as_deref(), Some("b"));
 }

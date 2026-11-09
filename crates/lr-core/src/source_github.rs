@@ -1,8 +1,8 @@
 use crate::identity::{
-    build_identity, sanitize_label, validate_label, GithubInfo, Identity, IdentityError, Source,
+    build_identity, sanitize_label, validate_label, GithubInfo, Identity, IdentityError,
+    SenderFacts, Source,
 };
 use std::collections::BTreeMap;
-use std::path::Path;
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
 
@@ -22,10 +22,10 @@ fn optional(env: &BTreeMap<String, String>, name: &str) -> String {
 /// Collects the identity of a GitHub Actions job from its environment. An explicit `label`
 /// (`--as`) is validated; without it the label is `github:<workflow>/<job>`. Requires
 /// `GITHUB_ACTIONS=true`.
-pub fn collect_github(
+pub fn identity_from_github(
     env: &BTreeMap<String, String>,
     label: Option<&str>,
-    cwd: &Path,
+    facts: SenderFacts,
 ) -> Result<Identity, IdentityError> {
     if env.get("GITHUB_ACTIONS").map(|v| v.trim()) != Some("true") {
         return Err(IdentityError::NotGithubActions);
@@ -69,7 +69,7 @@ pub fn collect_github(
     Ok(build_identity(
         label,
         None,
-        cwd,
+        facts,
         Source::Github(info),
         Some(&repository),
     ))

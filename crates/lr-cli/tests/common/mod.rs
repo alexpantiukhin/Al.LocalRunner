@@ -68,5 +68,5 @@ pub fn session(
     note: Option<&str>,
     cwd: &Path,
 ) -> Result<lr_core::Identity, lr_core::IdentityError> {
-    lr_core::collect_session(label, note, cwd)
+    lr_cli::facts::collect_session(label, note, cwd)
 }
