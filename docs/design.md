@@ -166,6 +166,11 @@ Interaction common to all tabs:
 - Export of the current filtered table as CSV or JSON, and `Save snapshot` that writes the same page as a file.
 - Shortcuts: `/` search, `j`/`k` move, `Enter` open, `Esc` close, `g q|h|s|r` switch tabs, `?` list shortcuts.
 
+Data sources (extension point, stage 1 implements only the local one):
+- The page and the server read through one `DataSource` interface; stage 1 has `LocalSource` (the daemon of this machine and its own store). The dashboard is not configured with a list of runners and runners do not know any dashboard address; neither side gets a new listener.
+- Later stage: the source is the **hub**. Live state (queue, running jobs, runners, pools) already converges on the hub and arrives as its event feed. History and logs stay on the machine that ran the job; the hub asks that runner for them over the runner channel the runner already opened (request from the hub, answer from the runner), and the dashboard gets them from the hub. The only address the dashboard needs is the hub, by default the machine it runs on.
+- Without a hub the dashboard reads the local daemon only. While the hub is down, history of other machines is unavailable, the same as "Hub down" below. *(Author's call.)*
+
 Actions (live mode only):
 - **Cancel** a queued or running job, after a confirmation that names the job. A cancel from the page counts as `--force`: it is recorded in the job log and history as cancelled by `dashboard:<os user>` with the reason typed in the dialog. Cancelling all jobs of a project or label is a separate explicit action with the list of jobs in the dialog.
 - No submit, no edit of profiles or config, no up or down of runners from the page.
