@@ -677,14 +677,14 @@ steps = [
 <div class="scroll"><table>
 <tr><th>Способ</th><th>Как</th><th>Что делает</th><th>Для чего</th></tr>
 <tr><td>Готовый файл</td><td>скачать архив релиза под ОС и архитектуру, сверить SHA-256 и подпись, положить в каталог из <code>PATH</code></td><td>только бинарник; каталоги и шаблоны создаёт <code>localrunner init</code></td><td>любая машина, в том числе без выхода в сеть</td></tr>
-<tr><td>Установочная команда</td><td>Linux и macOS: <code>curl -fsSL адрес-релизов/install.sh | sh</code>; Windows: <code>irm адрес-релизов/install.ps1 | iex</code></td><td>определяет ОС и архитектуру, скачивает файл, сверяет SHA-256 и подпись, ставит в каталог пользователя без прав администратора, дополняет <code>PATH</code>, вызывает <code>init</code></td><td>рабочие машины и ноутбуки</td></tr>
+<tr><td>Установочная команда</td><td>Linux и macOS: <code>curl -fsSL адрес-релизов/install.sh | sh</code>; Windows: <code>irm адрес-релизов/install.ps1 | iex</code></td><td>определяет ОС и архитектуру, скачивает файл, сверяет SHA-256 и подпись, ставит в каталог пользователя без прав администратора, дополняет <code>PATH</code>, вызывает <code>init --role</code></td><td>рабочие машины и ноутбуки</td></tr>
 <tr><td>Docker и Compose</td><td>образ <code>al-localrunner:версия</code> (linux, amd64 и arm64) и файл <code>compose.yaml</code> (10.4)</td><td>брокер и (или) раннеры в контейнерах, состояние в томах</td><td>серверы, изолированные раннеры</td></tr>
 <tr><td>Из исходников</td><td><code>cargo install --locked al-localrunner</code> или <code>cargo build --release</code></td><td>собирает тот же бинарник</td><td>разработчики, редкие платформы</td></tr>
 <tr><td>Менеджеры пакетов</td><td>winget, Scoop, Homebrew, пакеты <code>deb</code> и <code>rpm</code></td><td>ставят бинарник; пакеты Linux добавляют юнит службы брокера</td><td>машины, где пакеты ставят так</td></tr>
 <tr><td>Скил <code>install-runner</code></td><td>из сессии агента, раздел 11</td><td>вызывает один из способов выше, затем <code>init</code> и <code>doctor</code></td><td>агенты и скрипты</td></tr>
 </table></div>
 <ul>
-<li><b>Что обязан делать установщик.</b> Быть идемпотентным; работать от обычного пользователя; отказываться от root или администратора без явного флага; сверять SHA-256 и подпись и при несовпадении ничего не ставить; поддерживать <code>--version</code>, <code>--dir</code> и <code>--offline файл</code>; не запускать роли, не включать автозапуск и ничего не отправлять в сеть, кроме загрузки релиза.</li>
+<li><b>Что обязан делать установщик.</b> Быть идемпотентным; работать от обычного пользователя; отказываться от root или администратора без явного флага; сверять SHA-256 и подпись и при несовпадении ничего не ставить; поддерживать <code>--version</code>, <code>--dir</code>, <code>--offline файл</code> и <code>--role hub|broker|runner|all</code> (по умолчанию <code>all</code>; скачивается всегда один и тот же бинарник со всеми ролями, а роль определяет только то, какие шаблоны создаст <code>init</code> и что подскажет установщик в конце); не запускать роли, не включать автозапуск и ничего не отправлять в сеть, кроме загрузки релиза.</li>
 <li><b>Релиз.</b> На каждую версию публикуются бинарники (Windows x64, Linux x64 и arm64, macOS x64 и arm64), файл <code>SHA256SUMS</code> с подписью, образ Docker и манифесты пакетов. Тег <code>latest</code> у образа не публикуется: версию владелец указывает явно.</li>
 <li><b>Риск «curl | sh».</b> Команда запускает скачанный скрипт; тем, кто этого не хочет, остаётся готовый файл с ручной сверкой. Скрипт короткий и сам проверяет подпись бинарника.</li>
 <li><b>Принцип «ничего не уходит наружу»</b> относится к ролям системы. Установщик — разовое действие владельца вне ролей, оно не нарушает принцип.</li>
@@ -696,13 +696,13 @@ steps = [
 <tr><th>Узел</th><th>Что на нём работает</th><th>Шаги после установки бинарника</th></tr>
 <tr><td>Всё на одной машине</td><td>hub, брокер, раннер</td><td><code>init</code>, <code>doctor</code>, <code>up</code>; по желанию <code>autostart on</code></td></tr>
 <tr><td>Клиентская машина (ноутбук)</td><td>только hub</td><td><code>hub join адрес код</code> (код выдаёт <code>broker add --label ярлык</code>); адрес и ключ брокера попадают в список hub</td></tr>
-<tr><td>Выделенный брокер пула</td><td>брокер как служба ОС, раннеров нет</td><td>правка <code>policy.toml</code> и <code>[networks]</code>, явный адрес слушателя, установка службы, <code>broker add</code> для каждого участника</td></tr>
+<tr><td>Выделенный брокер пула</td><td>брокер как служба ОС, раннеров нет</td><td>правка <code>policy.toml</code> и <code>[networks]</code>, явный адрес слушателя, <code>broker install-service</code>, <code>broker add</code> для каждого участника</td></tr>
 <tr><td>Раннер на другой машине</td><td>раннер</td><td><code>runner.toml</code>, <code>runner join адрес код</code>, <code>up</code></td></tr>
 <tr><td>Раннер в Docker или виртуалке</td><td>раннер в отдельной установке</td><td>образ или бинарник внутри; <code>runner join</code> к брокеру хоста; файлов хоста не видит, работает с коммитами</td></tr>
 <tr><td>GitHub-раннер <code>ci</code></td><td>раннер GitHub Actions и hub с ярлыком <code>ci</code></td><td><code>install-runner</code> с токеном регистрации; <code>hub join</code> по коду с <code>--label ci</code>; машину держат отдельно от сессий агентов</td></tr>
 </table></div>
 <ul>
-<li><b><code>init</code></b> создаёт каталог состояния и шаблоны конфигураций (<code>policy.toml</code>, <code>hub-policy.toml</code>, <code>runner.toml</code>, <code>logging.toml</code>) с комментариями; существующие файлы не перезаписывает.</li>
+<li><b><code>init [--role hub|broker|runner|all]</code></b> создаёт каталог состояния и шаблоны конфигураций нужной роли (<code>policy.toml</code> и <code>[networks]</code> для брокера, <code>hub-policy.toml</code> для hub, <code>runner.toml</code> для раннера, везде <code>logging.toml</code>) с комментариями; существующие файлы не перезаписывает.</li>
 <li><b><code>doctor</code></b> проверяет узел и печатает, что не так: версия ОС, права (не root), доступность каталогов, наличие <code>cgroup v2</code> в Linux, программы из <code>runner.toml</code> и их проверки, свободные порты, разница часов с брокером, достижимость брокера и совпадение отпечатка сертификата.</li>
 </ul>
 
@@ -778,6 +778,7 @@ volumes:
 <tr><th>Команда</th><th>Что делает</th></tr>
 <tr><td><code>up [роль]</code></td><td>запускает hub, брокер и раннеры отдельными процессами; при работающей роли дубля нет</td></tr>
 <tr><td><code>down [имена] [--drain | --cancel]</code></td><td>останавливает раннеры и роли: доделать текущую джобу или отменить</td></tr>
+<tr><td><code>broker install-service</code></td><td>ставит брокера службой ОС под отдельной непривилегированной учётной записью (нужны права администратора); снимает <code>uninstall</code></td></tr>
 <tr><td><code>autostart on|off [роль]</code></td><td>включает или выключает автозапуск средствами ОС</td></tr>
 <tr><td><code>hub run</code></td><td><code>broker run</code>, <code>runner run</code> — роль на переднем плане (контейнеры, отладка)</td></tr>
 </table></div>
@@ -797,7 +798,7 @@ volumes:
 <tr><td><code>policy reload</code></td><td>проверяет и применяет <code>policy.toml</code>; только по локальному каналу</td></tr>
 <tr><td><code>policy check</code></td><td>проверяет файл политики, не применяя; печатает перекрытые правила</td></tr>
 <tr><td><code>logging reload</code></td><td>перечитывает <code>logging.toml</code></td></tr>
-<tr><td><code>init</code></td><td>создаёт каталог состояния и шаблоны конфигураций</td></tr>
+<tr><td><code>init [--role hub|broker|runner|all]</code></td><td>создаёт каталог состояния и шаблоны конфигураций выбранной роли</td></tr>
 <tr><td><code>doctor</code></td><td>проверяет узел и печатает, что не так (10.2)</td></tr>
 <tr><td><code>uninstall [--purge]</code></td><td>останавливает роли, снимает автозапуск и службу; <code>--purge</code> удаляет и состояние</td></tr>
 <tr><td><code>--version</code></td><td>версия бинарника и версия протокола</td></tr>
