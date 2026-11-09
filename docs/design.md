@@ -78,7 +78,7 @@ steps = [
 - States: `queued` → `running` → `passed | failed | timeout | cancelled`; a step is `passed | failed | timeout | skipped`.
 - Each job writes stdout and stderr to `temp/runner/<job-id>.log` in the submitter directory, with a header per step; the submit call returns the job id, and waiting streams progress and returns the exit code.
 - Cancel and timeout kill the process tree (Windows Job Object; process group elsewhere).
-- Crash safety: a dead submitter queued jobs are dropped, a dead job is reaped, leases are tied to the daemon child processes.
+- Crash safety: the dead-submitter rule is in "Own jobs and early cancel"; a dead job is reaped; leases are tied to the daemon child processes.
 
 ## Submitter identity
 Every job says who submitted it, so the queue, the page and the log answer "whose is this".
@@ -88,7 +88,7 @@ Every job says who submitted it, so the queue, the page and the log answer "whos
 - Collected by the CLI automatically and not overridable: OS user, host, submitter process id and start time, working directory, and, when the directory is a git worktree, the branch and the worktree root. Collection is generic git/OS data, with no agent knowledge.
 - Shown in `status`, the HTML snapshot, the dashboard and the log header: project, source, label, note, branch, directory, age of the job.
 - The identity is advisory, not authentication: any local process of the same OS user can submit under any label. The IPC endpoint is restricted to the OS user, which is the actual boundary.
-- A label may be reused by a session across jobs; the submitter process id is what links a job to a live caller. A queued job whose submitter is dead is dropped; a running one is finished or killed by the same crash-safety rule as before.
+- A label may be reused by a session across jobs; the submitter process id is what links a job to a live caller (see "Own jobs and early cancel" for what happens when it is gone).
 - Cancel: by default only a job with the same `--as` and the same OS user; cancelling another label needs `--force`, which is recorded in the log of the cancelled job together with the label of whoever cancelled it.
 
 ### Project and source
@@ -102,6 +102,21 @@ Besides the label, every job records which project it is for and where it came f
 - A `github` job has no local submitter process to watch; its liveness comes from the runner process of that job, and a cancelled workflow run cancels the job.
 - Every view shows `project`, `source` and the label together, for example `Al.Browser · session · claude:fix-12` or `AiGateway · github · ci.yml/rust-test #4821`, and a `github` job links to its run URL.
 - Filtering: `status --project <name>`, `--source <session|github>` and `--as <label>`; the same filters exist as fields in `--json`.
+
+### Own jobs and early cancel
+An agent must be able to tell which jobs are its own and stop them before they finish.
+
+- `submit` prints the job id and writes a handle `temp/runner/<job-id>.json` in the submitter directory (label, id, profile, time). After a context loss or a restart the agent finds its jobs from these handles and from the daemon.
+- `al-localrunner jobs --mine` lists the jobs of the caller: same OS user and same `--as` label (the label is given or read from the latest handle in the directory). Output is the same as `status` restricted to those jobs, with `--json`. `jobs --mine --active` leaves only `queued` and `running`.
+- `al-localrunner cancel <job-id>` cancels one job; `cancel --mine` cancels all active jobs of the caller. Both check ownership as defined in "Submitter identity"; another label needs `--force`.
+- Effect of cancel:
+  - `queued`: removed from the queue at once, nothing was started.
+  - `running`: a graceful stop signal to the process tree (Ctrl+Break on Windows, SIGTERM elsewhere), then, after a grace period (default 10 s, daemon config), the whole tree is killed. The running step ends `cancelled`, the remaining steps are `skipped`, the job is `cancelled`, and held resources are released only after the tree is gone.
+  - Already finished: a no-op that reports the final state.
+- The cancel reason is written to the job log header: who cancelled (label), when, and `--reason <text>` if given.
+- `wait` is only an observer: interrupting `wait` (Ctrl+C, an agent tool timeout) does not cancel the job. The job is cancelled by `cancel`, by its timeout, or by the dead-submitter rule below.
+- Dead submitter: when the submitter process is gone, its queued jobs are dropped and its running jobs are killed to free the machine. `submit --detach` opts out for a running job that must outlive the caller; a detached job is still visible and cancellable by its label.
+- A `github` job is cancelled by cancelling the workflow run or with `cancel <job-id>` by an operator using `--force`.
 
 ## Viewing the queue
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
