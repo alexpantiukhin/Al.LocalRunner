@@ -12,6 +12,6 @@ description: >-
 2. Make sure runners are up (`status-runner`); if not, `up-runner`.
 3. Submit the profile from the working directory to test (a worktree is fine). The timeout comes from the profile and may only be lowered.
 4. Wait for the job as a background task; the log goes to `temp/runner/<job-id>.log`. Never read the whole log: bring into context the final state, the exit code and the failing lines.
-5. States: `passed`, `failed`, `timeout`, `cancelled`. A timeout is a failure of the run, not of the tests: report it as such and do not retry in a loop.
+5. A profile with `steps` is one job: the steps run back to back and the report lists each step as `passed`, `failed`, `timeout` or `skipped`. Name the first failed step; do not rerun the whole sequence to see a later one. Job states: `passed`, `failed`, `timeout`, `cancelled`. A timeout is a failure of the run, not of the tests: report it as such and do not retry in a loop.
 6. Do not start the same command outside the queue while a job of your session is queued or running.
 7. Do not cancel jobs of other sessions.

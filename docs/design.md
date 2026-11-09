@@ -48,13 +48,35 @@ exclusive = ["gradle", "emulator"]
 
 - `timeout_s` is required; there is no default and no unbounded run. The daemon enforces an upper cap from its own config.
 - `tags` are resources held for the duration of the run; `exclusive` lists tags that no other running job may hold.
-- The core never interprets `command`; it only spawns it.
+- The core never interprets `command`; it only spawns it. A profile with several commands uses `steps`.
+
+### Steps
+A profile has either `command` (one step) or `steps` (an ordered sequence); never both.
+
+```toml
+[profile.rust-gate]
+level = "light"
+timeout_s = 1800
+tags = ["cargo"]
+steps = [
+  { name = "fmt",    command = "cargo fmt --all --check", timeout_s = 120 },
+  { name = "clippy", command = "cargo clippy --workspace --all-targets -- -D warnings", timeout_s = 600 },
+  { name = "test",   command = "cargo test --workspace", timeout_s = 900, mem_mb = 8192 },
+]
+```
+
+- One job, one place in the queue: steps run back to back and no other job of the level is started between them.
+- Resources are acquired once, as the maximum over the steps (memory, CPU) and the union of tags and `exclusive`; a step may override `mem_mb`, `cpu`, `tags`. There is no per-step acquisition, so there is no partial hold and no deadlock.
+- Each step has its own `timeout_s` (required) and runs under the remaining job `timeout_s`; the job timeout is required too. A step is killed at the earlier of the two.
+- A failed step stops the job; later steps are `skipped`. `continue_on_failure = true` on a step lets the job go on, and the job result is still `failed`.
+- Branches, conditions and dependencies between steps are not part of the core; use a script inside `command`.
+- Several independent jobs from one session are several submits: each is queued separately and other sessions may run between them.
 
 ## Queue and scheduling
 - FIFO per level; a job starts when a worker of its level is free and the scheduler grants memory, CPU and tags.
 - A job that can never fit the machine limits is rejected on submit with the reason.
-- States: `queued` → `running` → `passed | failed | timeout | cancelled`.
-- Each job writes stdout and stderr to `temp/runner/<job-id>.log` in the submitter directory; the submit call returns the job id, and waiting streams progress and returns the exit code.
+- States: `queued` → `running` → `passed | failed | timeout | cancelled`; a step is `passed | failed | timeout | skipped`.
+- Each job writes stdout and stderr to `temp/runner/<job-id>.log` in the submitter directory, with a header per step; the submit call returns the job id, and waiting streams progress and returns the exit code.
 - Cancel and timeout kill the process tree (Windows Job Object; process group elsewhere).
 - Crash safety: a dead submitter queued jobs are dropped, a dead job is reaped, leases are tied to the daemon child processes.
 
@@ -83,7 +105,7 @@ The `ci` runner is never a system service on any OS: it must run in the user ses
 | `up-runner` | levels (default `light,heavy,ci`), workers per level (default 1) | runners running; prints status |
 | `down-runner` | levels, `--drain` or `--cancel` | runners stopped; queue handled as asked |
 | `status-runner` | none | queue, running jobs, waiting time, free resources |
-| `run` | profile, level override, timeout override (lowered only) | job id, log path, exit code |
+| `run` | profile, level override, timeout override (lowered only) | job id, log path, exit code, result per step |
 
 ## Out of scope
 - Phones and physical devices over USB/ADB.
