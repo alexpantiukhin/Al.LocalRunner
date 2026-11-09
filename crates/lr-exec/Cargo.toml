@@ -7,3 +7,21 @@ publish = false
 [dependencies]
 lr-core.workspace = true
 lr-abstractions.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "sync", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_JobObjects", "Win32_System_Console", "Win32_Security"] }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+lr-abstractions = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "rt-multi-thread", "sync", "macros"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_Console"] }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true
