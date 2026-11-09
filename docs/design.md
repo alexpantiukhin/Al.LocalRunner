@@ -80,6 +80,17 @@ steps = [
 - Cancel and timeout kill the process tree (Windows Job Object; process group elsewhere).
 - Crash safety: a dead submitter queued jobs are dropped, a dead job is reaped, leases are tied to the daemon child processes.
 
+## Submitter identity
+Every job says who submitted it, so the queue, the page and the log answer "whose is this".
+
+- `--as <name>` is required on `submit`; a submit without it is rejected. It is a free-form label chosen by the caller, for example `claude:session-3`, `codex:review`, `alex`. The core does not enumerate or interpret agents.
+- Optional `--note <text>` (what the run is for, up to 200 characters), for example `check fix for #609`.
+- Collected by the CLI automatically and not overridable: OS user, host, submitter process id and start time, working directory, and, when the directory is a git worktree, the branch and the worktree root. Collection is generic git/OS data, with no agent knowledge.
+- Shown in `status`, the HTML snapshot, the dashboard and the log header: label, note, branch, directory, age of the job.
+- The identity is advisory, not authentication: any local process of the same OS user can submit under any label. The IPC endpoint is restricted to the OS user, which is the actual boundary.
+- A label may be reused by a session across jobs; the submitter process id is what links a job to a live caller. A queued job whose submitter is dead is dropped; a running one is finished or killed by the same crash-safety rule as before.
+- Cancel: by default only a job with the same `--as` and the same OS user; cancelling another label needs `--force`, which is recorded in the log of the cancelled job together with the label of whoever cancelled it.
+
 ## Viewing the queue
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
 
@@ -120,7 +131,7 @@ The `ci` runner is never a system service on any OS: it must run in the user ses
 | `up-runner` | levels (default `light,heavy,ci`), workers per level (default 1) | runners running; prints status |
 | `down-runner` | levels, `--drain` or `--cancel` | runners stopped; queue handled as asked |
 | `status-runner` | optional `--html` or `dashboard` | queue, running jobs with steps, waiting time and reason, free resources; text, JSON, HTML snapshot or live page |
-| `run` | profile, level override, timeout override (lowered only) | job id, log path, exit code, result per step |
+| `run` | submitter label (`--as`), optional note, profile, level override, timeout override (lowered only) | job id, log path, exit code, result per step |
 
 ## Out of scope
 - Phones and physical devices over USB/ADB.
