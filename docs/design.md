@@ -136,7 +136,7 @@ Finished jobs are kept and can be looked at later, from any session and for any 
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
 
 - `al-localrunner status` — text; `--json` for agents and scripts.
-- `al-localrunner status --html [path]` — writes one self-contained HTML file (no external scripts or fonts), default `temp/runner/queue.html`. A snapshot: it needs no listener, can be opened from disk and attached to a report.
+- `al-localrunner status --html [path]` — writes the dashboard page as one self-contained HTML file with the data embedded, default `temp/runner/queue.html`. A snapshot: it needs no listener, can be opened from disk and attached to a report.
 - `al-localrunner dashboard` — live view in a browser. The daemon serves one page and a JSON/SSE feed on `127.0.0.1` only, on a random free port; the URL carries a per-start random token, and requests without it or from another origin are refused. Started on demand and stopped with `Ctrl+C` or `down`; it is the only network listener, absent unless asked for.
 
 What the page shows:
@@ -145,7 +145,35 @@ What the page shows:
 - Queue: position, project, source, submitter label, profile, directory, waiting time, the reason it waits (worker busy, memory, CPU, a held `exclusive` tag and whose).
 - Recent finished jobs with the result per step and a link to the log file; the full list with filters is the History tab (see "History").
 
-The view never changes anything: cancel and control stay in the CLI. Log text is escaped on output. The same data model backs all three forms, so a form added later adds no new source of truth.
+The page is specified in "Dashboard". The same data model backs all three forms, so a form added later adds no new source of truth. Only cancel is available from the page; everything else stays in the CLI.
+
+## Dashboard
+One interactive page that serves both the live `dashboard` and the static `status --html` snapshot: the snapshot embeds the data as JSON and runs the same code with live updates and actions switched off.
+
+Delivery: a single self-contained page embedded in the daemon, with no external scripts, fonts or network requests (works offline). Light and dark theme follow the system; layout works at phone width; keyboard operable with visible focus.
+
+Tabs:
+- **Queue** — running and waiting jobs. A row expands into the job card: project, source, label, note, branch, directory, profile, level, why it waits, and the **steps timeline** (a bar per step against its timeout, current step animated, `skipped` greyed). Beside it a **live log** of the selected step: follow mode, pause, text search, copy, download. The card shows the cancel button (see Actions).
+- **History** — finished jobs, newest first, a click opens the same card with the stored log.
+- **Stats** — per profile and step: pass rate, wait time and duration (median, 95th percentile) as inline SVG charts, and a per-level lane diagram of the day (who held the worker when, gaps, waiting).
+- **Runners** — per level: workers up or down, queue length, memory and CPU gauges, held and exclusive tags with the holder of each.
+
+Interaction common to all tabs:
+- Filters: project, source, label, level, profile, result, time range, free text; sortable columns; the state lives in the URL hash, so a view is a shareable link, and the last filters are restored from `localStorage`.
+- `?as=<label>` highlights and pins the jobs of that label, so an agent or a person can open "my jobs" directly.
+- Live updates over one SSE stream with automatic reconnect and a visible connection state; a Pause button freezes the view while reading; new events during a pause show as a counter.
+- Export of the current filtered table as CSV or JSON, and `Save snapshot` that writes the same page as a file.
+- Shortcuts: `/` search, `j`/`k` move, `Enter` open, `Esc` close, `g q|h|s|r` switch tabs, `?` list shortcuts.
+
+Actions (live mode only):
+- **Cancel** a queued or running job, after a confirmation that names the job. A cancel from the page counts as `--force`: it is recorded in the job log and history as cancelled by `dashboard:<os user>` with the reason typed in the dialog. Cancelling all jobs of a project or label is a separate explicit action with the list of jobs in the dialog.
+- No submit, no edit of profiles or config, no up or down of runners from the page.
+
+Security:
+- Loopback only, random port, per-start token; the token is exchanged for a session cookie (`HttpOnly`, `SameSite=Strict`) on the first request and removed from the address bar.
+- Every state-changing request is `POST`, carries a per-session anti-forgery header and passes an `Origin`/`Host` check; reads and the stream require the session cookie.
+- Log and field text is rendered as text, never as markup; strict Content-Security-Policy without inline script evaluation; logs are not indexed or cached.
+- A snapshot file contains logs only when `--with-logs` is given, because logs may hold secrets from the profile commands.
 
 ## Transport and state
 - Local IPC only: named pipe on Windows, Unix socket elsewhere. No network listener, except the optional loopback-only `dashboard` described above.
@@ -176,5 +204,5 @@ The `ci` runner is never a system service on any OS: it must run in the user ses
 
 ## Out of scope
 - Phones and physical devices over USB/ADB.
-- Controlling jobs from the web page (the view is read-only).
+- Submitting jobs, editing profiles or config, and starting or stopping runners from the web page (only cancel is there).
 - Any consumer-specific command or toolchain knowledge inside the core.

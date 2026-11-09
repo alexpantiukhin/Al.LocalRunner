@@ -15,4 +15,4 @@ Read only; changes nothing.
 - `--json`: the same data for scripts.
 - `--html [path]`: one self-contained HTML file, default `temp/runner/queue.html`. Give the user its full path.
 - History: `history` (filters `--project`, `--source`, `--as`, `--profile`, `--result`, `--since`, `--limit`), `history show <job-id>`, `log <job-id> [--step NAME] [--tail N]`, and `stats` for pass rate, waiting time and duration per profile. Read the log with `--tail` or a step, never whole.
-- `dashboard`: live page on `127.0.0.1` with a per-start token. Start it as its own background task, give the user the URL from its output, and stop it when the user is done. Never expose it beyond loopback.
+- `dashboard`: interactive page (Queue, History, Stats, Runners tabs; filters, live log, steps timeline, cancel with confirmation) on `127.0.0.1` with a per-start token; `?as=<label>` opens it focused on your own jobs. Start it as its own background task, give the user the URL from its output, and stop it when the user is done. Never expose it beyond loopback.
