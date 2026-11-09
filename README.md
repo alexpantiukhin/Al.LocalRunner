@@ -2,7 +2,7 @@
 
 Local queued runners for tests and builds on one developer machine. Parallel agent sessions submit runs to a shared queue instead of competing for CPU, memory, the emulator and Gradle/cargo caches.
 
-Shipped as a Claude Code plugin (`plugin/`). The core is project-agnostic: it knows nothing about Rust, Kotlin or any consumer. Each consumer project declares its own profiles (see `docs/design.md`).
+Shipped as a Claude Code plugin (`plugin/`). The core is project-agnostic: it knows nothing about Rust, Kotlin or any consumer. Each consumer project declares its own profiles (see `docs/architecture.html`).
 
 ## Levels
 
@@ -31,4 +31,4 @@ Install into a consumer project with project scope only:
 
 ## Status
 
-Skeleton. Contracts of the skills and the queue are in `docs/design.md`; implementation is tracked in issue #1.
+Skeleton. Contracts of the skills and the queue are in `docs/architecture.html`; implementation is tracked in issue #1.

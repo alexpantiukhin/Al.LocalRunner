@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the whole system of `docs/design.md`: a queued runner (daemon, CLI, runners, clients, history, dashboard) as one Rust binary `al-localrunner`.
+**Goal:** Build the whole system of `docs/architecture.html`: a queued runner (daemon, CLI, runners, clients, history, dashboard) as one Rust binary `al-localrunner`.
 
 **Architecture:** A Cargo workspace. Pure logic (model, scheduler, queue selection) lives in `lr-core` with no IO and is tested first; process execution, storage, wire protocol, TLS, daemon, runner agent and dashboard are separate crates over it. One binary, three roles (hub, runner, client). A single machine runs its own hub with local runners; multi-machine is the same code with a network channel.
 
 **Tech Stack:** Rust stable, tokio, serde, toml, clap, rusqlite (bundled SQLite), rustls + tokio-rustls + rcgen, ed25519-dalek, sha2, axum (dashboard), windows-sys (Job Object), libc (process groups).
 
-**Spec:** `docs/design.md`
+**Spec:** `docs/architecture.html`
 
 ## Global Constraints
 
@@ -225,7 +225,7 @@
 
 ### Task 13b: Levels defined outside the code
 
-Inserted after Tasks 1-13 were built with a closed `Level` enum; this task removes it. Design: "Level definitions (set outside the code)".
+Inserted after Tasks 1-13 were built with a closed `Level` enum; this task removes it. Spec: `docs/architecture.html`, section 4 (levels).
 
 **Files:**
 - Create: `crates/lr-core/src/levels.rs` (`LevelDef`, `LevelSet`, `levels.toml` parsing, built-in defaults, `LevelDef::unmet(&Facts) -> Vec<Unmet>`), `crates/lr-daemon/src/probe.rs` (disk free, programs on `PATH`, `check` command with 10 s timeout), `crates/lr-cli/src/cmd/levels.rs`
@@ -243,7 +243,7 @@ Inserted after Tasks 1-13 were built with a closed `Level` enum; this task remov
 
 ### Task 13c: Runner as a separate role
 
-Inserted after Tasks 1-13b: the runner leaves the hub process. Design: "Roles", the strict separation rule.
+Inserted after Tasks 1-13b: the runner leaves the hub process. Spec: `docs/architecture.html`, section 3 (roles); the broker model there supersedes the hub-only engine of this task.
 
 **Files:**
 - Create: `crates/lr-runner/src/{agent.rs,buffer.rs,local.rs}` (agent core over any `Dial`, `Outbox`, local dial through `IpcEndpoint`), `crates/lr-cli/src/cmd/runner_proc.rs` (`al-localrunner runner` foreground runner process)
@@ -359,7 +359,7 @@ Inserted after Tasks 1-13b: the runner leaves the hub process. Design: "Roles", 
 - Consumes: Tasks 7, 10.
 - Produces: `trait DataSource: Send + Sync {fn snapshot(&self) -> Snapshot; fn history(&self, &HistoryFilter) -> Vec<JobRecord>; fn log(&self, &JobId, Option<&str>, Option<usize>) -> Vec<u8>; fn stats(&self, ..) -> Vec<ProfileStats>; fn subscribe(&self) -> broadcast::Receiver<JobEventView>}`, `struct LocalSource` (hub live state plus the local store), `async fn serve_dashboard(src: Arc<dyn DataSource>, actions: Arc<dyn Actions>) -> io::Result<DashboardHandle>` (random port on `127.0.0.1`/`::1`, per-start token exchanged for an `HttpOnly; SameSite=Strict` cookie and removed from the URL), `trait Actions {fn cancel(&self, ..)}`.
 
-- [ ] **Step 1: Write failing tests:** `binds_only_loopback_and_aborts_if_not`, `request_without_cookie_refused`, `foreign_host_header_refused_dns_rebinding`, `foreign_origin_refused`, `post_without_anti_forgery_header_refused`, `sse_requires_cookie_and_reconnects_with_last_event_id`, `csp_header_forbids_inline_script_eval_and_external_hosts`, `log_text_is_served_as_text_plain_not_markup`, `another_data_source_plugs_in_without_touching_the_server` (a fake `DataSource` implemented in the test is served by `serve_dashboard` and its snapshot, history and events reach the HTTP and SSE responses). `DataSource` carries no machine or runner address: a later hub-backed source (design, "Data sources") implements the same trait; only `LocalSource` is built now.
+- [ ] **Step 1: Write failing tests:** `binds_only_loopback_and_aborts_if_not`, `request_without_cookie_refused`, `foreign_host_header_refused_dns_rebinding`, `foreign_origin_refused`, `post_without_anti_forgery_header_refused`, `sse_requires_cookie_and_reconnects_with_last_event_id`, `csp_header_forbids_inline_script_eval_and_external_hosts`, `log_text_is_served_as_text_plain_not_markup`, `another_data_source_plugs_in_without_touching_the_server` (a fake `DataSource` implemented in the test is served by `serve_dashboard` and its snapshot, history and events reach the HTTP and SSE responses). `DataSource` carries no machine or runner address: a later hub-backed source (`docs/architecture.html`, section 9.3) implements the same trait; only `LocalSource` is built now.
 - [ ] **Step 2:** Run `cargo test -p lr-dashboard --test security`; expected FAIL.
 - [ ] **Step 3:** Implement with axum on a manually bound listener; after binding, read back the local address and exit with an error if it is not loopback.
 - [ ] **Step 4:** Run; expected PASS. Commit `feat(dashboard): источники данных и защищённый сервер`.
@@ -402,8 +402,8 @@ Inserted after Tasks 1-13b: the runner leaves the hub process. Design: "Roles", 
 **Interfaces:**
 - Consumes: the CLI contract of Tasks 12, 13, 15, 18, 19, 22.
 
-- [ ] **Step 1:** Rewrite each skill so it calls the real commands with the inputs of the design's skills table; `run` documents `--as`, `--platform`, remote jobs and the push requirement; `install-runner` documents `runner join` and `client join`; skills stay in English.
-- [ ] **Step 2:** Fill the OS files with the per-OS differences of the design table (IPC endpoint, tree kill, supervision, emulator acceleration, sleep prevention) and the emulator or simulator notes for Android and iOS runners.
+- [ ] **Step 1:** Rewrite each skill so it calls the real commands with the inputs of the skills table in `docs/architecture.html` (section 11); `run` documents `--as`, `--platform`, remote jobs and the push requirement; `install-runner` documents `runner join` and `client join`; skills stay in English.
+- [ ] **Step 2:** Fill the OS files with the per-OS differences of the OS table in `docs/architecture.html` (section 10: IPC endpoint, tree kill, supervision, emulator acceleration, sleep prevention) and the emulator or simulator notes for Android and iOS runners.
 - [ ] **Step 3:** Update the README status from skeleton to the implemented commands.
 - [ ] **Step 4:** Run `claude plugin validate plugin` if available; expected no errors. Commit `docs: скилы, заметки по ОС, README`.
 

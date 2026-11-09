@@ -1,7 +1,7 @@
 # Al.LocalRunner — local queued runners
 
 ## Project overview
-See `README.md` and `docs/design.md`.
+See `README.md` and `docs/architecture.html`: the single design document (architecture, requirements, config formats, security) with a table of contents. Do not add design Markdown files; update the HTML instead.
 
 ## Rules
 - Respond in Russian; write AGENTS.md and all AI instructions in English
