@@ -63,6 +63,19 @@ exclusive = ["gradle", "emulator"]
 - State and runner directories under `%LOCALAPPDATA%\Al.LocalRunner` (`~/.local/share/al-localrunner` elsewhere).
 - The `ci` runner lives in its own directory and registers per repository with a token supplied by the user at install time; the token is never stored by the plugin.
 
+## Operating systems
+Windows, Linux and macOS are first-class. The core is OS-neutral; everything that differs lives in one file per OS under `plugin/shared/os/` (`windows.md`, `linux.md`, `macos.md`) and is read by the install, up and down skills:
+
+| Concern | Windows | Linux | macOS |
+|---|---|---|---|
+| IPC | named pipe | Unix socket in `$XDG_RUNTIME_DIR` | Unix socket in the state directory |
+| Tree kill | Job Object | process group or cgroup | process group |
+| `ci` supervision | user-session process | systemd user unit | LaunchAgent (GUI domain) |
+| Emulator acceleration | WHPX or Hyper-V | KVM | HVF, arm64 images on Apple Silicon |
+| Sleep prevention | `SetThreadExecutionState` | none by default | `caffeinate -i` |
+
+The `ci` runner is never a system service on any OS: it must run in the user session to see the user toolchains, caches and devices. Daemon code selects the OS-specific parts behind one internal interface; consumer profiles stay OS-neutral where they can and use per-OS `command` variants where they cannot.
+
 ## Skills contract
 | Skill | Inputs | Result |
 |---|---|---|

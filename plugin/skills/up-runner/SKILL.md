@@ -7,8 +7,7 @@ description: >-
 
 # up-runner
 
-1. If not installed, run `install-runner` first.
+1. If not installed, run `install-runner` first. Read `../../shared/os/<windows|linux|macos>.md` for the current OS.
 2. Start the requested levels (default `light,heavy,ci`) with the requested worker count (default 1). Skip those already running.
-3. Start every long-running process as its own background task, with no self-detaching wrapper.
-4. The `ci` runner must inherit a PATH that contains the project toolchains; start it from the user session, not as a service.
-5. Finish with `status-runner`; wait for "Listening for Jobs" on `ci` before reporting success.
+3. Start the daemon as its own background task, with no self-detaching wrapper. Start `ci` the way the OS file prescribes (user session, user PATH; never a system service).
+4. Finish with `status-runner`; wait for "Listening for Jobs" on `ci` before reporting success.
