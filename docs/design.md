@@ -170,7 +170,10 @@ Actions (live mode only):
 - No submit, no edit of profiles or config, no up or down of runners from the page.
 
 Security:
-- Loopback only, random port, per-start token; the token is exchanged for a session cookie (`HttpOnly`, `SameSite=Strict`) on the first request and removed from the address bar.
+- Random port, per-start token; the token is exchanged for a session cookie (`HttpOnly`, `SameSite=Strict`) on the first request and removed from the address bar.
+- Localhost only, with no way to change it: the socket is bound to `127.0.0.1` (and `::1`), never to `0.0.0.0`, `::` or a LAN address, and there is no option, config key or environment variable that widens it. Remote access, if ever needed, is the user's own SSH port forward to the loopback port.
+- DNS-rebinding protection: a request whose `Host` is not `localhost`, `127.0.0.1` or `[::1]` with the dashboard port is refused, and so is a request carrying a foreign `Origin`.
+- On start the daemon checks the actual bound address and exits with an error if it is not loopback.
 - Every state-changing request is `POST`, carries a per-session anti-forgery header and passes an `Origin`/`Host` check; reads and the stream require the session cookie.
 - Log and field text is rendered as text, never as markup; strict Content-Security-Policy without inline script evaluation; logs are not indexed or cached.
 - A snapshot file contains logs only when `--with-logs` is given, because logs may hold secrets from the profile commands.
