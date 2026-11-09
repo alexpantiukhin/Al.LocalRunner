@@ -653,11 +653,11 @@ steps = [
 <li>Случайный порт, токен на запуск; токен обменивается на сессионный cookie (<code>HttpOnly</code>, <code>SameSite=Strict</code>) при первом запросе и убирается из адресной строки.</li>
 <li>Только localhost без возможности изменить: сокет на <code>127.0.0.1</code> (и <code>::1</code>), никогда <code>0.0.0.0</code>, <code>::</code> или адрес LAN; нет опции, ключа конфигурации или переменной окружения, которые это расширят. Дашборд не публикуется и не туннелируется плагином.</li>
 <li>Защита от DNS rebinding: запрос с <code>Host</code>, не равным <code>localhost</code>, <code>127.0.0.1</code> или <code>[::1]</code> с портом дашборда, отклоняется, как и запрос с чужим <code>Origin</code>. При старте hub проверяет фактический адрес и завершается с ошибкой, если он не loopback.</li>
-<li>Ничего не покидает машину: hub, CLI и страница не делают исходящих запросов, не шлют телеметрию, не загружают логи, историю и снимки. Единственные исходящие соединения всей системы: <code>ci</code>-раннер GitHub Actions к GitHub (собственный протокол, без данных системы), соединения hub и раннеров с брокерами, <code>git fetch</code> раннера из репозитория джобы и необязательный получатель логов и метрик (OTLP), который владелец включил в <code>logging.toml</code>.</li>
+<li>Ничего не покидает машину: hub, CLI и страница не делают исходящих запросов, не шлют телеметрию, не загружают логи, историю и снимки. Единственные исходящие соединения ролей системы (установщик — отдельная программа, которую владелец запускает вручную, см. 10.1): <code>ci</code>-раннер GitHub Actions к GitHub (собственный протокол, без данных системы), соединения hub и раннеров с брокерами, <code>git fetch</code> раннера из репозитория джобы и необязательный получатель логов и метрик (OTLP), который владелец включил в <code>logging.toml</code>.</li>
 <li>Любой запрос, меняющий состояние, — <code>POST</code> с заголовком против подделки и проверкой <code>Origin</code>/<code>Host</code>; чтения и поток требуют сессионный cookie. Текст логов и полей выводится как текст, не как разметка; строгая CSP без выполнения встроенных скриптов; логи не индексируются и не кэшируются. Снимок содержит логи только с <code>--with-logs</code>, потому что в логах могут быть секреты из команд профиля.</li>
 </ul>
 
-<h2 id="s-os">10. Операционные системы</h2>
+<h2 id="s-os">10. Установка и операционные системы</h2>
 <p>Windows, Linux и macOS равноправны. Ядро нейтрально к ОС; всё различающееся лежит в одном файле на ОС в <code>plugin/shared/os/</code> (<code>windows.md</code>, <code>linux.md</code>, <code>macos.md</code>), его читают скилы install, up и down.</p>
 <div class="scroll"><table>
 <tr><th>Что</th><th>Windows</th><th>Linux</th><th>macOS</th></tr>
@@ -672,10 +672,91 @@ steps = [
 <p><b>Запуск.</b> Доступны оба способа, и они не исключают друг друга. Вручную: <code>up</code> запускает hub, брокер и раннеры, <code>down</code> останавливает. Автозапуск: по умолчанию выключен, включается явной командой <code>autostart on [роль]</code> (или при установке) и выключается <code>autostart off</code>; он настраивается средствами ОС из таблицы выше и работает под пользователем, который его включил (раздел 3.12). Автозапуск можно включить для одной роли: например, брокер и раннеры на выделенной машине всегда, а hub на ноутбуке вручную. У автозапуска окружение беднее, чем у терминала, поэтому <code>PATH</code> раннера и пути программ задаются в <code>runner.toml</code> явно. <code>up</code> при уже работающей роли ничего не дублирует.</p>
 <p><code>ci</code>-раннер нигде не служба системы: он должен работать в пользовательской сессии, чтобы видеть инструменты, кэши и устройства пользователя. Код выбирает ОС-специфичные части за одним внутренним интерфейсом; профили потребителя остаются нейтральными к ОС, где могут, и используют варианты <code>command</code> на ОС там, где не могут. Демон Windows стартует с <code>CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP</code>, поэтому джобы наследуют скрытую консоль и работает Ctrl+Break; именованный канал содержит SID пользователя и проверку владельца; пул по умолчанию — 75% памяти хоста брокера и все его логические ядра (Docker и виртуалки входят в пул, но память измеряется на хосте брокера; владелец уточняет лимиты в политике).</p>
 
+<h3>10.1 Способы установки</h3>
+<p>Все способы доставляют одно и то же: один бинарник <code>al-localrunner</code> (при желании в образе). Роль узла определяется командами и конфигурацией, а не способом установки. Сама система ничего не скачивает и себя не обновляет: установщик — отдельная программа, которую владелец запускает вручную.</p>
+<div class="scroll"><table>
+<tr><th>Способ</th><th>Как</th><th>Что делает</th><th>Для чего</th></tr>
+<tr><td>Готовый файл</td><td>скачать архив релиза под ОС и архитектуру, сверить SHA-256 и подпись, положить в каталог из <code>PATH</code></td><td>только бинарник; каталоги и шаблоны создаёт <code>al-localrunner init</code></td><td>любая машина, в том числе без выхода в сеть</td></tr>
+<tr><td>Установочная команда</td><td>Linux и macOS: <code>curl -fsSL адрес-релизов/install.sh | sh</code>; Windows: <code>irm адрес-релизов/install.ps1 | iex</code></td><td>определяет ОС и архитектуру, скачивает файл, сверяет SHA-256 и подпись, ставит в каталог пользователя без прав администратора, дополняет <code>PATH</code>, вызывает <code>init</code></td><td>рабочие машины и ноутбуки</td></tr>
+<tr><td>Docker и Compose</td><td>образ <code>al-localrunner:версия</code> (linux, amd64 и arm64) и файл <code>compose.yaml</code> (10.4)</td><td>брокер и (или) раннеры в контейнерах, состояние в томах</td><td>серверы, изолированные раннеры</td></tr>
+<tr><td>Из исходников</td><td><code>cargo install --locked al-localrunner</code> или <code>cargo build --release</code></td><td>собирает тот же бинарник</td><td>разработчики, редкие платформы</td></tr>
+<tr><td>Менеджеры пакетов</td><td>winget, Scoop, Homebrew, пакеты <code>deb</code> и <code>rpm</code></td><td>ставят бинарник; пакеты Linux добавляют юнит службы брокера</td><td>машины, где пакеты ставят так</td></tr>
+<tr><td>Скил <code>install-runner</code></td><td>из сессии агента, раздел 11</td><td>вызывает один из способов выше, затем <code>init</code> и <code>doctor</code></td><td>агенты и скрипты</td></tr>
+</table></div>
+<ul>
+<li><b>Что обязан делать установщик.</b> Быть идемпотентным; работать от обычного пользователя; отказываться от root или администратора без явного флага; сверять SHA-256 и подпись и при несовпадении ничего не ставить; поддерживать <code>--version</code>, <code>--dir</code> и <code>--offline файл</code>; не запускать роли, не включать автозапуск и ничего не отправлять в сеть, кроме загрузки релиза.</li>
+<li><b>Релиз.</b> На каждую версию публикуются бинарники (Windows x64, Linux x64 и arm64, macOS x64 и arm64), файл <code>SHA256SUMS</code> с подписью, образ Docker и манифесты пакетов. Тег <code>latest</code> у образа не публикуется: версию владелец указывает явно.</li>
+<li><b>Риск «curl | sh».</b> Команда запускает скачанный скрипт; тем, кто этого не хочет, остаётся готовый файл с ручной сверкой. Скрипт короткий и сам проверяет подпись бинарника.</li>
+<li><b>Принцип «ничего не уходит наружу»</b> относится к ролям системы. Установщик — разовое действие владельца вне ролей, оно не нарушает принцип.</li>
+</ul>
+<div class="scroll"><svg viewBox="0 0 960 412" role="img" aria-label="Установка командой"><rect class="nx" x="20" y="234" width="920" height="58" rx="6"/><text class="g" x="28" y="248">не совпало</text><path class="ld" d="M75,42 V400"/><path class="ld" d="M345,42 V400"/><path class="ld" d="M615,42 V400"/><path class="ld" d="M885,42 V400"/><path class="ln" d="M75,92 L345,92" marker-end="url(#ar)"/><text class="s sq" x="210" y="86" text-anchor="middle">curl адрес-релизов/install.sh | sh</text><path class="ln" d="M345,112 H373 V128 H347" fill="none" marker-end="url(#ar)"/><text class="s sq" x="381" y="122">определяет ОС и архитектуру</text><path class="ln" d="M345,158 L615,158" marker-end="url(#ar)"/><text class="s sq" x="480" y="152" text-anchor="middle">файл релиза, SHA256SUMS и подпись</text><path class="ld" d="M615,188 L345,188" marker-end="url(#ar)"/><text class="s sq" x="480" y="182" text-anchor="middle">файлы</text><path class="ln" d="M345,208 H373 V224 H347" fill="none" marker-end="url(#ar)"/><text class="s sq" x="381" y="218">сверяет SHA-256 и подпись</text><path class="ld" d="M345,284 L75,284" marker-end="url(#ar)"/><text class="s sq" x="210" y="278" text-anchor="middle">отказ: ничего не установлено</text><path class="ln" d="M345,322 L885,322" marker-end="url(#ar)"/><text class="s sq" x="615" y="316" text-anchor="middle">кладёт бинарник в каталог пользователя, дополняет PATH</text><path class="ln" d="M345,352 L885,352" marker-end="url(#ar)"/><text class="s sq" x="615" y="346" text-anchor="middle">al-localrunner init, затем doctor</text><path class="ld" d="M345,382 L75,382" marker-end="url(#ar)"/><text class="s sq" x="210" y="376" text-anchor="middle">что дальше: up, broker add или hub join</text><rect class="b" x="10" y="8" width="130" height="34" rx="7"/><text class="h" x="75" y="30" text-anchor="middle">Владелец</text><rect class="hub" x="280" y="8" width="130" height="34" rx="7"/><text class="h" x="345" y="30" text-anchor="middle">Установщик</text><rect class="b" x="550" y="8" width="130" height="34" rx="7"/><text class="h" x="615" y="30" text-anchor="middle">Сервер релизов</text><rect class="ok" x="820" y="8" width="130" height="34" rx="7"/><text class="h" x="885" y="30" text-anchor="middle">Машина</text></svg></div>
+<h3>10.2 Что ставить на какой узел</h3>
+<p>Порядок: сначала брокер пула, затем узлы, которые вступают в него.</p>
+<div class="scroll"><table>
+<tr><th>Узел</th><th>Что на нём работает</th><th>Шаги после установки бинарника</th></tr>
+<tr><td>Всё на одной машине</td><td>hub, брокер, раннер</td><td><code>init</code>, <code>doctor</code>, <code>up</code>; по желанию <code>autostart on</code></td></tr>
+<tr><td>Клиентская машина (ноутбук)</td><td>только hub</td><td><code>hub join адрес код</code> (код выдаёт <code>broker add --label ярлык</code>); адрес и ключ брокера попадают в список hub</td></tr>
+<tr><td>Выделенный брокер пула</td><td>брокер как служба ОС, раннеров нет</td><td>правка <code>policy.toml</code> и <code>[networks]</code>, явный адрес слушателя, установка службы, <code>broker add</code> для каждого участника</td></tr>
+<tr><td>Раннер на другой машине</td><td>раннер</td><td><code>runner.toml</code>, <code>runner join адрес код</code>, <code>up</code></td></tr>
+<tr><td>Раннер в Docker или виртуалке</td><td>раннер в отдельной установке</td><td>образ или бинарник внутри; <code>runner join</code> к брокеру хоста; файлов хоста не видит, работает с коммитами</td></tr>
+<tr><td>GitHub-раннер <code>ci</code></td><td>раннер GitHub Actions и hub с ярлыком <code>ci</code></td><td><code>install-runner</code> с токеном регистрации; <code>hub join</code> по коду с <code>--label ci</code>; машину держат отдельно от сессий агентов</td></tr>
+</table></div>
+<ul>
+<li><b><code>init</code></b> создаёт каталог состояния и шаблоны конфигураций (<code>policy.toml</code>, <code>hub-policy.toml</code>, <code>runner.toml</code>, <code>logging.toml</code>) с комментариями; существующие файлы не перезаписывает.</li>
+<li><b><code>doctor</code></b> проверяет узел и печатает, что не так: версия ОС, права (не root), доступность каталогов, наличие <code>cgroup v2</code> в Linux, программы из <code>runner.toml</code> и их проверки, свободные порты, разница часов с брокером, достижимость брокера и совпадение отпечатка сертификата.</li>
+</ul>
+
+<h3>10.3 Что создаётся на узле</h3>
+<div class="scroll"><table>
+<tr><th>Что</th><th>Windows</th><th>Linux</th><th>macOS</th></tr>
+<tr><td>Бинарник</td><td><code>%LOCALAPPDATA%\Programs\Al.LocalRunner</code></td><td><code>~/.local/bin</code></td><td><code>~/.local/bin</code></td></tr>
+<tr><td>Состояние hub и раннера</td><td><code>%LOCALAPPDATA%\Al.LocalRunner</code></td><td><code>~/.local/share/al-localrunner</code></td><td><code>~/.local/share/al-localrunner</code></td></tr>
+<tr><td>Состояние брокера-службы</td><td><code>%ProgramData%\Al.LocalRunner</code></td><td><code>/var/lib/al-localrunner</code></td><td><code>/Library/Application Support/Al.LocalRunner</code></td></tr>
+<tr><td>Служба брокера</td><td>служба Windows</td><td>юнит systemd</td><td>LaunchDaemon</td></tr>
+</table></div>
+<p>В каталоге состояния: <code>machine-id</code>, конфигурации, базы (<code>broker.db</code>, <code>hub.db</code>, <code>runner.db</code>), <code>logs/</code>, сертификат брокера и секретные ключи участника. Секретные ключи и базы доступны только владельцу каталога (права <code>0600</code> и аналог ACL в Windows).</p>
+
+<h3>10.4 Docker и Compose</h3>
+<p>Образ содержит только бинарник и работает не от root. Инструментов потребителя (gradle, adb, эмулятор) в нём нет: владелец строит свой образ на основе нашего (<code>FROM</code>) и добавляет нужное. Пример для брокера и одного раннера:</p>
+<pre class="code">services:
+  broker:
+    image: al-localrunner:версия
+    command: ["al-localrunner", "broker", "run"]
+    ports: ["7443:7443"]
+    volumes:
+      - broker-state:/var/lib/al-localrunner
+      - ./policy.toml:/etc/al-localrunner/policy.toml:ro
+    restart: unless-stopped
+  runner:
+    image: al-localrunner:версия
+    command: ["al-localrunner", "runner", "run"]
+    volumes:
+      - runner-state:/var/lib/al-localrunner
+      - ./runner.toml:/etc/al-localrunner/runner.toml:ro
+    depends_on: [broker]
+    restart: unless-stopped
+volumes:
+  broker-state: {}
+  runner-state: {}
+</pre>
+<ul>
+<li><b>Вступление.</b> Код выдаёт <code>docker compose exec broker al-localrunner broker add</code>, раннер вступает командой <code>runner join broker:7443 код</code>; ключи и сертификат лежат в томах и переживают пересоздание контейнеров.</li>
+<li><b>Политика.</b> Владелец правит смонтированный <code>policy.toml</code> и вызывает <code>docker compose exec broker al-localrunner policy reload</code>: локальным каналом считается доступ внутри контейнера.</li>
+<li><b>Границы.</b> Контейнерный раннер файлов хоста не видит, поэтому берёт только заказы с коммитом. Его сети в списке <code>[networks]</code> владелец относит к сети хоста. Адрес слушателя брокера (порт 7443) публикуется явно, подстановочные адреса не используются.</li>
+<li><b>Версия.</b> Тег образа всегда явный; обновление — смена тега и <code>docker compose up -d</code>.</li>
+</ul>
+
+<h3>10.5 Обновление, удаление, перенос</h3>
+<ul>
+<li><b>Обновление.</b> Заменить бинарник или образ любым способом из 10.1 и перезапустить роль (<code>down</code> и <code>up</code>, перезапуск службы или контейнера). Совместимость по версии протокола (3.9). Схемы баз обновляются при старте автоматически с резервной копией; откат на более старую версию с более новой схемой не поддерживается и завершается понятным отказом.</li>
+<li><b>Удаление.</b> <code>al-localrunner uninstall</code> останавливает роли, выключает автозапуск, удаляет службу и бинарник; ключи и история остаются. <code>uninstall --purge</code> после подтверждения удаляет и каталог состояния.</li>
+<li><b>Перенос брокера.</b> Остановить службу, скопировать каталог состояния (<code>broker.db</code>, <code>logs/</code>, сертификат, <code>policy.toml</code>) на новую машину и запустить с тем же адресом: hub и раннеры подключаются без повторного вступления, пока сертификат тот же. При смене адреса его нужно обновить в списке hub и в настройке раннеров.</li>
+</ul>
+
 <h2 id="s-skills">11. Контракт скилов</h2>
 <div class="scroll"><table>
 <tr><th>Скил</th><th>Входные данные</th><th>Результат</th></tr>
-<tr><td><code>install-runner</code></td><td>репозиторий для <code>ci</code> (необязательно), токен регистрации (спрашивается, не сохраняется)</td><td>установка; <code>ci</code>-раннер настроен, если его нет; идемпотентно</td></tr>
+<tr><td><code>install-runner</code></td><td>репозиторий для <code>ci</code> (необязательно), токен регистрации (спрашивается, не сохраняется)</td><td>бинарник установлен выбранным способом (раздел 10.1), выполнены <code>init</code> и <code>doctor</code>; <code>ci</code>-раннер настроен, если его нет; идемпотентно</td></tr>
 <tr><td><code>up-runner</code></td><td>файл настроек раннера (по умолчанию один универсальный раннер), число копий раннера (<code>--count</code>, по умолчанию 1)</td><td>hub, брокер и раннеры запущены; печатает статус</td></tr>
 <tr><td><code>autostart-runner</code></td><td><code>on</code> или <code>off</code>, роли (hub, брокер, раннеры; по умолчанию все)</td><td>автозапуск включён или выключен средствами ОС; идемпотентно; ручной <code>up</code> продолжает работать</td></tr>
 <tr><td><code>down-runner</code></td><td>имена раннеров, <code>--drain</code> или <code>--cancel</code></td><td>раннеры остановлены; очередь обработана как задано</td></tr>
