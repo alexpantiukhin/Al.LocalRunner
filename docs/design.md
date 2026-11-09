@@ -80,8 +80,23 @@ steps = [
 - Cancel and timeout kill the process tree (Windows Job Object; process group elsewhere).
 - Crash safety: a dead submitter queued jobs are dropped, a dead job is reaped, leases are tied to the daemon child processes.
 
+## Viewing the queue
+Read-only views of the queue, running jobs and their steps, in three forms of the same data:
+
+- `al-localrunner status` — text; `--json` for agents and scripts.
+- `al-localrunner status --html [path]` — writes one self-contained HTML file (no external scripts or fonts), default `temp/runner/queue.html`. A snapshot: it needs no listener, can be opened from disk and attached to a report.
+- `al-localrunner dashboard` — live view in a browser. The daemon serves one page and a JSON/SSE feed on `127.0.0.1` only, on a random free port; the URL carries a per-start random token, and requests without it or from another origin are refused. Started on demand and stopped with `Ctrl+C` or `down`; it is the only network listener, absent unless asked for.
+
+What the page shows:
+- Per level: workers up or down, free memory and CPU, held tags.
+- Running jobs: id, profile, submitter directory, level, elapsed against the job timeout, and the step list with state (`queued`, `running`, `passed`, `failed`, `timeout`, `skipped`), per-step elapsed against its timeout, and the last lines of the running step.
+- Queue: position, profile, submitter directory, waiting time, the reason it waits (worker busy, memory, CPU, a held `exclusive` tag and whose).
+- Recent finished jobs with the result per step and a link to the log file.
+
+The view never changes anything: cancel and control stay in the CLI. Log text is escaped on output. The same data model backs all three forms, so a form added later adds no new source of truth.
+
 ## Transport and state
-- Local IPC only: named pipe on Windows, Unix socket elsewhere. No network listener.
+- Local IPC only: named pipe on Windows, Unix socket elsewhere. No network listener, except the optional loopback-only `dashboard` described above.
 - State and runner directories under `%LOCALAPPDATA%\Al.LocalRunner` (`~/.local/share/al-localrunner` elsewhere).
 - The `ci` runner lives in its own directory and registers per repository with a token supplied by the user at install time; the token is never stored by the plugin.
 
@@ -104,9 +119,10 @@ The `ci` runner is never a system service on any OS: it must run in the user ses
 | `install-runner` | repository for `ci` (optional), registration token (asked, not stored) | daemon installed; `ci` runner configured if absent; idempotent |
 | `up-runner` | levels (default `light,heavy,ci`), workers per level (default 1) | runners running; prints status |
 | `down-runner` | levels, `--drain` or `--cancel` | runners stopped; queue handled as asked |
-| `status-runner` | none | queue, running jobs, waiting time, free resources |
+| `status-runner` | optional `--html` or `dashboard` | queue, running jobs with steps, waiting time and reason, free resources; text, JSON, HTML snapshot or live page |
 | `run` | profile, level override, timeout override (lowered only) | job id, log path, exit code, result per step |
 
 ## Out of scope
 - Phones and physical devices over USB/ADB.
+- Controlling jobs from the web page (the view is read-only).
 - Any consumer-specific command or toolchain knowledge inside the core.
