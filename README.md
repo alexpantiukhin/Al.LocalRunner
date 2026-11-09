@@ -4,24 +4,18 @@ Local queued runners for tests and builds on one developer machine. Parallel age
 
 Shipped as a Claude Code plugin (`plugin/`). The core is project-agnostic: it knows nothing about Rust, Kotlin or any consumer. Each consumer project declares its own profiles (see `docs/architecture.html`).
 
-## Levels
+## Requirements instead of levels
 
-| Level | Backend | Purpose | Sees uncommitted tree |
-|---|---|---|---|
-| `light` | any runner | single tests during work on one feature | yes on the submitter machine, no on a remote runner (pushed commit) |
-| `heavy` | any runner | whole test tiers, emulator runs | yes on the submitter machine, no on a remote runner (pushed commit) |
-| `ci` | GitHub Actions self-hosted runner | CI jobs and deploys | no (pushed commit) |
+There are no levels. A job lists what it needs (platform, memory, CPU, disk, installed programs, tags, timeout); a runner reports what it has; the hub and the broker pick a runner that satisfies all of it, and answer with the exact difference when none does. Priority and ordering come from the owner policy (`policy.toml` on the broker), not from the code.
 
-Levels are labels defined by the machine owner in `levels.toml` (priority and the characteristics a runner must have: memory, CPU, free disk, installed programs); the three above are the defaults, so a single machine needs no file. A different gradation is a different file.
-
-By default one runner per level is started. All levels share one resource scheduler, so a `ci` job never overlaps with a conflicting `heavy` run.
+A single machine runs a hub, a broker and a runner by default, so no configuration is needed. All runners of a pool share one resource budget, so a `ci` job never overlaps with a conflicting local run.
 
 ## Skills
 
 | Skill | Purpose |
 |---|---|
 | `install-runner` | one-time setup of the daemon and the `ci` runner if absent |
-| `up-runner` | start runners (default: one `light`, one `heavy`, one `ci`) |
+| `up-runner` | start the hub, the broker and runners (default: one general runner) |
 | `down-runner` | stop runners, drain or cancel the queue |
 | `status-runner` | queue, running jobs, waiting time, free resources |
 | `run` | how to submit a run: level, profile, timeout, reading the result |

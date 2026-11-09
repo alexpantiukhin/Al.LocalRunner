@@ -10,6 +10,8 @@
 
 **Spec:** `docs/architecture.html`
 
+> **Plan status (design moved on):** the spec now has a broker role (queue, scheduler, history), hub as a client with an outbox, policies in `policy.toml`, and requirements instead of levels. Tasks 4, 9-15 and the level tasks (13b, 13c) describe the older model and must be rewritten before they are executed. Do not run them as written.
+
 ## Global Constraints
 
 - Language Rust; one workspace under `crates/`; the CLI binary is `al-localrunner`.
