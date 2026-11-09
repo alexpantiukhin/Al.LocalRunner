@@ -1,0 +1,17 @@
+---
+name: run
+description: >-
+  Use whenever tests or builds must run on a machine shared by parallel sessions: submit the run
+  to the queue instead of starting it directly. Triggers: "run tests via runner", "прогони через
+  раннер", and any test-run step of a consumer project that declares profiles.
+---
+
+# run
+
+1. Pick the profile from the consumer `.localrunner/profiles.toml`. The level comes from the profile; override only to a lighter one. Never invent a profile.
+2. Make sure runners are up (`status-runner`); if not, `up-runner`.
+3. Submit the profile from the working directory to test (a worktree is fine). The timeout comes from the profile and may only be lowered.
+4. Wait for the job as a background task; the log goes to `temp/runner/<job-id>.log`. Never read the whole log: bring into context the final state, the exit code and the failing lines.
+5. States: `passed`, `failed`, `timeout`, `cancelled`. A timeout is a failure of the run, not of the tests: report it as such and do not retry in a loop.
+6. Do not start the same command outside the queue while a job of your session is queued or running.
+7. Do not cancel jobs of other sessions.

@@ -1,0 +1,14 @@
+{
+  "extraKnownMarketplaces": {
+    "dev-standards": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/alexpantiukhin/development-standards.git",
+        "sparsePaths": [".claude-plugin", "plugin"]
+      }
+    }
+  },
+  "enabledPlugins": {
+    "development-standards@dev-standards": true
+  }
+}

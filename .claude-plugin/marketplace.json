@@ -1,0 +1,11 @@
+{
+  "name": "al-localrunner",
+  "owner": { "name": "Alex Pantiukhin" },
+  "plugins": [
+    {
+      "name": "al-localrunner",
+      "source": "./plugin",
+      "description": "Local queued runners (light, heavy, ci) for tests and builds shared by parallel agent sessions"
+    }
+  ]
+}
