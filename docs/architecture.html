@@ -21,7 +21,7 @@ svg text{fill:var(--fg);font:13px system-ui,sans-serif}
 svg .s{font-size:11px;fill:var(--mut)}svg .h{font-weight:600}svg .g{font-size:12px;font-weight:600;fill:var(--mut)}
 svg .m{font:11px ui-monospace,Consolas,monospace}svg .k{font:600 10px ui-monospace,Consolas,monospace;fill:var(--acc)}
 svg .b{fill:var(--box);stroke:var(--line);stroke-width:1.2}svg .hub{fill:var(--hub);stroke:var(--acc);stroke-width:1.4}
-svg .grp{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:5 4}svg .nx{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:3 3}
+svg .grp{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:5 4}svg .pool{fill:none;stroke:var(--acc);stroke-width:1.3;stroke-dasharray:2 4}svg .nx{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:3 3}
 svg .ln{stroke:var(--line);stroke-width:1.4;fill:none}svg .lo{stroke:var(--acc);stroke-width:1.6;fill:none}svg .ld{stroke:var(--line);stroke-width:1.2;fill:none;stroke-dasharray:5 4}
 svg .ok{fill:var(--box);stroke:var(--ok);stroke-width:1.4}
 .legend{font-size:14px;color:var(--mut)}
@@ -51,7 +51,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <p class="lead">Все термины определены здесь один раз. Подчёркнутое точками слово в тексте и на схемах показывает определение из этого раздела при наведении мыши или фокусе с клавиатуры; отдельной копии текста определений нет.</p>
 <h3>Узлы и роли</h3>
 <dl class="gl">
-<dt id="g-computer" data-re="компьютер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Компьютер</dt><dd>Физическая машина, на которой может стоять несколько установок (основная ОС, Docker, виртуалки). Всё, что на ней работает одновременно и делит одну память и один процессор, образует один пул.</dd>
+<dt id="g-computer" data-re="компьютер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Компьютер</dt><dd>Физическая машина. На ней может стоять несколько установок: те, что работают одновременно (основная ОС, Docker, виртуалки), образуют один пул, а взаимоисключающие (двойная загрузка) — разные пулы.</dd>
 <dt id="g-install" data-re="установк(?:а|и|у|е|ой|ам|ами|ах)">Установка</dt><dd>Один экземпляр программы со своим каталогом состояния, MachineId и ключами: основная ОС, контейнер Docker или виртуалка. Один компьютер может нести несколько установок.</dd>
 <dt id="g-machineid" data-re="MachineId">MachineId</dt><dd>Случайный идентификатор установки. Создаётся один раз при первом запуске демона и хранится в файле machine-id. По нему определяется, чья это джоба и кто вправе её отменить.</dd>
 <dt id="g-hub" data-re="hub|хаб(?:а|у|е|ом)?">Hub (хаб)</dt><dd>Роль: владеет очередью, планировщиком, историей и дашбордом и решает, какая джоба на какой раннер пойдёт. Сам джобы не исполняет. По умолчанию это машина пользователя; хабом может быть любая.</dd>
@@ -68,7 +68,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <dt id="g-level" data-re="уров(?:ень|ня|ню|не|нем|ни|ней|нями|нях)|level">Уровень</dt><dd>Метка, которая говорит, какие джобы принимает раннер и с каким приоритетом. По умолчанию light, heavy и ci. Владелец определяет уровни в levels.toml вместе с требованиями к машине.</dd>
 <dt id="g-ci" data-re="ci">ci</dt><dd>Уровень по умолчанию с наивысшим приоритетом (100). Его джобы берутся первыми, но уже работающие джобы не вытесняют.</dd>
 <dt id="g-priority" data-re="приоритет(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Приоритет</dt><dd>Порядок выдачи: выше приоритет, раньше джоба. Внутри одного приоритета порядок постановки. Джоба, ждавшая дольше 30 минут, поднимается до высшего приоритета.</dd>
-<dt id="g-pool" data-re="пул(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Пул</dt><dd>Физический компьютер как общий бюджет: лимиты памяти и CPU и набор exclusive-тегов. Лимиты задаёт владелец, а не проект. Раннеры одного пула считают нагрузку вместе.</dd>
+<dt id="g-pool" data-re="пул(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Пул</dt><dd>Набор установок, которые работают одновременно и делят общий бюджет: лимиты памяти и CPU и набор exclusive-тегов. Лимиты задаёт владелец, а не проект. На одном компьютере может быть несколько пулов, если они взаимоисключающие (двойная загрузка): у каждого лимиты всего компьютера.</dd>
 <dt id="g-worker" data-re="воркер(?:а|у|е|ом|ы|ов|ам|ами|ах)?">Воркер</dt><dd>Сколько джоб раннер выполняет одновременно. Параллельность ограничена дважды: воркерами раннера и лимитами пула; действует более строгое.</dd>
 <dt id="g-platform" data-re="платформ(?:а|ы|у|е|ой|ам|ами|ах)?">Платформа</dt><dd>Непрозрачная метка владельца (macos, ios, android...). Ядро только сравнивает метки на равенство. Если в профиле несколько платформ, на каждую создаётся своя джоба.</dd>
 <dt id="g-tag" data-re="тег(?:а|у|е|ом|и|ов|ам|ами|ах)?">Тег</dt><dd>Ресурс, который джоба удерживает на время прогона (gradle, emulator). Теги раннера означают заявленные им возможности.</dd>
@@ -93,15 +93,16 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <li><b>Роли разделены.</b> hub не исполняет джобы и не содержит встроенного раннера; раннер не решает, что запускать. Между ними один интерфейс — протокол раннера. Локальный раннер — отдельный процесс, он подключается к hub по тому же протоколу через локальный канал.</li>
 <li><b>Один бинарник, три роли.</b> <code>al-localrunner</code> работает как <b>hub</b> (очередь, планировщик, дашборд), <b>раннер</b> (выполняет джобы) и <b>клиент</b> (отправляет и смотрит). По умолчанию каждая машина сама себе hub.</li>
 <li><b>Раннер сам подключается к hub</b>, как у GitHub self-hosted: входящие порты на раннере не нужны.</li>
-<li><b>Ресурсы считаются по пулу</b> — физическому компьютеру как общему бюджету, а не по раннеру. Docker и виртуалки на компьютере остаются отдельными установками со своим ID, но входят в его пул.</li>
+<li><b>Ресурсы считаются по пулу</b> — набору установок, которые работают одновременно и делят бюджет, а не по раннеру. Docker и виртуалки остаются отдельными установками со своим ID, но входят в пул хоста. Взаимоисключающие установки (двойная загрузка) — разные пулы на одном компьютере.</li>
 <li><b>Локальный раннер тестирует рабочее дерево, удалённый — запушенный коммит.</b></li>
 <li><b>Ничего не уходит наружу.</b> Дашборд слушает только loopback; телеметрии и загрузок нет.</li>
 </ul>
 
 <h2>2. Архитектура: машины и связи</h2>
 <p class="lead">Этап 1 — всё в одной локальной сети. Раннеры на VPS и за чужим роутером — следующий этап; схема им не мешает.</p>
-<div class="scroll"><svg viewBox="0 0 1000 640" role="img" aria-label="Схема компьютеров, установок и связей">
-<rect class="grp" x="20" y="50" width="470" height="545" rx="10"/><text class="g" x="34" y="72">Компьютер 1 · рабочий · пул win-host</text>
+<div class="scroll"><svg viewBox="0 0 1000 770" role="img" aria-label="Схема компьютеров, установок и связей">
+<rect class="grp" x="20" y="50" width="470" height="702" rx="10"/><text class="g" x="34" y="72">Компьютер 1 · рабочий · два взаимоисключающих пула</text>
+<rect class="pool" x="30" y="80" width="450" height="512" rx="8"/>
 <rect class="b" x="40" y="86" width="430" height="304" rx="8"/><text class="h" x="52" y="106">Windows · установка 1 · hub по умолчанию</text><text class="k" x="360" y="106">ID m-7f3a</text>
 <rect class="b" x="55" y="130" width="118" height="54" rx="6"/><text class="h" x="65" y="152">Сессии агентов</text><text class="s" x="65" y="170">терминал, CLI</text>
 <rect class="b" x="55" y="214" width="118" height="54" rx="6"/><text class="h" x="65" y="236">Браузер</text><text class="s" x="65" y="254">дашборд</text>
@@ -117,6 +118,9 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <rect class="ok" x="40" y="408" width="205" height="96" rx="8"/><text class="h" x="52" y="428">Docker (Linux) · установка 2</text><text class="k" x="52" y="446">ID m-b21c</text><text class="s" x="52" y="464">роль: раннер · пул win-host</text><text class="s" x="52" y="480">платформы: linux, android</text><text class="s" x="52" y="496">файлы хоста не видит</text>
 <rect class="ok" x="265" y="408" width="205" height="96" rx="8"/><text class="h" x="277" y="428">VM Ubuntu · установка 3</text><text class="k" x="277" y="446">ID m-d3e5</text><text class="s" x="277" y="464">роль: раннер · пул win-host</text><text class="s" x="277" y="480">платформы: linux</text><text class="s" x="277" y="496">файлы хоста не видит</text>
 <rect class="nx" x="40" y="516" width="430" height="68" rx="6"/><text class="h" x="52" y="536">Пул win-host: общий бюджет трёх установок</text><text class="s" x="52" y="554">память, CPU и exclusive-теги считаются вместе; лимиты задаёт владелец на hub</text><text class="s" x="52" y="570">Docker и виртуалка проверяют запушенный коммит, а не рабочее дерево</text>
+<path class="ld" d="M255,592 L255,620" marker-start="url(#ar)" marker-end="url(#ar)"/><text class="s" x="266" y="610">пулы взаимоисключающие: активен один</text>
+<rect class="pool" x="30" y="620" width="450" height="120" rx="8"/><text class="k" x="44" y="640">пул linux-boot · лимиты равны всему компьютеру</text>
+<rect class="ok" x="40" y="650" width="430" height="80" rx="8"/><text class="h" x="52" y="670">Linux (двойная загрузка) · установка 7</text><text class="k" x="380" y="670">ID m-a7c2</text><text class="s" x="52" y="690">роль: раннер · платформы: linux, android</text><text class="s" x="52" y="706">работает только после загрузки в Linux;</text><text class="s" x="52" y="720">пока загружена Windows, этот раннер offline</text>
 <path class="lo" d="M142,408 L270,327" marker-end="url(#ao)"/><path class="lo" d="M367,408 L385,327" marker-end="url(#ao)"/>
 
 <rect class="grp" x="520" y="50" width="460" height="138" rx="10"/><text class="g" x="534" y="72">Компьютер 2 · linux-box · пул linux-box</text>
@@ -134,7 +138,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <path class="ld" d="M750,482 L750,520" marker-end="url(#ar)"/><text class="s" x="758" y="506">git push</text>
 <rect class="nx" x="520" y="580" width="460" height="44" rx="6"/><text class="h" x="532" y="600">VPS и внешние раннеры — этап 2</text><text class="s" x="532" y="616">нужен hub, доступный по адресу, или туннель</text>
 </svg></div>
-<p class="legend">Сплошные синие стрелки — постоянное TLS-соединение раннера или клиента к hub (проверка версии, heartbeat 15 с). Серые — локальный IPC и HTTP на loopback. Пунктирные рамки — физические компьютеры; каждая рамка внутри — отдельная установка программы со своим ID. Зелёные — установки в роли раннера. Docker и виртуалка стоят на компьютере 1, делят пул <code>win-host</code> с Windows, но остаются отдельными установками. Раннер Windows — отдельный процесс рядом с демоном hub: он подключается к hub по тому же протоколу, что и удалённые раннеры, а hub сам джобы не исполняет.</p>
+<p class="legend">Сплошные синие стрелки — постоянное TLS-соединение раннера или клиента к hub (проверка версии, heartbeat 15 с). Серые — локальный IPC и HTTP на loopback. Пунктирные рамки — физические компьютеры; каждая рамка внутри — отдельная установка программы со своим ID. Точечные синие рамки — пулы: установки внутри одной рамки работают одновременно и делят ресурсы; два пула на одном компьютере взаимоисключающие. Зелёные — установки в роли раннера. Docker и виртуалка стоят на компьютере 1, делят пул <code>win-host</code> с Windows, но остаются отдельными установками. Раннер Windows — отдельный процесс рядом с демоном hub: он подключается к hub по тому же протоколу, что и удалённые раннеры, а hub сам джобы не исполняет.</p>
 <h3>Что где работает</h3>
 <ul>
 <li><b>Запуск джобов с любого компьютера.</b> Сессии агентов на компьютере 1 говорят с демоном по IPC, на компьютере 4 — через клиентское соединение к hub. Очередь одна, приоритет и учёт ресурсов у hub.</li>
@@ -151,7 +155,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <tr><td>Пара ключей ed25519</td><td>право машины подключаться к hub</td><td>сама машина при вступлении; публичный ключ уходит на hub</td><td>секретный у машины, публичный в <code>hub.db</code></td></tr>
 <tr><td>Код подключения</td><td>разрешение вступить раннеру или клиенту</td><td>hub по команде владельца; одноразовый, живёт 1 час</td><td><code>hub.db</code>, таблица <code>join_code</code></td></tr>
 <tr><td>Имя машины (<code>MachineName</code>)</td><td>запись машины в реестре hub</td><td>hub при вступлении</td><td><code>hub.db</code>, таблица <code>machine</code></td></tr>
-<tr><td>Пул</td><td>физический компьютер как общий бюджет ресурсов (в обсуждении: владелец заводит пул на hub, раннер называет его при вступлении)</td><td>владелец</td><td><code>hub.db</code>, таблица <code>pool</code></td></tr>
+<tr><td>Пул</td><td>набор одновременно работающих установок как общий бюджет ресурсов (в обсуждении: владелец заводит пул на hub, раннер называет его при вступлении)</td><td>владелец</td><td><code>hub.db</code>, таблица <code>pool</code></td></tr>
 <tr><td>Метка <code>network</code></td><td>сеть, в которой стоит машина; по ней считается зона</td><td>hub выводит из адреса подключения или владелец задаёт в конфиге</td><td><code>hub.db</code>, таблица <code>machine</code></td></tr>
 <tr><td><code>JobId</code>, <code>GroupId</code></td><td>один запуск; набор запусков по нескольким платформам</td><td>движок hub при отправке</td><td><code>history.db</code> и <code>hub.db</code> машины, где джоба выполнена</td></tr>
 <tr><td>Идентификатор аренды</td><td>захват ресурсов ci-раннером GitHub Actions</td><td>hub при <code>ci acquire</code></td><td><code>hub.db</code>, таблица <code>lease</code></td></tr>
