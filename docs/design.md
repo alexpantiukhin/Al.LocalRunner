@@ -136,7 +136,7 @@ Finished jobs are kept and can be looked at later, from any session and for any 
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
 
 - `al-localrunner status` — text; `--json` for agents and scripts.
-- `al-localrunner status --html [path]` — writes the dashboard page as one self-contained HTML file with the data embedded, default `temp/runner/queue.html`. A snapshot: it needs no listener, can be opened from disk and attached to a report.
+- `al-localrunner status --html [path]` — writes the dashboard page as one self-contained HTML file with the data embedded, default `temp/runner/queue.html`. A snapshot: it needs no listener, and can be opened from disk.
 - `al-localrunner dashboard` — live view in a browser. The daemon serves one page and a JSON/SSE feed on `127.0.0.1` only, on a random free port; the URL carries a per-start random token, and requests without it or from another origin are refused. Started on demand and stopped with `Ctrl+C` or `down`; it is the only network listener, absent unless asked for.
 
 What the page shows:
@@ -171,9 +171,10 @@ Actions (live mode only):
 
 Security:
 - Random port, per-start token; the token is exchanged for a session cookie (`HttpOnly`, `SameSite=Strict`) on the first request and removed from the address bar.
-- Localhost only, with no way to change it: the socket is bound to `127.0.0.1` (and `::1`), never to `0.0.0.0`, `::` or a LAN address, and there is no option, config key or environment variable that widens it. Remote access, if ever needed, is the user's own SSH port forward to the loopback port.
+- Localhost only, with no way to change it: the socket is bound to `127.0.0.1` (and `::1`), never to `0.0.0.0`, `::` or a LAN address, and there is no option, config key or environment variable that widens it. The dashboard is never published, tunnelled or shared by the plugin.
 - DNS-rebinding protection: a request whose `Host` is not `localhost`, `127.0.0.1` or `[::1]` with the dashboard port is refused, and so is a request carrying a foreign `Origin`.
 - On start the daemon checks the actual bound address and exits with an error if it is not loopback.
+- Nothing leaves the machine: the daemon, the CLI and the page make no outbound network requests, send no telemetry, and never upload logs, history or snapshots anywhere. The only outbound connection in the whole system is the GitHub Actions runner of the `ci` level talking to GitHub, which is that runner own protocol and carries no daemon data.
 - Every state-changing request is `POST`, carries a per-session anti-forgery header and passes an `Origin`/`Host` check; reads and the stream require the session cookie.
 - Log and field text is rendered as text, never as markup; strict Content-Security-Policy without inline script evaluation; logs are not indexed or cached.
 - A snapshot file contains logs only when `--with-logs` is given, because logs may hold secrets from the profile commands.
