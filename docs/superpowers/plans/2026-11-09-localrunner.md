@@ -204,7 +204,7 @@
 - Consumes: Task 11 client and Task 8 identity.
 - Produces: commands `submit --as L [--note T] [--profile N] [--level X] [--timeout-s N] [--platform a,b] [--detach] [--wait]`, `wait <id>`, `jobs --mine [--active]`, `cancel <id|group|--mine> [--force] [--reason T]`, `status [--json] [--project P] [--source S] [--as L]`, `history [filters] [--json]`, `history show <id>`, `log <id> [--step N] [--tail N]`, `stats [--project P] [--profile N]`; `submit` writes the handle `temp/runner/<job-id>.json`; the log file `temp/runner/<job-id>.log` is written from the stream. Exit codes: 0 passed, 1 failed, 2 timeout, 3 cancelled, 64 usage error.
 
-- [ ] **Step 1: Write failing tests** against an in-process daemon: `submit_without_as_is_rejected`, `submit_wait_exit_code_matches_result`, `jobs_mine_lists_only_same_label_and_user`, `cancel_mine_cancels_all_active_of_caller`, `status_json_has_project_source_label_fields`, `handle_file_written_and_found_after_restart`, `lowering_timeout_allowed_raising_rejected`.
+- [ ] **Step 1: Write failing tests** against an in-process daemon: `submit_without_as_is_rejected`, `submit_wait_exit_code_matches_result`, `jobs_mine_lists_only_same_label_and_user`, `cancel_mine_cancels_all_active_of_caller`, `status_json_has_project_source_label_fields`, `handle_file_written_and_found_after_restart`, `lowering_timeout_allowed_raising_rejected`, `status_shows_wait_reason_with_numbers` (a queued job that waits for memory prints the pool, the needed and the free amount, e.g. `waits for memory in pool win-host: needs 6144 MB, free 2048 MB`; a job behind an `exclusive` tag names the holder; `--json` carries the same reason as structured fields).
 - [ ] **Step 2:** Run `cargo test -p lr-cli --test cli`; expected FAIL.
 - [ ] **Step 3:** Implement with clap derive; text and `--json` render from the same snapshot types.
 - [ ] **Step 4:** Run; expected PASS. Commit `feat(cli): команды очереди, истории и логов`.
@@ -340,19 +340,20 @@
 - [ ] **Step 1: Write failing tests** (Rust, parsing the embedded HTML): `page_has_no_external_urls`, `page_has_no_inline_event_handlers_or_eval`; plus browser checks run through the playwright MCP in Step 4.
 - [ ] **Step 2:** Run `cargo test -p lr-dashboard --test page`; expected FAIL.
 - [ ] **Step 3:** Implement the page in plain JavaScript; the snapshot mode reads the embedded JSON and disables live updates and actions.
-- [ ] **Step 4:** Run the tests, then start `al-localrunner dashboard`, open it with playwright, and verify: a queued job appears, expanding shows the timeline, the live log follows, cancel needs confirmation, a hash URL restores the filter, and no console errors. Commit `feat(dashboard): страница очереди, истории и живого лога`.
+- [ ] **Step 4:** Run the tests, then start `al-localrunner dashboard`, open it with playwright, and verify: a queued job appears, expanding shows the timeline, the live log follows, cancel needs confirmation, a hash URL restores the filter, a waiting job shows its reason with the same numbers as `status` (pool, needed, free, holder), and no console errors. Commit `feat(dashboard): страница очереди, истории и живого лога`.
 
 ### Task 22: Dashboard — Stats, Runners, filters, export, snapshot
 
 **Files:**
 - Modify: `crates/lr-dashboard/assets/{index.html,app.js,style.css}`
 - Create: `crates/lr-cli/src/cmd/dashboard.rs`
-- Test: `crates/lr-cli/tests/snapshot.rs`
+- Modify: `crates/lr-store/src/{schema.rs,stats.rs,record.rs}` (migration adding `waited_on` to `job`), `crates/lr-daemon/src/{commands.rs,actor.rs}` (write it when the job starts)
+- Test: `crates/lr-cli/tests/snapshot.rs`, `crates/lr-store/tests/saturation.rs`
 
 **Interfaces:**
-- Produces: tabs Stats (inline SVG charts of pass rate, wait and duration median and p95, per-level day lanes) and Runners (per machine and pool: online, last seen, platform, levels, gauges, held tags); filters, `?as=<label>` pinning, CSV and JSON export, shortcuts (`/`, `j`, `k`, `Enter`, `Esc`, `g q|h|s|r`, `?`); `al-localrunner dashboard` (live) and `status --html [path]` (default `temp/runner/queue.html`, logs only with `--with-logs`).
+- Produces: tabs Stats (inline SVG charts of pass rate, wait and duration median and p95, per-level day lanes, and **saturation**: the share of jobs and of total waiting time per cause of the last wait: `worker`, `memory`, `cpu`, `exclusive tag`, `no runner`, so the owner sees which limit to raise) and Runners (per machine and pool: online, last seen, platform, levels, gauges, held tags); the job row stores `waited_on` (the last wait reason kind, `none` if it started at once) and `Store::saturation(filter)` returns counts and wait sums per kind; filters, `?as=<label>` pinning, CSV and JSON export, shortcuts (`/`, `j`, `k`, `Enter`, `Esc`, `g q|h|s|r`, `?`); `al-localrunner dashboard` (live) and `status --html [path]` (default `temp/runner/queue.html`, logs only with `--with-logs`).
 
-- [ ] **Step 1: Write failing tests:** `snapshot_file_is_self_contained_and_opens_without_listener`, `snapshot_omits_logs_unless_with_logs`, `dashboard_command_prints_url_with_token_and_stops_on_ctrl_c`.
+- [ ] **Step 1: Write failing tests:** `snapshot_file_is_self_contained_and_opens_without_listener`, `snapshot_omits_logs_unless_with_logs`, `dashboard_command_prints_url_with_token_and_stops_on_ctrl_c`; in `lr-store/tests/saturation.rs`: `waited_on_is_stored_and_migrated_from_older_db`, `saturation_splits_wait_by_cause`, `job_started_at_once_counts_as_none`.
 - [ ] **Step 2:** Run `cargo test -p lr-cli --test snapshot`; expected FAIL.
 - [ ] **Step 3:** Implement the tabs and commands.
 - [ ] **Step 4:** Run the tests, then verify in the browser through playwright: charts render, filters and export work, shortcuts switch tabs, phone width (375 px) has no horizontal scroll. Commit `feat(dashboard): статистика, раннеры, снимок`.
