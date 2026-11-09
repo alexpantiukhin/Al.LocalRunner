@@ -223,6 +223,24 @@
 - [ ] **Step 3:** Implement; `up` spawns the daemon detached with a pid file and waits for the endpoint to answer.
 - [ ] **Step 4:** Run; expected PASS. Commit `feat(cli): up, down, конфигурация, machine id`.
 
+### Task 13b: Levels defined outside the code
+
+Inserted after Tasks 1-13 were built with a closed `Level` enum; this task removes it. Design: "Level definitions (set outside the code)".
+
+**Files:**
+- Create: `crates/lr-core/src/levels.rs` (`LevelDef`, `LevelSet`, `levels.toml` parsing, built-in defaults, `LevelDef::unmet(&Facts) -> Vec<Unmet>`), `crates/lr-daemon/src/probe.rs` (disk free, programs on `PATH`, `check` command with 10 s timeout), `crates/lr-cli/src/cmd/levels.rs`
+- Modify: `crates/lr-core/src/{model.rs,profile.rs,queue.rs,scheduler.rs}` (`Level` becomes a validated string newtype, no `Ord`; priority comes from `LevelSet`), `crates/lr-proto/src/*` (wire `Level` as string; `Register` carries the probe result per level; `PROTOCOL_MINOR` bumped), `crates/lr-daemon/src/*` (load `levels.toml` from the state directory, probe at registration and on `up`, offer a runner only the levels it satisfies, anti-starvation uses the highest defined priority), `crates/lr-cli/src/cmd/up.rs` (`up --levels` validates and refuses with the difference), `crates/lr-store` if a column assumes the three names.
+- Test: `crates/lr-core/tests/levels.rs`, `crates/lr-daemon/tests/levels.rs`, `crates/lr-cli/tests/levels.rs`
+
+**Interfaces:**
+- Produces: `struct Level(String)` with `Level::parse(&str) -> Result<Level, LevelError>` (`[a-z0-9-]`, 1-32 chars); `struct LevelDef {name, description, priority: i32, min_memory_mb: Option<u64>, min_cpu: Option<u32>, min_disk_mb: Option<u64>, programs: Vec<ProgramReq>}`; `struct LevelSet` (`LevelSet::defaults()`, `LevelSet::from_toml(&str)`, `get`, `priority(&Level) -> i32`, `max_priority()`); `struct Facts {pool_memory_mb, pool_cpu, free_disk_mb, programs: BTreeMap<String, bool>}`; `enum Unmet {Memory{needs, has}, Cpu{needs, has}, Disk{needs, has}, ProgramMissing(String), CheckFailed{program, reason}}`; `al-localrunner levels [--json]` lists definitions and, per registered runner, the unmet characteristics.
+- Consumes: Tasks 2-4, 9, 10, 13.
+
+- [ ] **Step 1: Write failing tests:** in `lr-core/tests/levels.rs`: `defaults_need_no_file` (`light`, `heavy` priority 0, `ci` priority 100), `custom_label_from_toml`, `level_name_validation` (uppercase, space, empty, 33 chars rejected), `priority_comes_from_definition_not_name` (a level `nightly` with priority 100 goes before `light`; a level named `ci` with priority 0 does not), `unknown_level_in_profile_rejected_with_defined_list`, `generic_core_has_no_level_literals` (no `"light"`, `"heavy"` or `"ci"` string literal in `lr-core/src` or `lr-daemon/src` outside `levels.rs` defaults and tests), `unmet_reports_numbers_for_memory_cpu_disk`, `programs_list_accepts_names_and_name_with_check`; in `lr-daemon/tests/levels.rs`: `runner_below_min_memory_gets_no_such_level_and_others_stay`, `missing_program_makes_level_unavailable_and_reported`, `failing_check_command_is_reported_with_reason`, `check_command_over_10_s_is_failure`, `disk_below_minimum_reported`, `submit_with_level_nobody_can_carry_rejected_with_reason`, `anti_starvation_uses_highest_defined_priority`; in `lr-cli/tests/levels.rs`: `up_levels_refuses_unmet_level_with_difference`, `levels_command_lists_unmet_per_runner`, `old_three_level_setup_works_without_a_file`.
+- [ ] **Step 2:** Run `cargo test --workspace`; expected FAIL on the new tests.
+- [ ] **Step 3:** Implement the refactor; every existing test keeps passing with the default set; probes of one `up` run in parallel with a total time limit.
+- [ ] **Step 4:** Run `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo deny check`. Commit `refactor(core): уровни задаются снаружи, характеристики уровня`.
+
 ### Task 14: TLS identity, join codes, keys, registry
 
 **Files:**
@@ -351,7 +369,7 @@
 - Test: `crates/lr-cli/tests/snapshot.rs`, `crates/lr-store/tests/saturation.rs`
 
 **Interfaces:**
-- Produces: tabs Stats (inline SVG charts of pass rate, wait and duration median and p95, per-level day lanes, and **saturation**: the share of jobs and of total waiting time per cause of the last wait: `worker`, `memory`, `cpu`, `exclusive tag`, `no runner`, so the owner sees which limit to raise) and Runners (per machine and pool: online, last seen, platform, levels, gauges, held tags); the job row stores `waited_on` (the last wait reason kind, `none` if it started at once) and `Store::saturation(filter)` returns counts and wait sums per kind; filters, `?as=<label>` pinning, CSV and JSON export, shortcuts (`/`, `j`, `k`, `Enter`, `Esc`, `g q|h|s|r`, `?`); `al-localrunner dashboard` (live) and `status --html [path]` (default `temp/runner/queue.html`, logs only with `--with-logs`).
+- Produces: tabs Stats (inline SVG charts of pass rate, wait and duration median and p95, per-level day lanes, and **saturation**: the share of jobs and of total waiting time per cause of the last wait: `worker`, `memory`, `cpu`, `exclusive tag`, `no runner`, so the owner sees which limit to raise) and Runners (per machine and pool: online, last seen, platform, levels, the unmet characteristics of a level the machine does not carry with the numbers, gauges, held tags); the job row stores `waited_on` (the last wait reason kind, `none` if it started at once) and `Store::saturation(filter)` returns counts and wait sums per kind; filters, `?as=<label>` pinning, CSV and JSON export, shortcuts (`/`, `j`, `k`, `Enter`, `Esc`, `g q|h|s|r`, `?`); `al-localrunner dashboard` (live) and `status --html [path]` (default `temp/runner/queue.html`, logs only with `--with-logs`).
 
 - [ ] **Step 1: Write failing tests:** `snapshot_file_is_self_contained_and_opens_without_listener`, `snapshot_omits_logs_unless_with_logs`, `dashboard_command_prints_url_with_token_and_stops_on_ctrl_c`; in `lr-store/tests/saturation.rs`: `waited_on_is_stored_and_migrated_from_older_db`, `saturation_splits_wait_by_cause`, `job_started_at_once_counts_as_none`.
 - [ ] **Step 2:** Run `cargo test -p lr-cli --test snapshot`; expected FAIL.

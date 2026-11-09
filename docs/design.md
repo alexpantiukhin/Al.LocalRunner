@@ -20,10 +20,36 @@ flowchart LR
   CI -->|acquire| SCH
 ```
 
+- A **level** is a label that says which jobs a runner accepts. Levels are not built into the code: the owner defines them outside the program (see "Level definitions"); `light`, `heavy` and `ci` below are the defaults that ship, so a single machine needs no file. The core never names a level.
 - `light` and `heavy` are classes of runner: the level says which jobs a runner accepts. On the machine of the submitter a runner executes in the submitter working directory, so uncommitted changes are tested. A runner on another machine tests a pushed commit (see "Multiple machines").
 - `ci` is a real GitHub Actions self-hosted runner (label `al-ci`). Before executing a job it acquires its resource tags from the same scheduler through the daemon, so it never overlaps a conflicting local run. Other projects and workflows are free to use other runners; only jobs that land on `al-ci` go through this queue.
 - One worker per level by default. More workers per level are allowed; the scheduler enforces the limits.
 - A single machine with its own daemon is the default and needs no extra configuration; everything in "Multiple machines" is opt-in.
+
+## Level definitions (set outside the code)
+`levels.toml` in the state directory of the hub (the machine owner's file, never a project file). Without the file the three defaults apply: `light` and `heavy` with no requirements and priority 0, and `ci` with priority 100.
+
+```toml
+[level.light]
+description = "single tests while working on one feature"
+priority = 0
+
+[level.heavy]
+description = "whole test tiers, emulator runs"
+priority = 0
+min_memory_mb = 12288
+min_cpu = 6
+min_disk_mb = 51200
+programs = ["git", "adb", { name = "gradle", check = "gradle --version" }]
+
+[level.ci]
+priority = 100
+```
+
+- A definition has a name (lowercase letters, digits and `-`, up to 32 characters), an optional description, a `priority` (higher is taken first, default 0) and optional **characteristics a runner must have to carry the label**: `min_memory_mb`, `min_cpu`, `min_disk_mb` (free space where the runner works), and `programs` (executables that must be found on the runner `PATH`; an entry with `check` also runs that command, which must exit 0 within 10 s). The core interprets only these keys and compares numbers; it does not know what a program or a level means.
+- A runner is offered a level only if its machine satisfies the definition: memory and CPU are the limits of its pool, disk and programs are probed on the runner machine at registration and again on every `up`. A runner that fails a level is registered without it, and the Runners page and `levels` show the unmet characteristic with the numbers (`needs 12288 MB, pool has 8192 MB`; `adb not found`). `up --levels heavy` on such a machine refuses with the same difference. The other levels of that runner keep working. A remote runner probes itself and reports the result to the hub, the same trust as the pool limits it declares. *(Author's call.)*
+- A profile names a level; a level that is not defined is rejected on submit with the list of defined ones. A different gradation is a different `levels.toml`: rename, add or remove labels without touching the program or the profiles that still use existing names.
+- Priority comes only from the definition, never from a name: the queue order, the `ci acquire` lease (it names its level, default `ci`) and the anti-starvation rule use `priority`.
 
 ## Profiles (consumer-supplied)
 `.localrunner/profiles.toml` in the consumer repository:
@@ -213,7 +239,7 @@ flowchart LR
 - Hub down: the queue stops. A runner finishes its running jobs, keeps the results and delivers them on reconnect; a running job whose hub stays unreachable for a grace period (default 10 min, runner config) is killed, the same rule as a dead submitter. *(Builder's call.)*
 
 ### Runner attributes
-- `levels`: which of `light`, `heavy`, `ci` the runner accepts.
+- `levels`: which of the defined levels the runner accepts, limited to those whose characteristics its machine satisfies.
 - `platforms`: a list of opaque labels declared by the machine owner, for example `["macos", "ios"]` or `["linux", "android"]`. The core only compares labels for equality; it does not know what they mean. The CLI additionally records detected facts (OS, architecture, hostname) for display only.
 - `tags`: opaque capability labels, as today (`emulator`, `gradle`, ...).
 - `pool`: the resource pool the runner belongs to (next section).
@@ -258,9 +284,9 @@ command = "..."
 - A runner on the submitter own machine keeps running in the submitter directory and sees uncommitted changes.
 
 ### Priority
-- `ci` jobs are taken before `light` and `heavy` whenever a runner or resources become free; inside one priority the order is FIFO.
-- No preemption: a `ci` job never stops or evicts a running job. It goes first in the queue and waits for resources.
-- Anti-starvation: a non-`ci` job that has waited longer than a limit (default 30 min, hub config) is ordered as `ci` from then on. *(Builder's call.)*
+- Jobs of a level with a higher `priority` are taken first whenever a runner or resources become free (by default `ci` before `light` and `heavy`); inside one priority the order is FIFO.
+- No preemption: a job of a higher priority never stops or evicts a running job. It goes first in the queue and waits for resources.
+- Anti-starvation: a job that has waited longer than a limit (default 30 min, hub config) is ordered with the highest priority defined from then on. *(Builder's call.)*
 
 ### Joining a runner
 Modelled on GitHub self-hosted runners: the runner dials the hub, so it needs no inbound port.

@@ -12,6 +12,8 @@ Shipped as a Claude Code plugin (`plugin/`). The core is project-agnostic: it kn
 | `heavy` | any runner | whole test tiers, emulator runs | yes on the submitter machine, no on a remote runner (pushed commit) |
 | `ci` | GitHub Actions self-hosted runner | CI jobs and deploys | no (pushed commit) |
 
+Levels are labels defined by the machine owner in `levels.toml` (priority and the characteristics a runner must have: memory, CPU, free disk, installed programs); the three above are the defaults, so a single machine needs no file. A different gradation is a different file.
+
 By default one runner per level is started. All levels share one resource scheduler, so a `ci` job never overlaps with a conflicting `heavy` run.
 
 ## Skills
