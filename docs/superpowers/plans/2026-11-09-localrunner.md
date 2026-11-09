@@ -24,6 +24,7 @@
 - One platform per command; no run groups. `--detach` disables the reaper for the whole order.
 - Admin commands are never accepted over the network; local IPC clients map to `[[local_user]]` records and zones local/lan/remote by source address (spec 3.8, 3.12).
 - Time is read only through `Clock`; storage only through `Store`; processes only through `ProcessRunner` (outside `lr-exec`, `lr-store`, `lr-net`, `lr-obs`, `lr-cli`).
+- **Every requirement is covered by a test.** Each normative statement of the spec sections a task cites (a "must", a default value, a state transition, a rejection, a reason code, a config key) needs at least one test that fails if the behavior is removed. The tests listed in a task are a minimum, not the full set: before implementing, the implementer walks the cited spec sections and adds a test for every requirement not yet listed, named after the behavior. A requirement that cannot be tested at the task's level is deferred in writing to the task that owns it (Task 19 at the latest); an untestable requirement is reported to the user, never skipped silently.
 - Temporary files go to `temp/` (gitignored); never read or print files under `secrets/`.
 - Commits in Russian with a conventional prefix; no `Co-Authored-By`, no agent attribution; plugins at project scope only.
 
@@ -52,6 +53,7 @@
 - [ ] **Step 2:** Create the workspace and empty crates so the test passes; `main` prints the version through clap.
 - [ ] **Step 3:** `deny.toml` allows only the licenses above plus Unicode-3.0, Unlicense, CC0-1.0 and the SQLite public-domain exception.
 - [ ] **Step 4:** Run `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo deny check licenses && cargo test -p lr-cli --test layers`. Expected: pass.
+- [ ] **Step 4a:** Add `crates/lr-cli/tests/spec_coverage.rs::every_scenario_of_section_16_is_named_by_an_e2e_test` as an ignored placeholder listing the 25 scenario ids; Task 19 un-ignores it.
 - [ ] **Step 5:** Commit `chore: каркас workspace по слоям и проверка правила зависимостей`.
 
 ### Task 2: Core model, profiles, requirements
@@ -258,4 +260,5 @@
 
 - [ ] **Step 1:** Tests using real implementations: `single_machine_submit_wait_passes_and_history_has_one_row`, `join_runner_by_code_then_job_runs_remote`, `kill_runner_mid_job_marks_lost_after_deadline` (with short timeout and `lost_min` override), `broker_restart_keeps_queue`, `timeout_kills_grandchildren`.
 - [ ] **Step 2:** Run `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo deny check licenses && cargo test --workspace`. Expected: all pass on Windows (and Linux when available).
-- [ ] **Step 3:** Commit `test: сквозные сценарии`; then whole-branch review and `superpowers:finishing-a-development-branch` only on the user's command.
+- [ ] **Step 3: Coverage audit.** Walk `docs/architecture.html` section by section (3, 4, 5, 6, 7, 9.4, 10.3, 12, 14, 15 and every scenario of 16) and write `temp/coverage.md`: one row per requirement with the test that covers it. Rows without a test are gaps: write the missing tests (or, for a genuinely untestable item, list it for the user). Expected: zero uncovered rows before the final review.
+- [ ] **Step 4:** Commit `test: сквозные сценарии и аудит покрытия требований`; then whole-branch review and `superpowers:finishing-a-development-branch` only on the user's command.
