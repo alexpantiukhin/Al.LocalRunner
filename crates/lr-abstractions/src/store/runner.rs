@@ -90,6 +90,14 @@ pub trait RunnerStore: Send + Sync {
     /// Removes every entry (the broker removed this runner); returns how many.
     async fn clear_outbox(&self) -> Result<usize, StoreError>;
 
+    /// Records message `seq` of `job` received from the broker (assign, cancel): `true` for
+    /// the next seq (`last + 1`), `false` for a repeat, [`StoreError::SeqGap`] beyond the
+    /// next. Unknown jobs start at 0.
+    async fn accept_seq(&self, job: &JobId, seq: u64) -> Result<bool, StoreError>;
+
+    /// The last seq of `job` accepted from the broker, 0 when none; sent in `resume`.
+    async fn last_seq(&self, job: &JobId) -> Result<u64, StoreError>;
+
     /// Adds or replaces a service by name.
     async fn upsert_service(&self, service: ServiceRow) -> Result<(), StoreError>;
 

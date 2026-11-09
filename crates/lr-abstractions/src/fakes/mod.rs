@@ -19,5 +19,5 @@ pub use process::{
     FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript,
 };
 pub use transport::{
-    channel_pair, ChannelTransport, FakeDialer, FakeListener, FakeNetwork, Faults,
+    channel_pair, ChannelTransport, FakeConnection, FakeDialer, FakeListener, FakeNetwork, Faults,
 };

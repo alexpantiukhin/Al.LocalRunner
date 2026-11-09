@@ -1,4 +1,4 @@
-use crate::store::{OutboxEntry, OutboxKind};
+use crate::store::{OutboxEntry, OutboxKind, StoreError};
 use lr_core::{JobId, Timestamp};
 use std::collections::HashMap;
 
@@ -72,5 +72,19 @@ impl MemoryOutbox {
         let before = self.entries.len();
         self.entries.retain(|(r, e)| !doomed(r, e));
         before - self.entries.len()
+    }
+}
+
+pub(crate) fn accept_next(last: &mut u64, seq: u64) -> Result<bool, StoreError> {
+    match seq {
+        s if s <= *last => Ok(false),
+        s if s == *last + 1 => {
+            *last = s;
+            Ok(true)
+        }
+        s => Err(StoreError::SeqGap {
+            expected: *last + 1,
+            got: s,
+        }),
     }
 }

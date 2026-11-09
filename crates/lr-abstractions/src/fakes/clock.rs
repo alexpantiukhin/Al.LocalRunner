@@ -54,10 +54,39 @@ impl ManualClock {
     }
 
     /// Yields to other tasks until at least `count` sleeps wait on this clock, so a test can
-    /// advance time only once the code under test is actually waiting.
+    /// advance time only once the code under test is actually waiting. Panics after
+    /// [`ManualClock::DEFAULT_YIELDS`] yields instead of hanging.
     pub async fn wait_for_sleepers(&self, count: usize) {
-        while self.sleepers() < count {
+        if let Err(seen) = self
+            .wait_for_sleepers_within(count, Self::DEFAULT_YIELDS)
+            .await
+        {
+            panic!(
+                "waited for {count} sleepers, only {seen} after {} yields",
+                Self::DEFAULT_YIELDS
+            );
+        }
+    }
+
+    /// Yields budget of [`ManualClock::wait_for_sleepers`].
+    pub const DEFAULT_YIELDS: usize = 10_000;
+
+    /// Like [`ManualClock::wait_for_sleepers`] but gives up after `max_yields` yields and
+    /// returns the number of sleepers seen then.
+    pub async fn wait_for_sleepers_within(
+        &self,
+        count: usize,
+        max_yields: usize,
+    ) -> Result<(), usize> {
+        for _ in 0..max_yields {
+            if self.sleepers() >= count {
+                return Ok(());
+            }
             tokio::task::yield_now().await;
+        }
+        match self.sleepers() {
+            n if n >= count => Ok(()),
+            n => Err(n),
         }
     }
 }

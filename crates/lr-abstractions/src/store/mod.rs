@@ -12,10 +12,10 @@ mod runner;
 
 pub use broker::BrokerStore;
 pub use broker_rows::{
-    Admission, Applied, CodeSource, GithubRunRow, Intake, JobKey, JobLogRow, JobRecord, JobRow,
-    JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow, PruneLimits,
-    PruneReport, Revoked, RunnerRow, RunnerState, SourceKind, StepRow, StepUpdate, Transition,
-    LOG_TRUNCATED_MARK,
+    Admission, Applied, CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobLogRow, JobRecord,
+    JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow,
+    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, SourceKind, StepRow, StepUpdate,
+    Transition, LOG_TRUNCATED_MARK,
 };
 pub use hub::{ActiveOrder, BrokerLink, HubStore};
 pub use query::{
@@ -86,6 +86,16 @@ pub enum StoreError {
     CodeUsedUp,
     /// The join code is for another kind of participant.
     CodeKindMismatch,
+    /// The join code fixes another name than the one joining.
+    CodeNameMismatch,
+    /// A received seq skips the next expected one; on an ordered transport with resume this
+    /// is a protocol error, not a loss to tolerate.
+    SeqGap {
+        /// The seq that should have come.
+        expected: u64,
+        /// The seq that came.
+        got: u64,
+    },
     /// Storage failure.
     Io(String),
 }
@@ -103,6 +113,10 @@ impl fmt::Display for StoreError {
             StoreError::CodeExpired => f.write_str("join code expired"),
             StoreError::CodeUsedUp => f.write_str("join code used up"),
             StoreError::CodeKindMismatch => f.write_str("join code is for another kind"),
+            StoreError::CodeNameMismatch => f.write_str("join code is for another name"),
+            StoreError::SeqGap { expected, got } => {
+                write!(f, "seq gap: expected {expected}, got {got}")
+            }
             StoreError::Io(e) => write!(f, "storage: {e}"),
         }
     }

@@ -1,24 +1,31 @@
 use super::broker_jobs::BrokerState;
 use crate::store::{
-    compute_stats, Admission, Applied, BrokerStore, Intake, JobFilter, JobKey, JobRecord, Join,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxEntry, OutboxKind, PruneLimits,
+    compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
+    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxEntry, OutboxKind, PruneLimits,
     PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate, StoreError,
     Transition,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// `broker.db` and `logs/` in memory, with the invariants of [`BrokerStore`].
 #[derive(Default)]
 pub struct MemoryBrokerStore {
-    state: Mutex<BrokerState>,
+    state: Arc<Mutex<BrokerState>>,
 }
 
 impl MemoryBrokerStore {
     /// An empty store.
     pub fn new() -> MemoryBrokerStore {
         MemoryBrokerStore::default()
+    }
+
+    /// Another handle over the same data, as if the database were closed and opened again.
+    pub fn reopen(&self) -> MemoryBrokerStore {
+        MemoryBrokerStore {
+            state: self.state.clone(),
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, BrokerState> {
@@ -45,25 +52,27 @@ impl BrokerState {
         if code.kind != join.machine.kind {
             return Err(StoreError::CodeKindMismatch);
         }
+        if code.name.as_ref().is_some_and(|n| *n != join.machine.name) {
+            return Err(StoreError::CodeNameMismatch);
+        }
+        let mut machine = join.machine;
+        if let Some(label) = &code.label {
+            machine.label = label.clone();
+        }
         let taken = self.machines.values().any(|m| {
-            m.revoked_at.is_none()
-                && (m.name == join.machine.name || m.public_key == join.machine.public_key)
+            m.revoked_at.is_none() && (m.name == machine.name || m.public_key == machine.public_key)
         });
         if taken {
-            return Err(StoreError::Duplicate(format!(
-                "machine {}",
-                join.machine.name
-            )));
+            return Err(StoreError::Duplicate(format!("machine {}", machine.name)));
         }
         let code = self.codes.get_mut(&join.code_hash).unwrap();
         code.uses_left -= 1;
-        code.machine_name = Some(join.machine.name.clone());
+        code.machine_name = Some(machine.name.clone());
         if code.uses_left == 0 {
             code.redeemed_at = Some(join.at);
         }
-        self.machines
-            .insert(join.machine.name.clone(), join.machine.clone());
-        Ok(join.machine)
+        self.machines.insert(machine.name.clone(), machine.clone());
+        Ok(machine)
     }
 
     fn revoke(&mut self, name: &str, at: Timestamp) -> Result<Revoked, StoreError> {
@@ -114,8 +123,8 @@ impl BrokerStore for MemoryBrokerStore {
         self.lock().grant(key, runner)
     }
 
-    async fn requeue(&self, order: OrderRow) -> Result<(), StoreError> {
-        self.lock().requeue(order)
+    async fn requeue(&self, key: &JobKey) -> Result<(), StoreError> {
+        self.lock().requeue(key)
     }
 
     async fn transition(&self, key: &JobKey, change: Transition) -> Result<Applied, StoreError> {
@@ -126,12 +135,16 @@ impl BrokerStore for MemoryBrokerStore {
         self.lock().update_step(key, update)
     }
 
-    async fn accept_seq(&self, key: &JobKey, seq: u64) -> Result<bool, StoreError> {
-        self.lock().accept_seq(key, seq)
+    async fn accept_seq(&self, key: &JobKey, from: Inbound, seq: u64) -> Result<bool, StoreError> {
+        self.lock().accept_seq(key, from, seq)
     }
 
-    async fn last_seq(&self, key: &JobKey) -> Result<u64, StoreError> {
-        self.lock().last_seq(key)
+    async fn last_seq(&self, key: &JobKey, from: Inbound) -> Result<u64, StoreError> {
+        self.lock().last_seq(key, from)
+    }
+
+    async fn next_seq_to_runner(&self, key: &JobKey) -> Result<u64, StoreError> {
+        self.lock().next_seq_to_runner(key)
     }
 
     async fn append_log(
@@ -172,6 +185,10 @@ impl BrokerStore for MemoryBrokerStore {
         }
         s.codes.insert(code.code_hash.clone(), code);
         Ok(())
+    }
+
+    async fn join_code(&self, code_hash: &str) -> Result<Option<JoinCodeRow>, StoreError> {
+        Ok(self.lock().codes.get(code_hash).cloned())
     }
 
     async fn join_codes(&self) -> Result<Vec<JoinCodeRow>, StoreError> {

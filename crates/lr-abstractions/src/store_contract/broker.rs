@@ -206,18 +206,20 @@ pub async fn cancelling_run_of_vanished_runner_ends_lost(store: &dyn BrokerStore
     assert_eq!(record.job.cancel_reason.as_deref(), Some("runner_lost"));
 }
 
-/// A granted run that never started goes back to the queue with its runner cleared.
+/// A granted run that never started goes back to the queue with its runner cleared; the store
+/// rebuilds the order row it stored at accept, `same_machine` and priority hint included.
 pub async fn unstarted_granted_run_can_be_requeued(store: &dyn BrokerStore) {
-    let i = intake("c1", "j1", "check", T0);
+    let mut i = intake("c1", "j1", "check", T0);
+    i.order.same_machine = true;
+    i.order.priority_hint = Some(5);
     let (key, order) = (i.job.key.clone(), i.order.clone());
     store.accept(i).await.unwrap();
     store.grant(&key, "r1").await.unwrap();
-    store.requeue(order.clone()).await.unwrap();
-    let orders = store.orders().await.unwrap();
-    assert_eq!(orders, vec![order.clone()]);
+    store.requeue(&key).await.unwrap();
+    assert_eq!(store.orders().await.unwrap(), vec![order]);
     assert_eq!(store.job(&key).await.unwrap().unwrap().job.runner, None);
     assert!(matches!(
-        store.requeue(order).await,
+        store.requeue(&key).await,
         Err(StoreError::Duplicate(_))
     ));
 }
@@ -225,13 +227,16 @@ pub async fn unstarted_granted_run_can_be_requeued(store: &dyn BrokerStore) {
 /// A started run is never queued again, so nothing runs twice.
 pub async fn started_run_cannot_be_requeued(store: &dyn BrokerStore) {
     let key = running(store, "c1", "j1").await;
-    let order = intake("c1", "j1", "check", T0).order;
     assert!(matches!(
-        store.requeue(order).await,
+        store.requeue(&key).await,
         Err(StoreError::Conflict(_))
     ));
     assert!(store.orders().await.unwrap().is_empty());
     assert_eq!(state(store, &key).await, JobState::Running);
+    assert!(matches!(
+        store.requeue(&JobKey::new("c1", "nope")).await,
+        Err(StoreError::NotFound(_))
+    ));
 }
 
 /// Step updates apply until the step ended or the run is final.
@@ -275,23 +280,6 @@ pub async fn step_updates_stop_at_step_end_and_run_end(store: &dyn BrokerStore) 
     assert_eq!(steps[0].state, StepState::Passed);
     assert_eq!(steps[0].finished_at, Some(at(15)));
     assert_eq!(steps[1].state, StepState::Queued);
-}
-
-/// A message seq seen before is reported as a repeat, per client key and JobId (spec 3.9).
-pub async fn repeated_seq_is_dropped_per_run(store: &dyn BrokerStore) {
-    let a = queued(store, "c1", "j1").await;
-    let b = queued(store, "c2", "j1").await;
-    assert_eq!(store.last_seq(&a).await.unwrap(), 0);
-    assert!(store.accept_seq(&a, 1).await.unwrap());
-    assert!(!store.accept_seq(&a, 1).await.unwrap());
-    assert!(store.accept_seq(&a, 3).await.unwrap());
-    assert!(!store.accept_seq(&a, 2).await.unwrap());
-    assert_eq!(store.last_seq(&a).await.unwrap(), 3);
-    assert!(store.accept_seq(&b, 1).await.unwrap());
-    assert!(matches!(
-        store.accept_seq(&JobKey::new("c1", "nope"), 1).await,
-        Err(StoreError::NotFound(_))
-    ));
 }
 
 /// Output appended to a run's log is read back whole, with its size recorded.

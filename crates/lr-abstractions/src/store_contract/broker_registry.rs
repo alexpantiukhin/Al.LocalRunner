@@ -62,6 +62,62 @@ pub async fn multi_use_code_counts_down_per_join(store: &dyn BrokerStore) {
     assert_eq!(uses_left(store, "h").await, 0);
 }
 
+/// A code issued with `--name` admits only that name, and spends nothing on another one.
+pub async fn named_code_admits_only_its_name(store: &dyn BrokerStore) {
+    let mut c = code("h", MachineKind::Hub, 1);
+    c.name = Some("laptop".into());
+    store.issue_code(c).await.unwrap();
+    let other = machine("desktop", MachineKind::Hub, "k1");
+    assert_eq!(
+        store.redeem(join("h", other, at(1))).await,
+        Err(StoreError::CodeNameMismatch)
+    );
+    assert_eq!(uses_left(store, "h").await, 1);
+    assert!(store.machines().await.unwrap().is_empty());
+    let named = machine("laptop", MachineKind::Hub, "k1");
+    let stored = store.redeem(join("h", named, at(2))).await.unwrap();
+    assert_eq!(stored.name, "laptop");
+}
+
+/// The label of the code replaces the label the joining machine brought.
+pub async fn code_label_applied_to_joining_machine(store: &dyn BrokerStore) {
+    let mut c = code("h", MachineKind::Runner, 2);
+    c.label = Some("ci-farm".into());
+    store.issue_code(c).await.unwrap();
+    let stored = store
+        .redeem(join("h", machine("r-1", MachineKind::Runner, "k1"), at(1)))
+        .await
+        .unwrap();
+    assert_eq!(stored.label, "ci-farm");
+    let kept = store.machine_by_key("k1").await.unwrap().unwrap();
+    assert_eq!(kept.label, "ci-farm");
+    let mut unlabelled = code("u", MachineKind::Runner, 1);
+    unlabelled.label = None;
+    store.issue_code(unlabelled).await.unwrap();
+    let own = store
+        .redeem(join("u", machine("r-2", MachineKind::Runner, "k2"), at(2)))
+        .await
+        .unwrap();
+    assert_eq!(own.label, "agent");
+}
+
+/// A code is found by its hash, with its current uses; an unknown hash finds nothing.
+pub async fn join_code_found_by_hash(store: &dyn BrokerStore) {
+    let c = code("h", MachineKind::Runner, 2);
+    store.issue_code(c.clone()).await.unwrap();
+    store
+        .issue_code(code("g", MachineKind::Hub, 1))
+        .await
+        .unwrap();
+    assert_eq!(store.join_code("h").await.unwrap(), Some(c));
+    store
+        .redeem(join("h", machine("r-1", MachineKind::Runner, "k1"), at(1)))
+        .await
+        .unwrap();
+    assert_eq!(store.join_code("h").await.unwrap().unwrap().uses_left, 1);
+    assert_eq!(store.join_code("nope").await.unwrap(), None);
+}
+
 /// Unknown, expired and other-kind codes are refused and spend nothing.
 pub async fn invalid_codes_refused_without_spending_a_use(store: &dyn BrokerStore) {
     store

@@ -4,19 +4,30 @@ use async_trait::async_trait;
 use lr_core::Timestamp;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
 
-struct Envelope {
-    frame: Frame,
-    deliver_at: Option<Timestamp>,
+enum Envelope {
+    Frame {
+        frame: Frame,
+        deliver_at: Option<Timestamp>,
+    },
+    Eof,
 }
 
 #[derive(Default)]
 struct Direction {
     queue: Mutex<VecDeque<Envelope>>,
     notify: Notify,
+    eof_sent: AtomicBool,
+}
+
+impl Direction {
+    fn wake(&self) {
+        self.notify.notify_one();
+        self.notify.notify_waiters();
+    }
 }
 
 #[derive(Default)]
@@ -30,8 +41,14 @@ impl Link {
         self.closed.store(true, Ordering::SeqCst);
         for dir in &self.dirs {
             dir.queue.lock().unwrap().clear();
-            dir.notify.notify_one();
-            dir.notify.notify_waiters();
+            dir.wake();
+        }
+    }
+
+    fn finish(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        for dir in &self.dirs {
+            dir.wake();
         }
     }
 }
@@ -69,7 +86,8 @@ impl Faults {
         plan.delay_by = by;
     }
 
-    /// Breaks the connection: frames in flight are lost and both ends see `Closed`.
+    /// Breaks the connection: frames in flight are lost and both ends see `Closed`, unlike the
+    /// graceful [`Transport::close`].
     pub fn disconnect(&self) {
         self.link.disconnect();
     }
@@ -80,7 +98,7 @@ pub struct ChannelTransport {
     peer: Peer,
     link: Arc<Link>,
     send_dir: usize,
-    faults: Faults,
+    faults: Arc<Faults>,
     clock: Arc<dyn Clock>,
 }
 
@@ -88,6 +106,17 @@ impl ChannelTransport {
     /// Faults of the frames this end sends.
     pub fn faults(&self) -> &Faults {
         &self.faults
+    }
+
+    fn shared_faults(&self) -> Arc<Faults> {
+        self.faults.clone()
+    }
+
+    fn closed_here(&self) -> bool {
+        self.link.closed.load(Ordering::SeqCst)
+            || self.link.dirs[self.send_dir]
+                .eof_sent
+                .load(Ordering::SeqCst)
     }
 }
 
@@ -103,10 +132,10 @@ pub fn channel_pair(
         peer,
         link: link.clone(),
         send_dir,
-        faults: Faults {
+        faults: Arc::new(Faults {
             link: link.clone(),
             plan: Mutex::new(FaultPlan::default()),
-        },
+        }),
         clock: clock.clone(),
     };
     (end(b, 0), end(a, 1))
@@ -119,7 +148,7 @@ impl Transport for ChannelTransport {
     }
 
     async fn send(&self, frame: Frame) -> Result<(), TransportError> {
-        if self.link.closed.load(Ordering::SeqCst) {
+        if self.closed_here() {
             return Err(TransportError::Closed);
         }
         if frame.len() > MAX_FRAME_BYTES {
@@ -151,7 +180,7 @@ impl Transport for ChannelTransport {
         {
             let mut queue = dir.queue.lock().unwrap();
             for _ in 0..copies {
-                queue.push_back(Envelope {
+                queue.push_back(Envelope::Frame {
                     frame: frame.clone(),
                     deliver_at,
                 });
@@ -164,15 +193,24 @@ impl Transport for ChannelTransport {
     async fn recv(&self) -> Result<Frame, TransportError> {
         let dir = &self.link.dirs[1 - self.send_dir];
         loop {
-            if self.link.closed.load(Ordering::SeqCst) {
+            if self.closed_here() {
                 return Err(TransportError::Closed);
             }
             let wait_until = {
                 let mut queue = dir.queue.lock().unwrap();
                 match queue.front() {
-                    Some(env) => match env.deliver_at {
-                        Some(at) if at > self.clock.now() => Some(at),
-                        _ => return Ok(queue.pop_front().unwrap().frame),
+                    Some(Envelope::Eof) => {
+                        queue.clear();
+                        drop(queue);
+                        self.link.finish();
+                        return Err(TransportError::Closed);
+                    }
+                    Some(Envelope::Frame { deliver_at, .. }) => match deliver_at {
+                        Some(at) if *at > self.clock.now() => Some(*at),
+                        _ => match queue.pop_front() {
+                            Some(Envelope::Frame { frame, .. }) => return Ok(frame),
+                            _ => None,
+                        },
                     },
                     None => None,
                 }
@@ -185,8 +223,23 @@ impl Transport for ChannelTransport {
     }
 
     async fn close(&self) {
-        self.link.disconnect();
+        let dir = &self.link.dirs[self.send_dir];
+        if dir.eof_sent.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        dir.queue.lock().unwrap().push_back(Envelope::Eof);
+        dir.wake();
+        self.link.dirs[1 - self.send_dir].wake();
     }
+}
+
+/// Fault handles of one connection made through [`FakeNetwork`].
+#[derive(Clone)]
+pub struct FakeConnection {
+    /// Faults of the frames the dialing side sends.
+    pub client: Arc<Faults>,
+    /// Faults of the frames the listening side sends.
+    pub server: Arc<Faults>,
 }
 
 struct ListenerState {
@@ -199,7 +252,7 @@ struct ListenerState {
 struct Net {
     listeners: HashMap<String, Arc<ListenerState>>,
     unreachable: HashSet<String>,
-    links: HashMap<String, Vec<Weak<Link>>>,
+    connections: HashMap<String, Vec<FakeConnection>>,
 }
 
 /// An in-memory network of named addresses: listeners bind an address, dialers connect to it.
@@ -242,6 +295,17 @@ impl FakeNetwork {
         }
     }
 
+    /// Fault handles of every connection dialed to `address` and not cut, oldest first.
+    pub fn connections(&self, address: &str) -> Vec<FakeConnection> {
+        self.net
+            .lock()
+            .unwrap()
+            .connections
+            .get(address)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Makes `address` reachable or not for new connections; live connections stay.
     pub fn set_reachable(&self, address: &str, reachable: bool) {
         let mut net = self.net.lock().unwrap();
@@ -254,15 +318,15 @@ impl FakeNetwork {
 
     /// Breaks every live connection to `address`.
     pub fn cut(&self, address: &str) {
-        let links = self
+        let connections = self
             .net
             .lock()
             .unwrap()
-            .links
+            .connections
             .remove(address)
             .unwrap_or_default();
-        for link in links.iter().filter_map(Weak::upgrade) {
-            link.disconnect();
+        for connection in connections {
+            connection.client.disconnect();
         }
     }
 }
@@ -321,10 +385,13 @@ impl Dialer for FakeDialer {
             self.peer.clone(),
             listener.peer.clone(),
         );
-        net.links
+        net.connections
             .entry(address.to_string())
             .or_default()
-            .push(Arc::downgrade(&client.link));
+            .push(FakeConnection {
+                client: client.shared_faults(),
+                server: server.shared_faults(),
+            });
         listener.queue.lock().unwrap().push_back(server);
         listener.notify.notify_one();
         Ok(Box::new(client))

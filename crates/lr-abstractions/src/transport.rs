@@ -1,12 +1,9 @@
 use async_trait::async_trait;
 use lr_core::Endpoint;
+pub use lr_core::MAX_FRAME_BYTES;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fmt;
-
-/// Largest frame a transport carries, both ways: 4 MiB (spec 3.9). A larger frame is refused
-/// by `send` and by the receiving side; it is never split.
-pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 /// One framed message: a single JSON document. The transport moves frames whole and in order;
 /// what the document means is defined by the protocol crate.
@@ -118,7 +115,8 @@ pub trait Transport: Send + Sync {
     /// Receives the next frame; [`TransportError::Closed`] once the connection is gone.
     async fn recv(&self) -> Result<Frame, TransportError>;
 
-    /// Closes the connection; the other side's `recv` then fails with `Closed`.
+    /// Closes the connection gracefully: frames sent before are still delivered, then the other
+    /// side's `recv` fails with `Closed`; this end can neither send nor receive afterwards.
     async fn close(&self);
 }
 

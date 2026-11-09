@@ -25,6 +25,15 @@ impl JobKey {
     }
 }
 
+/// Which side sent a message of a run to the broker; each is its own seq direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Inbound {
+    /// The client hub (orders, cancels).
+    Hub,
+    /// The runner of the run (started, output, results).
+    Runner,
+}
+
 /// Where the job came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceKind {

@@ -1,8 +1,8 @@
-use super::outbox::MemoryOutbox;
+use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
-    Admission, Applied, Intake, JobFilter, JobKey, JobLogRow, JobRecord, JoinCodeRow, LogAppend,
-    MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow, StepUpdate, StoreError, Transition,
-    LOG_TRUNCATED_MARK,
+    Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord, JoinCodeRow,
+    LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow, StepUpdate, StoreError,
+    Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::BTreeMap;
@@ -11,7 +11,9 @@ pub(crate) struct Run {
     pub(crate) record: JobRecord,
     log: Vec<u8>,
     truncated: bool,
-    last_seq: u64,
+    order: OrderRow,
+    received: BTreeMap<Inbound, u64>,
+    to_runner: u64,
 }
 
 #[derive(Default)]
@@ -47,7 +49,7 @@ impl BrokerState {
                 "intake needs a queued job and an order of the same key".into(),
             ));
         }
-        self.orders.insert(key.clone(), intake.order);
+        self.orders.insert(key.clone(), intake.order.clone());
         self.runs.insert(
             key,
             Run {
@@ -60,7 +62,9 @@ impl BrokerState {
                 },
                 log: Vec::new(),
                 truncated: false,
-                last_seq: 0,
+                order: intake.order,
+                received: BTreeMap::new(),
+                to_runner: 0,
             },
         );
         Ok(Admission::Accepted)
@@ -84,15 +88,17 @@ impl BrokerState {
         Ok(())
     }
 
-    pub(crate) fn requeue(&mut self, order: OrderRow) -> Result<(), StoreError> {
-        let key = order.key.clone();
+    pub(crate) fn requeue(&mut self, key: &JobKey) -> Result<(), StoreError> {
+        let key = key.clone();
         if self.orders.contains_key(&key) {
             return Err(StoreError::Duplicate(format!(
                 "order {}/{}",
                 key.client, key.job
             )));
         }
-        let job = &mut self.run(&key)?.record.job;
+        let run = self.run(&key)?;
+        let order = run.order.clone();
+        let job = &mut run.record.job;
         if job.state != JobState::Queued || job.started_at.is_some() {
             return Err(StoreError::Conflict(format!(
                 "job {} already started, cannot be queued again",
@@ -169,18 +175,23 @@ impl BrokerState {
         Ok(Applied::Changed)
     }
 
-    pub(crate) fn accept_seq(&mut self, key: &JobKey, seq: u64) -> Result<bool, StoreError> {
-        let run = self.run(key)?;
-        if seq > run.last_seq {
-            run.last_seq = seq;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+    pub(crate) fn accept_seq(
+        &mut self,
+        key: &JobKey,
+        from: Inbound,
+        seq: u64,
+    ) -> Result<bool, StoreError> {
+        accept_next(self.run(key)?.received.entry(from).or_insert(0), seq)
     }
 
-    pub(crate) fn last_seq(&mut self, key: &JobKey) -> Result<u64, StoreError> {
-        Ok(self.run(key)?.last_seq)
+    pub(crate) fn last_seq(&mut self, key: &JobKey, from: Inbound) -> Result<u64, StoreError> {
+        Ok(self.run(key)?.received.get(&from).copied().unwrap_or(0))
+    }
+
+    pub(crate) fn next_seq_to_runner(&mut self, key: &JobKey) -> Result<u64, StoreError> {
+        let run = self.run(key)?;
+        run.to_runner += 1;
+        Ok(run.to_runner)
     }
 
     pub(crate) fn append_log(

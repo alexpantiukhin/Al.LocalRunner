@@ -1,6 +1,7 @@
 use super::broker_rows::{
-    Admission, Applied, Intake, JobKey, JobRecord, Join, JoinCodeRow, LogAppend, MachineRow,
-    OrderRow, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, StepUpdate, Transition,
+    Admission, Applied, Inbound, Intake, JobKey, JobRecord, Join, JoinCodeRow, LogAppend,
+    MachineRow, OrderRow, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, StepUpdate,
+    Transition,
 };
 use super::query::{JobFilter, Stats, StatsQuery};
 use super::{OutboxEntry, OutboxKind, StoreError};
@@ -31,24 +32,37 @@ pub trait BrokerStore: Send + Sync {
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError>;
 
     /// Puts a granted but not started run back into the queue (its runner vanished before
-    /// start, or broker restart): the order row is stored again and the runner cleared.
-    async fn requeue(&self, order: OrderRow) -> Result<(), StoreError>;
+    /// start, or broker restart): the order row is rebuilt from what `accept` stored (client
+    /// machine, spec JSON, platform, `same_machine`, priority hint, `enqueued_at`, queue state)
+    /// and the runner cleared. Refused for a started or final run, and while an order row
+    /// exists.
+    async fn requeue(&self, key: &JobKey) -> Result<(), StoreError>;
 
     /// Changes the state of a run as `lr_core::JobState::can_become` allows. `Running` needs
     /// a grant and sets `started_at`; a final state sets `finished_at` and the exit code and
     /// removes a waiting order row. Canceller and reason are kept once set. A change of a
     /// final run is [`Applied::Ignored`].
+    ///
+    /// The store does not know which runner a report comes from: refusing a late result of a
+    /// runner that was removed, or of a run that was requeued and granted to another runner
+    /// (spec 3.9 "result of a removed runner is not accepted"), is the engine's job.
     async fn transition(&self, key: &JobKey, change: Transition) -> Result<Applied, StoreError>;
 
     /// Updates one step; ignored when the run is final or the step already ended.
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError>;
 
-    /// Records message `seq` received from the runner for this run: `true` when it is new
-    /// (greater than every seq seen), `false` for a repeat that must be dropped (spec 3.9).
-    async fn accept_seq(&self, key: &JobKey, seq: u64) -> Result<bool, StoreError>;
+    /// Records message `seq` of this run received from `from`; each direction has its own
+    /// counter (spec 3.9). `true` for the next seq (`last + 1`), which becomes the last;
+    /// `false` for a repeat (`seq <= last`) that must be dropped; [`StoreError::SeqGap`] for a
+    /// seq beyond the next, a protocol error on an ordered transport with resume.
+    async fn accept_seq(&self, key: &JobKey, from: Inbound, seq: u64) -> Result<bool, StoreError>;
 
-    /// The greatest seq accepted for this run, 0 when none; sent in `resume`.
-    async fn last_seq(&self, key: &JobKey) -> Result<u64, StoreError>;
+    /// The last seq accepted for this run from `from`, 0 when none; sent in `resume`.
+    async fn last_seq(&self, key: &JobKey, from: Inbound) -> Result<u64, StoreError>;
+
+    /// Allocates the next seq of a message from the broker to the runner of this run (from 1);
+    /// the counter survives a broker restart, so a resumed runner never sees a seq reused.
+    async fn next_seq_to_runner(&self, key: &JobKey) -> Result<u64, StoreError>;
 
     /// Appends output to the run's log, keeping it within `limit_bytes` (spec 8).
     async fn append_log(
@@ -77,13 +91,18 @@ pub trait BrokerStore: Send + Sync {
     /// Stores a newly issued join code.
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError>;
 
+    /// The join code with this hash.
+    async fn join_code(&self, code_hash: &str) -> Result<Option<JoinCodeRow>, StoreError>;
+
     /// All join codes.
     async fn join_codes(&self) -> Result<Vec<JoinCodeRow>, StoreError>;
 
     /// Records a join and spends one use of the code in one write, so an interrupted join
     /// costs no use (spec 3.8). Fails without any change when the code is unknown, expired,
-    /// used up or of another kind, or the name belongs to an unrevoked machine; a revoked
-    /// machine of the same name is replaced.
+    /// used up or of another kind, when the code fixes a name (`broker add --name`) and the
+    /// join asks for another, or the name or key belongs to an unrevoked machine; a revoked
+    /// machine of the same name is replaced. The code's label, when set, replaces the label of
+    /// the joining record; the stored record is returned.
     async fn redeem(&self, join: Join) -> Result<MachineRow, StoreError>;
 
     /// All key records, revoked ones included.

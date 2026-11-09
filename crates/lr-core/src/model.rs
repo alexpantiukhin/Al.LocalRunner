@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
+/// Largest protocol frame, both ways: 4 MiB (spec 3.9). Shared by the protocol crate and the
+/// transport contract so both refuse the same frames.
+pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
 /// Identifier of a job, issued by the hub.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]

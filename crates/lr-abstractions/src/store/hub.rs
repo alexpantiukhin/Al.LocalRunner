@@ -93,8 +93,10 @@ pub trait HubStore: Send + Sync {
     /// Sets or clears the broker of an active order.
     async fn set_broker(&self, job: &JobId, broker: Option<&str>) -> Result<(), StoreError>;
 
-    /// Records message `seq` received from the broker: `true` when new (greater than
-    /// `last_seq`, which it becomes), `false` for a repeat.
+    /// Records message `seq` received from the broker: `true` for the next seq
+    /// (`last_seq + 1`, which it becomes), `false` for a repeat (`seq <= last_seq`),
+    /// [`StoreError::SeqGap`] beyond the next. After [`HubStore::finish`] the order is gone
+    /// and this returns `NotFound`, which the caller treats as a repeat of a finished job.
     async fn accept_seq(&self, job: &JobId, seq: u64) -> Result<bool, StoreError>;
 
     /// The job reached its final state: removes the active order and its outbox entries.

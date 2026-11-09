@@ -267,8 +267,11 @@ impl std::error::Error for ProcessError {}
 /// `failed`. On [`Stop::Cancel`] the running step gets the soft signal and is killed after
 /// `cancel_grace`; on [`Stop::Kill`] it is killed at once; it ends `cancelled`, later steps
 /// `skipped`, the job `cancelled`, and `run_job` returns only when the tree is dead. Output
-/// is passed to `output` with every secret value of the job replaced by [`MASK`]. A step that
-/// cannot be spawned is `failed` without an exit code. All times come from the runner's clock.
+/// is passed to `output` with every secret value of the job replaced by [`MASK`], also when a
+/// value is split across reads of the process output: [`mask_secrets`] works on one buffer
+/// only, so the implementation buffers output (for example up to a line end, or keeps the
+/// last `max secret length - 1` bytes back) before masking and emitting. A step that cannot be
+/// spawned is `failed` without an exit code. All times come from the runner's clock.
 #[async_trait]
 pub trait ProcessRunner: Send + Sync {
     /// Runs `spec` to its end and reports how it ended.
@@ -303,7 +306,9 @@ pub trait ProcessInspector: Send + Sync {
     fn liveness(&self, pid: u32, start: u64) -> Liveness;
 }
 
-/// Replaces every occurrence of each non-empty secret value in `data` with [`MASK`].
+/// Replaces every occurrence of each non-empty secret value in `data` with [`MASK`]. It sees
+/// only this buffer: a value split between two chunks is not found, so callers mask buffered
+/// output, never raw reads (see [`ProcessRunner`]).
 pub fn mask_secrets(data: &[u8], secrets: &[&SecretValue]) -> Vec<u8> {
     let mut out = data.to_vec();
     for secret in secrets {

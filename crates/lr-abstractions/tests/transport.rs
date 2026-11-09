@@ -81,6 +81,25 @@ async fn close_by_one_end_is_seen_by_the_other() {
 }
 
 #[tokio::test]
+async fn graceful_close_delivers_frames_sent_before_it_then_closed() {
+    let (_, clock) = clock();
+    let (a, b) = channel_pair(clock, ipc_peer("a"), ipc_peer("b"));
+    a.send(Frame::from_bytes(b"Bye".to_vec())).await.unwrap();
+    a.close().await;
+    assert!(matches!(
+        a.send(Frame::from_bytes(b"late".to_vec())).await,
+        Err(TransportError::Closed)
+    ));
+    assert!(matches!(a.recv().await, Err(TransportError::Closed)));
+    assert_eq!(b.recv().await.unwrap().into_bytes(), b"Bye".to_vec());
+    assert!(matches!(b.recv().await, Err(TransportError::Closed)));
+    assert!(matches!(
+        b.send(Frame::from_bytes(b"x".to_vec())).await,
+        Err(TransportError::Closed)
+    ));
+}
+
+#[tokio::test]
 async fn delayed_frame_arrives_only_after_clock_advance_and_keeps_order() {
     let (manual, clock) = clock();
     let (a, b) = channel_pair(clock, ipc_peer("a"), ipc_peer("b"));
@@ -150,6 +169,41 @@ async fn dial_with_wrong_fingerprint_is_refused() {
     assert_eq!(listener.pending(), 0);
 }
 
+fn bytes(s: &str) -> Frame {
+    Frame::from_bytes(s.as_bytes().to_vec())
+}
+
+#[tokio::test]
+async fn faults_reach_connections_made_through_the_network() {
+    let (manual, clock) = clock();
+    let net = FakeNetwork::new(clock);
+    let listener = net.listen("broker:7000", net_peer("10.0.0.1", "fp"));
+    let at_hub = net
+        .dialer(net_peer("10.0.0.5", "k"))
+        .dial("broker:7000", None)
+        .await
+        .unwrap();
+    let at_broker = listener.accept().await.unwrap();
+    let conn = net.connections("broker:7000").remove(0);
+    conn.client.duplicate_next(1);
+    at_hub.send(bytes("order")).await.unwrap();
+    at_hub.send(bytes("next")).await.unwrap();
+    for want in ["order", "order", "next"] {
+        assert_eq!(at_broker.recv().await.unwrap(), bytes(want));
+    }
+    conn.server.drop_next(1);
+    at_broker.send(bytes("lost")).await.unwrap();
+    at_broker.send(bytes("kept")).await.unwrap();
+    assert_eq!(at_hub.recv().await.unwrap(), bytes("kept"));
+    conn.server.delay_next(1, Duration::from_secs(5));
+    at_broker.send(bytes("late")).await.unwrap();
+    let task = tokio::spawn(async move { at_hub.recv().await.unwrap() });
+    manual.wait_for_sleepers(1).await;
+    assert!(!task.is_finished());
+    manual.advance(Duration::from_secs(5));
+    assert_eq!(task.await.unwrap(), bytes("late"));
+}
+
 #[tokio::test]
 async fn cut_drops_live_connections_to_address() {
     let (_, clock) = clock();
@@ -161,7 +215,9 @@ async fn cut_drops_live_connections_to_address() {
         .await
         .unwrap();
     let at_broker = listener.accept().await.unwrap();
+    assert_eq!(net.connections("broker:7000").len(), 1);
     net.cut("broker:7000");
+    assert!(net.connections("broker:7000").is_empty());
     assert!(matches!(at_hub.recv().await, Err(TransportError::Closed)));
     assert!(matches!(
         at_broker.recv().await,

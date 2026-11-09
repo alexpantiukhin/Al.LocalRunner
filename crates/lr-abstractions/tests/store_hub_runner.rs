@@ -4,12 +4,18 @@ use std::path::Path;
 
 mod hub {
     use super::MemoryHubStore;
-    lr_abstractions::hub_store_contract!(MemoryHubStore::new());
+    lr_abstractions::hub_store_contract!(
+        make: MemoryHubStore::new(),
+        reopen: |s: MemoryHubStore| s.reopen(),
+    );
 }
 
 mod runner {
     use super::MemoryRunnerStore;
-    lr_abstractions::runner_store_contract!(MemoryRunnerStore::new());
+    lr_abstractions::runner_store_contract!(
+        make: MemoryRunnerStore::new(),
+        reopen: |s: MemoryRunnerStore| s.reopen(),
+    );
 }
 
 #[tokio::test]

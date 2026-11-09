@@ -70,6 +70,20 @@ async fn dropped_sleep_is_not_counted_as_sleeper() {
 }
 
 #[tokio::test]
+async fn waiting_for_absent_sleepers_times_out_instead_of_hanging() {
+    let (manual, _clock) = clock();
+    assert_eq!(manual.wait_for_sleepers_within(1, 100).await, Err(0));
+    assert_eq!(manual.wait_for_sleepers_within(0, 1).await, Ok(()));
+}
+
+#[tokio::test]
+#[should_panic(expected = "waited for 2 sleepers")]
+async fn wait_for_sleepers_panics_after_its_budget() {
+    let (manual, _clock) = clock();
+    manual.wait_for_sleepers(2).await;
+}
+
+#[tokio::test]
 async fn sleep_until_waits_for_absolute_time() {
     let (manual, clock) = clock();
     let c = clock.clone();

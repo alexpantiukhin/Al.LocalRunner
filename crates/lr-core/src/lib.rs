@@ -22,7 +22,7 @@ pub use identity::{
     validate_note, GithubInfo, Identity, IdentityError, SenderFacts, Source,
 };
 pub use matching::{satisfies, Accept, Capabilities, Mismatch, MismatchReason, ServiceStatus};
-pub use model::{JobId, JobState, StepState, Timestamp, Zone};
+pub use model::{JobId, JobState, StepState, Timestamp, Zone, MAX_FRAME_BYTES};
 pub use policy::{
     Condition, GroupBy, Policy, Quota, Reserve, Rule, RulePolicy, Strategy, DEFAULT_AGE_AFTER_MIN,
     DEFAULT_CI_PRIORITY,

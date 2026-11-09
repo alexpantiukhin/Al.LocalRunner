@@ -1,4 +1,4 @@
-use super::outbox::MemoryOutbox;
+use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
     ActiveOrder, BrokerLink, HubStore, OutboxEntry, OutboxKind, RunnerStore, StoreError,
 };
@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use lr_core::{JobId, Timestamp, Zone};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct HubState {
@@ -20,13 +20,20 @@ struct HubState {
 /// `hub.db` and the log copies in memory, with the invariants of [`HubStore`].
 #[derive(Default)]
 pub struct MemoryHubStore {
-    state: Mutex<HubState>,
+    state: Arc<Mutex<HubState>>,
 }
 
 impl MemoryHubStore {
     /// An empty store.
     pub fn new() -> MemoryHubStore {
         MemoryHubStore::default()
+    }
+
+    /// Another handle over the same data, as if the database were closed and opened again.
+    pub fn reopen(&self) -> MemoryHubStore {
+        MemoryHubStore {
+            state: self.state.clone(),
+        }
     }
 
     /// Content of a log copy written with `append_log_copy`.
@@ -82,12 +89,7 @@ impl HubStore for MemoryHubStore {
     async fn accept_seq(&self, job: &JobId, seq: u64) -> Result<bool, StoreError> {
         let mut s = self.state.lock().unwrap();
         let order = s.active.get_mut(job).ok_or_else(|| missing(job))?;
-        if seq > order.last_seq {
-            order.last_seq = seq;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        accept_next(&mut order.last_seq, seq)
     }
 
     async fn finish(&self, job: &JobId) -> Result<(), StoreError> {
@@ -180,18 +182,26 @@ struct RunnerState {
     outbox: MemoryOutbox,
     services: BTreeMap<String, ServiceRow>,
     cache: BTreeMap<CacheKey, CacheEntry>,
+    received: BTreeMap<JobId, u64>,
 }
 
 /// `runner.db` in memory, with the invariants of [`RunnerStore`].
 #[derive(Default)]
 pub struct MemoryRunnerStore {
-    state: Mutex<RunnerState>,
+    state: Arc<Mutex<RunnerState>>,
 }
 
 impl MemoryRunnerStore {
     /// An empty store.
     pub fn new() -> MemoryRunnerStore {
         MemoryRunnerStore::default()
+    }
+
+    /// Another handle over the same data, as if the database were closed and opened again.
+    pub fn reopen(&self) -> MemoryRunnerStore {
+        MemoryRunnerStore {
+            state: self.state.clone(),
+        }
     }
 }
 
@@ -226,6 +236,22 @@ impl RunnerStore for MemoryRunnerStore {
 
     async fn clear_outbox(&self) -> Result<usize, StoreError> {
         Ok(self.state.lock().unwrap().outbox.remove(|_, _| true))
+    }
+
+    async fn accept_seq(&self, job: &JobId, seq: u64) -> Result<bool, StoreError> {
+        let mut s = self.state.lock().unwrap();
+        accept_next(s.received.entry(job.clone()).or_insert(0), seq)
+    }
+
+    async fn last_seq(&self, job: &JobId) -> Result<u64, StoreError> {
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .received
+            .get(job)
+            .copied()
+            .unwrap_or(0))
     }
 
     async fn upsert_service(&self, service: ServiceRow) -> Result<(), StoreError> {
