@@ -172,7 +172,7 @@
 
 **Interfaces:**
 - Consumes: Tasks 2–9.
-- Produces: `struct DaemonConfig {state_dir, max_timeout_s, grace_s, starvation, retention, pools: Vec<PoolCfg>, workers: BTreeMap<Level,u32>, hub: Option<HubCfg>}`, `struct Engine`, `Engine::start(cfg, store: Store) -> Engine`, `submit(&self, SubmitReq) -> Result<JobId, SubmitError>` (rejects unreachable fits and missing `timeout_s`, caps timeout), `cancel(&self, who: &Identity, target: &str, force: bool, reason: Option<&str>) -> CancelResult`, `subscribe(&self) -> broadcast::Receiver<JobEventView>`, `snapshot(&self) -> Snapshot`, `mark_submitter_dead(&self, JobId)`. Queued jobs are persisted in the store and restored on start; on start any job left `running` by a dead daemon is marked `failed` with reason `daemon restarted`.
+- Produces: `struct DaemonConfig {state_dir, max_timeout_s, grace_s, starvation, retention, pools: Vec<PoolCfg>, workers: BTreeMap<Level,u32>, hub: Option<HubCfg>}`, `struct Engine`, `Engine::start(cfg, store: Store) -> Engine`, `submit(&self, SubmitReq) -> Result<JobId, SubmitError>` (rejects unreachable fits and missing `timeout_s`, caps timeout), `cancel(&self, who: &Identity, target: &str, force: bool, reason: Option<&str>) -> CancelResult`, `subscribe(&self) -> broadcast::Receiver<JobEventView>`, `snapshot(&self) -> Snapshot`, `mark_submitter_dead(&self, JobId)`. Queued jobs are persisted in `hub.db` (`queue_entry`, with `pool`, `runner`, `lease`) and restored on start; on start any job left `running` by a dead daemon is marked `failed` with reason `daemon restarted`.
 
 - [ ] **Step 1: Write failing tests** with a fake runner: `job_goes_queued_running_passed`, `cancel_queued_removes_it_without_starting`, `cancel_other_label_needs_force_and_is_recorded`, `finish_vs_cancel_race_leaves_single_final_state`, `restart_restores_queued_and_reaps_running`, `dead_submitter_drops_queued_and_kills_running_unless_detached`, `timeout_above_cap_is_lowered`, `reject_on_submit_when_never_fits`, `result_delivered_twice_writes_one_history_row`.
 - [ ] **Step 2:** Run `cargo test -p lr-daemon --test engine`; expected FAIL.
@@ -234,7 +234,7 @@
 
 - [ ] **Step 1: Write failing tests:** `code_is_single_use`, `code_expires_after_one_hour`, `wrong_code_rejected_without_hint`, `signature_with_registered_key_verifies`, `removed_machine_no_longer_verifies`, `client_rejects_certificate_with_other_fingerprint`, `pool_limits_mismatch_on_join_is_rejected_with_difference` (via `MachineInfo.pool_limits`).
 - [ ] **Step 2:** Run `cargo test -p lr-net`; expected FAIL.
-- [ ] **Step 3:** Implement with rcgen, rustls, sha2, ed25519-dalek; the registry persists to the state directory, public keys only.
+- [ ] **Step 3:** Implement with rcgen, rustls, sha2, ed25519-dalek; the registry persists in `hub.db` (tables `machine`, `join_code`, see `docs/architecture.html`), public keys only.
 - [ ] **Step 4:** Run; expected PASS. Commit `feat(net): сертификат хаба, коды подключения, ключи`.
 
 ### Task 15: Hub listener and runner agent
