@@ -1,0 +1,10 @@
+[package]
+name = "lr-runner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+lr-core.workspace = true
+lr-abstractions.workspace = true
+lr-proto.workspace = true

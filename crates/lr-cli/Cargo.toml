@@ -1,0 +1,26 @@
+[package]
+name = "lr-cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "localrunner"
+path = "src/main.rs"
+
+[dependencies]
+lr-core.workspace = true
+lr-abstractions.workspace = true
+lr-proto.workspace = true
+lr-net.workspace = true
+lr-store.workspace = true
+lr-exec.workspace = true
+lr-obs.workspace = true
+lr-broker.workspace = true
+lr-hub.workspace = true
+lr-runner.workspace = true
+lr-dashboard.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
