@@ -572,7 +572,7 @@ steps = [
 <p>Каждая джоба говорит, кто её отправил, чтобы очередь, страница и лог отвечали на вопрос «чья это».</p>
 <h3>7.1 Идентичность</h3>
 <ul>
-<li><code>--as &lt;имя&gt;</code> обязателен для <code>submit</code> из сессии или терминала (внутри GitHub Actions получает значение по умолчанию). Это свободная метка вызывающего (<code>claude:session-3</code>, <code>alex</code>); ядро агентов не перечисляет и не интерпретирует. Необязательный <code>--note &lt;текст&gt;</code> (до 200 символов) говорит, зачем запуск.</li>
+<li><code>--as &lt;имя&gt;</code> обязателен для <code>submit</code> и <code>run</code> из сессии или терминала (внутри GitHub Actions получает значение по умолчанию). Это свободная метка вызывающего (<code>claude:session-3</code>, <code>alex</code>); ядро агентов не перечисляет и не интерпретирует. Необязательный <code>--note &lt;текст&gt;</code> (до 200 символов) говорит, зачем запуск.</li>
 <li>CLI собирает сам и без возможности переопределить: пользователя ОС, хост, идентификатор и время старта процесса-отправителя, рабочий каталог, а для git-worktree ещё ветку и корень. Это общие данные git и ОС, без знания об агентах.</li>
 <li>Показывается в <code>status</code>, HTML-снимке, дашборде и заголовке лога: проект, источник, метка, заметка, ветка, каталог, возраст джобы.</li>
 <li>Идентичность — подсказка, а не аутентификация: любой локальный процесс того же пользователя ОС может отправить под любой меткой. Граница — IPC, доступный только пользователю ОС. Для брокера границей служит ключ клиента.</li>
@@ -753,7 +753,56 @@ volumes:
 <li><b>Перенос брокера.</b> Остановить службу, скопировать каталог состояния (<code>broker.db</code>, <code>logs/</code>, сертификат, <code>policy.toml</code>) на новую машину и запустить с тем же адресом: hub и раннеры подключаются без повторного вступления, пока сертификат тот же. При смене адреса его нужно обновить в списке hub и в настройке раннеров.</li>
 </ul>
 
-<h2 id="s-skills">11. Контракт скилов</h2>
+<h2 id="s-skills">11. Команды и скилы</h2>
+<h3>11.1 Справочник команд</h3>
+<p>Бинарник один: <code>al-localrunner</code>. Ежедневные команды короткие и стоят на верхнем уровне; администрирование сгруппировано по существительному: <code>broker</code>, <code>runner</code>, <code>hub</code>, <code>client</code>, <code>policy</code>, <code>logging</code>. У каждой команды чтения есть <code>--json</code>. Скилы Claude Code (11.2) — обёртки над этими командами.</p>
+<h4>Работа с джобами (через hub)</h4>
+<div class="scroll"><table>
+<tr><th>Команда</th><th>Что делает</th></tr>
+<tr><td><code>submit [профиль] --as метка [--note] [--platform список] [--timeout] [--detach] [--wait]</code></td><td>ставит заказ и печатает <code>JobId</code>; без <code>--wait</code> возвращается сразу, с <code>--detach</code> выполняющаяся джоба переживает отправителя</td></tr>
+<tr><td><code>run [профиль] --as метка …</code></td><td>то же, что <code>submit --wait</code>: ставит заказ, стримит вывод и возвращает код выхода</td></tr>
+<tr><td><code>wait &lt;job-id&gt;</code></td><td>наблюдает за джобой; прерывание ничего не отменяет</td></tr>
+<tr><td><code>jobs --mine [--active]</code></td><td>свои джобы (метка <code>--as</code> и пользователь ОС)</td></tr>
+<tr><td><code>cancel &lt;job-id&gt;</code></td><td><code>cancel --mine</code> — все свои активные; <code>--force</code> для чужой метки, <code>--reason</code> записывается в лог</td></tr>
+<tr><td><code>status [--html путь] [--project] [--source] [--as]</code></td><td>очередь и выполняющиеся джобы с шагами и причиной ожидания</td></tr>
+<tr><td><code>explain &lt;job-id&gt;</code></td><td>почему заказ ждёт, с названием сработавшего правила политики</td></tr>
+<tr><td><code>history [фильтры]</code></td><td><code>history show &lt;job-id&gt;</code> — полная запись; фильтры: проект, источник, метка, профиль, результат, период, платформа, раннер, группа, клиент</td></tr>
+<tr><td><code>log &lt;job-id&gt; [--step имя] [--tail N] [-f]</code></td><td>сохранённый лог; для идущей джобы следит за ним</td></tr>
+<tr><td><code>stats [--project] [--profile] [--client]</code></td><td>статистика и насыщение пула</td></tr>
+<tr><td><code>runners [--broker B]</code></td><td>раннеры: состояние, платформы, программы, нагрузка пула, теги, сервисы, кэш</td></tr>
+<tr><td><code>brokers</code></td><td>известные брокеры: зона, доступность, заказы в outbox</td></tr>
+<tr><td><code>dashboard</code></td><td>живой дашборд на loopback (раздел 9)</td></tr>
+</table></div>
+<h4>Запуск и остановка ролей</h4>
+<div class="scroll"><table>
+<tr><th>Команда</th><th>Что делает</th></tr>
+<tr><td><code>up [роль]</code></td><td>запускает hub, брокер и раннеры отдельными процессами; при работающей роли дубля нет</td></tr>
+<tr><td><code>down [имена] [--drain | --cancel]</code></td><td>останавливает раннеры и роли: доделать текущую джобу или отменить</td></tr>
+<tr><td><code>autostart on|off [роль]</code></td><td>включает или выключает автозапуск средствами ОС</td></tr>
+<tr><td><code>hub run</code></td><td><code>broker run</code>, <code>runner run</code> — роль на переднем плане (контейнеры, отладка)</td></tr>
+</table></div>
+<h4>Вступление и доступ</h4>
+<div class="scroll"><table>
+<tr><th>Команда</th><th>Где</th><th>Что делает</th></tr>
+<tr><td><code>broker add [--label ярлык]</code></td><td>брокер</td><td>печатает адрес, одноразовый код (1 час) и отпечаток сертификата</td></tr>
+<tr><td><code>runner join адрес код</code></td><td>вступающая машина</td><td>раннер вступает в пул и создаёт свою пару ключей</td></tr>
+<tr><td><code>hub join адрес код</code></td><td>вступающая машина</td><td>hub вступает как клиент, брокер попадает в его список</td></tr>
+<tr><td><code>runner list</code></td><td>брокер</td><td>раннеры пула</td></tr>
+<tr><td><code>runner remove имя</code></td><td>брокер</td><td>удаляет раннер и отзывает ключ</td></tr>
+<tr><td><code>client list</code>, <code>client remove имя</code></td><td>брокер</td><td>клиенты (hub) и отзыв их ключей</td></tr>
+</table></div>
+<h4>Конфигурация и обслуживание</h4>
+<div class="scroll"><table>
+<tr><th>Команда</th><th>Что делает</th></tr>
+<tr><td><code>policy reload</code></td><td>проверяет и применяет <code>policy.toml</code>; только по локальному каналу</td></tr>
+<tr><td><code>policy check</code></td><td>проверяет файл политики, не применяя; печатает перекрытые правила</td></tr>
+<tr><td><code>logging reload</code></td><td>перечитывает <code>logging.toml</code></td></tr>
+<tr><td><code>init</code></td><td>создаёт каталог состояния и шаблоны конфигураций</td></tr>
+<tr><td><code>doctor</code></td><td>проверяет узел и печатает, что не так (10.2)</td></tr>
+<tr><td><code>uninstall [--purge]</code></td><td>останавливает роли, снимает автозапуск и службу; <code>--purge</code> удаляет и состояние</td></tr>
+<tr><td><code>--version</code></td><td>версия бинарника и версия протокола</td></tr>
+</table></div>
+<h3>11.2 Скилы</h3>
 <div class="scroll"><table>
 <tr><th>Скил</th><th>Входные данные</th><th>Результат</th></tr>
 <tr><td><code>install-runner</code></td><td>репозиторий для <code>ci</code> (необязательно), токен регистрации (спрашивается, не сохраняется)</td><td>бинарник установлен выбранным способом (раздел 10.1), выполнены <code>init</code> и <code>doctor</code>; <code>ci</code>-раннер настроен, если его нет; идемпотентно</td></tr>
