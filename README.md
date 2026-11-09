@@ -8,8 +8,8 @@ Shipped as a Claude Code plugin (`plugin/`). The core is project-agnostic: it kn
 
 | Level | Backend | Purpose | Sees uncommitted tree |
 |---|---|---|---|
-| `light` | local daemon | single tests during work on one feature | yes |
-| `heavy` | local daemon | whole test tiers, emulator runs | yes |
+| `light` | any runner | single tests during work on one feature | yes on the submitter machine, no on a remote runner (pushed commit) |
+| `heavy` | any runner | whole test tiers, emulator runs | yes on the submitter machine, no on a remote runner (pushed commit) |
 | `ci` | GitHub Actions self-hosted runner | CI jobs and deploys | no (pushed commit) |
 
 By default one runner per level is started. All levels share one resource scheduler, so a `ci` job never overlaps with a conflicting `heavy` run.
