@@ -110,7 +110,7 @@ pub fn parse_profiles(text: &str) -> Result<Vec<Profile>, ProfileError> {
     let mut sets = BTreeMap::new();
     for (name, value) in file.needs {
         let raw: RawNeeds = value.try_into().map_err(|e: toml::de::Error| {
-            ProfileError::invalid(&format!("needs.{name}"), "", e.to_string())
+            ProfileError::invalid(&format!("needs.{name}"), &error_key(&e), e.to_string())
         })?;
         sets.insert(name, raw);
     }
@@ -309,4 +309,12 @@ fn build_steps(
             })
         })
         .collect()
+}
+
+fn error_key(e: &toml::de::Error) -> String {
+    let msg = e.message();
+    msg.split('`')
+        .nth(1)
+        .map(str::to_string)
+        .unwrap_or_default()
 }

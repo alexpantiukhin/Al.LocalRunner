@@ -1,6 +1,6 @@
 use lr_core::{
     cache_env_var, parse_profiles, satisfies, Accept, Capabilities, MachineRef, MismatchReason,
-    Profile, Requirements, ServiceStatus, Zone,
+    Profile, ProfileError, Requirements, ServiceStatus, Zone,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -306,7 +306,12 @@ programs = [\"nope\"]
 #[test]
 fn no_platform_and_no_client_machine_is_an_error() {
     let p = one(BASIC);
-    assert!(Requirements::from_profile(&p, None, None).is_err());
+    match Requirements::from_profile(&p, None, None).unwrap_err() {
+        ProfileError::Invalid { profile, field, .. } => {
+            assert_eq!((profile.as_str(), field.as_str()), ("p", "platform"));
+        }
+        other => panic!("expected Invalid, got {other:?}"),
+    }
 }
 
 #[test]

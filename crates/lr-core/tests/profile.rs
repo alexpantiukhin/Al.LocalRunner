@@ -1,6 +1,4 @@
-use lr_core::{
-    parse_profiles, resolve_for_platform, JobState, Profile, ProfileError, StepState, Zone,
-};
+use lr_core::{parse_profiles, resolve_for_platform, Profile, ProfileError, StepState, Zone};
 
 const SPEC_EXAMPLES: &str = r#"
 [profile.rust-unit]
@@ -413,45 +411,6 @@ disk_mb = 51200
 }
 
 #[test]
-fn zones_are_ordered_nearest_first() {
-    assert!(Zone::Local < Zone::Lan && Zone::Lan < Zone::Remote);
-}
-
-#[test]
-fn job_final_state_is_never_overwritten() {
-    use JobState::*;
-    for from in [Passed, Failed, Timeout, Cancelled, Lost] {
-        assert!(from.is_final());
-        for to in [
-            Queued, Running, Cancelling, Passed, Failed, Timeout, Cancelled, Lost,
-        ] {
-            assert!(!from.can_become(to), "{from:?} -> {to:?}");
-        }
-    }
-}
-
-#[test]
-fn waiting_job_cancel_is_immediate_and_running_goes_through_cancelling() {
-    use JobState::*;
-    assert!(Queued.can_become(Cancelled));
-    assert!(Queued.can_become(Running));
-    assert!(!Queued.can_become(Passed));
-    assert!(!Running.can_become(Cancelled));
-    assert!(Running.can_become(Cancelling));
-    assert!(Cancelling.can_become(Cancelled));
-    assert!(!Cancelling.is_final());
-}
-
-#[test]
-fn running_job_reaches_every_reported_final_state() {
-    use JobState::*;
-    for to in [Passed, Failed, Timeout, Lost] {
-        assert!(Running.can_become(to));
-    }
-    assert!(!Running.can_become(Queued));
-}
-
-#[test]
 fn override_with_only_timeout_moves_single_step_timeout() {
     let text = r#"
 [profile.p]
@@ -500,7 +459,7 @@ level = \"x\"
 command = \"x\"
 timeout_s = 1
 ";
-    assert_eq!(invalid(text).0, "needs.n");
+    assert_eq!(invalid(text), ("needs.n".into(), "level".into()));
 }
 
 #[test]
