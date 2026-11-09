@@ -83,13 +83,25 @@ steps = [
 ## Submitter identity
 Every job says who submitted it, so the queue, the page and the log answer "whose is this".
 
-- `--as <name>` is required on `submit`; a submit without it is rejected. It is a free-form label chosen by the caller, for example `claude:session-3`, `codex:review`, `alex`. The core does not enumerate or interpret agents.
+- `--as <name>` is required on `submit` from a session or terminal; a submit without it is rejected (inside GitHub Actions it defaults, see below). It is a free-form label chosen by the caller, for example `claude:session-3`, `codex:review`, `alex`. The core does not enumerate or interpret agents.
 - Optional `--note <text>` (what the run is for, up to 200 characters), for example `check fix for #609`.
 - Collected by the CLI automatically and not overridable: OS user, host, submitter process id and start time, working directory, and, when the directory is a git worktree, the branch and the worktree root. Collection is generic git/OS data, with no agent knowledge.
-- Shown in `status`, the HTML snapshot, the dashboard and the log header: label, note, branch, directory, age of the job.
+- Shown in `status`, the HTML snapshot, the dashboard and the log header: project, source, label, note, branch, directory, age of the job.
 - The identity is advisory, not authentication: any local process of the same OS user can submit under any label. The IPC endpoint is restricted to the OS user, which is the actual boundary.
 - A label may be reused by a session across jobs; the submitter process id is what links a job to a live caller. A queued job whose submitter is dead is dropped; a running one is finished or killed by the same crash-safety rule as before.
 - Cancel: by default only a job with the same `--as` and the same OS user; cancelling another label needs `--force`, which is recorded in the log of the cancelled job together with the label of whoever cancelled it.
+
+### Project and source
+Besides the label, every job records which project it is for and where it came from. Both are collected by the CLI and cannot be overridden.
+
+- `project`: the normalized `origin` remote (`owner/repo`) of the submitter directory; without a remote, the repository root directory name; outside git, the directory name. Also recorded: the repository root and the worktree root, so two worktrees of one project are told apart.
+- `source`, one of:
+  - `session` — a submit from a terminal or an agent session; carries the `--as` label, the submitter process id and the directory.
+  - `github` — a submit from a GitHub Actions job (detected by `GITHUB_ACTIONS=true`); carries repository, workflow, job, run id and attempt, ref, actor and the run URL. Here `--as` is optional and defaults to `github:<workflow>/<job>`.
+- Reading the CI environment lives in a source adapter of the `ci` level; the core queue and scheduler see only the normalized fields. A further source (another CI system) is another adapter, not a change of the core.
+- A `github` job has no local submitter process to watch; its liveness comes from the runner process of that job, and a cancelled workflow run cancels the job.
+- Every view shows `project`, `source` and the label together, for example `Al.Browser · session · claude:fix-12` or `AiGateway · github · ci.yml/rust-test #4821`, and a `github` job links to its run URL.
+- Filtering: `status --project <name>`, `--source <session|github>` and `--as <label>`; the same filters exist as fields in `--json`.
 
 ## Viewing the queue
 Read-only views of the queue, running jobs and their steps, in three forms of the same data:
@@ -100,8 +112,8 @@ Read-only views of the queue, running jobs and their steps, in three forms of th
 
 What the page shows:
 - Per level: workers up or down, free memory and CPU, held tags.
-- Running jobs: id, profile, submitter directory, level, elapsed against the job timeout, and the step list with state (`queued`, `running`, `passed`, `failed`, `timeout`, `skipped`), per-step elapsed against its timeout, and the last lines of the running step.
-- Queue: position, profile, submitter directory, waiting time, the reason it waits (worker busy, memory, CPU, a held `exclusive` tag and whose).
+- Running jobs: id, project, source (session or github, with the run link), submitter label, profile, directory, level, elapsed against the job timeout, and the step list with state (`queued`, `running`, `passed`, `failed`, `timeout`, `skipped`), per-step elapsed against its timeout, and the last lines of the running step.
+- Queue: position, project, source, submitter label, profile, directory, waiting time, the reason it waits (worker busy, memory, CPU, a held `exclusive` tag and whose).
 - Recent finished jobs with the result per step and a link to the log file.
 
 The view never changes anything: cancel and control stay in the CLI. Log text is escaped on output. The same data model backs all three forms, so a form added later adds no new source of truth.
