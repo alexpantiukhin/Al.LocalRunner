@@ -27,3 +27,21 @@ pub(crate) fn user_name(uid: u32) -> String {
 pub(crate) fn current_user() -> Result<String, NetError> {
     Ok(user_name(unsafe { libc::geteuid() }))
 }
+
+/// The uid of login `name` from the user database, `None` when there is no such user.
+pub(crate) fn uid_of(name: &str) -> Option<u32> {
+    let name = std::ffi::CString::new(name).ok()?;
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe {
+        libc::getpwnam_r(
+            name.as_ptr(),
+            &mut pwd,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    (rc == 0 && !result.is_null()).then_some(pwd.pw_uid)
+}

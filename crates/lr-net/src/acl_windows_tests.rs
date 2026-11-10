@@ -48,9 +48,11 @@ fn handle_sddl(handle: HANDLE) -> String {
 }
 
 async fn pipe_sddl_of(access: IpcAccess) -> String {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let name = format!(
-        r"\\.\pipe\lr-acl-{}-{}",
+        r"\\.\pipe\lr-acl-{}-{}-{}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -91,6 +93,19 @@ async fn owner_only_pipe_has_the_owner_alone() {
     assert_eq!(aces, 1, "{sddl}");
     assert!(
         !sddl.contains(";;;WD)") && !sddl.contains(USERS_SID),
+        "{sddl}"
+    );
+}
+
+#[tokio::test]
+async fn admin_channel_pipe_admits_owner_system_and_administrators_only() {
+    let sddl = pipe_sddl_of(IpcAccess::OwnerAndAdmins).await;
+    let own = own_sid();
+    assert!(sddl.starts_with(&format!("O:{own}D:P")), "{sddl}");
+    assert!(sddl.contains(";;;SY)") && sddl.contains(";;;BA)"), "{sddl}");
+    assert_eq!(sddl.matches("(A;").count(), 3, "{sddl}");
+    assert!(
+        !sddl.contains(";;;WD)") && !sddl.contains(USERS_SID) && !sddl.contains(";;;BU)"),
         "{sddl}"
     );
 }

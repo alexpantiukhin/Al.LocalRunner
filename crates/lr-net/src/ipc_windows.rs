@@ -57,6 +57,10 @@ pub(crate) fn account_of_sid(sid: &str) -> Option<String> {
     sid_text_account_name(sid).ok()
 }
 
+pub(crate) fn account_principal(name: &str) -> Result<String, NetError> {
+    account_sid(name)
+}
+
 pub(crate) fn machine_name() -> String {
     computer_name().unwrap_or_default()
 }
@@ -72,6 +76,7 @@ fn sddl(access: &IpcAccess) -> Result<String, NetError> {
     let owner = current_principal()?;
     Ok(match access {
         IpcAccess::OwnerOnly => pipe_sddl(&owner, None),
+        IpcAccess::OwnerAndAdmins => pipe_sddl(&owner, Some(&[])),
         IpcAccess::Principals(names) => {
             let sids = names
                 .iter()

@@ -34,6 +34,10 @@ pub enum IpcAccess {
     /// `al-localrunner` group, whose members are the listed users (the names are not used by
     /// the socket).
     Principals(Vec<String>),
+    /// The broker's administrative channel (spec 3.9): the owner (the service account of a
+    /// broker service) and the machine's administrators. Windows: a protected DACL with the
+    /// owner, SYSTEM and Administrators; Unix: socket mode `0600` (root passes anyway).
+    OwnerAndAdmins,
 }
 
 /// Whom an IPC client accepts as the server, checked BEFORE it sends anything (a pipe or
@@ -105,6 +109,13 @@ pub fn current_os_principal() -> Result<String, NetError> {
 
 pub(crate) fn account_of_sid(sid: &str) -> Option<String> {
     platform::account_of_sid(sid)
+}
+
+/// The principal of account `name` in the form [`ServerIdentity::principal`] takes: the SID on
+/// Windows (a bare name is a local account, `NT SERVICE\name` a service account, a SID passes
+/// through), the numeric uid on Unix. An unknown account is an error.
+pub fn account_principal(name: &str) -> Result<String, NetError> {
+    platform::account_principal(name)
 }
 
 /// The computer name that qualifies a bare `[[local_user]]` name on Windows; empty elsewhere.

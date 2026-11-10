@@ -248,6 +248,7 @@ async fn unix_socket_modes_follow_access() {
     use std::os::unix::fs::PermissionsExt;
     for (access, mode) in [
         (IpcAccess::OwnerOnly, 0o600),
+        (IpcAccess::OwnerAndAdmins, 0o600),
         (
             IpcAccess::Principals(vec![current_os_user().unwrap()]),
             0o660,

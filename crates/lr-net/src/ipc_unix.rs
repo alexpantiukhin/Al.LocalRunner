@@ -30,13 +30,19 @@ pub(crate) fn account_of_sid(_sid: &str) -> Option<String> {
     None
 }
 
+pub(crate) fn account_principal(name: &str) -> Result<String, NetError> {
+    crate::os_unix::uid_of(name)
+        .map(|uid| uid.to_string())
+        .ok_or_else(|| NetError::Io(format!("unknown account `{name}`")))
+}
+
 pub(crate) fn machine_name() -> String {
     String::new()
 }
 
 fn mode(access: &IpcAccess) -> u32 {
     match access {
-        IpcAccess::OwnerOnly => 0o600,
+        IpcAccess::OwnerOnly | IpcAccess::OwnerAndAdmins => 0o600,
         IpcAccess::Principals(_) => 0o660,
     }
 }

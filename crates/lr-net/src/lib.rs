@@ -44,8 +44,8 @@ pub use error::NetError;
 pub use files::{read_private, write_private, write_public};
 pub use fingerprint::Fingerprint;
 pub use ipc::{
-    current_os_principal, current_os_user, local_machine_name, IpcAccess, IpcDialer, IpcListener,
-    ServerIdentity, PREAMBLE, PREAMBLE_TIMEOUT,
+    account_principal, current_os_principal, current_os_user, local_machine_name, IpcAccess,
+    IpcDialer, IpcListener, ServerIdentity, PREAMBLE, PREAMBLE_TIMEOUT,
 };
 pub use keys::{
     canonical_public_key, challenge_message, fresh_nonce, parse_public_key, verify_challenge,

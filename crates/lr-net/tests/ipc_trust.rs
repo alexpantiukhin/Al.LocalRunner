@@ -223,3 +223,16 @@ async fn sid_entry_matches_the_account_it_names() {
         "a SID is never taken for a local account name"
     );
 }
+
+#[test]
+fn account_principal_resolves_names_the_way_server_identity_compares_them() {
+    let me = current_os_user().unwrap();
+    assert_eq!(
+        lr_net::account_principal(&me).unwrap(),
+        current_os_principal().unwrap()
+    );
+    let admin = if cfg!(windows) { "S-1-5-18" } else { "root" };
+    let expected = if cfg!(windows) { "S-1-5-18" } else { "0" };
+    assert_eq!(lr_net::account_principal(admin).unwrap(), expected);
+    assert!(lr_net::account_principal("al-localrunner-no-such-account-42").is_err());
+}
