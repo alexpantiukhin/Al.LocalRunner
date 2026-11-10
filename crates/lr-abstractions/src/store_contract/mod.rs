@@ -125,6 +125,7 @@ macro_rules! hub_store_contract {
             hub::received_seq_repeat_dropped_and_last_seq_kept,
             hub::finish_removes_active_order_and_its_outbox,
             hub::broker_of_active_order_set_and_cleared,
+            hub::rebroker_restarts_both_streams_at_one,
             hub::broker_list_upsert_zone_and_remove,
             seq::hub_seq_gap_is_refused,
         );

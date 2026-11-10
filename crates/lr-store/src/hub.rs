@@ -260,6 +260,29 @@ impl HubStore for SqliteHubStore {
             .await
     }
 
+    async fn rebroker(
+        &self,
+        job: &JobId,
+        kind: OutboxKind,
+        payload: String,
+        at: Timestamp,
+    ) -> Result<u64, StoreError> {
+        let job = job.clone();
+        self.db
+            .run(move |c| {
+                write(c, |tx| {
+                    require_active(tx, &job)?;
+                    tx.execute(
+                        "UPDATE active_order SET broker = NULL, last_seq = 0 WHERE job_id = ?1",
+                        [&job.0],
+                    )?;
+                    tx.execute("DELETE FROM outbox WHERE job_id = ?1", [&job.0])?;
+                    outbox::push(tx, HUB, "", &job, kind, &payload, at)
+                })
+            })
+            .await
+    }
+
     async fn upsert_broker(&self, link: BrokerLink) -> Result<(), StoreError> {
         self.db
             .run(move |c| {

@@ -505,6 +505,10 @@ dependencies = [
  "lr-abstractions",
  "lr-core",
  "lr-proto",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
 ]
 
 [[package]]

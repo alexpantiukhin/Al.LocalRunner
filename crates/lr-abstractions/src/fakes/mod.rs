@@ -10,6 +10,7 @@ mod hub_runner_store;
 mod misc;
 mod outbox;
 mod process;
+mod repository;
 mod transport;
 
 pub use broker_store::MemoryBrokerStore;
@@ -20,6 +21,7 @@ pub use misc::{FakeDataSource, MemoryLogSink, MemorySecrets};
 pub use process::{
     FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript,
 };
+pub use repository::MemoryRepository;
 pub use transport::{
     channel_pair, ChannelTransport, FakeConnection, FakeDialer, FakeListener, FakeNetwork, Faults,
 };

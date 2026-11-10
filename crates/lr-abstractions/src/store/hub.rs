@@ -122,6 +122,17 @@ pub trait HubStore: Send + Sync {
     /// expiry); returns how many.
     async fn discard_outbox(&self, job: &JobId) -> Result<usize, StoreError>;
 
+    /// Starts both streams of the job over for another broker (rejected or returned order,
+    /// spec 3.1): clears the broker and `last_seq`, drops every outbox entry and stores
+    /// `payload` as seq 1, which it returns. One write: either all of it or nothing.
+    async fn rebroker(
+        &self,
+        job: &JobId,
+        kind: OutboxKind,
+        payload: String,
+        at: Timestamp,
+    ) -> Result<u64, StoreError>;
+
     /// Adds or replaces a broker.
     async fn upsert_broker(&self, link: BrokerLink) -> Result<(), StoreError>;
 

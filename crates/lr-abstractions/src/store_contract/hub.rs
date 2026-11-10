@@ -138,6 +138,51 @@ pub async fn broker_of_active_order_set_and_cleared(store: &dyn HubStore) {
     assert_eq!(store.active(&id("j1")).await.unwrap().unwrap().broker, None);
 }
 
+/// Re-brokering starts both streams of the job over: broker and `last_seq` cleared, old
+/// entries gone, the new order is seq 1 (spec 3.1, 3.9).
+pub async fn rebroker_restarts_both_streams_at_one(store: &dyn HubStore) {
+    submitted(store, "j1", 1).await;
+    submitted(store, "j2", 1).await;
+    store.set_broker(&id("j1"), Some("a")).await.unwrap();
+    store.ack_outbox(&id("j1"), 1).await.unwrap();
+    store
+        .push_outbox(&id("j1"), OutboxKind::Cancel, "c".into(), at(2))
+        .await
+        .unwrap();
+    assert!(store.accept_seq(&id("j1"), 1).await.unwrap());
+    let seq = store
+        .rebroker(&id("j1"), OutboxKind::Order, "again".into(), at(3))
+        .await
+        .unwrap();
+    assert_eq!(seq, 1);
+    let a = store.active(&id("j1")).await.unwrap().unwrap();
+    assert_eq!((a.broker, a.last_seq), (None, 0));
+    let mine: Vec<(u64, String)> = store
+        .pending_outbox()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.job == id("j1"))
+        .map(|e| (e.seq, e.payload))
+        .collect();
+    assert_eq!(mine, vec![(1, "again".to_string())]);
+    assert_eq!(
+        store
+            .push_outbox(&id("j1"), OutboxKind::Cancel, "c2".into(), at(4))
+            .await
+            .unwrap(),
+        2
+    );
+    assert!(store.accept_seq(&id("j1"), 1).await.unwrap());
+    assert_eq!(store.pending_outbox().await.unwrap().len(), 3);
+    assert!(matches!(
+        store
+            .rebroker(&id("ghost"), OutboxKind::Order, "x".into(), at(5))
+            .await,
+        Err(StoreError::NotFound(_))
+    ));
+}
+
 /// The broker list keeps address, fingerprint and the last zone.
 pub async fn broker_list_upsert_zone_and_remove(store: &dyn HubStore) {
     let link = BrokerLink {

@@ -1,4 +1,4 @@
-use crate::api::{ReadReply, ReadRequest};
+use crate::api::{JobSummary, ReadReply, ReadRequest};
 use crate::common::ProtocolError;
 use crate::frame::message;
 use crate::reason::ReasonCode;
@@ -130,6 +130,13 @@ pub enum CliRequest {
     Read(CliRead),
     /// List the known brokers.
     Brokers,
+    /// `jobs --mine`: the caller's jobs this hub knows (same OS user and label `--as`).
+    Jobs {
+        /// Label `--as` of the caller.
+        label: String,
+        /// `--active`: only queued and running jobs.
+        active: bool,
+    },
 }
 
 /// Messages from a hub to its CLI.
@@ -182,6 +189,11 @@ pub enum CliReply {
     Brokers {
         /// The list.
         brokers: Vec<BrokerStatus>,
+    },
+    /// Answer to `jobs --mine`.
+    Jobs {
+        /// The jobs, oldest first.
+        jobs: Vec<JobSummary>,
     },
     /// A refusal.
     Error(ProtocolError),
@@ -294,7 +306,7 @@ pub enum ControlReply {
 message!(
     CliRequest,
     local: true,
-    ["submit", "done", "wait", "cancel", "read", "brokers"]
+    ["submit", "done", "wait", "cancel", "read", "brokers", "jobs"]
 );
 message!(
     CliReply,
@@ -307,6 +319,7 @@ message!(
         "cancelled",
         "read",
         "brokers",
+        "jobs",
         "error"
     ]
 );

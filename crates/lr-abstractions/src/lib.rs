@@ -1,5 +1,5 @@
-//! I/O contracts of the roles (spec 13.1, layer 3): time, storage, files, network, processes,
-//! secrets, diagnostic sinks and the dashboard data source.
+//! I/O contracts of the roles (spec 13.1, layer 3): time, storage, files, git repositories,
+//! network, processes, secrets, diagnostic sinks and the dashboard data source.
 //!
 //! Roles receive implementations of these traits through their constructors and never know
 //! what stands behind them, so the broker engine, the hub reaper and the runner agent are
@@ -20,6 +20,7 @@ pub mod datasource;
 pub mod files;
 pub mod logsink;
 pub mod process;
+pub mod repository;
 pub mod secrets;
 pub mod store;
 pub mod transport;
@@ -38,6 +39,7 @@ pub use process::{
     ProcessError, ProcessInspector, ProcessRef, ProcessRunner, SpawnSpec, StepOutcome, Stop,
     StopHandle, StopSignal, DEFAULT_CANCEL_GRACE, MASK,
 };
+pub use repository::{Repository, RepositoryError};
 pub use secrets::{SecretError, SecretSource, SecretValue};
 pub use store::{
     outlives_cancel, ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry,

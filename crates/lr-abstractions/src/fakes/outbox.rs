@@ -85,6 +85,13 @@ impl MemoryOutbox {
         self.remove(|r, e| r == recipient && &e.job == job && e.seq <= seq)
     }
 
+    pub(crate) fn restart(&mut self, recipient: &str, job: &JobId) {
+        let key = (recipient.to_string(), job.clone());
+        self.counters.remove(&key);
+        self.last.remove(&key);
+        self.discard(recipient, job);
+    }
+
     pub(crate) fn discard(&mut self, recipient: &str, job: &JobId) -> usize {
         self.remove(|r, e| r == recipient && &e.job == job)
     }

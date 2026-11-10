@@ -14,8 +14,10 @@ impl fmt::Display for FilesError {
 
 impl std::error::Error for FilesError {}
 
-/// The few file operations a runner needs in its state directory: workspace and cache
-/// directories, their sizes, and small state files. Programs are never started through it.
+/// The few file operations a role needs: for a runner the workspace and cache directories of
+/// its state directory, their sizes and small state files; for a hub the profile file of a
+/// work tree and the job handles in the submitter's directory. Programs are never started
+/// through it.
 #[async_trait]
 pub trait Files: Send + Sync {
     /// Whether a file or directory exists at `path`.

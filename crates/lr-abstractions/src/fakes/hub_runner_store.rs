@@ -125,6 +125,21 @@ impl HubStore for MemoryHubStore {
         Ok(self.state.lock().unwrap().outbox.discard("", job))
     }
 
+    async fn rebroker(
+        &self,
+        job: &JobId,
+        kind: OutboxKind,
+        payload: String,
+        at: Timestamp,
+    ) -> Result<u64, StoreError> {
+        let mut s = self.state.lock().unwrap();
+        let order = s.active.get_mut(job).ok_or_else(|| missing(job))?;
+        order.broker = None;
+        order.last_seq = 0;
+        s.outbox.restart("", job);
+        Ok(s.outbox.push("", job, kind, payload, at))
+    }
+
     async fn upsert_broker(&self, link: BrokerLink) -> Result<(), StoreError> {
         self.state
             .lock()

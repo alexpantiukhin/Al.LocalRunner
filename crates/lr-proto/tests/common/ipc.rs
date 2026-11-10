@@ -31,6 +31,10 @@ pub fn cli_requests() -> Vec<CliRequest> {
             request: ReadRequest::Runners,
         }),
         CliRequest::Brokers,
+        CliRequest::Jobs {
+            label: "agent".into(),
+            active: true,
+        },
     ]
 }
 
@@ -66,6 +70,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 outbox: 2,
             }],
         },
+        CliReply::Jobs { jobs: vec![] },
         CliReply::Error(protocol_error()),
     ]
 }
