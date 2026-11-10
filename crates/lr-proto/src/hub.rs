@@ -4,7 +4,7 @@ use crate::common::{Ack, Bye, Hello, Join, Joined, ProtocolError, Resume, Welcom
 use crate::frame::message;
 use crate::job::{
     check_chunk, Accepted, CancelAck, Chunk, HubCancel, JobResult, Order, Rejected, Returned,
-    StartedNotice, StepResult,
+    StartedNotice, StepResult, CHUNK_TEXT_LIMIT,
 };
 use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::{JobId, Zone};
@@ -66,7 +66,7 @@ pub struct ReadAnswer {
     pub reply: ReadReply,
 }
 
-/// A piece of a followed log, for the request `req`.
+/// A piece of a followed log, for the request `req`; `text` is at most `CHUNK_TEXT_LIMIT` bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LogChunk {
     /// Correlation id of the log request.
@@ -208,6 +208,10 @@ message!(
     check: |m: &BrokerToHub| match m {
         BrokerToHub::Started(s) => seq_from_one(s.seq),
         BrokerToHub::Chunk(c) => check_chunk(c),
+        BrokerToHub::LogChunk(l) if l.text.len() > CHUNK_TEXT_LIMIT => Err(format!(
+            "log chunk text of {} bytes exceeds {CHUNK_TEXT_LIMIT}",
+            l.text.len()
+        )),
         BrokerToHub::StepResult(s) => seq_from_one(s.seq),
         BrokerToHub::JobResult(r) => final_result(r),
         BrokerToHub::CancelAck(c) => seq_from_one(c.seq),

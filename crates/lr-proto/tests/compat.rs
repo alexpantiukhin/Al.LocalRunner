@@ -134,6 +134,7 @@ fn restarted_stream_starts_again_at_one_for_the_next_broker() {
 
 #[test]
 fn restarted_stream_is_a_new_stream_for_deduplication() {
+    use std::collections::HashSet;
     let order = |seq| {
         HubToBroker::Order(Order {
             job: job(1),
@@ -141,15 +142,68 @@ fn restarted_stream_is_a_new_stream_for_deduplication() {
             spec: Box::new(order_spec()),
         })
     };
-    let first = DedupKey::of("hub-a", &order(1)).unwrap();
-    let again = DedupKey::of("hub-a", &order(1)).unwrap();
-    assert_eq!(first, again, "a resend to the same broker is a repeat");
-    assert_eq!(classify_seq(1, 1), SeqCheck::Repeat);
+    let mut stream = SeqStream::new();
+    let mut seen_a: HashSet<DedupKey> = HashSet::new();
+    let mut last_a = 0;
+    for _ in 0..2 {
+        let seq = stream.next_seq();
+        assert_eq!(classify_seq(last_a, seq), SeqCheck::Next);
+        last_a = seq;
+        assert!(seen_a.insert(DedupKey::of("hub", &order(seq)).unwrap()));
+    }
     assert_eq!(
-        classify_seq(0, 1),
-        SeqCheck::Next,
-        "a fresh broker accepts seq 1"
+        classify_seq(last_a, 2),
+        SeqCheck::Repeat,
+        "resend to broker A"
     );
+
+    stream.restart();
+    let seq = stream.next_seq();
+    assert_eq!(seq, 1);
+    let key = DedupKey::of("hub", &order(seq)).unwrap();
+    let seen_b: HashSet<DedupKey> = HashSet::new();
+    assert_eq!(
+        classify_seq(0, seq),
+        SeqCheck::Next,
+        "broker B accepts seq 1"
+    );
+    assert!(
+        !seen_b.contains(&key),
+        "a pre-restart seq is no duplicate for B"
+    );
+    assert!(
+        seen_a.contains(&key),
+        "while broker A would see it as a repeat"
+    );
+    assert_eq!(classify_seq(last_a, seq), SeqCheck::Repeat);
+}
+
+#[test]
+fn worst_case_escaped_log_chunk_fits_a_frame() {
+    let l = LogChunk {
+        req: u64::MAX,
+        text: "\u{0}".repeat(CHUNK_TEXT_LIMIT),
+        end: true,
+    };
+    let bytes = encode(&BrokerToHub::LogChunk(l.clone())).unwrap();
+    assert!(bytes.len() <= FRAME_LIMIT, "{}", bytes.len());
+    assert_eq!(
+        decode::<BrokerToHub>(&bytes).unwrap(),
+        BrokerToHub::LogChunk(l)
+    );
+}
+
+#[test]
+fn log_chunk_over_the_text_limit_is_malformed() {
+    let l = LogChunk {
+        req: 1,
+        text: "a".repeat(CHUNK_TEXT_LIMIT + 1),
+        end: false,
+    };
+    assert!(matches!(
+        decode::<BrokerToHub>(&encode(&BrokerToHub::LogChunk(l)).unwrap()).unwrap_err(),
+        DecodeError::Malformed(_)
+    ));
 }
 
 #[test]
