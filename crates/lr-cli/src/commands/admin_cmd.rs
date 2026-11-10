@@ -4,7 +4,7 @@
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_broker::policy::{check, load};
-use lr_proto::{AdminReply, AdminRequest, IpcChannel};
+use lr_proto::{AdminReply, AdminRequest};
 use std::path::PathBuf;
 
 /// `policy check [file]`: errors stop the file, shadowed rules and the like are warnings.
@@ -32,7 +32,7 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
 
 /// Sends one admin command to the broker of this installation and prints the answer.
 pub async fn simple(layout: &Layout, req: AdminRequest) -> Result<i32, String> {
-    let client = IpcClient::connect(&layout.admin_ipc(), IpcChannel::Admin)
+    let client = IpcClient::connect_broker_admin(&layout.admin_ipc())
         .await
         .map_err(|e| format!("the broker admin channel is not reachable: {e}"))?;
     let reply: AdminReply = client.call(&req).await?;

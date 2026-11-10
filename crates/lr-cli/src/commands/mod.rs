@@ -1,9 +1,15 @@
 //! The commands of spec 11.1 implemented by this build and their dispatch.
 
 pub mod admin_cmd;
+pub mod args;
 pub mod jobs;
+pub mod join_cmd;
 pub mod roles_cmd;
+pub mod service_cmd;
+pub mod setup;
 pub mod view;
+
+pub use args::*;
 
 use crate::paths::Layout;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -186,89 +192,59 @@ pub enum Command {
         #[command(subcommand)]
         action: ClientAction,
     },
-}
-
-/// `policy ...`.
-#[derive(Subcommand, Debug)]
-pub enum PolicyAction {
-    /// Check `policy.toml` without applying it.
-    Check {
-        /// The file; `policy.toml` of the configuration directory when omitted.
-        file: Option<PathBuf>,
+    /// Create the state directory and configuration templates of the chosen roles.
+    Init {
+        /// Roles to prepare.
+        #[arg(long, value_enum, default_value_t = RoleArg::All)]
+        role: RoleArg,
     },
-    /// Check and apply `policy.toml` (local channel only).
-    Reload,
-}
-
-/// `logging ...`.
-#[derive(Subcommand, Debug)]
-pub enum LoggingAction {
-    /// Reread `logging.toml` of the broker.
-    Reload,
-}
-
-/// `hub ...`.
-#[derive(Subcommand, Debug)]
-pub enum HubAction {
-    /// Run the hub in the foreground.
-    Run,
-}
-
-/// `broker ...`.
-#[derive(Subcommand, Debug)]
-pub enum BrokerAction {
-    /// Run the broker in the foreground.
-    Run,
-    /// Print a join code.
-    Add {
-        /// Client name.
+    /// Install this binary for the current user, put it on PATH and run `init`.
+    Install {
+        /// Target directory (default: the user's program directory).
         #[arg(long)]
-        name: Option<String>,
-        /// Client label.
+        dir: Option<PathBuf>,
+        /// Roles `init` prepares.
+        #[arg(long, value_enum, default_value_t = RoleArg::All)]
+        role: RoleArg,
+        /// Allow installing as root or administrator.
         #[arg(long)]
-        label: Option<String>,
-        /// A code for N runners.
+        allow_elevated: bool,
+        /// Print what would be done and change nothing.
         #[arg(long)]
-        runners: Option<u32>,
-        /// Address to print.
-        #[arg(long)]
-        address: Option<String>,
+        dry_run: bool,
     },
-}
-
-/// `runner ...`.
-#[derive(Subcommand, Debug)]
-pub enum RunnerAction {
-    /// Run runners in the foreground.
-    Run {
-        /// Runner name.
+    /// Stop runners, remove autostart, the broker service and the binary; keys and history stay.
+    Uninstall {
+        /// Also delete the state directory (asks for confirmation).
         #[arg(long)]
-        name: Option<String>,
-        /// Number of runners `name-1` … `name-N`.
-        #[arg(long, default_value_t = 1)]
-        count: u32,
-        /// `runner.toml` to use.
+        purge: bool,
+        /// Confirm `--purge` without asking.
         #[arg(long)]
-        config: Option<PathBuf>,
+        yes: bool,
+        /// Directory the binary was installed to.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Print what would be done and change nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
-    /// Runners of the pool (on the broker).
-    List,
-    /// Remove a runner and revoke its key (on the broker).
-    Remove {
-        /// Runner name.
-        name: String,
+    /// Enable or disable starting roles with the OS (`broker` = the broker service).
+    Autostart {
+        /// `on` or `off`.
+        #[arg(value_enum)]
+        switch: Switch,
+        /// The role; the roles `init` created when omitted.
+        #[arg(value_enum)]
+        role: Option<RoleArg>,
+        /// Print what would be done and change nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
-}
-
-/// `client ...`.
-#[derive(Subcommand, Debug)]
-pub enum ClientAction {
-    /// Clients of the broker.
-    List,
-    /// Remove a client and revoke its key.
-    Remove {
-        /// Client name.
-        name: String,
+    /// Check this node and print what is wrong.
+    Doctor {
+        /// Print JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -328,11 +304,22 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Logging {
             action: LoggingAction::Reload,
         } => admin_cmd::simple(&layout, lr_proto::AdminRequest::LoggingReload).await,
-        Command::Hub {
-            action: HubAction::Run,
-        } => roles_cmd::hub_run(&layout).await,
+        Command::Hub { action } => match action {
+            HubAction::Run { background } => roles_cmd::hub_run(&layout, background).await,
+            HubAction::Join {
+                address,
+                code,
+                name,
+            } => join_cmd::hub_join(&layout, &address, &code, name).await,
+        },
         Command::Broker { action } => match action {
-            BrokerAction::Run => roles_cmd::broker_run(&layout).await,
+            BrokerAction::Run {
+                background,
+                service,
+            } => roles_cmd::broker_run(&layout, background, service).await,
+            BrokerAction::InstallService { dry_run } => {
+                service_cmd::install_service(&layout, dry_run)
+            }
             BrokerAction::Add {
                 name,
                 label,
@@ -353,7 +340,28 @@ pub async fn run(cli: Cli) -> i32 {
                 name,
                 count,
                 config,
-            } => roles_cmd::runner_run(&layout, name, count, config).await,
+                background,
+            } => roles_cmd::runner_run(&layout, name, count, config, background).await,
+            RunnerAction::Join {
+                address,
+                code,
+                name,
+                count,
+                config,
+                platforms,
+                tags,
+            } => {
+                let join = join_cmd::RunnerJoin {
+                    address,
+                    code,
+                    name,
+                    count,
+                    config,
+                    platforms,
+                    tags,
+                };
+                join_cmd::runner_join(&layout, join).await
+            }
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
             }
@@ -369,6 +377,25 @@ pub async fn run(cli: Cli) -> i32 {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientRemove { name }).await
             }
         },
+        Command::Init { role } => setup::init(&layout, role),
+        Command::Install {
+            dir,
+            role,
+            allow_elevated,
+            dry_run,
+        } => setup::install(&layout, dir, role, allow_elevated, dry_run),
+        Command::Uninstall {
+            purge,
+            yes,
+            dir,
+            dry_run,
+        } => setup::uninstall(&layout, purge, yes, dir, dry_run).await,
+        Command::Autostart {
+            switch,
+            role,
+            dry_run,
+        } => service_cmd::autostart(&layout, switch, role, dry_run),
+        Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };
     match result {
         Ok(code) => code,

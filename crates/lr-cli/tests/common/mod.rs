@@ -11,9 +11,11 @@ pub struct TempDir(PathBuf);
 
 impl TempDir {
     pub fn new(name: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let unique = format!(
-            "lr-identity-{}-{}",
+            "lr-identity-{}-{}-{}",
             std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

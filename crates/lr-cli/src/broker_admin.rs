@@ -26,6 +26,7 @@ pub struct TlsListening {
     addresses: Vec<ListenAddr>,
     bound: Mutex<Option<Vec<SocketAddr>>>,
     starting: tokio::sync::Mutex<()>,
+    desk: Option<Arc<crate::join::JoinDesk>>,
 }
 
 impl TlsListening {
@@ -43,7 +44,14 @@ impl TlsListening {
             addresses,
             bound: Mutex::new(None),
             starting: tokio::sync::Mutex::new(()),
+            desk: None,
         }
+    }
+
+    /// Joining connections of these listeners go to `desk` (spec 3.8).
+    pub fn with_join_desk(mut self, desk: Arc<crate::join::JoinDesk>) -> TlsListening {
+        self.desk = Some(desk);
+        self
     }
 
     /// Starts listening if it has not yet; returns the bound addresses in `[listen]` order.
@@ -67,7 +75,12 @@ impl TlsListening {
         }
         let bound: Vec<SocketAddr> = listeners.iter().map(|l| l.local_addr()).collect();
         for l in listeners {
-            self.merged.add(Arc::new(l) as Arc<dyn Listener>);
+            let l: Arc<dyn Listener> = Arc::new(l);
+            let l: Arc<dyn Listener> = match &self.desk {
+                Some(desk) => Arc::new(crate::join::JoiningListener::new(l, desk.clone())),
+                None => l,
+            };
+            self.merged.add(l);
         }
         *self.bound.lock().unwrap_or_else(|e| e.into_inner()) = Some(bound.clone());
         Ok(bound)

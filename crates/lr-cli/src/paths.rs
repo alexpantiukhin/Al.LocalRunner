@@ -21,6 +21,7 @@ pub struct Layout {
     /// `runner.toml` templates; the state directory unless given.
     pub config: PathBuf,
     suffix: String,
+    ipc_dir: PathBuf,
 }
 
 fn fnv64(text: &str) -> u64 {
@@ -38,19 +39,60 @@ pub fn default_root() -> Option<PathBuf> {
     }
 }
 
+/// The state directory of the broker service (spec 10.3).
+pub fn service_root() -> PathBuf {
+    if cfg!(windows) {
+        let data = std::env::var_os("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into());
+        PathBuf::from(data).join("Al.LocalRunner")
+    } else if cfg!(target_os = "macos") {
+        PathBuf::from("/Library/Application Support/Al.LocalRunner")
+    } else {
+        PathBuf::from("/var/lib/al-localrunner")
+    }
+}
+
+/// Where the broker service keeps its Unix sockets (spec 10, table "IPC"): `/run/al-localrunner`
+/// on Linux (created by systemd for the service), `ipc/` of the service state directory on
+/// macOS; unused on Windows, whose pipe names are global.
+pub fn service_ipc_dir() -> PathBuf {
+    if cfg!(target_os = "linux") {
+        PathBuf::from("/run/al-localrunner")
+    } else {
+        service_root().join("ipc")
+    }
+}
+
 impl Layout {
-    /// A layout over explicit directories.
+    /// A layout over explicit directories. The default directory of the user and the service
+    /// directory use the fixed IPC names, so a hub finds the broker service by them.
     pub fn new(root: PathBuf, config: PathBuf) -> Layout {
-        let suffix = if Some(&root) == default_root().as_ref() {
+        let service = root == service_root();
+        let suffix = if service || Some(&root) == default_root().as_ref() {
             String::new()
         } else {
             format!("-{:016x}", fnv64(&root.to_string_lossy()))
+        };
+        let ipc_dir = if service {
+            service_ipc_dir()
+        } else {
+            root.join("ipc")
         };
         Layout {
             root,
             config,
             suffix,
+            ipc_dir,
         }
+    }
+
+    /// The layout of the broker service.
+    pub fn service() -> Layout {
+        Layout::new(service_root(), service_root())
+    }
+
+    /// Whether this is the broker service's layout.
+    pub fn is_service(&self) -> bool {
+        self.root == service_root()
     }
 
     /// The layout from flags, then [`STATE_DIR_ENV`] and [`CONFIG_DIR_ENV`], then the default.
@@ -97,12 +139,21 @@ impl Layout {
         if cfg!(windows) {
             format!("{PIPE_PREFIX}-{name}{}", self.suffix)
         } else {
-            self.root
-                .join("ipc")
+            self.ipc_dir
                 .join(format!("{name}.sock"))
                 .to_string_lossy()
                 .into_owned()
         }
+    }
+
+    fn broker_side(&self, name: &str) -> String {
+        if !cfg!(windows) && self.suffix.is_empty() && !self.is_service() {
+            let service = service_ipc_dir().join(format!("{name}.sock"));
+            if service.exists() {
+                return service.to_string_lossy().into_owned();
+            }
+        }
+        self.ipc(name)
     }
 
     /// The CLI channel of the hub of OS principal `principal` (SID on Windows).
@@ -110,14 +161,16 @@ impl Layout {
         self.ipc(&format!("hub-{principal}"))
     }
 
-    /// The broker's IPC for hubs and runners of this machine.
+    /// The broker's IPC for hubs and runners of this machine; for the default layout of a
+    /// user on Unix, the broker service's socket when the service runs.
     pub fn broker_ipc(&self) -> String {
-        self.ipc("broker")
+        self.broker_side("broker")
     }
 
-    /// The broker's administrative channel (spec 3.9): local IPC, broker owner only.
+    /// The broker's administrative channel (spec 3.9): local IPC, broker owner and
+    /// administrators only.
     pub fn admin_ipc(&self) -> String {
-        self.ipc("broker-admin")
+        self.broker_side("broker-admin")
     }
 
     /// The control channel of runner `name` of OS principal `principal`.
@@ -130,6 +183,6 @@ impl Layout {
         if cfg!(windows) {
             return Ok(());
         }
-        std::fs::create_dir_all(self.root.join("ipc"))
+        std::fs::create_dir_all(&self.ipc_dir)
     }
 }

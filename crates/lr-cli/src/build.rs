@@ -16,7 +16,7 @@ use lr_exec::{ExecRunner, OsProcessInspector, SystemClock};
 use lr_hub::{parse_hub_policy, Hub, HubDeps};
 use lr_net::{
     current_os_principal, current_os_user, BrokerIdentity, ClientKey, IpcAccess, IpcDialer,
-    IpcListener, Registry, ServerIdentity, TlsDialer,
+    IpcListener, Registry, TlsDialer,
 };
 use lr_obs::logger::Resource;
 use lr_obs::{Logger, LoggingConfig, Metrics, ObsEnv, RedactingSecrets};
@@ -69,10 +69,9 @@ pub fn logger(
 }
 
 fn ipc_dialer() -> Result<Arc<dyn Dialer>, String> {
-    let server = ServerIdentity::current_user()
-        .map_err(|e| e.to_string())?
-        .or_admins();
-    Ok(Arc::new(IpcDialer::new(server)))
+    Ok(Arc::new(IpcDialer::new(
+        crate::os_service::broker_servers()?
+    )))
 }
 
 fn dialer(key: &Path) -> Result<Arc<dyn Dialer>, String> {
@@ -137,8 +136,14 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
     let registry = Arc::new(Registry::new(
         store.clone(),
         clock.clone(),
-        machine_id,
+        machine_id.clone(),
         identity.fingerprint(),
+    ));
+    let desk = Arc::new(crate::join::JoinDesk::new(
+        registry.clone(),
+        store.clone(),
+        clock.clone(),
+        machine_id,
     ));
     let ipc = Arc::new(
         IpcListener::bind(&layout.broker_ipc(), access)
@@ -146,18 +151,16 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
             .map_err(|e| format!("broker IPC {}: {e}", layout.broker_ipc()))?,
     );
     let admin_ipc = Arc::new(
-        IpcListener::bind(&layout.admin_ipc(), IpcAccess::OwnerOnly)
+        IpcListener::bind(&layout.admin_ipc(), IpcAccess::OwnerAndAdmins)
             .await
             .map_err(|e| format!("admin IPC {}: {e}", layout.admin_ipc()))?,
     );
     let merged = Arc::new(MergedListener::default());
     merged.add(ipc.clone() as Arc<dyn Listener>);
-    let tls = Arc::new(TlsListening::new(
-        identity,
-        registry.clone(),
-        merged.clone(),
-        addresses,
-    ));
+    let tls = Arc::new(
+        TlsListening::new(identity, registry.clone(), merged.clone(), addresses)
+            .with_join_desk(desk),
+    );
     if registry
         .should_listen(clock.now())
         .await

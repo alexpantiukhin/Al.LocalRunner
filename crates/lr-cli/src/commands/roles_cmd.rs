@@ -8,10 +8,27 @@ use lr_proto::{ControlReply, DownMode, IpcChannel, RunnerControl};
 use lr_runner::AgentExit;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+async fn terminated() {
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut s) => {
+            s.recv().await;
+        }
+        Err(_) => std::future::pending().await,
+    }
+}
+
+#[cfg(not(unix))]
+async fn terminated() {
+    std::future::pending().await
+}
+
 async fn until_interrupted(running: Running) -> Result<i32, String> {
     let ended = tokio::select! {
         exits = running.wait() => Some(exits),
         _ = tokio::signal::ctrl_c() => None,
+        _ = terminated() => None,
     };
     match ended {
         None => Ok(0),
@@ -27,15 +44,29 @@ async fn until_interrupted(running: Running) -> Result<i32, String> {
     }
 }
 
-/// `hub run`.
-pub async fn hub_run(layout: &Layout) -> Result<i32, String> {
+/// `hub run`; `background` when the OS started it at logon.
+pub async fn hub_run(layout: &Layout, background: bool) -> Result<i32, String> {
+    if background {
+        crate::os_service::background_console();
+    }
     let running = roles::start_hub(layout, true).await?;
     eprintln!("hub running; Ctrl+C stops it");
     until_interrupted(running).await
 }
 
-/// `broker run`.
-pub async fn broker_run(layout: &Layout) -> Result<i32, String> {
+/// `broker run`; `service` under the OS service manager (Windows: the service host).
+pub async fn broker_run(layout: &Layout, background: bool, service: bool) -> Result<i32, String> {
+    #[cfg(windows)]
+    if service {
+        let layout = layout.clone();
+        return tokio::task::spawn_blocking(move || crate::os_service::windows_host::run(layout))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|()| 0);
+    }
+    if background || service {
+        crate::os_service::background_console();
+    }
     let running = roles::start_broker(layout, true).await?;
     for a in running.network_addresses() {
         eprintln!("broker listening on {a}");
@@ -44,13 +75,17 @@ pub async fn broker_run(layout: &Layout) -> Result<i32, String> {
     until_interrupted(running).await
 }
 
-/// `runner run`.
+/// `runner run`; `background` when the OS started it at logon.
 pub async fn runner_run(
     layout: &Layout,
     name: Option<String>,
     count: u32,
     config: Option<PathBuf>,
+    background: bool,
 ) -> Result<i32, String> {
+    if background {
+        crate::os_service::background_console();
+    }
     let running =
         roles::start_runners(layout, name.as_deref(), count, config.as_deref(), true).await?;
     eprintln!("runners running: {}", running.runners.join(", "));

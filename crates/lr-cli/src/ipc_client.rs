@@ -26,6 +26,22 @@ impl IpcClient {
         let server = ServerIdentity::current_user()
             .map_err(|e| e.to_string())?
             .or_admins();
+        IpcClient::connect_to(address, channel, server).await
+    }
+
+    /// Dials the broker's admin channel at `address`: its server may also be the broker
+    /// service's account (spec 3.9).
+    pub async fn connect_broker_admin(address: &str) -> Result<IpcClient, String> {
+        let server = crate::os_service::broker_servers()?;
+        IpcClient::connect_to(address, IpcChannel::Admin, server).await
+    }
+
+    /// Dials `address`, accepting only a server run by `server`, and opens `channel`.
+    pub async fn connect_to(
+        address: &str,
+        channel: IpcChannel,
+        server: ServerIdentity,
+    ) -> Result<IpcClient, String> {
         let t = IpcDialer::new(server)
             .dial(address, None)
             .await
