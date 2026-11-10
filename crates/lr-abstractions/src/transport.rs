@@ -60,9 +60,11 @@ pub struct Peer {
     /// network source address. Zones are computed from it on every connection (spec 3.7).
     pub endpoint: Endpoint,
     /// Public key the peer proved to hold (signed nonce for clients and runners, pinned
-    /// certificate fingerprint for a dialed broker). `None` on local IPC, which needs no key,
-    /// and on a joining connection that has only a join code. Whether the key is registered
-    /// or revoked is decided by the role from its store, not by the transport.
+    /// certificate fingerprint for a dialed broker). `None` on local IPC, which needs no key.
+    /// A joiner proves the fresh key it is about to register, so a joining connection carries
+    /// that key too and its `join` must name the same one. The transport may refuse a revoked
+    /// key at the handshake; whether a key is registered is otherwise decided by the role from
+    /// its store.
     pub key: Option<String>,
 }
 

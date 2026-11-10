@@ -2,6 +2,7 @@
 //! reason codes. Depends on `lr-core` only; the role crates convert messages to their rows.
 
 mod api;
+mod auth;
 mod caps;
 mod common;
 mod frame;
@@ -15,6 +16,7 @@ mod stats_view;
 mod version;
 
 pub use api::*;
+pub use auth::{AuthFromBroker, AuthToBroker};
 pub use caps::{WireCapabilities, WireServiceStatus};
 pub use common::*;
 pub use frame::{

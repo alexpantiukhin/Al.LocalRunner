@@ -150,3 +150,33 @@ fn message_travels_through_a_frame() {
     let bytes = read_frame(&mut Cursor::new(wire)).unwrap();
     assert_eq!(decode::<HubToBroker>(&bytes).unwrap(), msg);
 }
+
+#[test]
+fn key_proof_messages_round_trip_and_are_network_messages() {
+    let challenge = AuthFromBroker::Challenge {
+        nonce: "bm9uY2U".into(),
+    };
+    let bytes = encode(&challenge).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["type"],
+        "challenge"
+    );
+    assert_eq!(decode::<AuthFromBroker>(&bytes).unwrap(), challenge);
+    let proof = AuthToBroker::Proof {
+        public_key: "ed25519:AAAA".into(),
+        signature: "c2ln".into(),
+    };
+    let bytes = encode(&proof).unwrap();
+    assert_eq!(
+        decode_for_peer::<AuthToBroker>(&bytes, PeerKind::Network).unwrap(),
+        proof
+    );
+    let refusal = AuthFromBroker::Error(ProtocolError {
+        code: ProtocolErrorCode::KeyRevoked,
+        message: "revoked".into(),
+        supported: None,
+    });
+    let bytes = encode(&refusal).unwrap();
+    let as_hub: BrokerToHub = decode(&bytes).unwrap();
+    assert!(matches!(as_hub, BrokerToHub::Error(e) if e.code == ProtocolErrorCode::KeyRevoked));
+}
