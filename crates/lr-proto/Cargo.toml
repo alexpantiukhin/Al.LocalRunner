@@ -6,3 +6,5 @@ publish = false
 
 [dependencies]
 lr-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
