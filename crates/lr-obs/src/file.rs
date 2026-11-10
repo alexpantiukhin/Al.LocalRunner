@@ -9,7 +9,8 @@
 //! configuration only, never from a record.
 //!
 //! I/O failures never panic: they are counted in [`Writer::errors`] and the record is lost
-//! (and counted as dropped); the file is reopened on the next record. A refused rename (for
+//! (and counted as dropped), together with the lines still buffered since the last successful
+//! flush; the file is reopened on the next record. A refused rename (for
 //! example a reader holding the file on Windows) keeps writing to the active file and retries
 //! after [`RENAME_RETRY_MS`].
 
@@ -112,6 +113,7 @@ pub struct FileWriter {
     opened_at: Timestamp,
     retry_at: Option<Timestamp>,
     errors: u64,
+    unflushed: u64,
 }
 
 impl FileWriter {
@@ -141,6 +143,7 @@ impl FileWriter {
             opened_at: Timestamp(0),
             retry_at: None,
             errors: 0,
+            unflushed: 0,
         }
     }
 
@@ -174,18 +177,30 @@ impl FileWriter {
         self.len > 0 && (full || old) && self.retry_at.is_none_or(|t| now >= t)
     }
 
-    fn rotate(&mut self, now: Timestamp) {
-        if let Some(mut file) = self.file.take() {
-            if file.flush().is_err() {
-                self.fail();
+    fn release(&mut self, flush: bool) -> u64 {
+        let pending = std::mem::take(&mut self.unflushed);
+        match self.file.take() {
+            Some(mut file) if flush => {
+                if file.flush().is_ok() {
+                    0
+                } else {
+                    self.fail();
+                    pending
+                }
             }
+            Some(_) => pending,
+            None => 0,
         }
+    }
+
+    fn rotate(&mut self, now: Timestamp) -> u64 {
+        let lost = self.release(true);
         let names = match self.fs.list(&self.dir) {
             Ok(names) => names,
             Err(_) => {
                 self.fail();
                 self.retry_at = Some(Timestamp(now.0.saturating_add(RENAME_RETRY_MS)));
-                return;
+                return lost;
             }
         };
         let target = (0u32..)
@@ -202,6 +217,7 @@ impl FileWriter {
                 self.retry_at = Some(Timestamp(now.0.saturating_add(RENAME_RETRY_MS)));
             }
         }
+        lost
     }
 
     fn prune(&mut self, now: Timestamp) {
@@ -232,29 +248,30 @@ impl FileWriter {
         }
     }
 
-    fn write_line(&mut self, line: &[u8]) -> bool {
+    fn write_line(&mut self, line: &[u8]) -> u64 {
         let now = self.clock.now();
         if self.file.is_none() && !self.open(now) {
-            return false;
+            return 1;
         }
+        let mut lost = 0u64;
         if self.rotation_due(now, line.len() as u64) {
-            self.rotate(now);
+            lost = self.rotate(now);
             if self.file.is_none() && !self.open(now) {
-                return false;
+                return lost.saturating_add(1);
             }
         }
         let Some(file) = self.file.as_mut() else {
-            return false;
+            return lost.saturating_add(1);
         };
         match file.write_all(line) {
             Ok(()) => {
                 self.len = self.len.saturating_add(line.len() as u64);
-                true
+                self.unflushed = self.unflushed.saturating_add(1);
+                lost
             }
             Err(_) => {
-                self.file = None;
                 self.fail();
-                false
+                lost.saturating_add(self.release(false)).saturating_add(1)
             }
         }
     }
@@ -268,21 +285,26 @@ impl Writer for FileWriter {
                 Format::Json => json_line(record),
                 Format::Text => text_line(record, true),
             };
-            if !self.write_line(line.as_bytes()) {
-                lost = lost.saturating_add(1);
-            }
+            lost = lost.saturating_add(self.write_line(line.as_bytes()));
         }
         lost
     }
 
     fn flush(&mut self) -> u64 {
-        if let Some(file) = self.file.as_mut() {
-            if file.flush().is_err() {
-                self.file = None;
-                self.fail();
-            }
+        let Some(file) = self.file.as_mut() else {
+            return 0;
+        };
+        if file.flush().is_ok() {
+            self.unflushed = 0;
+            0
+        } else {
+            self.fail();
+            self.release(false)
         }
-        0
+    }
+
+    fn close(&mut self) -> u64 {
+        self.release(true)
     }
 
     fn errors(&self) -> u64 {

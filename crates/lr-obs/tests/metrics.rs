@@ -398,3 +398,43 @@ fn snapshot_is_sorted_and_starts_at_creation_time() {
     );
     assert_eq!(m.start(), T0);
 }
+
+#[test]
+fn forgetting_an_entity_removes_its_series() {
+    let m = metrics();
+    m.set("localrunner_runner_online", &[("runner", "r1")], 1.0);
+    m.set("localrunner_runner_online", &[("runner", "r2")], 1.0);
+    m.set(
+        "localrunner_service_up",
+        &[("runner", "r1"), ("service", "db")],
+        1.0,
+    );
+    m.add(
+        "localrunner_service_starts_total",
+        &[("runner", "r1"), ("service", "db")],
+        1,
+    );
+    m.forget("runner", "r1");
+    let left: Vec<(String, Vec<(String, String)>)> = m
+        .snapshot()
+        .into_iter()
+        .map(|p| (p.name.to_string(), p.labels))
+        .collect();
+    assert_eq!(
+        left,
+        vec![(
+            "localrunner_runner_online".to_string(),
+            vec![("runner".to_string(), "r2".to_string())]
+        )]
+    );
+    for n in 0..MAX_SERIES_PER_METRIC {
+        m.set(
+            "localrunner_runner_online",
+            &[("runner", &format!("x{n}"))],
+            1.0,
+        );
+        m.forget("runner", &format!("x{n}"));
+    }
+    m.set("localrunner_runner_online", &[("runner", "fresh")], 1.0);
+    assert_eq!(m.rejected(), 0);
+}

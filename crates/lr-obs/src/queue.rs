@@ -37,6 +37,12 @@ pub trait Writer: Send {
         0
     }
 
+    /// Final flush that also releases the writer's resources (closes the file); returns
+    /// records lost doing so.
+    fn close(&mut self) -> u64 {
+        self.flush()
+    }
+
     /// Most records handed to one [`Writer::write`].
     fn batch_max(&self) -> usize {
         256
@@ -67,6 +73,9 @@ impl SinkKind {
         }
     }
 }
+
+/// Longest sleep of a sink worker; also the period of its flush and periodic work.
+pub const WORKER_PERIOD: Duration = Duration::from_secs(1);
 
 /// Bounds of one sink's queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,29 +190,35 @@ impl Queued {
         batch
     }
 
-    /// Writes what is queued (while the writer is ready) and does the periodic work.
-    pub fn pump(&self) {
+    /// Writes what is queued while the writer is ready and does the periodic work; returns
+    /// whether the writer was still ready at the end (`false` while an exporter backs off).
+    pub fn pump(&self) -> bool {
         let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
-        while w.ready() {
+        let ready = loop {
+            if !w.ready() {
+                break false;
+            }
             let batch = self.take(w.batch_max());
             if batch.is_empty() {
-                break;
+                break true;
             }
             let lost = w.write(&batch);
             self.lose(lost);
-        }
+        };
         let lost = w.tick();
         self.lose(lost);
         self.errors.store(w.errors(), Ordering::Relaxed);
+        ready
     }
 
-    /// [`Queued::pump`], then pushes buffered data out.
-    pub fn flush(&self) {
-        self.pump();
+    /// [`Queued::pump`], then pushes buffered data out; returns what `pump` returned.
+    pub fn flush(&self) -> bool {
+        let ready = self.pump();
         let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
         let lost = w.flush();
         self.lose(lost);
         self.errors.store(w.errors(), Ordering::Relaxed);
+        ready
     }
 
     /// Stops taking records; later ones are dropped and counted. Wakes a waiting worker.
@@ -220,7 +235,13 @@ impl Queued {
     /// Final delivery after [`Queued::close`]: flushes, and counts what still could not be
     /// delivered as dropped.
     pub fn finish(&self) {
-        self.flush();
+        self.pump();
+        {
+            let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+            let lost = w.close();
+            self.lose(lost);
+            self.errors.store(w.errors(), Ordering::Relaxed);
+        }
         let left = {
             let mut p = self.pending();
             let n = p.items.len() as u64;
@@ -241,11 +262,21 @@ impl Queued {
         self.errors.load(Ordering::Relaxed)
     }
 
-    /// Blocks until a record arrives, the queue is closed or `timeout` passes.
-    pub fn wait(&self, timeout: Duration) {
-        let p = self.pending();
-        if p.items.is_empty() && !p.closed {
-            let _ = self.wake.wait_timeout(p, timeout);
+    /// The worker loop of the sink: delivers until [`Queued::close`]. While the writer is not
+    /// ready (an exporter backing off) the worker sleeps a whole [`WORKER_PERIOD`] and ignores
+    /// arriving records, so a paused sink costs a few wake-ups per second, not a busy loop.
+    pub fn run(&self) {
+        let mut ready = true;
+        while !self.is_closed() {
+            self.wait(WORKER_PERIOD, ready);
+            ready = self.flush();
         }
+    }
+
+    fn wait(&self, timeout: Duration, ready: bool) {
+        let p = self.pending();
+        let _ = self
+            .wake
+            .wait_timeout_while(p, timeout, |p| !p.closed && !(ready && !p.items.is_empty()));
     }
 }

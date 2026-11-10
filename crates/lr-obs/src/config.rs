@@ -427,6 +427,9 @@ pub fn parse_endpoint(text: &str) -> Result<Endpoint, ConfigError> {
         {
             return refuse("has an invalid IPv6 address");
         }
+        if !after.is_empty() && !after.starts_with(':') {
+            return refuse("has text after the IPv6 address");
+        }
         (host, after.strip_prefix(':'))
     } else {
         match authority.rsplit_once(':') {

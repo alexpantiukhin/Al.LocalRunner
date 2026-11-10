@@ -12,7 +12,7 @@ use crate::oslog::{OsLogApi, OsLogWriter};
 use crate::otlp::{OtlpTransport, OtlpWriter};
 use crate::queue::{QueueLimits, Queued, SinkKind, Writer};
 use crate::redact::Redactor;
-use lr_abstractions::{Clock, LogSink, Meter, Record, Role};
+use lr_abstractions::{Clock, Level, LogSink, Meter, Record, Role};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -125,6 +125,7 @@ pub struct Logger {
     stopped: AtomicBool,
     retired_dropped: AtomicU64,
     retired_errors: AtomicU64,
+    spawn_failures: AtomicU64,
 }
 
 impl Logger {
@@ -140,6 +141,7 @@ impl Logger {
             stopped: AtomicBool::new(false),
             retired_dropped: AtomicU64::new(0),
             retired_errors: AtomicU64::new(0),
+            spawn_failures: AtomicU64::new(0),
         })
     }
 
@@ -164,10 +166,11 @@ impl Logger {
             &mut *self.current.write().unwrap_or_else(|e| e.into_inner()),
             fresh.clone(),
         );
-        if self.workers_on.load(Ordering::SeqCst) {
-            spawn(&fresh);
-        }
         self.retire(&old);
+        drop(old);
+        if self.workers_on.load(Ordering::SeqCst) {
+            self.spawn(&fresh);
+        }
         Ok(())
     }
 
@@ -193,7 +196,7 @@ impl Logger {
         if self.stopped.load(Ordering::SeqCst) || self.workers_on.swap(true, Ordering::SeqCst) {
             return;
         }
-        spawn(&self.pipeline());
+        self.spawn(&self.pipeline());
     }
 
     /// Stops the workers and delivers what is queued; records written later are dropped
@@ -209,6 +212,29 @@ impl Logger {
     pub fn errors(&self) -> u64 {
         let live: u64 = self.pipeline().sinks.iter().map(|s| s.queue.errors()).sum();
         live.saturating_add(self.retired_errors.load(Ordering::Relaxed))
+            .saturating_add(self.spawn_failures.load(Ordering::Relaxed))
+    }
+
+    /// Worker threads that could not be started; their sinks deliver only on
+    /// [`Logger::flush`]. Each failure is also logged at `error` to the other sinks.
+    pub fn spawn_failures(&self) -> u64 {
+        self.spawn_failures.load(Ordering::Relaxed)
+    }
+
+    fn spawn(&self, p: &Pipeline) {
+        let failed = spawn(p);
+        for kind in failed {
+            self.spawn_failures.fetch_add(1, Ordering::Relaxed);
+            let record = Record::new(
+                self.env.clock.now(),
+                Level::Error,
+                self.env.resource.role,
+                "obs",
+                "sink worker thread could not start",
+            )
+            .field("sink", kind.label());
+            self.write(&record);
+        }
     }
 }
 
@@ -241,21 +267,21 @@ impl LogSink for Logger {
     }
 }
 
-fn spawn(p: &Pipeline) {
+fn spawn(p: &Pipeline) -> Vec<SinkKind> {
+    let mut failed = Vec::new();
     let mut workers = p.workers.lock().unwrap_or_else(|e| e.into_inner());
     for sink in &p.sinks {
         let queue = sink.queue.clone();
         let name = format!("lr-obs-{}", queue.kind().label());
-        let started = std::thread::Builder::new().name(name).spawn(move || {
-            while !queue.is_closed() {
-                queue.wait(Duration::from_secs(1));
-                queue.flush();
-            }
-        });
-        if let Ok(handle) = started {
-            workers.push(handle);
+        let started = std::thread::Builder::new()
+            .name(name)
+            .spawn(move || queue.run());
+        match started {
+            Ok(handle) => workers.push(handle),
+            Err(_) => failed.push(sink.queue.kind()),
         }
     }
+    failed
 }
 
 fn stop(p: &Pipeline) {

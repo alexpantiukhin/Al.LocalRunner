@@ -267,3 +267,131 @@ async fn redacting_secrets_registers_every_fetched_value() {
     assert_eq!(redactor.redact_text("got tok-12345"), format!("got {MASK}"));
     assert!(secrets.get("missing").await.is_err());
 }
+
+#[test]
+fn redaction_cost_is_bounded_with_many_secrets_and_a_huge_message() {
+    let redactor = plain();
+    for n in 0..MAX_SECRETS {
+        redactor.protect(&format!("secret-value-{n:05}"));
+    }
+    let huge = "x".repeat(1024 * 1024);
+    let input = record(&huge).field("note", &huge);
+    let started = std::time::Instant::now();
+    for _ in 0..3 {
+        let out = redactor.redact(&input);
+        assert!(out.record().message.len() <= MAX_MESSAGE_BYTES + TRUNCATED.len());
+    }
+    let elapsed = started.elapsed();
+    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+}
+
+#[test]
+fn overlapping_secrets_leave_no_tail() {
+    let redactor = plain();
+    redactor.protect("abcdef");
+    redactor.protect("defghi");
+    assert_eq!(redactor.redact_text("[abcdefghi]"), format!("[{MASK}]"));
+    assert_eq!(
+        redactor.redact_text("defghi abcdef"),
+        format!("{MASK} {MASK}")
+    );
+}
+
+#[test]
+fn secret_straddling_the_input_cap_cannot_leak_a_prefix() {
+    let redactor = plain();
+    let secret = "s1-xxxxxxxxxxxxxxxxx";
+    assert_eq!(secret.len(), 20);
+    redactor.protect(secret);
+    let message = secret.repeat(1000);
+    let out = redactor.redact(&record(&message));
+    let m = &out.record().message;
+    assert!(!m.contains("s1-"), "{}", &m[m.len().saturating_sub(40)..]);
+    assert!(m.ends_with(TRUNCATED));
+}
+
+#[test]
+fn authorization_values_are_masked_to_the_end_of_the_line() {
+    let r = plain();
+    assert_eq!(
+        r.redact_text("Authorization: token ghp_abcdef123\nnext"),
+        format!("Authorization: {MASK}\nnext")
+    );
+    assert_eq!(
+        r.redact_text("authorization: Digest username=\"u\", response=\"abc\""),
+        format!("authorization: {MASK}")
+    );
+    assert_eq!(
+        r.redact_text("Proxy-Authorization: Basic abc"),
+        format!("Proxy-Authorization: {MASK}")
+    );
+}
+
+#[test]
+fn debug_escaped_json_is_masked() {
+    let r = plain();
+    assert_eq!(
+        r.redact_text(r#"{\"token\":\"abc def\",\"ok\":1}"#),
+        format!(r#"{{\"token\":\"{MASK}\",\"ok\":1}}"#)
+    );
+}
+
+#[test]
+fn colon_values_are_masked_to_the_end_of_the_value() {
+    let r = plain();
+    assert_eq!(
+        r.redact_text("password: my pass phrase\nnext"),
+        format!("password: {MASK}\nnext")
+    );
+    assert_eq!(r.redact_text("token=abc def"), format!("token={MASK} def"));
+    assert_eq!(
+        r.redact_text("bearer=abc123 rest"),
+        format!("bearer={MASK} rest")
+    );
+}
+
+#[test]
+fn acronyms_digits_and_name_families_are_sensitive() {
+    let r = plain();
+    for name in [
+        "APIKey",
+        "token2",
+        "PGPASSWORD",
+        "accesstoken",
+        "dbPwd",
+        "passphrase",
+        "x_bearer",
+        "OAuthHeader",
+        "clientSecretValue",
+        "my-credential-id",
+    ] {
+        assert!(r.is_sensitive_field(name), "{name}");
+    }
+}
+
+#[test]
+fn documented_false_positive_guards_are_not_masked() {
+    use lr_obs::redact::NOT_SENSITIVE;
+    assert_eq!(
+        NOT_SENSITIVE,
+        &[
+            "tokens_used",
+            "token_count",
+            "author",
+            "authority",
+            "unauthorized",
+            "authenticated"
+        ]
+    );
+    let r = plain();
+    for name in NOT_SENSITIVE
+        .iter()
+        .chain(&["exit_code", "keyboard", "monkey", "job_id"])
+    {
+        assert!(!r.is_sensitive_field(name), "{name}");
+    }
+    assert_eq!(
+        r.redact_text("unauthorized: peer rejected"),
+        "unauthorized: peer rejected"
+    );
+}

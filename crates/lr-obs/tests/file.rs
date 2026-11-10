@@ -300,6 +300,46 @@ fn text_format_files_carry_time_and_escape_controls() {
     let text = String::from_utf8(b.fs.file(&dir().join("daemon.log")).unwrap()).unwrap();
     assert_eq!(
         text,
-        "2023-11-14T22:13:20.000Z INFO  broker engine one\\ntwo\n"
+        "2023-11-14T22:13:20.000Z INFO  broker engine \"one\\ntwo\"\n"
+    );
+}
+
+#[test]
+fn lines_lost_in_a_failed_flush_are_counted() {
+    let mut b = bench(policy(50, 14, 10));
+    b.fs.buffered(true);
+    assert_eq!(
+        b.writer
+            .write(&[redacted("a", T0), redacted("b", T0), redacted("c", T0)]),
+        0
+    );
+    b.fs.fail_flush(true);
+    assert_eq!(b.writer.flush(), 3);
+    b.fs.fail_flush(false);
+    assert_eq!(b.writer.write(&[redacted("d", T0), redacted("e", T0)]), 0);
+    b.fs.fail(Some("disk gone"));
+    assert_eq!(b.writer.write(&[redacted("f", T0)]), 3);
+}
+
+#[test]
+fn json_escapes_bidi_separators_del_and_c1() {
+    let line = json_line(&redacted(
+        "a\u{202e}b\u{2028}c\u{7f}d\u{85}e\u{2066}f\u{2029}",
+        T0,
+    ));
+    for esc in [
+        "\\u202e", "\\u2028", "\\u007f", "\\u0085", "\\u2066", "\\u2029",
+    ] {
+        assert!(line.contains(esc), "{esc} missing in {line}");
+    }
+    for raw in [
+        '\u{202e}', '\u{2028}', '\u{7f}', '\u{85}', '\u{2066}', '\u{2029}',
+    ] {
+        assert!(!line.contains(raw), "{raw:?} kept in {line}");
+    }
+    let back: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+    assert_eq!(
+        back["message"],
+        "a\u{202e}b\u{2028}c\u{7f}d\u{85}e\u{2066}f\u{2029}"
     );
 }

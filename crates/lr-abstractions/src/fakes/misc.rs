@@ -106,6 +106,8 @@ pub enum MeterUpdate {
     Set(String, Vec<(String, String)>, f64),
     /// A histogram observation.
     Observe(String, Vec<(String, String)>, f64),
+    /// Series with this label value forgotten.
+    Forget(String, String),
 }
 
 /// A meter in memory: keeps every update in arrival order, accepts any name.
@@ -146,6 +148,11 @@ impl Meter for MemoryMeter {
 
     fn observe(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         let update = MeterUpdate::Observe(name.to_string(), owned(labels), value);
+        self.updates.lock().unwrap().push(update);
+    }
+
+    fn forget(&self, label: &str, value: &str) {
+        let update = MeterUpdate::Forget(label.to_string(), value.to_string());
         self.updates.lock().unwrap().push(update);
     }
 }

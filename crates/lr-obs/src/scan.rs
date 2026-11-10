@@ -178,7 +178,21 @@ fn closing_bracket(s: &str, from: usize) -> usize {
     s.len()
 }
 
-fn value_span(s: &str, start: usize) -> Option<(usize, usize, usize)> {
+#[derive(Clone, Copy, PartialEq)]
+enum Until {
+    Space,
+    Separator,
+    LineEnd,
+}
+
+fn value_span(s: &str, start: usize, until: Until) -> Option<(usize, usize, usize)> {
+    if s[start..].starts_with("\\\"") {
+        let inner = start + 2;
+        return match s[inner..].find("\\\"") {
+            Some(rel) => Some((inner, inner + rel, inner + rel + 2)),
+            None => Some((inner, s.len(), s.len())),
+        };
+    }
     let first = s[start..].chars().next()?;
     match first {
         '"' | '\'' => {
@@ -193,12 +207,24 @@ fn value_span(s: &str, start: usize) -> Option<(usize, usize, usize)> {
             Some((start, end, end))
         }
         _ => {
-            let end = take_while(s, start, |c| {
-                !(c.is_whitespace() || matches!(c, ',' | ';' | '&' | ')' | '}' | ']' | '"' | '\''))
-            });
+            let end = match until {
+                Until::Space => take_while(s, start, |c| {
+                    !(c.is_whitespace()
+                        || matches!(c, ',' | ';' | '&' | ')' | '}' | ']' | '"' | '\''))
+                }),
+                Until::Separator => {
+                    take_while(s, start, |c| !matches!(c, '\n' | '\r' | ',' | ';' | '&'))
+                }
+                Until::LineEnd => take_while(s, start, |c| !matches!(c, '\n' | '\r')),
+            };
+            let end = s[start..end].trim_end().len() + start;
             (end > start).then_some((start, end, end))
         }
     }
+}
+
+fn is_authorization(word: &str) -> bool {
+    word.eq_ignore_ascii_case("auth") || segments(word).iter().any(|s| s == "authorization")
 }
 
 pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
@@ -218,15 +244,24 @@ pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
             continue;
         }
         let mut j = end;
-        if s[j..].starts_with(['"', '\'']) {
+        if s[j..].starts_with("\\\"") {
+            j += 2;
+        } else if s[j..].starts_with(['"', '\'']) {
             j += 1;
         }
         j = take_while(s, j, |c| c == ' ' || c == '\t');
         if !s[j..].starts_with(['=', ':']) || s[j..].starts_with("://") {
             continue;
         }
+        let until = if is_authorization(word) {
+            Until::LineEnd
+        } else if s[j..].starts_with(':') {
+            Until::Separator
+        } else {
+            Until::Space
+        };
         j = take_while(s, j + 1, |c| c == ' ' || c == '\t');
-        if let Some((mask_from, mask_to, resume)) = value_span(s, j) {
+        if let Some((mask_from, mask_to, resume)) = value_span(s, j, until) {
             out.push_str(&s[from..mask_from]);
             out.push_str(MASK);
             from = mask_to;
@@ -238,21 +273,26 @@ pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
 }
 
 pub(crate) fn segments(name: &str) -> Vec<String> {
+    let chars: Vec<char> = name.chars().collect();
     let mut parts = Vec::new();
     let mut cur = String::new();
-    let mut prev_lower = false;
-    for c in name.chars() {
+    for (i, &c) in chars.iter().enumerate() {
         if !c.is_alphanumeric() {
             if !cur.is_empty() {
                 parts.push(std::mem::take(&mut cur));
             }
-            prev_lower = false;
             continue;
         }
-        if c.is_uppercase() && prev_lower && !cur.is_empty() {
-            parts.push(std::mem::take(&mut cur));
+        if let Some(&p) = i.checked_sub(1).and_then(|j| chars.get(j)) {
+            let next_lower = chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            let split = p.is_alphanumeric()
+                && ((p.is_lowercase() && c.is_uppercase())
+                    || (p.is_alphabetic() != c.is_alphabetic())
+                    || (p.is_uppercase() && c.is_uppercase() && next_lower));
+            if split && !cur.is_empty() {
+                parts.push(std::mem::take(&mut cur));
+            }
         }
-        prev_lower = c.is_lowercase() || c.is_ascii_digit();
         cur.extend(c.to_lowercase());
     }
     if !cur.is_empty() {

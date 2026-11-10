@@ -270,3 +270,11 @@ fn component_levels_override_the_default() {
     assert_eq!(cfg.level_for("outbox"), Level::Error);
     assert_eq!(cfg.level_for("hub"), Level::Warn);
 }
+
+#[test]
+fn ipv6_endpoint_refuses_garbage_after_the_bracket() {
+    for bad in ["https://[::1]x:443", "https://[::1]x", "https://[::1]:"] {
+        assert!(parse_endpoint(bad).is_err(), "{bad} accepted");
+    }
+    assert_eq!(parse_endpoint("https://[::1]").unwrap().port, 443);
+}

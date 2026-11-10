@@ -1,12 +1,12 @@
-//! Line formats of the local sinks. Both put one record on exactly one line: JSON escapes
-//! every control character, text escapes control, bidirectional and line-separator
-//! characters, so a field value cannot forge a second record or recolour a terminal.
+//! Line formats of the local sinks. Both put one record on exactly one line and escape
+//! control characters (C0, DEL, C1), bidirectional controls (U+200E/F, U+202A-202E,
+//! U+2066-2069) and the line separators U+2028/2029, so a field value cannot forge a second
+//! record, reorder what a reader sees or recolour a terminal.
 
 use crate::redact::Redacted;
 use crate::time::rfc3339;
 use lr_abstractions::{Level, Role};
 use serde::Deserialize;
-use serde_json::Value;
 
 /// Line format of a file sink (`format`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -49,7 +49,21 @@ fn unique_fields(r: &Redacted) -> Vec<&(String, String)> {
 }
 
 fn js(s: &str) -> String {
-    Value::String(s.to_string()).to_string()
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if needs_escape(c) => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The record as one JSON line ending in `\n`: `time` (RFC 3339 UTC, milliseconds),
@@ -114,18 +128,27 @@ fn field_name(name: &str) -> String {
     }
 }
 
+fn quoted(value: &str) -> String {
+    let escaped = escape(&value.replace('\\', "\\\\")).replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
 fn field_value(value: &str) -> String {
-    let v = escape(value);
-    if v.is_empty() || v.contains([' ', '"', '=']) {
-        format!("\"{}\"", v.replace('"', "\\\""))
+    let plain = !value.is_empty()
+        && !value.contains([' ', '"', '=', '\\'])
+        && !value.chars().any(needs_escape);
+    if plain {
+        value.to_string()
     } else {
-        v
+        quoted(value)
     }
 }
 
 /// The record as one text line ending in `\n`:
-/// `[time ]LEVEL role component message name=value ...`; the time is left out for the OS
-/// journal, which stamps entries itself.
+/// `[time LEVEL ]role component "message" name=value ...`. The message is always quoted and
+/// values are quoted when they hold spaces, quotes, `=`, `\` or escaped characters, with `\`
+/// and `"` escaped inside quotes, so no text can forge another field. The time and level are
+/// left out for the OS journal, which records both itself.
 pub fn text_line(r: &Redacted, with_time: bool) -> String {
     let rec = r.record();
     let mut line = String::new();
@@ -138,7 +161,7 @@ pub fn text_line(r: &Redacted, with_time: bool) -> String {
     line.push(' ');
     line.push_str(&field_name(&rec.component));
     line.push(' ');
-    line.push_str(&escape(&rec.message));
+    line.push_str(&quoted(&rec.message));
     for (name, value) in unique_fields(r) {
         line.push(' ');
         line.push_str(&field_name(name));

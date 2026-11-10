@@ -411,3 +411,13 @@ fn https_transport_rejects_a_bad_ca_file() {
     let endpoint = parse_endpoint("https://localhost:4318").unwrap();
     assert!(HttpsTransport::new(&endpoint, b"not a pem", Duration::from_secs(1)).is_err());
 }
+
+#[test]
+fn https_transport_refuses_a_trusted_certificate_for_another_host() {
+    let pki = pki();
+    let (port, server) = serve_once(&pki, "200 OK");
+    let endpoint = parse_endpoint(&format!("https://127.0.0.1:{port}")).unwrap();
+    let t = HttpsTransport::new(&endpoint, pki.ca_pem.as_bytes(), Duration::from_secs(5)).unwrap();
+    assert!(matches!(t.post(LOGS_PATH, b"{}"), Err(ExportError::Io(_))));
+    let _ = server.join();
+}

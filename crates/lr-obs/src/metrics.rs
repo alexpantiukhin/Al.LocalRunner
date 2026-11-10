@@ -6,7 +6,9 @@
 //! [`MAX_LABEL_VALUE_BYTES`] printable bytes, and a metric has at most
 //! [`MAX_SERIES_PER_METRIC`] series. Project, branch, client label and job names are never
 //! labels; the `client` label exists only with `[metrics] client_label = true` and only on
-//! [`CLIENT_LABEL_METRICS`]. Refused updates are counted in [`Metrics::rejected`].
+//! [`CLIENT_LABEL_METRICS`]. Refused updates are counted in [`Metrics::rejected`]. Series of
+//! a runner, service or pool that is gone are removed with [`Meter::forget`], which also
+//! frees their place under the series cap.
 
 use lr_abstractions::Meter;
 use lr_core::Timestamp;
@@ -459,5 +461,12 @@ impl Meter for Metrics {
 
     fn observe(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         self.update(name, labels, Update::Observe(value));
+    }
+
+    fn forget(&self, label: &str, value: &str) {
+        let mut all = self.series.lock().unwrap_or_else(|e| e.into_inner());
+        for series in all.iter_mut() {
+            series.retain(|labels, _| !labels.iter().any(|(k, v)| k == label && v == value));
+        }
     }
 }

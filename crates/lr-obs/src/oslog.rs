@@ -4,13 +4,36 @@
 
 use crate::format::text_line;
 use crate::queue::Writer;
-use crate::redact::Redacted;
+use crate::redact::{Redacted, TRUNCATED};
 use lr_abstractions::Level;
 use std::io;
 use std::sync::{Arc, Mutex};
 
 /// Event source name in the Windows Event Log, ident in syslog.
 pub const EVENT_SOURCE: &str = "Al.LocalRunner";
+
+/// Longest insertion string `ReportEventW` accepts, in UTF-16 units.
+pub const EVENT_TEXT_MAX: usize = 31_839;
+
+/// The text cut to [`EVENT_TEXT_MAX`] UTF-16 units (at a character boundary, ending in
+/// [`TRUNCATED`] when cut), so an over-long record is shortened instead of refused.
+pub fn event_text(text: &str) -> String {
+    if text.encode_utf16().count() <= EVENT_TEXT_MAX {
+        return text.to_string();
+    }
+    let budget = EVENT_TEXT_MAX - TRUNCATED.encode_utf16().count();
+    let mut used = 0;
+    let mut out = String::new();
+    for c in text.chars() {
+        used += c.len_utf16();
+        if used > budget {
+            break;
+        }
+        out.push(c);
+    }
+    out.push_str(TRUNCATED);
+    out
+}
 
 /// The OS journal API.
 pub trait OsLogApi: Send + Sync {
@@ -73,7 +96,10 @@ impl Writer for OsLogWriter {
             let line = text_line(record, false);
             if self
                 .api
-                .emit(record.record().level, line.trim_end_matches('\n'))
+                .emit(
+                    record.record().level,
+                    &event_text(line.trim_end_matches('\n')),
+                )
                 .is_err()
             {
                 lost = lost.saturating_add(1);

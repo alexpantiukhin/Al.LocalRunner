@@ -13,4 +13,10 @@ pub trait Meter: Send + Sync {
 
     /// Records one observation of a histogram.
     fn observe(&self, name: &str, labels: &[(&str, &str)], value: f64);
+
+    /// Forgets every series whose label `label` equals `value` (a runner, service or pool
+    /// that is gone), so series of ended entities do not live forever.
+    fn forget(&self, label: &str, value: &str) {
+        let _ = (label, value);
+    }
 }

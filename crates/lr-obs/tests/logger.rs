@@ -183,7 +183,7 @@ fn console_lines_neutralise_line_injection() {
         out,
         concat!(
             "2023-11-14T22:13:20.000Z WARN  broker engine ",
-            "a\\nFAKE ERROR\\u{1b}[31m\\u{202e}x host=\"h 1\\r\\n\" bad_name_=v\n"
+            "\"a\\nFAKE ERROR\\u{1b}[31m\\u{202e}x\" host=\"h 1\\r\\n\" bad_name_=v\n"
         )
     );
 }
@@ -196,7 +196,7 @@ fn journal_gets_level_and_text_without_time() {
     logger.flush();
     assert_eq!(
         b.os_log.entries(),
-        vec![(Level::Error, "broker engine boom job_id=j1".to_string())]
+        vec![(Level::Error, "broker engine \"boom\" job_id=j1".to_string())]
     );
 }
 
@@ -450,4 +450,47 @@ fn unreachable_receiver_never_blocks_writers() {
     stuck.wake.notify_all();
     logger.shutdown();
     assert!(b.file().contains("\"w4999\""));
+}
+
+#[test]
+fn text_message_cannot_forge_a_field() {
+    let b = Bench::new();
+    let logger = b.logger("[[sink]]\nkind = \"journal\"\n");
+    logger.write(&record("engine", Level::Info, "ok\" job_id=evil").field("path", "C:\\dir \"x\""));
+    logger.flush();
+    assert_eq!(
+        b.os_log.lines(),
+        vec!["broker engine \"ok\\\" job_id=evil\" path=\"C:\\\\dir \\\"x\\\"\"".to_string()]
+    );
+}
+
+#[test]
+fn reload_never_has_two_writers_on_one_path() {
+    let b = Bench::new();
+    let logger = Arc::new(b.logger("[[sink]]\nkind = \"file\"\n"));
+    logger.start_workers();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let (logger, stop) = (logger.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let mut n = 0u64;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                logger.write(&record("engine", Level::Info, &format!("r{n}")));
+                n += 1;
+                if n.is_multiple_of(64) {
+                    std::thread::yield_now();
+                }
+            }
+        })
+    };
+    let cfg = LoggingConfig::parse("[[sink]]\nkind = \"file\"\n").unwrap();
+    for _ in 0..30 {
+        logger.reload(&cfg).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    logger.shutdown();
+    let path = PathBuf::from("state").join("logs").join("daemon.log");
+    assert_eq!(b.fs.max_open(&path), 1);
 }
