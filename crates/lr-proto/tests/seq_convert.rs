@@ -189,3 +189,20 @@ fn commit_code_without_repository_reads_as_before() {
         new
     );
 }
+
+#[test]
+fn denied_cancel_ack_outside_the_outbox_has_seq_zero_and_no_dedup_key() {
+    let denied = br#"{"type":"cancel_ack","job":"j1","seq":0,"cancel_seq":2,"outcome":"denied","denial":"unknown job"}"#;
+    let msg = lr_proto::decode::<BrokerToHub>(denied).unwrap();
+    let BrokerToHub::CancelAck(a) = &msg else {
+        panic!("{msg:?}");
+    };
+    assert_eq!(
+        (a.seq, a.cancel_seq, a.outcome),
+        (0, 2, CancelOutcome::Denied)
+    );
+    assert!(lr_proto::Sequenced::sequence(&msg).is_none());
+    assert!(DedupKey::of("c", &msg).is_none());
+    let applied = br#"{"type":"cancel_ack","job":"j1","seq":0,"cancel_seq":2,"outcome":"applied","denial":null}"#;
+    assert!(lr_proto::decode::<BrokerToHub>(applied).is_err());
+}

@@ -1028,8 +1028,11 @@ fields = ["command", "env", "token"]
 </ul>
 <p>Уточнения hub там, где разделы выше не задают поведение:</p>
 <ul>
+<li>Активный заказ хранит в <code>active_order.spec_json</code> заказ, как он был подан: после перезапуска hub возвращённый (<code>returned</code>) заказ снова предлагается другим брокерам с seq 1, а заказ «та же машина» завершается с подсказкой. <code>hub_meta</code> хранит наибольшее выданное время JobId (<code>job_id_floor</code>): после перезапуска JobId выдаются выше него, даже если часы ушли назад. Схема <code>hub.db</code> версии 2; файл версии 1 переводится миграцией.</li>
+<li>Заказ, чья запись в <code>hub.db</code> не читается (испорченный JSON в outbox, или нет ни брокера, ни сохранённого заказа), завершается сразу отказом <code>rejected_order_unreadable</code>, при старте hub или при досылке. Восстановленная джоба с ждущей отменой в outbox считается отменённой: reaper и повторный <code>cancel</code> второй отмены не ставят; повторный <code>cancel</code> той же джобы отвечает её JobId и ничего не ставит.</li>
+<li>Подтверждения брокера (<code>accepted</code>, <code>ack</code>, <code>resume</code>, <code>cancel_ack</code>) применяются не дальше наибольшего seq, реально отправленного этому брокеру по этой джобе. Не удавшаяся запись выбора брокера переводит заказ в ожидание с повтором через <code>query_retry_s</code>. Если после отказа брокера в допустимых зонах заказа брокеров не осталось, заказ получает причину последнего отказа, а не <code>rejected_zone_not_served</code>. Файл-хэндл пишется после записи заказа в outbox. <code>cancel_ack</code> <code>denied</code> вне outbox приходит с <code>seq = 0</code> и в поток seq не входит.</li>
 <li>Канал CLI принимается только по локальному IPC (<code>PeerAccess::Local</code>); пользователь ОС берётся из того, что сообщает ОС о собеседнике, и заменяет <code>os_user</code> в присланной идентичности. Сетевой собеседник получает <code>refused</code> (<code>unauthorized</code>).</li>
-<li>Файл-хэндл <code>temp/runner/&lt;job-id&gt;.json</code> и копию лога пишет hub (он знает JobId и путь, <code>active_order.handle_path</code>). Каталог отправителя (<code>cwd</code>, <code>worktree_root</code>) должен быть абсолютным и без <code>.</code> и <code>..</code>, JobId — из букв, цифр и дефиса, иначе заказ отклоняется ошибкой <code>malformed</code>. JobId hub выдаёт из своего времени в миллисекундах и счётчика.</li>
+<li>Файл-хэндл <code>temp/runner/&lt;job-id&gt;.json</code> и копию лога пишет hub (он знает JobId и путь, <code>active_order.handle_path</code>). Каталог отправителя (<code>cwd</code>, <code>worktree_root</code>) должен быть абсолютным (в Windows — с буквой диска) и без <code>.</code> и <code>..</code>, JobId — из букв, цифр и дефиса, иначе заказ отклоняется ошибкой <code>malformed</code>. JobId hub выдаёт из своего времени в миллисекундах и счётчика.</li>
 <li>Сразу, без JobId, отклоняются: ошибка профиля или флагов (<code>error malformed</code>, в том числе <code>--timeout</code> больше таймаута профиля), незапушенный коммит заказа на платформу (<code>rejected_commit_not_pushed</code>), заказ «та же машина» без настроенного локального брокера (<code>rejected_no_local_broker</code>). Остальные отказы приходят после JobId: тому, кто ждёт (<code>--wait</code>), и в копию лога.</li>
 <li><code>done</code> принимается только на том соединении, где выдан JobId этой джобы, и ответа не имеет; иначе — ошибка. Reaper следит за каждой джобой без <code>--detach</code> независимо от <code>done</code>. <code>wait</code> на завершённую джобу отвечает её итогом, пока он в памяти (последние 1024 итога), иначе ошибкой; закрытие соединения <code>wait</code> ничего не отменяет.</li>
 <li>Брокер без сообщённой зоны считается <code>remote</code>, локальный брокер — всегда <code>local</code>. Подходящими считаются только раннеры на связи; <code>least_loaded</code> выбирает брокера с наибольшим числом подходящих раннеров, при равенстве — раньшего по <code>[brokers] order</code>. Если ни один допустимый брокер не ответил, заказ ждёт в outbox и выбор повторяется через <code>query_retry_s</code> и при каждом подключении брокера.</li>
@@ -1212,7 +1215,8 @@ runner:{x:940,y:60,w:210,f:["PK name","FK machine_name","programs","platforms","
 result_outbox:{x:680,y:440,w:220,f:["PK client_machine","PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 order:{x:940,y:450,w:210,f:["PK/FK client_key","PK/FK job_id","client_machine","spec_json","platform","same_machine","priority_hint","enqueued_at","state"]},
 outbox:{x:30,y:740,w:260,f:["PK/FK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
-active_order:{x:330,y:740,w:260,f:["PK job_id","broker","last_seq","label","os_user","submitter_pid","submitter_start","handle_path","detached"]},
+active_order:{x:330,y:740,w:260,f:["PK job_id","broker","last_seq","label","os_user","submitter_pid","submitter_start","handle_path","detached","spec_json"]},
+hub_meta:{x:920,y:740,w:240,f:["PK name","value"]},
 broker_link:{x:630,y:740,w:260,f:["PK broker","address","fingerprint","key_id","machine_id","last_zone"]},
 runner_outbox:{x:30,y:960,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 service_registry:{x:330,y:960,w:260,f:["PK name","pid","pid_start","state","started_at","expires_at","mem_mb"]},
@@ -1224,7 +1228,7 @@ svg.appendChild(el("rect",{class:"grp",x:10,y:30,width:620,height:610,rx:10}));
 svg.appendChild(el("text",{class:"g",x:24,y:50},"broker.db — история запусков"));
 svg.appendChild(el("rect",{class:"grp",x:650,y:30,width:520,height:610,rx:10}));
 svg.appendChild(el("text",{class:"g",x:664,y:50},"broker.db — реестр, очередь"));
-svg.appendChild(el("rect",{class:"grp",x:10,y:700,width:1160,height:215,rx:10}));
+svg.appendChild(el("rect",{class:"grp",x:10,y:700,width:1160,height:222,rx:10}));
 svg.appendChild(el("text",{class:"g",x:24,y:720},"hub.db — у каждого hub"));
 svg.appendChild(el("rect",{class:"grp",x:10,y:925,width:1160,height:170,rx:10}));
 svg.appendChild(el("text",{class:"g",x:24,y:945},"runner.db — у каждого раннера"));

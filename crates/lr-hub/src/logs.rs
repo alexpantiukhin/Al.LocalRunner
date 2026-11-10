@@ -21,7 +21,6 @@ fn source_name(id: &Identity) -> &'static str {
     }
 }
 
-/// First lines of the log copy: who, what and from where (spec 7.1).
 pub(crate) fn header(job: &JobId, spec: &OrderSpec) -> String {
     let id = &spec.identity;
     let mut text = format!(
@@ -40,7 +39,6 @@ pub(crate) fn header(job: &JobId, spec: &OrderSpec) -> String {
     text
 }
 
-/// The line written when a cancel is requested: who, when, `--force` and `--reason`.
 pub(crate) fn cancel_line(
     by: &str,
     at: Timestamp,
@@ -59,12 +57,10 @@ pub(crate) fn cancel_line(
     text
 }
 
-/// The line of a started job.
 pub(crate) fn started_line(runner: &str, at: Timestamp) -> String {
     format!("=== started on runner {runner} at {at} ===\n")
 }
 
-/// The line of a finished step.
 pub(crate) fn step_line(r: &StepResult) -> String {
     let code = r
         .exit_code
@@ -85,7 +81,6 @@ pub(crate) fn step_line(r: &StepResult) -> String {
     )
 }
 
-/// The last line of a finished job.
 pub(crate) fn result_line(
     state: JobState,
     exit_code: Option<i32>,
@@ -102,7 +97,6 @@ pub(crate) fn result_line(
     text
 }
 
-/// The last line of a refused order.
 pub(crate) fn rejected_line(code: &ReasonCode, detail: &str) -> String {
     format!("=== rejected: {code}: {detail} ===\n")
 }

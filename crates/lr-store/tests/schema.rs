@@ -72,8 +72,9 @@ fn hub_db_has_the_tables_and_columns_of_the_er_diagram() {
         ),
         (
             "active_order",
-            "job_id, broker, last_seq, label, os_user, submitter_pid, submitter_start, handle_path, detached",
+            "job_id, broker, last_seq, label, os_user, submitter_pid, submitter_start, handle_path, detached, spec_json",
         ),
+        ("hub_meta", "name, value"),
         (
             "broker_link",
             "broker, address, fingerprint, key_id, machine_id, last_zone",

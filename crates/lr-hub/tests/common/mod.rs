@@ -16,7 +16,7 @@ use lr_proto::{
     decode, CliReply, CliRequest, IpcChannel, IpcOpen, IpcOpenReply, SubmitRequest,
     PROTOCOL_VERSION,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,7 +42,11 @@ platforms = ["linux"]
 "#;
 
 pub fn repo_root() -> PathBuf {
-    PathBuf::from("/work/repo")
+    if cfg!(windows) {
+        PathBuf::from(r"C:\work\repo")
+    } else {
+        PathBuf::from("/work/repo")
+    }
 }
 
 pub async fn settle() {
@@ -95,6 +99,16 @@ pub fn submit(profile: &str, platform: Option<&str>) -> SubmitRequest {
     }
 }
 
+fn ipc_peer() -> Peer {
+    Peer {
+        endpoint: Endpoint::Ipc {
+            os_user: "alex".into(),
+        },
+        key: None,
+        access: PeerAccess::Local,
+    }
+}
+
 pub struct Rig {
     pub clock: ManualClock,
     pub net: FakeNetwork,
@@ -106,6 +120,7 @@ pub struct Rig {
     pub log: Arc<MemoryLogSink>,
     pub policy: HubPolicy,
     pub local: bool,
+    pub hub_clock: Option<ManualClock>,
 }
 
 impl Rig {
@@ -113,16 +128,7 @@ impl Rig {
         let clock = ManualClock::new(Timestamp(START));
         let shared: Arc<dyn Clock> = Arc::new(clock.clone());
         let net = FakeNetwork::new(shared);
-        let ipc = net.listen(
-            HUB_IPC,
-            Peer {
-                endpoint: Endpoint::Ipc {
-                    os_user: "alex".into(),
-                },
-                key: None,
-                access: PeerAccess::Local,
-            },
-        );
+        let ipc = net.listen(HUB_IPC, ipc_peer());
         let inspector = FakeProcessInspector::new();
         inspector.add(ProcessRef {
             pid: SENDER_PID,
@@ -148,6 +154,7 @@ impl Rig {
             log: Arc::new(MemoryLogSink::new()),
             policy: HubPolicy::default(),
             local: false,
+            hub_clock: None,
         }
     }
 
@@ -182,7 +189,7 @@ impl Rig {
             access: PeerAccess::Member,
         }));
         HubDeps {
-            clock: Arc::new(self.clock.clone()),
+            clock: Arc::new(self.hub_clock.clone().unwrap_or_else(|| self.clock.clone())),
             store: self.store.clone(),
             ipc: Arc::new(self.ipc.take().expect("hub started once")),
             dialer,
@@ -199,6 +206,19 @@ impl Rig {
     pub fn start(&mut self) -> tokio::task::JoinHandle<()> {
         let hub = Hub::new(self.deps());
         tokio::spawn(hub.run())
+    }
+
+    pub async fn restart(
+        &mut self,
+        old: tokio::task::JoinHandle<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        old.abort();
+        let _ = old.await;
+        settle().await;
+        self.ipc = Some(self.net.listen(HUB_IPC, ipc_peer()));
+        let hub = self.start();
+        settle().await;
+        hub
     }
 
     pub async fn cli(&self) -> Cli {
@@ -296,9 +316,15 @@ impl Cli {
 }
 
 pub fn handle_path(job: &JobId) -> PathBuf {
-    Path::new("/work/repo/temp/runner").join(format!("{job}.json"))
+    repo_root()
+        .join("temp")
+        .join("runner")
+        .join(format!("{job}.json"))
 }
 
 pub fn log_path(job: &JobId) -> PathBuf {
-    Path::new("/work/repo/temp/runner").join(format!("{job}.log"))
+    repo_root()
+        .join("temp")
+        .join("runner")
+        .join(format!("{job}.log"))
 }

@@ -10,7 +10,8 @@ use lr_abstractions::{
 };
 use lr_core::{JobId, Timestamp, Zone};
 use lr_proto::{
-    BrokerToHub, CliReply, CliRequest, HubToBroker, ProtocolError, ProtocolErrorCode, ReasonCode,
+    BrokerToHub, CliReply, CliRequest, HubToBroker, OrderSpec, ProtocolError, ProtocolErrorCode,
+    ReasonCode, RejectReason,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -207,7 +208,7 @@ impl Hub {
     }
 }
 
-fn spec_of(payload: &str) -> Option<lr_proto::OrderSpec> {
+fn spec_of(payload: &str) -> Option<OrderSpec> {
     match serde_json::from_str::<HubToBroker>(payload).ok()? {
         HubToBroker::Order(o) => Some(*o.spec),
         _ => None,
@@ -285,19 +286,57 @@ impl Engine {
                 Vec::new()
             }
         };
+        let floor = match self.s.store.job_id_floor().await {
+            Ok(f) => f,
+            Err(e) => {
+                self.s.diag(
+                    Level::Error,
+                    "job-id floor unreadable",
+                    &[("error", &e.to_string())],
+                );
+                0
+            }
+        };
+        let restored = orders.iter().filter_map(|o| JobIds::time_of(&o.job)).max();
+        self.ids = JobIds::above(floor.max(restored.unwrap_or(0)));
+        let mut broken = Vec::new();
         for o in orders {
-            let entry = pending
+            let mine: Vec<_> = pending.iter().filter(|e| e.job == o.job).collect();
+            let entry = mine.iter().find(|e| e.kind == OutboxKind::Order);
+            let stored = o
+                .spec_json
+                .as_deref()
+                .and_then(|j| serde_json::from_str::<OrderSpec>(j).ok());
+            let spec = stored.or_else(|| entry.and_then(|e| spec_of(&e.payload)));
+            let unreadable = mine
                 .iter()
-                .find(|e| e.job == o.job && e.kind == OutboxKind::Order);
-            let spec = entry.and_then(|e| spec_of(&e.payload));
+                .any(|e| serde_json::from_str::<HubToBroker>(&e.payload).is_err());
             let stage = match (&o.broker, entry) {
                 (None, _) => Stage::Selecting,
                 (Some(_), Some(_)) => Stage::Sent,
                 (Some(_), None) => Stage::Accepted,
             };
-            self.tracks
-                .insert(o.job.clone(), Track::new(o, spec, stage));
+            if unreadable || (o.broker.is_none() && spec.is_none()) {
+                broken.push(o.job.clone());
+            }
+            let mut track = Track::new(o, spec, stage);
+            track.cancelled = mine.iter().any(|e| e.kind == OutboxKind::Cancel);
+            self.tracks.insert(track.order.job.clone(), track);
         }
+        for job in broken {
+            self.unreadable(&job).await;
+        }
+    }
+
+    pub(crate) async fn unreadable(&mut self, job: &JobId) {
+        self.s.diag(
+            Level::Error,
+            "order or outbox entry in hub.db unreadable: the job is ended",
+            &[("job", &job.0)],
+        );
+        let code = ReasonCode::Rejected(RejectReason::Other("rejected_order_unreadable".into()));
+        let detail = "запись заказа в hub.db не читается".to_string();
+        self.final_reject(job, code, detail).await;
     }
 
     async fn handle(&mut self, ev: Event) -> bool {

@@ -129,7 +129,10 @@ macro_rules! hub_store_contract {
             hub::broker_list_upsert_zone_and_remove,
             seq::hub_seq_gap_is_refused,
         );
-        $crate::__store_reopen_cases!($make, $reopen; hub_outbox_and_seq_survive_reopen);
+        $crate::__store_reopen_cases!($make, $reopen;
+            hub_outbox_and_seq_survive_reopen,
+            hub_order_spec_and_job_id_floor_survive_reopen,
+        );
     };
 }
 

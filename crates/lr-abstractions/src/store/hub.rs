@@ -25,6 +25,9 @@ pub struct ActiveOrder {
     pub handle_path: Option<String>,
     /// `--detach`: the reaper leaves the job alone.
     pub detached: bool,
+    /// The order as submitted (JSON), kept while the job is active so that it can be placed
+    /// again at another broker after a restart of the hub.
+    pub spec_json: Option<String>,
 }
 
 impl ActiveOrder {
@@ -46,6 +49,7 @@ impl ActiveOrder {
             submitter_start,
             handle_path: None,
             detached: false,
+            spec_json: None,
         }
     }
 }
@@ -132,6 +136,13 @@ pub trait HubStore: Send + Sync {
         payload: String,
         at: Timestamp,
     ) -> Result<u64, StoreError>;
+
+    /// The greatest job-id time this hub has issued (milliseconds), 0 when none: job ids stay
+    /// unique across restarts even when the clock goes back.
+    async fn job_id_floor(&self) -> Result<u64, StoreError>;
+
+    /// Raises the job-id floor to `ms`; a lower value leaves it unchanged.
+    async fn raise_job_id_floor(&self, ms: u64) -> Result<(), StoreError>;
 
     /// Adds or replaces a broker.
     async fn upsert_broker(&self, link: BrokerLink) -> Result<(), StoreError>;

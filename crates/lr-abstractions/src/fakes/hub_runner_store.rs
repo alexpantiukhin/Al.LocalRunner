@@ -15,6 +15,20 @@ struct HubState {
     outbox: MemoryOutbox,
     brokers: BTreeMap<String, BrokerLink>,
     files: BTreeMap<PathBuf, Vec<u8>>,
+    failures: BTreeMap<&'static str, usize>,
+    job_id_floor: u64,
+}
+
+impl HubState {
+    fn injected(&mut self, op: &'static str) -> Result<(), StoreError> {
+        match self.failures.get_mut(op) {
+            Some(n) if *n > 0 => {
+                *n -= 1;
+                Err(StoreError::Io(format!("injected failure of {op}")))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// `hub.db` and the log copies in memory, with the invariants of [`HubStore`].
@@ -34,6 +48,12 @@ impl MemoryHubStore {
         MemoryHubStore {
             state: self.state.clone(),
         }
+    }
+
+    /// The next `times` calls of the operation `op` (`enqueue`, `set_broker`) fail with
+    /// [`StoreError::Io`] and change nothing.
+    pub fn fail(&self, op: &'static str, times: usize) {
+        self.state.lock().unwrap().failures.insert(op, times);
     }
 
     /// Content of a log copy written with `append_log_copy`.
@@ -56,6 +76,7 @@ impl HubStore for MemoryHubStore {
         at: Timestamp,
     ) -> Result<u64, StoreError> {
         let mut s = self.state.lock().unwrap();
+        s.injected("enqueue")?;
         if s.active.contains_key(&order.job) {
             return Err(StoreError::Duplicate(format!("active order {}", order.job)));
         }
@@ -81,6 +102,7 @@ impl HubStore for MemoryHubStore {
 
     async fn set_broker(&self, job: &JobId, broker: Option<&str>) -> Result<(), StoreError> {
         let mut s = self.state.lock().unwrap();
+        s.injected("set_broker")?;
         let order = s.active.get_mut(job).ok_or_else(|| missing(job))?;
         order.broker = broker.map(str::to_string);
         Ok(())
@@ -138,6 +160,16 @@ impl HubStore for MemoryHubStore {
         order.last_seq = 0;
         s.outbox.restart("", job);
         Ok(s.outbox.push("", job, kind, payload, at))
+    }
+
+    async fn job_id_floor(&self) -> Result<u64, StoreError> {
+        Ok(self.state.lock().unwrap().job_id_floor)
+    }
+
+    async fn raise_job_id_floor(&self, ms: u64) -> Result<(), StoreError> {
+        let mut s = self.state.lock().unwrap();
+        s.job_id_floor = s.job_id_floor.max(ms);
+        Ok(())
     }
 
     async fn upsert_broker(&self, link: BrokerLink) -> Result<(), StoreError> {

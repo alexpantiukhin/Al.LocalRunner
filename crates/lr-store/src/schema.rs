@@ -39,10 +39,17 @@ pub static BROKER: Schema = Schema {
 pub static HUB: Schema = Schema {
     name: "hub.db",
     application_id: 0x4c52_4832,
-    version: 1,
+    version: 2,
     create: include_str!("sql/hub.sql"),
-    migrations: &[],
+    migrations: &[hub_v2],
 };
+
+fn hub_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE active_order ADD COLUMN spec_json TEXT;
+         CREATE TABLE hub_meta (name TEXT PRIMARY KEY, value INTEGER NOT NULL);",
+    )
+}
 
 /// Schema of `runner.db`.
 pub static RUNNER: Schema = Schema {

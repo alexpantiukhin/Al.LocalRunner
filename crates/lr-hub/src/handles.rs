@@ -3,10 +3,8 @@ use lr_core::{JobId, Timestamp};
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 
-/// Checks a directory reported by the CLI before anything is written under it: absolute, and
-/// without `.` or `..` components, so a handle or log copy never lands outside it.
 pub(crate) fn checked_dir(dir: &Path) -> Result<(), String> {
-    let absolute = dir.is_absolute() || dir.has_root();
+    let absolute = dir.is_absolute();
     let clean = dir
         .components()
         .all(|c| !matches!(c, Component::ParentDir | Component::CurDir));
@@ -37,12 +35,10 @@ fn job_file(cwd: &Path, job: &JobId, ext: &str) -> Result<PathBuf, String> {
     Ok(cwd.join("temp").join("runner").join(format!("{id}.{ext}")))
 }
 
-/// `temp/runner/<job-id>.json` in the submitter's directory (spec 7.3).
 pub(crate) fn handle_path(cwd: &Path, job: &JobId) -> Result<PathBuf, String> {
     job_file(cwd, job, "json")
 }
 
-/// `temp/runner/<job-id>.log` in the submitter's directory (spec 6, 8).
 pub(crate) fn log_path(cwd: &Path, job: &JobId) -> Result<PathBuf, String> {
     job_file(cwd, job, "log")
 }
@@ -56,8 +52,6 @@ struct Handle<'a> {
     detached: bool,
 }
 
-/// Writes the handle: label, id, profile and time of submission, by which an agent finds its
-/// jobs after losing its context.
 pub(crate) async fn write_handle(
     files: &dyn Files,
     path: &Path,

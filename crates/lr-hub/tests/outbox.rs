@@ -334,3 +334,23 @@ async fn brokers_lists_zone_availability_and_outbox() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn repeated_cancel_of_one_job_queues_one_cancel() {
+    let mut rig = Rig::new();
+    let (local, job) = accepted_job(&mut rig).await;
+    let cli = rig.cli().await;
+    for _ in 0..2 {
+        cli.send(cancel(&job, "agent", false)).await;
+        assert_eq!(
+            cli.reply().await,
+            CliReply::Cancelled {
+                jobs: vec![job.clone()]
+            }
+        );
+    }
+    settle().await;
+    assert_eq!(local.cancels().len(), 1);
+    let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
+    assert_eq!(log.matches("cancel requested").count(), 1, "{log}");
+}

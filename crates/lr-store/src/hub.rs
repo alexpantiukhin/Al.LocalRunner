@@ -53,7 +53,8 @@ impl SqliteHubStore {
 }
 
 const ACTIVE: &str = "job_id, broker, last_seq, label, os_user, submitter_pid, submitter_start, \
-                      handle_path, detached";
+                      handle_path, detached, spec_json";
+const ID_FLOOR: &str = "job_id_floor";
 
 fn active_row(r: &Row<'_>) -> rusqlite::Result<ActiveOrder> {
     Ok(ActiveOrder {
@@ -66,6 +67,7 @@ fn active_row(r: &Row<'_>) -> rusqlite::Result<ActiveOrder> {
         submitter_start: col_opt_u64(r, 6)?,
         handle_path: r.get(7)?,
         detached: r.get(8)?,
+        spec_json: r.get(9)?,
     })
 }
 
@@ -121,7 +123,7 @@ impl HubStore for SqliteHubStore {
                     tx.execute(
                         &format!(
                             "INSERT INTO active_order ({ACTIVE}) \
-                             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
+                             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
                         ),
                         params![
                             order.job.0,
@@ -132,7 +134,8 @@ impl HubStore for SqliteHubStore {
                             order.submitter_pid,
                             opt_int(order.submitter_start),
                             order.handle_path,
-                            order.detached
+                            order.detached,
+                            order.spec_json
                         ],
                     )?;
                     outbox::push(tx, HUB, "", &order.job, kind, &payload, at)
@@ -278,6 +281,35 @@ impl HubStore for SqliteHubStore {
                     )?;
                     tx.execute("DELETE FROM outbox WHERE job_id = ?1", [&job.0])?;
                     outbox::push(tx, HUB, "", &job, kind, &payload, at)
+                })
+            })
+            .await
+    }
+
+    async fn job_id_floor(&self) -> Result<u64, StoreError> {
+        self.db
+            .run(|c| {
+                let v: Option<i64> = c
+                    .query_row(
+                        "SELECT value FROM hub_meta WHERE name = ?1",
+                        [ID_FLOOR],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                Ok(v.map_or(0, |v| v as u64))
+            })
+            .await
+    }
+
+    async fn raise_job_id_floor(&self, ms: u64) -> Result<(), StoreError> {
+        self.db
+            .run(move |c| {
+                write(c, |tx| {
+                    tx.execute(
+                        "INSERT INTO hub_meta (name, value) VALUES (?1, ?2)                          ON CONFLICT (name) DO UPDATE SET value = max(value, excluded.value)",
+                        params![ID_FLOOR, int(ms)],
+                    )?;
+                    Ok(())
                 })
             })
             .await

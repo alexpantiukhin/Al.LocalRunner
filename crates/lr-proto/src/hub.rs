@@ -3,8 +3,8 @@ use crate::caps::WireCapabilities;
 use crate::common::{Ack, Bye, Hello, Join, Joined, ProtocolError, Resume, Welcome};
 use crate::frame::message;
 use crate::job::{
-    check_chunk, Accepted, CancelAck, Chunk, HubCancel, JobResult, Order, Rejected, Returned,
-    StartedNotice, StepResult, CHUNK_TEXT_LIMIT,
+    check_chunk, Accepted, CancelAck, CancelOutcome, Chunk, HubCancel, JobResult, Order, Rejected,
+    Returned, StartedNotice, StepResult, CHUNK_TEXT_LIMIT,
 };
 use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::{JobId, Zone};
@@ -214,6 +214,7 @@ message!(
         )),
         BrokerToHub::StepResult(s) => seq_from_one(s.seq),
         BrokerToHub::JobResult(r) => final_result(r),
+        BrokerToHub::CancelAck(c) if c.seq == 0 && c.outcome == CancelOutcome::Denied => Ok(()),
         BrokerToHub::CancelAck(c) => seq_from_one(c.seq),
         BrokerToHub::Returned(r) => seq_from_one(r.seq),
         BrokerToHub::Rejected(r) if !r.code.is_rejection() => {
@@ -244,6 +245,7 @@ impl Sequenced for BrokerToHub {
             BrokerToHub::Chunk(m) => Some((&m.job, m.seq)),
             BrokerToHub::StepResult(m) => Some((&m.job, m.seq)),
             BrokerToHub::JobResult(m) => Some((&m.job, m.seq)),
+            BrokerToHub::CancelAck(m) if m.seq == 0 => None,
             BrokerToHub::CancelAck(m) => Some((&m.job, m.seq)),
             BrokerToHub::Returned(m) => Some((&m.job, m.seq)),
             _ => None,

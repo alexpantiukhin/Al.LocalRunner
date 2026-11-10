@@ -1,7 +1,3 @@
-//! Sending the outbox (spec 13.3): entries go to the broker of their job with their stored
-//! seq, are sent again after every reconnect until `accepted` or `ack` removes them, and an
-//! order no broker accepted within `ttl_hours` ends as `rejected_outbox_expired`.
-
 use crate::engine::Engine;
 use crate::policy::OnExpire;
 use lr_abstractions::{Frame, Level, OutboxEntry, OutboxKind};
@@ -20,8 +16,6 @@ fn wire(e: &OutboxEntry) -> Result<Frame, String> {
 }
 
 impl Engine {
-    /// Sends what is pending for `name` and not yet sent on its current connection; a full
-    /// send queue leaves the rest for the next tick.
     pub(crate) async fn flush(&mut self, name: &str) {
         let Some(out) = self.links.get(name).and_then(|l| l.out.clone()) else {
             return;
@@ -41,13 +35,14 @@ impl Engine {
             return;
         };
         link.flush_later = false;
+        let mut broken: Vec<JobId> = Vec::new();
         for e in pending {
             let ours = self
                 .tracks
                 .get(&e.job)
                 .is_some_and(|t| t.order.broker.as_deref() == Some(name));
             let key = (e.job.clone(), e.seq);
-            if !ours || link.sent.contains(&key) {
+            if !ours || link.sent.contains(&key) || broken.contains(&e.job) {
                 continue;
             }
             let frame = match wire(&e) {
@@ -58,6 +53,7 @@ impl Engine {
                         "outbox entry unreadable, not sent",
                         &[("job", &e.job.0), ("error", &why)],
                     );
+                    broken.push(e.job);
                     continue;
                 }
             };
@@ -67,14 +63,16 @@ impl Engine {
                 }
                 Err(TrySendError::Full(_)) => {
                     link.flush_later = true;
-                    return;
+                    break;
                 }
-                Err(TrySendError::Closed(_)) => return,
+                Err(TrySendError::Closed(_)) => break,
             }
+        }
+        for job in broken {
+            self.unreadable(&job).await;
         }
     }
 
-    /// Stores a cancel for the job's broker and sends it.
     pub(crate) async fn push_cancel(
         &mut self,
         job: &JobId,
@@ -119,7 +117,6 @@ impl Engine {
         }
     }
 
-    /// Ends orders that waited longer than `ttl_hours` without `accepted`.
     pub(crate) async fn expire(&mut self) {
         let o = &self.policy.outbox;
         if o.on_expire == OnExpire::Keep {

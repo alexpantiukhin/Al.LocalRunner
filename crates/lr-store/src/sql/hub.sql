@@ -16,7 +16,13 @@ CREATE TABLE active_order (
     submitter_pid   INTEGER NOT NULL,
     submitter_start INTEGER,
     handle_path     TEXT,
-    detached        INTEGER NOT NULL
+    detached        INTEGER NOT NULL,
+    spec_json       TEXT
+);
+
+CREATE TABLE hub_meta (
+    name  TEXT PRIMARY KEY,
+    value INTEGER NOT NULL
 );
 
 CREATE TABLE outbox (

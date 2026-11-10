@@ -128,6 +128,22 @@ pub(crate) struct Link {
 }
 
 impl Link {
+    pub(crate) fn acked(&mut self, job: &JobId, seq: u64) -> u64 {
+        let top = self
+            .sent
+            .iter()
+            .filter(|(j, s)| j == job && *s <= seq)
+            .map(|(_, s)| *s)
+            .max()
+            .unwrap_or(0);
+        self.sent.retain(|(j, s)| j != job || *s > top);
+        top
+    }
+
+    pub(crate) fn forget(&mut self, job: &JobId) {
+        self.sent.retain(|(j, _)| j != job);
+    }
+
     pub(crate) fn close(&mut self) {
         if let Some(k) = &self.kill {
             k.notify_one();
@@ -140,4 +156,30 @@ pub(crate) struct Finished {
     pub(crate) os_user: String,
     pub(crate) summary: JobSummary,
     pub(crate) reply: CliReply,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(sent: &[(&str, u64)]) -> Link {
+        Link {
+            sent: sent
+                .iter()
+                .map(|(j, s)| (JobId(j.to_string()), *s))
+                .collect(),
+            ..Link::default()
+        }
+    }
+
+    #[test]
+    fn ack_is_clamped_to_the_highest_seq_sent_and_trims_the_sent_set() {
+        let mut l = link(&[("a", 1), ("a", 2), ("a", 3), ("b", 1)]);
+        assert_eq!(l.acked(&JobId("a".into()), u64::MAX), 3);
+        assert_eq!(l.sent, link(&[("b", 1)]).sent);
+        let mut l = link(&[("a", 1), ("a", 2), ("a", 3)]);
+        assert_eq!(l.acked(&JobId("a".into()), 2), 2);
+        assert_eq!(l.sent, link(&[("a", 3)]).sent);
+        assert_eq!(l.acked(&JobId("z".into()), 7), 0);
+    }
 }

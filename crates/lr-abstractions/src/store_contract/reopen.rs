@@ -96,6 +96,52 @@ pub async fn hub_outbox_and_seq_survive_reopen<S: HubStore>(store: S, reopen: im
     assert!(store.accept_seq(&id, 2).await.unwrap());
 }
 
+/// The order spec of an active order and the job-id floor survive a restart; re-brokering
+/// keeps the spec and finishing the job removes it.
+pub async fn hub_order_spec_and_job_id_floor_survive_reopen<S: HubStore>(
+    store: S,
+    reopen: impl Fn(S) -> S,
+) {
+    let id = JobId("j1".into());
+    let mut order = ActiveOrder::new(id.clone(), "agent", "alex", 1, Some(1));
+    order.spec_json = Some("{\"profile\":\"unit\"}".into());
+    store
+        .enqueue(order, OutboxKind::Order, "o".into(), at(1))
+        .await
+        .unwrap();
+    let plain = ActiveOrder::new(JobId("j2".into()), "agent", "alex", 1, Some(1));
+    store
+        .enqueue(plain, OutboxKind::Order, "o".into(), at(1))
+        .await
+        .unwrap();
+    assert_eq!(store.job_id_floor().await.unwrap(), 0);
+    store.raise_job_id_floor(1_700_000_000_123).await.unwrap();
+    store.raise_job_id_floor(1_600_000_000_000).await.unwrap();
+    let store = reopen(store);
+    assert_eq!(store.job_id_floor().await.unwrap(), 1_700_000_000_123);
+    let spec = |o: Option<ActiveOrder>| o.and_then(|o| o.spec_json);
+    assert_eq!(
+        spec(store.active(&id).await.unwrap()).as_deref(),
+        Some("{\"profile\":\"unit\"}")
+    );
+    assert_eq!(spec(store.active(&JobId("j2".into())).await.unwrap()), None);
+    let all = store.active_orders().await.unwrap();
+    assert_eq!(all[0].spec_json.as_deref(), Some("{\"profile\":\"unit\"}"));
+    store
+        .rebroker(&id, OutboxKind::Order, "again".into(), at(2))
+        .await
+        .unwrap();
+    let store = reopen(store);
+    assert_eq!(
+        spec(store.active(&id).await.unwrap()).as_deref(),
+        Some("{\"profile\":\"unit\"}")
+    );
+    store.finish(&id).await.unwrap();
+    let store = reopen(store);
+    assert!(store.active(&id).await.unwrap().is_none());
+    assert_eq!(store.job_id_floor().await.unwrap(), 1_700_000_000_123);
+}
+
 /// The runner outbox, its seq counter and the received seq survive a restart.
 pub async fn runner_outbox_and_seq_survive_reopen<S: RunnerStore>(
     store: S,

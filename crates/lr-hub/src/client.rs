@@ -2,16 +2,14 @@ use crate::engine::{BrokerEvent, Event, Shared};
 use lr_abstractions::{Frame, Level, Transport};
 use lr_core::Zone;
 use lr_proto::{
-    receive, BrokerToHub, CancelOutcome, DecodeError, Hello, HubToBroker, PeerKind, Received,
-    HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE, PROTOCOL_VERSION,
+    receive, BrokerToHub, Hello, HubToBroker, PeerKind, Received, HEARTBEAT_INTERVAL_S,
+    MISSED_HEARTBEATS_OFFLINE, PROTOCOL_VERSION,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Notify};
 
-/// Frames waiting to be written to one broker; more means the broker is too slow and its
-/// connection is closed and dialed again.
 pub(crate) const OUT_FRAMES: usize = 1024;
 
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
@@ -25,7 +23,6 @@ pub(crate) fn silence_limit() -> Duration {
     Duration::from_secs(HEARTBEAT_INTERVAL_S.saturating_mul(u64::from(MISSED_HEARTBEATS_OFFLINE)))
 }
 
-/// Answers awaited by correlation id (capabilities queries, read requests).
 #[derive(Default)]
 pub(crate) struct Pending {
     waiting: Mutex<HashMap<u64, oneshot::Sender<BrokerToHub>>>,
@@ -54,7 +51,6 @@ impl Pending {
     }
 }
 
-/// Where and how to reach one broker.
 #[derive(Clone)]
 pub(crate) struct Target {
     pub(crate) name: String,
@@ -197,15 +193,6 @@ async fn writer(shared: &Shared, t: &dyn Transport, mut out: mpsc::Receiver<Fram
     }
 }
 
-fn denied_cancel_ack(bytes: &[u8]) -> Option<BrokerToHub> {
-    match serde_json::from_slice::<BrokerToHub>(bytes).ok()? {
-        BrokerToHub::CancelAck(c) if c.seq == 0 && c.outcome == CancelOutcome::Denied => {
-            Some(BrokerToHub::CancelAck(c))
-        }
-        _ => None,
-    }
-}
-
 async fn reader(target: &Target, shared: &Shared, events: &mpsc::Sender<Event>, t: &dyn Transport) {
     loop {
         let frame = tokio::select! {
@@ -221,17 +208,6 @@ async fn reader(target: &Target, shared: &Shared, events: &mpsc::Sender<Event>, 
         let msg = match receive::<BrokerToHub>(frame.as_bytes(), PeerKind::Network) {
             Ok(Received::Message(m)) => m,
             Ok(Received::Ignored(_)) => continue,
-            Err(DecodeError::Malformed(why)) => match denied_cancel_ack(frame.as_bytes()) {
-                Some(m) => m,
-                None => {
-                    shared.diag(
-                        Level::Warn,
-                        "malformed message from broker ignored",
-                        &[("broker", &target.name), ("error", &why)],
-                    );
-                    continue;
-                }
-            },
             Err(e) => {
                 shared.diag(
                     Level::Warn,

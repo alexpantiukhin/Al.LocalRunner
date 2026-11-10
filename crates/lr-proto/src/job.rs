@@ -264,7 +264,8 @@ pub enum CancelOutcome {
 pub struct CancelAck {
     /// The job.
     pub job: JobId,
-    /// Position in the broker-to-hub stream of the job.
+    /// Position in the broker-to-hub stream of the job; 0 for a `denied` answer sent outside
+    /// the outbox, which is not part of the stream.
     pub seq: u64,
     /// Seq of the cancel this answers.
     pub cancel_seq: u64,

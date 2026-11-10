@@ -88,7 +88,6 @@ pub enum Decision {
     Reject(ReasonCode, String),
 }
 
-/// A broker that can be asked.
 #[derive(Clone)]
 pub(crate) struct Candidate {
     pub(crate) name: String,
@@ -230,7 +229,6 @@ impl Choice {
         Pass::NoneSuitable(figures.join("; "))
     }
 
-    /// Runs the choice with up to `query_attempts` passes.
     pub(crate) async fn run(self) -> Decision {
         if self.groups().is_empty() {
             return Decision::Reject(

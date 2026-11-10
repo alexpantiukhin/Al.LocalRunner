@@ -7,10 +7,8 @@ use lr_core::{
 use lr_proto::{HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, SubmitRequest, WireCode};
 use std::path::{Path, PathBuf};
 
-/// Path of the profiles inside a work tree or a commit.
 pub(crate) const PROFILES_PATH: &str = ".localrunner/profiles.toml";
 
-/// Why a submit produced no order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Refusal {
     Rejected(ReasonCode, String),
@@ -21,12 +19,10 @@ fn invalid(text: impl Into<String>) -> Refusal {
     Refusal::Invalid(text.into())
 }
 
-/// An order built from a submit, ready for the outbox.
 pub(crate) struct Built {
     pub(crate) spec: OrderSpec,
 }
 
-/// The reference "same machine" of a local IPC client as the broker assigns it (spec 13.2).
 pub(crate) fn local_machine(os_user: &str) -> MachineRef {
     MachineRef(format!("local:{os_user}"))
 }
@@ -128,8 +124,6 @@ fn lower_timeout(
     Ok(())
 }
 
-/// Reads the profile (work tree, or the pushed commit for a platform order) and builds the
-/// order (spec 3.4, 3.7, 5).
 pub(crate) async fn build(
     req: &SubmitRequest,
     files: &dyn Files,
@@ -201,7 +195,6 @@ pub(crate) async fn build(
     Ok(Built { spec })
 }
 
-/// The order message as stored in the outbox; its seq is set when it is sent.
 pub(crate) fn order_payload(job: &JobId, spec: &OrderSpec) -> HubToBroker {
     HubToBroker::Order(Order {
         job: job.clone(),
@@ -210,8 +203,6 @@ pub(crate) fn order_payload(job: &JobId, spec: &OrderSpec) -> HubToBroker {
     })
 }
 
-/// Issues job ids: hub time in milliseconds and a counter, monotonic even if the clock
-/// stands still, so an id is never reused by this hub.
 #[derive(Default)]
 pub(crate) struct JobIds {
     last_ms: u64,
@@ -219,6 +210,26 @@ pub(crate) struct JobIds {
 }
 
 impl JobIds {
+    pub(crate) fn above(floor: u64) -> JobIds {
+        JobIds {
+            last_ms: if floor == 0 {
+                0
+            } else {
+                floor.saturating_add(1)
+            },
+            counter: 0,
+        }
+    }
+
+    pub(crate) fn last_ms(&self) -> u64 {
+        self.last_ms
+    }
+
+    pub(crate) fn time_of(job: &JobId) -> Option<u64> {
+        let (ms, _) = job.0.strip_prefix('j')?.split_once('-')?;
+        u64::from_str_radix(ms, 16).ok()
+    }
+
     pub(crate) fn next(&mut self, now: Timestamp) -> JobId {
         if now.0 > self.last_ms {
             self.last_ms = now.0;

@@ -1,6 +1,3 @@
-//! The CLI channel (spec 3.9, 13.1): local IPC only; the OS user is the one the kernel
-//! reports for the peer, never one written in a message.
-
 use crate::client::send_within;
 use crate::engine::{refusal, CliEvent, ConnId, Event, Shared};
 use lr_abstractions::{Frame, Level, Listener, PeerAccess, Transport};
@@ -13,7 +10,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Replies waiting to be written to one CLI connection.
 const REPLY_QUEUE: usize = 256;
 const OPEN_WITHIN: Duration = Duration::from_secs(30);
 

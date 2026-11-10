@@ -11,7 +11,6 @@ use lr_proto::{
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Who cancels and how.
 pub(crate) struct CancelBy<'a> {
     pub(crate) by: &'a Identity,
     pub(crate) name: &'a str,
@@ -76,22 +75,8 @@ impl Engine {
             (Ok(h), Ok(l)) => (h, l),
             (Err(m), _) | (_, Err(m)) => return Some(error(ProtocolErrorCode::Malformed, m)),
         };
-        let files = self.s.files.as_ref();
-        if let Err(m) = write_handle(
-            files,
-            &handle,
-            &job,
-            &id.label,
-            &spec.profile,
-            now,
-            req.detach,
-        )
-        .await
-        {
-            return Some(error(
-                ProtocolErrorCode::Unavailable,
-                format!("handle {} not written: {m}", handle.display()),
-            ));
+        if let Err(e) = self.s.store.raise_job_id_floor(self.ids.last_ms()).await {
+            self.store_failed("storage failed: job-id floor not raised", &job, &e);
         }
         let mut order = ActiveOrder::new(
             job.clone(),
@@ -102,10 +87,16 @@ impl Engine {
         );
         order.handle_path = Some(handle.display().to_string());
         order.detached = req.detach;
-        let payload = match serde_json::to_string(&order_payload(&job, &spec)) {
-            Ok(p) => p,
-            Err(e) => return Some(error(ProtocolErrorCode::Malformed, e.to_string())),
+        let (payload, spec_json) = match (
+            serde_json::to_string(&order_payload(&job, &spec)),
+            serde_json::to_string(&spec),
+        ) {
+            (Ok(p), Ok(s)) => (p, s),
+            (Err(e), _) | (_, Err(e)) => {
+                return Some(error(ProtocolErrorCode::Malformed, e.to_string()))
+            }
         };
+        order.spec_json = Some(spec_json);
         let stored = self
             .s
             .store
@@ -114,6 +105,30 @@ impl Engine {
         if let Err(e) = stored {
             self.store_failed("storage failed: order not queued", &job, &e);
             return Some(error(ProtocolErrorCode::Unavailable, "hub storage failed"));
+        }
+        let files = self.s.files.as_ref();
+        let written = write_handle(
+            files,
+            &handle,
+            &job,
+            &id.label,
+            &spec.profile,
+            now,
+            req.detach,
+        )
+        .await;
+        if let Err(m) = written {
+            if let Err(e) = self.s.store.finish(&job).await {
+                self.store_failed(
+                    "storage failed: order without handle stays in hub.db",
+                    &job,
+                    &e,
+                );
+            }
+            return Some(error(
+                ProtocolErrorCode::Unavailable,
+                format!("handle {} not written: {m}", handle.display()),
+            ));
         }
         let header = crate::logs::header(&job, &spec);
         let mut track = Track::new(order, Some(spec), Stage::Selecting);
@@ -207,8 +222,10 @@ impl Engine {
         CliReply::Cancelled { jobs }
     }
 
-    /// Cancels one job: locally while no broker has it, through the outbox otherwise.
     pub(crate) async fn cancel_job(&mut self, job: &JobId, c: CancelBy<'_>) {
+        if self.tracks.get(job).is_none_or(|t| t.cancelled) {
+            return;
+        }
         let now = self.now();
         let line = crate::logs::cancel_line(c.name, now, c.force, &c.code, c.reason);
         self.log_copy(job, &line).await;

@@ -1,12 +1,11 @@
 use crate::engine::{Engine, Event, LOCAL_BROKER, RECENT_MAX};
 use crate::orders::order_payload;
-use crate::select::{broker_zone, Candidate, Choice, Decision};
+use crate::select::{allowed_zones, broker_zone, Candidate, Choice, Decision};
 use crate::track::{Finished, Stage};
 use lr_abstractions::{Level, OutboxKind};
 use lr_core::{JobId, JobState};
 use lr_proto::{CliReply, ProtocolErrorCode, ReasonCode, RejectReason};
 
-/// Hint for a same-machine order that found no runner of this installation (spec 3.1).
 pub(crate) const UP_HINT: &str = "нет раннера на вашей установке, запустите его: localrunner up";
 
 impl Engine {
@@ -31,15 +30,17 @@ impl Engine {
                 out: l.out.clone(),
             })
             .collect();
-        if candidates.is_empty() && !track.excluded.is_empty() {
+        let allowed = allowed_zones(&spec.requirements);
+        let any_allowed = candidates.iter().any(|c| allowed.contains(&c.zone));
+        if !any_allowed && !track.excluded.is_empty() {
             let (code, detail) = track.last_rejection.clone().unwrap_or((
                 ReasonCode::Rejected(RejectReason::NoMatchingRunner),
                 "все брокеры отказали".into(),
             ));
-            let _ = self.tx.try_send(Event::Selected {
-                job: job.clone(),
-                gen,
-                decision: Decision::Reject(code, detail),
+            let (tx, job) = (self.tx.clone(), job.clone());
+            let decision = Decision::Reject(code, detail);
+            tokio::spawn(async move {
+                let _ = tx.send(Event::Selected { job, gen, decision }).await;
             });
             return;
         }
@@ -75,6 +76,10 @@ impl Engine {
         match decision {
             Decision::Chosen(name) => {
                 if let Err(e) = self.s.store.set_broker(job, Some(&name)).await {
+                    let pause = self.policy.brokers.query_retry_s.max(1);
+                    track.stage = Stage::Waiting;
+                    track.wait_reason = Some("выбор брокера не записан, повтор".into());
+                    track.next_select = Some(self.s.clock.now().plus_secs(pause));
                     self.store_failed("storage failed: broker choice not recorded", job, &e);
                     return;
                 }
@@ -97,8 +102,6 @@ impl Engine {
         }
     }
 
-    /// The local broker refused this OS user: every same-machine order still looking for a
-    /// broker ends with `rejected_local_user_unknown`.
     pub(crate) async fn local_user_refused(&mut self) {
         let Some(why) = self.locally_refused() else {
             return;
@@ -117,8 +120,6 @@ impl Engine {
         }
     }
 
-    /// The broker refused or returned the order: a same-machine order ends, any other is
-    /// offered to the remaining brokers with both streams started over (spec 3.1).
     pub(crate) async fn rebroker(
         &mut self,
         job: &JobId,
@@ -165,6 +166,9 @@ impl Engine {
             return;
         }
         track.excluded.insert(from.to_string());
+        if let Some(l) = self.links.get_mut(from) {
+            l.forget(job);
+        }
         track.last_rejection = Some((code, detail));
         track.order.broker = None;
         track.order.last_seq = 0;
@@ -177,6 +181,9 @@ impl Engine {
         self.notify(job, &reply);
         if let Err(e) = self.s.store.finish(job).await {
             self.store_failed("storage failed: finished job stays in hub.db", job, &e);
+        }
+        for l in self.links.values_mut() {
+            l.forget(job);
         }
         let Some(track) = self.tracks.remove(job) else {
             return;

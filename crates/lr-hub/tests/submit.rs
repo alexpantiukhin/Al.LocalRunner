@@ -218,7 +218,7 @@ async fn submitter_directory_with_parent_components_is_refused() {
     rig.start();
     let cli = rig.cli().await;
     let mut req = submit("unit", None);
-    req.identity.cwd = "/work/repo/../../etc".into();
+    req.identity.cwd = repo_root().join("..").join("..").join("etc");
     req.identity.worktree_root = None;
     cli.send(CliRequest::Submit(req)).await;
     assert!(matches!(cli.reply().await, CliReply::Error(_)));
@@ -306,4 +306,38 @@ async fn job_ids_are_unique_and_path_safe() {
             "{id}"
         );
     }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn rooted_directory_without_drive_is_not_absolute() {
+    let mut rig = Rig::new();
+    rig.start();
+    let cli = rig.cli().await;
+    let mut req = submit("unit", None);
+    req.identity.cwd = r"\work\repo".into();
+    req.identity.worktree_root = None;
+    cli.send(CliRequest::Submit(req)).await;
+    match cli.reply().await {
+        CliReply::Error(e) => assert!(e.message.contains("must be absolute"), "{}", e.message),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn failed_enqueue_leaves_no_handle_behind() {
+    let mut rig = Rig::new();
+    let _local = rig.local_broker(Script::local_runner());
+    rig.start();
+    rig.store.fail("enqueue", 1);
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(submit("unit", None))).await;
+    match cli.reply().await {
+        CliReply::Error(e) => assert_eq!(e.code, ProtocolErrorCode::Unavailable),
+        other => panic!("{other:?}"),
+    }
+    let first = lr_core::JobId(format!("j{START:x}-0"));
+    assert_eq!(rig.files.file(&handle_path(&first)), None);
+    let job = cli.submit(submit("unit", None)).await;
+    assert!(rig.files.file(&handle_path(&job)).is_some());
 }

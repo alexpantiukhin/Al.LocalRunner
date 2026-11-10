@@ -112,9 +112,7 @@ impl Engine {
         }
         match m {
             BrokerToHub::Accepted(a) if self.is_current(&a.job, name) => {
-                if let Err(e) = self.s.store.ack_outbox(&a.job, a.order_seq).await {
-                    self.store_failed("storage failed: accepted order stays in outbox", &a.job, &e);
-                }
+                self.ack_sent(name, &a.job, a.order_seq).await;
                 if let Some(t) = self.tracks.get_mut(&a.job) {
                     if t.stage == Stage::Sent {
                         t.stage = Stage::Accepted;
@@ -136,28 +134,16 @@ impl Engine {
                         .final_result(&c.job, JobState::Cancelled, None, reason)
                         .await;
                 }
-                self.cancel_answered(&c.job, c.cancel_seq, c.outcome, c.denial.as_deref())
+                self.cancel_answered(name, &c.job, c.cancel_seq, c.outcome, c.denial.as_deref())
                     .await;
             }
             BrokerToHub::Ack(a) if self.is_current(&a.job, name) => {
-                if let Err(e) = self.s.store.ack_outbox(&a.job, a.seq).await {
-                    self.store_failed(
-                        "storage failed: acknowledged entry stays in outbox",
-                        &a.job,
-                        &e,
-                    );
-                }
+                self.ack_sent(name, &a.job, a.seq).await;
             }
             BrokerToHub::Resume(r) => {
                 for p in &r.points {
-                    if self.is_current(&p.job, name) && p.last_seq > 0 {
-                        if let Err(e) = self.s.store.ack_outbox(&p.job, p.last_seq).await {
-                            self.store_failed(
-                                "storage failed: resumed entries stay in outbox",
-                                &p.job,
-                                &e,
-                            );
-                        }
+                    if self.is_current(&p.job, name) {
+                        self.ack_sent(name, &p.job, p.last_seq).await;
                     }
                 }
                 if let Some(link) = self.links.get_mut(name) {
@@ -182,8 +168,25 @@ impl Engine {
         }
     }
 
+    async fn ack_sent(&mut self, name: &str, job: &JobId, seq: u64) {
+        let Some(top) = self.links.get_mut(name).map(|l| l.acked(job, seq)) else {
+            return;
+        };
+        if top == 0 {
+            return;
+        }
+        if let Err(e) = self.s.store.ack_outbox(job, top).await {
+            self.store_failed(
+                "storage failed: acknowledged entry stays in outbox",
+                job,
+                &e,
+            );
+        }
+    }
+
     async fn cancel_answered(
         &mut self,
+        name: &str,
         job: &JobId,
         cancel_seq: u64,
         outcome: CancelOutcome,
@@ -193,11 +196,7 @@ impl Engine {
             let text = format!("=== cancel denied: {} ===\n", denial.unwrap_or("-"));
             self.log_copy(job, &text).await;
         }
-        if cancel_seq > 0 {
-            if let Err(e) = self.s.store.ack_outbox(job, cancel_seq).await {
-                self.store_failed("storage failed: answered cancel stays in outbox", job, &e);
-            }
-        }
+        self.ack_sent(name, job, cancel_seq).await;
     }
 
     async fn on_sequenced(&mut self, name: &str, job: JobId, seq: u64, m: BrokerToHub) {
@@ -274,7 +273,7 @@ impl Engine {
                 self.rebroker(job, name, r.code, detail).await;
             }
             BrokerToHub::CancelAck(c) => {
-                self.cancel_answered(job, c.cancel_seq, c.outcome, c.denial.as_deref())
+                self.cancel_answered(name, job, c.cancel_seq, c.outcome, c.denial.as_deref())
                     .await;
             }
             _ => {}
