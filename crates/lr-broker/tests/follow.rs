@@ -200,3 +200,38 @@ async fn a_follow_takes_a_subscription_slot() {
         "{message}"
     );
 }
+
+#[tokio::test]
+async fn unfollow_stops_the_stream_and_frees_the_slot() {
+    let h = Harness::start("");
+    let (mut r, _hub) = running(&h).await;
+    let mut viewer = h.local_hub("alex").await;
+    viewer.send(&follow("j1")).await;
+    log_chunk(&mut viewer).await;
+    let reply = viewer.read(ReadRequest::Unfollow { req: 77 }).await;
+    assert_eq!(reply, ReadReply::Unsubscribed { sub: 77 });
+    r.send(&chunk("j1", 3, "b\n")).await;
+    r.acked(3).await;
+    let after = viewer.sync().await;
+    assert!(
+        !after.iter().any(|m| matches!(m, BrokerToHub::LogChunk(_))),
+        "{after:?}"
+    );
+    let again = viewer.read(ReadRequest::Unfollow { req: 77 }).await;
+    assert!(matches!(again, ReadReply::NotFound { .. }), "{again:?}");
+}
+
+#[tokio::test]
+async fn unfollow_of_another_connection_leaves_its_stream() {
+    let h = Harness::start("");
+    let (mut r, _hub) = running(&h).await;
+    let mut viewer = h.local_hub("alex").await;
+    viewer.send(&follow("j1")).await;
+    log_chunk(&mut viewer).await;
+    let mut other = h.local_hub("alex").await;
+    let reply = other.read(ReadRequest::Unfollow { req: 77 }).await;
+    assert!(matches!(reply, ReadReply::NotFound { .. }), "{reply:?}");
+    r.send(&chunk("j1", 3, "b\n")).await;
+    r.acked(3).await;
+    assert_eq!(log_chunk(&mut viewer).await.text, "b\n");
+}

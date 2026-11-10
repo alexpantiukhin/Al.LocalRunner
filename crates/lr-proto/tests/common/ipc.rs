@@ -37,6 +37,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
             label: "agent".into(),
             active: true,
         },
+        CliRequest::Shutdown,
     ]
 }
 
@@ -73,6 +74,12 @@ pub fn cli_replies() -> Vec<CliReply> {
             }],
         },
         CliReply::Jobs { jobs: vec![] },
+        CliReply::LogChunk {
+            broker: "local".into(),
+            text: "line\n".into(),
+            end: false,
+        },
+        CliReply::Stopping,
         CliReply::Error(protocol_error()),
     ]
 }
@@ -92,6 +99,7 @@ pub fn admin_requests() -> Vec<AdminRequest> {
         AdminRequest::ClientRemove { name: "ci".into() },
         AdminRequest::RunnerList,
         AdminRequest::ClientList,
+        AdminRequest::Shutdown,
     ]
 }
 

@@ -24,6 +24,7 @@ pub fn read_requests() -> Vec<ReadRequest> {
             active_only: true,
             limit: Some(20),
             cursor: Some("c2".into()),
+            mine: true,
         }),
         ReadRequest::HistoryShow {
             job: job(1),
@@ -51,6 +52,7 @@ pub fn read_requests() -> Vec<ReadRequest> {
             topics: vec![Topic::Queue, Topic::Runners],
         },
         ReadRequest::Unsubscribe { sub: 4 },
+        ReadRequest::Unfollow { req: 9 },
     ]
 }
 

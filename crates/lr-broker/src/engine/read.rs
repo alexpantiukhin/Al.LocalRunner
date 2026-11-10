@@ -144,6 +144,10 @@ impl Engine {
                     None => not_found_text(format!("subscription {sub}")),
                 }
             }
+            ReadRequest::Unfollow { req } => match self.unfollow(conn, req) {
+                true => ReadReply::Unsubscribed { sub: req },
+                false => not_found_text(format!("followed log {req}")),
+            },
             ReadRequest::Unknown => ReadReply::Unknown,
         };
         self.send(
@@ -268,8 +272,12 @@ impl Engine {
     }
 
     async fn history(&self, viewer: &Viewer, f: HistoryFilter) -> ReadReply {
+        let client = match f.mine {
+            true => Some(viewer.key.clone()),
+            false => f.client.clone(),
+        };
         let filter = JobFilter {
-            client: f.client.clone(),
+            client,
             project: f.project.clone(),
             source: f.source.map(|s| match s {
                 WireSource::Session => lr_abstractions::SourceKind::Session,

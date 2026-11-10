@@ -23,12 +23,50 @@ pub(crate) fn silence_limit() -> Duration {
     Duration::from_secs(HEARTBEAT_INTERVAL_S.saturating_mul(u64::from(MISSED_HEARTBEATS_OFFLINE)))
 }
 
+pub(crate) const STREAM_FRAMES: usize = 1024;
+
+type Stream = (String, mpsc::Sender<BrokerToHub>);
+
 #[derive(Default)]
 pub(crate) struct Pending {
     waiting: Mutex<HashMap<u64, oneshot::Sender<BrokerToHub>>>,
+    streams: Mutex<HashMap<u64, Stream>>,
 }
 
 impl Pending {
+    pub(crate) fn stream(&self, req: u64, broker: &str) -> mpsc::Receiver<BrokerToHub> {
+        let (tx, rx) = mpsc::channel(STREAM_FRAMES);
+        if let Ok(mut s) = self.streams.lock() {
+            s.insert(req, (broker.to_string(), tx));
+        }
+        rx
+    }
+
+    pub(crate) fn forget_stream(&self, req: u64) {
+        if let Ok(mut s) = self.streams.lock() {
+            s.remove(&req);
+        }
+    }
+
+    fn close_streams(&self, broker: &str) {
+        if let Ok(mut s) = self.streams.lock() {
+            s.retain(|_, (b, _)| b != broker);
+        }
+    }
+
+    fn feed(&self, req: u64, msg: BrokerToHub) -> Option<BrokerToHub> {
+        let Ok(mut s) = self.streams.lock() else {
+            return Some(msg);
+        };
+        let Some((_, tx)) = s.get(&req) else {
+            return Some(msg);
+        };
+        if tx.try_send(msg).is_err() {
+            s.remove(&req);
+        }
+        None
+    }
+
     pub(crate) fn register(&self, req: u64) -> oneshot::Receiver<BrokerToHub> {
         let (tx, rx) = oneshot::channel();
         if let Ok(mut w) = self.waiting.lock() {
@@ -164,6 +202,7 @@ async fn session(
         _ = reader(target, shared, events, t.as_ref()) => {}
         _ = kill.notified() => {}
     }
+    shared.pending.close_streams(&target.name);
     t.close().await;
     let _ = events
         .send(Event::Broker(
@@ -226,10 +265,15 @@ async fn reader(target: &Target, shared: &Shared, events: &mpsc::Sender<Event>, 
             }
             BrokerToHub::ReadReply(a) => {
                 let req = a.req;
-                shared.pending.deliver(req, BrokerToHub::ReadReply(a));
+                if let Some(msg) = shared.pending.feed(req, BrokerToHub::ReadReply(a)) {
+                    shared.pending.deliver(req, msg);
+                }
+            }
+            BrokerToHub::LogChunk(l) => {
+                let req = l.req;
+                shared.pending.feed(req, BrokerToHub::LogChunk(l));
             }
             BrokerToHub::Heartbeat
-            | BrokerToHub::LogChunk(_)
             | BrokerToHub::Event(_)
             | BrokerToHub::Welcome(_)
             | BrokerToHub::Joined(_) => {}

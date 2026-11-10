@@ -143,6 +143,9 @@ pub enum CliRequest {
         /// `--active`: only queued and running jobs.
         active: bool,
     },
+    /// `down`: stop the hub. Only its owner reaches the CLI channel; answered with
+    /// [`CliReply::Stopping`] before the hub ends.
+    Shutdown,
 }
 
 /// Messages from a hub to its CLI.
@@ -201,6 +204,18 @@ pub enum CliReply {
         /// The jobs, oldest first.
         jobs: Vec<JobSummary>,
     },
+    /// A piece of the log a `log` read asked for, relayed from the broker in order; `end`
+    /// closes the stream. A refusal comes as [`CliReply::Read`] instead.
+    LogChunk {
+        /// Broker that sent it.
+        broker: String,
+        /// Text.
+        text: String,
+        /// No more text follows.
+        end: bool,
+    },
+    /// The hub stops (answer to [`CliRequest::Shutdown`]).
+    Stopping,
     /// A refusal.
     Error(ProtocolError),
 }
@@ -241,6 +256,9 @@ pub enum AdminRequest {
     RunnerList,
     /// List clients.
     ClientList,
+    /// `down`: stop a broker started by hand; a broker under the OS service manager stays and
+    /// says so in a warning.
+    Shutdown,
 }
 
 /// Answers to administrative commands.
@@ -312,7 +330,7 @@ pub enum ControlReply {
 message!(
     CliRequest,
     local: true,
-    ["submit", "done", "wait", "cancel", "read", "brokers", "jobs"]
+    ["submit", "done", "wait", "cancel", "read", "brokers", "jobs", "shutdown"]
 );
 message!(
     CliReply,
@@ -326,6 +344,8 @@ message!(
         "read",
         "brokers",
         "jobs",
+        "log_chunk",
+        "stopping",
         "error"
     ]
 );
@@ -340,7 +360,8 @@ message!(
         "runner_remove",
         "client_remove",
         "runner_list",
-        "client_list"
+        "client_list",
+        "shutdown"
     ]
 );
 message!(

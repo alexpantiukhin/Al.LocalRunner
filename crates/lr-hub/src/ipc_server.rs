@@ -8,7 +8,7 @@ use lr_proto::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 const REPLY_QUEUE: usize = 256;
 const OPEN_WITHIN: Duration = Duration::from_secs(30);
@@ -110,8 +110,16 @@ async fn connection(
     };
     let (tx, mut rx) = mpsc::channel::<CliReply>(REPLY_QUEUE);
     let (wt, ws) = (t.clone(), shared.clone());
+    let (gone_tx, mut gone) = oneshot::channel::<()>();
     tokio::spawn(async move {
-        while let Some(reply) = rx.recv().await {
+        loop {
+            let reply = tokio::select! {
+                r = rx.recv() => match r {
+                    Some(r) => r,
+                    None => break,
+                },
+                _ = &mut gone => break,
+            };
             let Ok(frame) = Frame::json(&reply) else {
                 continue;
             };
@@ -144,5 +152,6 @@ async fn connection(
         }
     }
     drop(tx);
+    let _ = gone_tx.send(());
     let _ = events.send(Event::CliClosed(conn)).await;
 }

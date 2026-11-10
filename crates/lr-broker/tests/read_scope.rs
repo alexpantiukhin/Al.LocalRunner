@@ -150,3 +150,42 @@ async fn show_needs_the_client_when_two_clients_use_one_job_id() {
         other => panic!("expected the run, got {other:?}"),
     }
 }
+
+fn history_ids(reply: ReadReply) -> Vec<String> {
+    match reply {
+        ReadReply::History { jobs, .. } => jobs.into_iter().map(|j| j.job.0).collect(),
+        other => panic!("expected history, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn history_mine_shows_only_the_askers_runs_whatever_the_visibility() {
+    let h = Harness::start("[visibility]\nothers_orders = \"full\"\n");
+    let (_r, _alex) = running(&h).await;
+    let mut bob = h.local_hub("bob").await;
+    bob.send(&order("b1", req(512, 1, 60))).await;
+    bob.accepted().await;
+    let all = history_ids(
+        bob.read(ReadRequest::History(HistoryFilter::default()))
+            .await,
+    );
+    assert!(all.contains(&"j1".to_string()) && all.contains(&"b1".to_string()));
+    let mine = HistoryFilter {
+        mine: true,
+        ..HistoryFilter::default()
+    };
+    assert_eq!(
+        history_ids(bob.read(ReadRequest::History(mine)).await),
+        ["b1"]
+    );
+    let mine_over_client = HistoryFilter {
+        mine: true,
+        client: Some("local:alex".into()),
+        ..HistoryFilter::default()
+    };
+    assert_eq!(
+        history_ids(bob.read(ReadRequest::History(mine_over_client)).await),
+        ["b1"],
+        "mine wins over a named client"
+    );
+}

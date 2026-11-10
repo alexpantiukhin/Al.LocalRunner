@@ -110,6 +110,12 @@ impl Engine {
         }
     }
 
+    pub(crate) fn unfollow(&mut self, conn: ConnId, req: u64) -> bool {
+        let before = self.follows.len();
+        self.follows.retain(|f| !(f.conn == conn && f.req == req));
+        self.follows.len() < before
+    }
+
     pub(crate) fn end_follows(&mut self, key: &JobKey) {
         let (done, keep): (Vec<Follow>, Vec<Follow>) = std::mem::take(&mut self.follows)
             .into_iter()

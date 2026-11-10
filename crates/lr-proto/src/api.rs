@@ -78,6 +78,10 @@ pub struct HistoryFilter {
     pub limit: Option<u64>,
     /// Continue after the `next` token of the previous answer.
     pub cursor: Option<String>,
+    /// Only runs of the asking client (`history` without `--all` or `--client`); the broker
+    /// puts the asker's key in place of `client`. Absent from older senders.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mine: bool,
 }
 
 impl HistoryFilter {
@@ -168,6 +172,12 @@ pub enum ReadRequest {
     Unsubscribe {
         /// Subscription id.
         sub: u64,
+    },
+    /// Stop streaming the log that the read call `req` of this connection follows (the viewer
+    /// went away); answered with [`ReadReply::Unsubscribed`] carrying `req`.
+    Unfollow {
+        /// The `req` of the following `log` call.
+        req: u64,
     },
     /// A request of a newer minor version; answered with [`ReadReply::Unknown`].
     #[serde(other)]
@@ -376,9 +386,9 @@ pub enum ReadReply {
         /// Subscription id.
         sub: u64,
     },
-    /// A subscription is closed.
+    /// A subscription (or a followed log, after `unfollow`) is closed.
     Unsubscribed {
-        /// Subscription id.
+        /// Subscription id, or the `req` of the followed log.
         sub: u64,
     },
     /// The job or log does not exist (or is not visible).

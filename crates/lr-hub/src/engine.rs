@@ -145,7 +145,7 @@ impl Hub {
         Hub { deps }
     }
 
-    /// Serves until the IPC listener closes.
+    /// Serves until the IPC listener closes or its owner asks it to stop (`down`).
     pub async fn run(self) {
         let d = self.deps;
         let shared = Arc::new(Shared {
@@ -179,10 +179,11 @@ impl Hub {
             client::spawn(t, shared.clone(), tx.clone());
         }
         let (ipc_tx, ipc_shared) = (tx.clone(), shared.clone());
-        tokio::spawn(async move { crate::ipc_server::serve(d.ipc, ipc_shared, ipc_tx).await });
+        let ipc =
+            tokio::spawn(async move { crate::ipc_server::serve(d.ipc, ipc_shared, ipc_tx).await });
         let tick_tx = tx.clone();
         let clock = d.clock;
-        tokio::spawn(async move {
+        let ticks = tokio::spawn(async move {
             loop {
                 clock.sleep(TICK).await;
                 if tick_tx.send(Event::Tick).await.is_err() {
@@ -205,6 +206,8 @@ impl Hub {
                 break;
             }
         }
+        ipc.abort();
+        ticks.abort();
     }
 }
 
@@ -341,6 +344,10 @@ impl Engine {
 
     async fn handle(&mut self, ev: Event) -> bool {
         match ev {
+            Event::Cli(e) if e.req == CliRequest::Shutdown => {
+                let _ = e.reply.try_send(CliReply::Stopping);
+                return false;
+            }
             Event::Cli(e) => self.on_cli(*e).await,
             Event::CliClosed(conn) => {
                 self.submitted.remove(&conn);

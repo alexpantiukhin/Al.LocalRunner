@@ -1,12 +1,13 @@
 use crate::engine::{refusal, CliEvent, ConnId, Engine, LOCAL_BROKER};
 use crate::handles::{handle_path, log_path, write_handle};
 use crate::orders::{build, order_payload, Refusal};
+use crate::relay::{relay_log, LogRead};
 use crate::track::{Stage, Track};
 use lr_abstractions::{ActiveOrder, Level, OutboxKind};
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
     BrokerStatus, CancelRequest, CancelTarget, CliRead, CliReply, CliRequest, HubToBroker,
-    ProtocolErrorCode, ReadCall, ReasonCode, RejectReason, SubmitRequest,
+    ProtocolErrorCode, ReadCall, ReadRequest, ReasonCode, RejectReason, SubmitRequest,
 };
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -34,6 +35,7 @@ impl Engine {
             CliRequest::Read(r) => self.read(r, &e.reply),
             CliRequest::Brokers => Some(self.brokers().await),
             CliRequest::Jobs { label, active } => Some(self.jobs(&e.os_user, &label, active)),
+            CliRequest::Shutdown => None,
         };
         if let Some(a) = answer {
             if reply.try_send(a).is_err() {
@@ -265,6 +267,19 @@ impl Engine {
             ));
         }
         let wait = Duration::from_secs(self.policy.brokers.query_timeout_s);
+        if let ReadRequest::Log { follow, .. } = &r.request {
+            for (broker, out) in targets {
+                let read = LogRead {
+                    broker,
+                    out,
+                    request: r.request.clone(),
+                    follow: *follow,
+                    wait,
+                };
+                relay_log(self.s.clone(), read, reply.clone());
+            }
+            return None;
+        }
         for (name, out) in targets {
             let s = self.s.clone();
             let (reply, request) = (reply.clone(), r.request.clone());
