@@ -1,8 +1,12 @@
+use super::faulty::FaultyStore;
+use super::listeners::{Stall, StallListener};
 pub use super::msgs::*;
-use lr_abstractions::fakes::{FakeNetwork, ManualClock, MemoryBrokerStore, MemorySecrets};
+use lr_abstractions::fakes::{
+    FakeListener, FakeNetwork, ManualClock, MemoryBrokerStore, MemoryLogSink, MemorySecrets,
+};
 use lr_abstractions::{
-    BrokerStore, Dialer, Frame, Join, JoinCodeRow, MachineKind, MachineRow, Peer, PeerAccess,
-    Transport,
+    BrokerStore, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
+    PeerAccess, Transport,
 };
 use lr_broker::policy::{ActivePolicy, HostResources};
 use lr_broker::{Broker, BrokerDeps, BusEvent, ExactLocalUsers};
@@ -33,6 +37,8 @@ pub fn policy(extra: &str) -> String {
 pub struct Harness {
     pub clock: ManualClock,
     pub store: Arc<MemoryBrokerStore>,
+    pub faults: Arc<FaultyStore>,
+    pub log: Arc<MemoryLogSink>,
     pub net: FakeNetwork,
     pub events: broadcast::Receiver<BusEvent>,
     task: tokio::task::JoinHandle<()>,
@@ -50,6 +56,23 @@ impl Harness {
     }
 
     pub fn with_owners(extra: &str, owners: &[&str]) -> Harness {
+        Harness::build(extra, owners, |l| Arc::new(l))
+    }
+
+    pub fn stalling(extra: &str) -> (Harness, Stall) {
+        let stall = Stall::default();
+        let s = stall.clone();
+        let h = Harness::build(extra, &["root"], move |inner| {
+            Arc::new(StallListener { inner, stall: s })
+        });
+        (h, stall)
+    }
+
+    pub fn build(
+        extra: &str,
+        owners: &[&str],
+        wrap: impl FnOnce(FakeListener) -> Arc<dyn Listener>,
+    ) -> Harness {
         let clock = ManualClock::new(Timestamp(START));
         let net = FakeNetwork::new(Arc::new(clock.clone()));
         let listener = net.listen(
@@ -61,22 +84,27 @@ impl Harness {
             },
         );
         let store = Arc::new(MemoryBrokerStore::new());
+        let faults = Arc::new(FaultyStore::new(store.clone()));
+        let log = Arc::new(MemoryLogSink::new());
         let (active, _) = ActivePolicy::start(&policy(extra), HOST_RES).expect("policy loads");
         let broker = Broker::new(BrokerDeps {
             clock: Arc::new(clock.clone()),
-            store: store.clone(),
-            listener: Arc::new(listener),
+            store: faults.clone(),
+            listener: wrap(listener),
             secrets: Arc::new(MemorySecrets::new()),
             policy: active,
         })
         .with_local_admission(Arc::new(ExactLocalUsers::with_owners(
             owners.iter().map(|s| s.to_string()),
-        )));
+        )))
+        .with_log_sink(log.clone());
         let events = broker.subscribe();
         let task = tokio::spawn(broker.run());
         Harness {
             clock,
             store,
+            faults,
+            log,
             net,
             events,
             task,

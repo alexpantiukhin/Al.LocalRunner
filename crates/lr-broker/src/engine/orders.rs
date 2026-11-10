@@ -1,20 +1,18 @@
 use super::assign::with_seq;
 use super::conn::ConnId;
 use super::hello::peer_kind;
-use super::{Cancel, Client, Engine, Job};
-use crate::policy::CancelOthers;
+use super::{Client, Engine, Job};
 use lr_abstractions::{
-    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRow, JobSpecRow, OrderRow, OutboxKind,
-    SourceKind, StepRow, StoreError, Transition,
+    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRow, JobSpecRow, Level, OrderRow,
+    SourceKind, StepRow, StoreError,
 };
 use lr_core::{
     check_runners, ClientView, Declared, JobState, MachineRef, QueueEntry, Reject, Source,
     StepState,
 };
 use lr_proto::{
-    receive, Accepted, Ack, BrokerToHub, BrokerToRunner, CancelAck, CancelOutcome, HubCancel,
-    HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent, ReasonCode, Received,
-    RejectReason, Rejected, Resume, RunnerCancel, WireCode,
+    receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
+    ReasonCode, Received, RejectReason, Rejected, Resume, WireCode,
 };
 
 fn reject_reason(r: &Reject) -> RejectReason {
@@ -153,6 +151,27 @@ impl Engine {
         }
     }
 
+    pub(crate) fn unavailable(&self, conn: ConnId, key: &JobKey, what: &str, e: &StoreError) {
+        let error = e.to_string();
+        self.diag(
+            Level::Error,
+            &format!("storage failed: could not {what}"),
+            &[
+                ("client", &key.client),
+                ("job", &key.job.0),
+                ("error", &error),
+            ],
+        );
+        self.error(
+            conn,
+            ProtocolErrorCode::Unavailable,
+            format!(
+                "broker storage failed, could not {what} for {}; retry later",
+                key.job
+            ),
+        );
+    }
+
     fn admit(&self, entry: &QueueEntry) -> Result<(), (RejectReason, String)> {
         let limit = self.policy.file().limits.max_active_per_client.get() as usize;
         let active = self
@@ -175,33 +194,7 @@ impl Engine {
         check_runners(entry, &self.runner_views(), &self.site).map_err(fail)
     }
 
-    async fn order(&mut self, conn: ConnId, client: &Client, o: Order) {
-        let key = JobKey {
-            client: client.key.clone(),
-            job: o.job.clone(),
-        };
-        let accepted = |waiting| {
-            BrokerToHub::Accepted(Accepted {
-                job: o.job.clone(),
-                order_seq: o.seq,
-                waiting,
-            })
-        };
-        if let Ok(Some(_)) = self.store.job(&key).await {
-            let _ = self.store.accept_seq(&key, Inbound::Hub, o.seq).await;
-            return self.send(conn, &accepted(self.waits.get(&key).cloned()));
-        }
-        if o.seq != 1 {
-            return self.error(
-                conn,
-                ProtocolErrorCode::SeqGap,
-                format!(
-                    "order {} must open its stream at seq 1, got {}",
-                    o.job, o.seq
-                ),
-            );
-        }
-        let spec = *o.spec.clone();
+    fn job_of(&mut self, client: &Client, key: &JobKey, spec: OrderSpec) -> Job {
         let mut requirements = spec.requirements.clone();
         if requirements.same_machine.is_some() {
             requirements.same_machine = Some(MachineRef(client.key.clone()));
@@ -222,7 +215,60 @@ impl Engine {
             },
             accepted_at: self.now(),
         };
-        if let Err((reason, detail)) = self.admit(&entry) {
+        Job {
+            key: key.clone(),
+            internal: entry.order.job.clone(),
+            entry,
+            spec,
+            runner: None,
+            assigned_at: self.now(),
+            started_at: None,
+            cancel: None,
+        }
+    }
+
+    async fn enqueue(&mut self, job: Job) {
+        let summary = crate::api::summary_of_job(&job);
+        let client = job.key.client.clone();
+        self.queue.push(job);
+        self.publish(Some(&client), QueueEvent::JobQueued { job: summary });
+        self.plan().await;
+    }
+
+    fn accepted(&self, key: &JobKey, o: &Order) -> BrokerToHub {
+        BrokerToHub::Accepted(Accepted {
+            job: o.job.clone(),
+            order_seq: o.seq,
+            waiting: self.waits.get(key).cloned(),
+        })
+    }
+
+    async fn order(&mut self, conn: ConnId, client: &Client, o: Order) {
+        let key = JobKey {
+            client: client.key.clone(),
+            job: o.job.clone(),
+        };
+        match self.store.job(&key).await {
+            Ok(Some(rec)) => {
+                return self
+                    .repeated_order(conn, client, &key, rec.job.state, o)
+                    .await
+            }
+            Ok(None) => {}
+            Err(e) => return self.unavailable(conn, &key, "read the order", &e),
+        }
+        if o.seq != 1 {
+            return self.error(
+                conn,
+                ProtocolErrorCode::SeqGap,
+                format!(
+                    "order {} must open its stream at seq 1, got {}",
+                    o.job, o.seq
+                ),
+            );
+        }
+        let job = self.job_of(client, &key, *o.spec.clone());
+        if let Err((reason, detail)) = self.admit(&job.entry) {
             return self.send(
                 conn,
                 &BrokerToHub::Rejected(Rejected {
@@ -233,168 +279,49 @@ impl Engine {
                 }),
             );
         }
-        if self
-            .store
-            .accept(intake(&key, client, &spec, &entry))
-            .await
-            .is_err()
-        {
-            return;
+        let intake = intake(&key, client, &job.spec, &job.entry);
+        if let Err(e) = self.store.accept(intake).await {
+            return self.unavailable(conn, &key, "store the order", &e);
         }
-        let _ = self.store.accept_seq(&key, Inbound::Hub, o.seq).await;
-        let job = Job {
-            key: key.clone(),
-            internal: entry.order.job.clone(),
-            entry,
-            spec,
-            runner: None,
-            assigned_at: self.now(),
-            started_at: None,
-            cancel: None,
-        };
-        let summary = crate::api::summary_of_job(&job);
-        self.queue.push(job);
-        self.publish(Some(&key.client), QueueEvent::JobQueued { job: summary });
-        self.plan().await;
-        self.send(conn, &accepted(self.waits.get(&key).cloned()));
+        if let Err(e) = self.store.accept_seq(&key, Inbound::Hub, o.seq).await {
+            return self.unavailable(conn, &key, "record the order seq", &e);
+        }
+        self.enqueue(job).await;
+        self.send(conn, &self.accepted(&key, &o));
     }
 
-    async fn cancel(&mut self, conn: ConnId, client: &Client, c: HubCancel) {
-        let own = JobKey {
-            client: client.key.clone(),
-            job: c.job.clone(),
-        };
-        let ack = BrokerToHub::Ack(Ack {
-            job: c.job.clone(),
-            seq: c.seq,
-        });
-        if let Ok(Some(rec)) = self.store.job(&own).await {
-            match self.store.accept_seq(&own, Inbound::Hub, c.seq).await {
-                Ok(true) => {}
-                Ok(false) => return self.send(conn, &ack),
-                Err(StoreError::SeqGap { expected, got }) => {
-                    return self.error(
-                        conn,
-                        ProtocolErrorCode::SeqGap,
-                        format!("job {}: expected seq {expected}, got {got}", c.job),
-                    )
-                }
-                Err(_) => return,
-            }
-            self.send(conn, &ack);
-            let outcome = if rec.job.state.is_final() {
-                CancelOutcome::AlreadyFinal
-            } else {
-                self.apply_cancel(&own, &c).await;
-                CancelOutcome::Applied
-            };
-            return self.cancel_ack(&client.key, &c, outcome, None).await;
-        }
-        self.send(conn, &ack);
-        let foreign = self
-            .queue
-            .iter()
-            .chain(self.active.iter())
-            .find(|j| j.key.job == c.job)
-            .map(|j| j.key.clone());
-        let others = self.policy.file().cancel.others;
-        match foreign {
-            Some(key) if client.owner && others == CancelOthers::Owner => {
-                self.apply_cancel(&key, &c).await;
-                self.cancel_ack(&client.key, &c, CancelOutcome::Applied, None)
-                    .await;
-            }
-            Some(_) => {
-                let why = "чужой заказ: отменять чужие заказы может только владелец брокера \
-                           ([cancel] others)";
-                self.cancel_ack(&client.key, &c, CancelOutcome::Denied, Some(why.into()))
-                    .await;
-            }
-            None => {
-                let why = format!("заказ {} не найден", c.job);
-                self.cancel_ack(&client.key, &c, CancelOutcome::Denied, Some(why))
-                    .await;
-            }
-        }
-    }
-
-    async fn cancel_ack(
+    async fn repeated_order(
         &mut self,
-        client: &str,
-        c: &HubCancel,
-        outcome: CancelOutcome,
-        denial: Option<String>,
+        conn: ConnId,
+        client: &Client,
+        key: &JobKey,
+        state: JobState,
+        o: Order,
     ) {
-        let msg = BrokerToHub::CancelAck(CancelAck {
-            job: c.job.clone(),
-            seq: 0,
-            cancel_seq: c.seq,
-            outcome,
-            denial,
-        });
-        self.notify_hub(client, &c.job, OutboxKind::CancelAck, &msg)
-            .await;
-    }
-
-    async fn apply_cancel(&mut self, key: &JobKey, c: &HubCancel) {
-        let cancel = Cancel {
-            by: c.by.label.clone(),
-            reason: match &c.reason {
-                Some(r) => format!("{}: {r}", c.code),
-                None => c.code.to_string(),
-            },
-            code: c.code.clone(),
-            detail: c.reason.clone(),
+        let last = match self.store.last_seq(key, Inbound::Hub).await {
+            Ok(last) => last,
+            Err(e) => return self.unavailable(conn, key, "read the order seq", &e),
         };
-        if let Some(i) = self.queue.iter().position(|j| &j.key == key) {
-            let job = self.queue.remove(i);
-            self.cancel_waiting(job, cancel).await;
-            return self.plan().await;
-        }
-        let Some(i) = self.active.iter().position(|j| &j.key == key) else {
-            return;
-        };
-        if self.active[i].cancel.is_some() {
-            return;
-        }
-        self.active[i].cancel = Some(cancel.clone());
-        let now = self.now();
-        if self.active[i].started_at.is_some() {
-            let mut t = Transition::to(JobState::Cancelling, now);
-            t.cancelled_by = Some(cancel.by.clone());
-            t.cancel_reason = Some(cancel.reason.clone());
-            let _ = self.store.transition(key, t).await;
-        }
-        let runner = self.active[i].runner.clone().unwrap_or_default();
-        let seq = self.store.next_seq_to_runner(key).await.unwrap_or(1);
-        if let Some(conn) = self.runner_conn(&runner) {
-            self.send(
+        if o.seq > last.max(1) {
+            return self.error(
                 conn,
-                &BrokerToRunner::Cancel(RunnerCancel {
-                    job: key.job.clone(),
-                    seq,
-                    code: cancel.code,
-                    detail: cancel.detail,
-                }),
+                ProtocolErrorCode::Malformed,
+                format!(
+                    "order {} is already accepted; a repeated order keeps seq 1, got {}",
+                    o.job, o.seq
+                ),
             );
         }
-    }
-
-    pub(crate) async fn cancel_waiting(&mut self, job: Job, cancel: Cancel) {
-        let mut t = Transition::to(JobState::Cancelled, self.now());
-        t.cancelled_by = Some(cancel.by);
-        t.cancel_reason = Some(cancel.reason);
-        if self.store.transition(&job.key, t).await.is_ok() {
-            self.waits.remove(&job.key);
-            self.finish(
-                &job.key,
-                JobState::Cancelled,
-                None,
-                Some(cancel.code),
-                cancel.detail,
-            )
-            .await;
+        if last == 0 {
+            if let Err(e) = self.store.accept_seq(key, Inbound::Hub, o.seq).await {
+                return self.unavailable(conn, key, "record the order seq", &e);
+            }
         }
+        if state == JobState::Queued && self.find(key).is_none() {
+            let job = self.job_of(client, key, *o.spec.clone());
+            self.enqueue(job).await;
+        }
+        self.send(conn, &self.accepted(key, &o));
     }
 
     async fn resume(&mut self, conn: ConnId, client: &Client, r: Resume) {

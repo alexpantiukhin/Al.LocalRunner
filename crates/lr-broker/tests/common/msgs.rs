@@ -136,6 +136,7 @@ pub fn cancel(job: &str, seq: u64) -> HubToBroker {
         force: false,
         code: ReasonCode::CancelledByUser,
         reason: Some("stop".into()),
+        client: None,
     })
 }
 

@@ -332,3 +332,21 @@ pub async fn requeue_starts_a_new_stream_for_the_next_runner(store: &dyn BrokerS
     assert_eq!(store.next_seq_to_runner(&key).await.unwrap(), 1);
     assert_eq!(store.last_seq(&key, Inbound::Hub).await.unwrap(), 1);
 }
+
+/// A tail read returns only the last bytes of the log, and the whole log when it is shorter.
+pub async fn log_tail_reads_only_the_end(store: &dyn BrokerStore) {
+    let key = running(store, "c1", "j1").await;
+    assert!(store.read_log_tail(&key, 4).await.unwrap().is_empty());
+    store
+        .append_log(&key, b"one\ntwo\n", at(11), 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.read_log_tail(&key, 4).await.unwrap(),
+        b"two\n".to_vec()
+    );
+    assert_eq!(
+        store.read_log_tail(&key, 100).await.unwrap(),
+        b"one\ntwo\n".to_vec()
+    );
+}

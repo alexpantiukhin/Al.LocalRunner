@@ -18,3 +18,4 @@ tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 [dev-dependencies]
 lr-abstractions = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["sync", "rt", "macros", "time"] }
+async-trait.workspace = true

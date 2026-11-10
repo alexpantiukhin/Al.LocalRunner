@@ -25,13 +25,20 @@ pub fn read_requests() -> Vec<ReadRequest> {
             limit: Some(20),
             cursor: Some("c2".into()),
         }),
-        ReadRequest::HistoryShow { job: job(1) },
-        ReadRequest::Explain { job: job(1) },
+        ReadRequest::HistoryShow {
+            job: job(1),
+            client: Some("local:bob".into()),
+        },
+        ReadRequest::Explain {
+            job: job(1),
+            client: None,
+        },
         ReadRequest::Log {
             job: job(1),
             step: Some("build".into()),
             tail: Some(50),
             follow: true,
+            client: None,
         },
         ReadRequest::Stats(StatsFilter {
             client: None,

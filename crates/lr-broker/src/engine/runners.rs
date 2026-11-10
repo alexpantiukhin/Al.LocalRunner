@@ -107,6 +107,18 @@ impl Engine {
         Ok(())
     }
 
+    pub(crate) async fn resend_cancels(&mut self, name: &str) {
+        let pending: Vec<usize> = (0..self.active.len())
+            .filter(|&i| {
+                let j = &self.active[i];
+                j.runner.as_deref() == Some(name) && j.cancel.as_ref().is_some_and(|c| !c.sent)
+            })
+            .collect();
+        for i in pending {
+            self.send_cancel(i).await;
+        }
+    }
+
     pub(crate) fn runner_views(&self) -> Vec<RunnerView> {
         self.runners
             .iter()
@@ -161,6 +173,13 @@ impl Engine {
             .into_iter()
             .partition(|j| j.runner.as_deref() == Some(name) && j.started_at.is_none());
         self.active = keep;
+        for job in self.active.iter_mut() {
+            if job.runner.as_deref() == Some(name) {
+                if let Some(c) = job.cancel.as_mut() {
+                    c.sent = false;
+                }
+            }
+        }
         for mut job in back {
             if self.store.requeue(&job.key).await.is_err() {
                 continue;

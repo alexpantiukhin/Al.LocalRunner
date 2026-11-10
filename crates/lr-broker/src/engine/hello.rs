@@ -1,4 +1,5 @@
 use super::conn::ConnId;
+use super::local::LOCAL_RUNNER_PREFIX;
 use super::{Client, Engine, Role};
 use lr_abstractions::{Frame, MachineKind, PeerAccess};
 use lr_core::{zone_of, Endpoint, Zone};
@@ -56,16 +57,18 @@ impl Engine {
         }
         let hello = match receive::<HubToBroker>(frame.as_bytes(), peer_kind(&peer.endpoint)) {
             Ok(Received::Message(HubToBroker::Hello(h))) => h,
-            Err(e) if e.refusal().is_some() => {
-                let r = e.refusal().expect("checked");
-                return self.refuse(conn, r.code, r.message);
-            }
-            _ => {
-                return self.refuse(
-                    conn,
-                    ProtocolErrorCode::Malformed,
-                    "the first message must be hello".into(),
-                )
+            other => {
+                let refusal = other.err().and_then(|e| e.refusal());
+                let (code, message) = refusal.map_or_else(
+                    || {
+                        (
+                            ProtocolErrorCode::Malformed,
+                            "the first message must be hello".to_string(),
+                        )
+                    },
+                    |r| (r.code, r.message),
+                );
+                return self.refuse(conn, code, message);
             }
         };
         if let Err(refused) = negotiate(hello.version) {
@@ -116,17 +119,30 @@ impl Engine {
             );
         }
         if let Some(caps) = hello.capabilities.clone() {
-            let (owner, persisted, machine) = match &who {
-                Who::Local(c) => (c.key.clone(), false, Some(c.key.clone())),
-                Who::Member(row) => (row.name.clone(), true, None),
+            let (name, owner, persisted, machine) = match &who {
+                Who::Local(c) => (
+                    format!("{LOCAL_RUNNER_PREFIX}{}", hello.name),
+                    c.key.clone(),
+                    false,
+                    Some(c.key.clone()),
+                ),
+                Who::Member(row) => (hello.name.clone(), row.name.clone(), true, None),
             };
+            if matches!(who, Who::Member(_)) && hello.name.contains(':') {
+                return self.refuse(
+                    conn,
+                    ProtocolErrorCode::Malformed,
+                    format!("runner name {} must not contain a colon", hello.name),
+                );
+            }
             if let Err(e) = self
-                .register_runner(conn, &hello.name, caps, owner, persisted, machine)
+                .register_runner(conn, &name, caps, owner, persisted, machine)
                 .await
             {
                 return self.refuse(conn, e.code, e.message);
             }
             self.welcome(conn, &peer.endpoint, &hello);
+            self.resend_cancels(&name).await;
             self.plan().await;
             return;
         }

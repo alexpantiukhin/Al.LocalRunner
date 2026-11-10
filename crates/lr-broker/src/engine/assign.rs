@@ -2,7 +2,7 @@ use super::conn::ConnId;
 use super::hello::peer_kind;
 use super::{Engine, Job};
 use lr_abstractions::{
-    Applied, Frame, Inbound, JobKey, OutboxKind, StepUpdate, StoreError, Transition,
+    Applied, Frame, Inbound, JobKey, Level, OutboxKind, StepUpdate, StoreError, Transition,
 };
 use lr_core::{pick_next, Assignment, JobId, JobState, QueueState, RunningJob, Timestamp, Wait};
 use lr_proto::{
@@ -195,6 +195,15 @@ impl Engine {
             .iter()
             .position(|j| j.runner.as_deref() == Some(runner) && &j.key.job == job);
         let Some(i) = found else {
+            self.diag(
+                Level::Info,
+                "late message for a job not assigned to this runner, ignored",
+                &[
+                    ("runner", runner),
+                    ("job", &job.0),
+                    ("seq", &seq.to_string()),
+                ],
+            );
             self.ack_runner(conn, job, seq);
             return None;
         };
@@ -377,13 +386,14 @@ impl Engine {
                 .transition(&job.key, Transition::to(JobState::Running, now))
                 .await;
         }
-        let reason = r
-            .reason
-            .clone()
-            .or_else(|| job.cancel.as_ref().map(|c| c.code.clone()));
+        let cancel = job
+            .cancel
+            .as_ref()
+            .filter(|_| r.state == JobState::Cancelled);
+        let reason = r.reason.clone().or_else(|| cancel.map(|c| c.code.clone()));
         let mut t = Transition::to(r.state, now);
         t.exit_code = r.exit_code;
-        match &job.cancel {
+        match cancel {
             Some(c) => {
                 t.cancelled_by = Some(c.by.clone());
                 t.cancel_reason = Some(c.reason.clone());

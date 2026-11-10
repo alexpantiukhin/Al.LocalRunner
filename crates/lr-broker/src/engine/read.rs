@@ -4,14 +4,18 @@ use crate::api::{
     access, detail_of, mask_detail, mask_summary, stats_view, summary_of, summary_of_job,
     wire_source, Access, Viewer,
 };
+use crate::MAX_SUBSCRIPTIONS;
 use lr_abstractions::{JobFilter, JobKey, JobRecord, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
-    split_text, BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, HistoryFilter,
-    JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall, ReadReply, ReadRequest,
-    RunnerCaps, RunnerInfo, RunningView, StatsFilter, StatusFilter, StatusView, WireSource,
-    CHUNK_TEXT_LIMIT,
+    split_text, BrokerToHub, HistoryFilter, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer,
+    ReadCall, ReadReply, ReadRequest, RunningView, StatsFilter, StatusFilter, StatusView,
+    WireSource, CHUNK_TEXT_LIMIT,
 };
+
+const SCAN_LIMIT: usize = 10_000;
+const TAIL_BYTES: u64 = 64 * 1024;
+const HEADER: &str = "=== step ";
 
 fn passes(
     project: &Option<String>,
@@ -39,15 +43,46 @@ fn page<T>(items: Vec<T>, cursor: &Option<String>, limit: u64) -> (Vec<T>, Optio
     (out, next)
 }
 
+fn header_of(line: &str, step: &str) -> Option<bool> {
+    let rest = line.strip_prefix(HEADER)?;
+    if !line.trim_end().ends_with("===") {
+        return None;
+    }
+    let after = rest.strip_prefix(step);
+    Some(after.is_some_and(|a| {
+        a.starts_with(" |") || a.starts_with(" ===") || a.starts_with(" cancelled at ")
+    }))
+}
+
+fn step_section(text: &str, step: &str) -> String {
+    let mut inside = false;
+    let mut out = String::new();
+    for line in text.split_inclusive('\n') {
+        if let Some(mine) = header_of(line, step) {
+            inside = mine;
+        }
+        if inside {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn last_lines(text: &str, n: usize) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    let from = lines.len().saturating_sub(n);
+    lines[from..].to_vec()
+}
+
 impl Engine {
-    fn viewer(client: &Client) -> Viewer {
+    pub(crate) fn viewer(client: &Client) -> Viewer {
         Viewer {
             key: client.key.clone(),
             owner: client.owner,
         }
     }
 
-    fn access_to(&self, viewer: &Viewer, run_client: &str) -> Access {
+    pub(crate) fn access_to(&self, viewer: &Viewer, run_client: &str) -> Access {
         access(
             viewer,
             run_client,
@@ -60,42 +95,39 @@ impl Engine {
         let reply = match call.request {
             ReadRequest::Status(f) => ReadReply::Status(self.status(&viewer, f).await),
             ReadRequest::History(f) => self.history(&viewer, f).await,
-            ReadRequest::HistoryShow { job } => match self.run_of(&viewer, &job).await {
-                Some((rec, a)) => {
-                    let wait = self.waits.get(&rec.job.key).cloned();
-                    match mask_detail(detail_of(&rec, wait), a) {
-                        Some(d) => ReadReply::Job(Box::new(d)),
-                        None => not_found(&job),
+            ReadRequest::HistoryShow { job, client } => {
+                match self.run_of(&viewer, &job, client.as_deref()).await {
+                    Ok((rec, a)) => {
+                        let wait = self.waits.get(&rec.job.key).cloned();
+                        match mask_detail(detail_of(&rec, wait), a) {
+                            Some(d) => ReadReply::Job(Box::new(d)),
+                            None => not_found(&job),
+                        }
                     }
+                    Err(reply) => reply,
                 }
-                None => not_found(&job),
+            }
+            ReadRequest::Explain { job, client } => {
+                self.explain(&viewer, job, client.as_deref()).await
+            }
+            ReadRequest::Log { follow: true, .. } => ReadReply::Failed {
+                message: "follow not supported yet".into(),
             },
-            ReadRequest::Explain { job } => self.explain(&viewer, job).await,
-            ReadRequest::Log { job, tail, .. } => match self.log(&viewer, &job, tail).await {
-                Ok(text) => {
-                    let parts = split_text(&text, CHUNK_TEXT_LIMIT);
-                    let last = parts.len().saturating_sub(1);
-                    if parts.is_empty() {
-                        self.send(conn, &log_chunk(call.req, String::new(), true));
-                    }
-                    for (i, part) in parts.into_iter().enumerate() {
-                        self.send(conn, &log_chunk(call.req, part.to_string(), i == last));
-                    }
-                    return;
-                }
+            ReadRequest::Log {
+                job,
+                step,
+                tail,
+                client,
+                ..
+            } => match self.log(&viewer, &job, client.as_deref(), step, tail).await {
+                Ok(text) => return self.send_log(conn, call.req, &text),
                 Err(reply) => reply,
             },
             ReadRequest::Stats(f) => self.stats(&viewer, f).await,
             ReadRequest::Runners => ReadReply::Runners {
                 runners: self.runner_infos(&viewer),
             },
-            ReadRequest::Subscribe { topics } => {
-                let sub = self.sub_id();
-                if let Some(c) = self.conns.get_mut(&conn) {
-                    c.subs.insert(sub, topics);
-                }
-                ReadReply::Subscribed { sub }
-            }
+            ReadRequest::Subscribe { topics } => self.subscribe(conn, topics),
             ReadRequest::Unsubscribe { sub } => {
                 match self.conns.get_mut(&conn).and_then(|c| c.subs.remove(&sub)) {
                     Some(_) => ReadReply::Unsubscribed { sub },
@@ -111,6 +143,31 @@ impl Engine {
                 reply,
             }),
         );
+    }
+
+    fn subscribe(&mut self, conn: ConnId, topics: Vec<lr_proto::Topic>) -> ReadReply {
+        let held = self.conns.get(&conn).map_or(0, |c| c.subs.len());
+        if held >= MAX_SUBSCRIPTIONS {
+            return ReadReply::Failed {
+                message: format!("at most {MAX_SUBSCRIPTIONS} subscriptions per connection"),
+            };
+        }
+        let sub = self.sub_id();
+        if let Some(c) = self.conns.get_mut(&conn) {
+            c.subs.insert(sub, topics);
+        }
+        ReadReply::Subscribed { sub }
+    }
+
+    fn send_log(&self, conn: ConnId, req: u64, text: &str) {
+        let parts = split_text(text, CHUNK_TEXT_LIMIT);
+        let last = parts.len().saturating_sub(1);
+        if parts.is_empty() {
+            self.send(conn, &log_chunk(req, String::new(), true));
+        }
+        for (i, part) in parts.into_iter().enumerate() {
+            self.send(conn, &log_chunk(req, part.to_string(), i == last));
+        }
     }
 
     async fn status(&self, viewer: &Viewer, f: StatusFilter) -> StatusView {
@@ -169,12 +226,7 @@ impl Engine {
         }
         let (queue, next) = page(queue, &f.cursor, limit as u64);
         let mut recent = Vec::new();
-        for rec in self
-            .store
-            .jobs(&JobFilter::default())
-            .await
-            .unwrap_or_default()
-        {
+        for rec in self.store.jobs(&scan()).await.unwrap_or_default() {
             if !rec.job.state.is_final() || recent.len() >= limit {
                 continue;
             }
@@ -217,7 +269,7 @@ impl Engine {
             runner: f.runner.clone(),
             since: f.since,
             active_only: f.active_only,
-            limit: None,
+            limit: Some(SCAN_LIMIT),
         };
         let Ok(rows) = self.store.jobs(&filter).await else {
             return ReadReply::Failed {
@@ -241,27 +293,55 @@ impl Engine {
         ReadReply::History { jobs, next }
     }
 
-    async fn run_of(&self, viewer: &Viewer, job: &JobId) -> Option<(JobRecord, Access)> {
-        let own = JobKey {
-            client: viewer.key.clone(),
+    async fn run_of(
+        &self,
+        viewer: &Viewer,
+        job: &JobId,
+        client: Option<&str>,
+    ) -> Result<(JobRecord, Access), ReadReply> {
+        let named = client.unwrap_or(&viewer.key);
+        let key = JobKey {
+            client: named.to_string(),
             job: job.clone(),
         };
-        if let Ok(Some(rec)) = self.store.job(&own).await {
-            return Some((rec, Access::Owner));
+        if let Ok(Some(rec)) = self.store.job(&key).await {
+            return match self.access_to(viewer, named) {
+                Access::Hidden => Err(not_found(job)),
+                a => Ok((rec, a)),
+            };
         }
-        let rows = self.store.jobs(&JobFilter::default()).await.ok()?;
-        rows.into_iter().find_map(|rec| {
-            if &rec.job.key.job != job {
-                return None;
+        if client.is_some() {
+            return Err(not_found(job));
+        }
+        let rows = self.store.jobs(&scan()).await.unwrap_or_default();
+        let mut found: Vec<(JobRecord, Access)> = rows
+            .into_iter()
+            .filter(|rec| &rec.job.key.job == job)
+            .filter_map(|rec| {
+                let a = self.access_to(viewer, &rec.job.key.client);
+                (a != Access::Hidden).then_some((rec, a))
+            })
+            .collect();
+        match found.len() {
+            0 => Err(not_found(job)),
+            1 => Ok(found.remove(0)),
+            _ => {
+                let clients: Vec<&str> = found
+                    .iter()
+                    .map(|(r, _)| r.job.key.client.as_str())
+                    .collect();
+                Err(not_found_text(format!(
+                    "job {job}: this JobId is used by several clients ({}); name the client",
+                    clients.join(", ")
+                )))
             }
-            let a = self.access_to(viewer, &rec.job.key.client);
-            (a != Access::Hidden).then_some((rec, a))
-        })
+        }
     }
 
-    async fn explain(&self, viewer: &Viewer, job: JobId) -> ReadReply {
-        let Some((rec, a)) = self.run_of(viewer, &job).await else {
-            return not_found(&job);
+    async fn explain(&self, viewer: &Viewer, job: JobId, client: Option<&str>) -> ReadReply {
+        let (rec, a) = match self.run_of(viewer, &job, client).await {
+            Ok(found) => found,
+            Err(reply) => return reply,
         };
         let key = &rec.job.key;
         let text = match self.find(key) {
@@ -286,34 +366,38 @@ impl Engine {
         &self,
         viewer: &Viewer,
         job: &JobId,
+        client: Option<&str>,
+        step: Option<String>,
         tail: Option<u64>,
     ) -> Result<String, ReadReply> {
-        let Some((rec, a)) = self.run_of(viewer, job).await else {
-            return Err(not_found(job));
-        };
+        let (rec, a) = self.run_of(viewer, job, client).await?;
         if !a.sees_log() {
             return Err(ReadReply::Denied {
                 reason: "полный лог отдаётся только клиенту-владельцу запуска".into(),
             });
         }
         let bytes = self.store.read_log(&rec.job.key).await.unwrap_or_default();
-        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
+        if let Some(step) = step {
+            text = step_section(&text, &step);
+        }
         Ok(match tail {
-            Some(n) => {
-                let lines: Vec<&str> = text.lines().collect();
-                let from = lines.len().saturating_sub(n as usize);
-                lines[from..].iter().map(|l| format!("{l}\n")).collect()
-            }
+            Some(n) => last_lines(&text, n as usize)
+                .iter()
+                .map(|l| format!("{l}\n"))
+                .collect(),
             None => text,
         })
     }
 
     async fn tail(&self, key: &JobKey, n: usize) -> Vec<String> {
-        let bytes = self.store.read_log(key).await.unwrap_or_default();
+        let bytes = self
+            .store
+            .read_log_tail(key, TAIL_BYTES)
+            .await
+            .unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
-        let lines: Vec<&str> = text.lines().collect();
-        let from = lines.len().saturating_sub(n);
-        lines[from..].iter().map(|l| l.to_string()).collect()
+        last_lines(&text, n).iter().map(|l| l.to_string()).collect()
     }
 
     async fn stats(&self, viewer: &Viewer, f: StatsFilter) -> ReadReply {
@@ -334,76 +418,12 @@ impl Engine {
             },
         }
     }
+}
 
-    fn runner_infos(&self, viewer: &Viewer) -> Vec<RunnerInfo> {
-        let running = self.running_jobs();
-        let pool = self.policy.policy().pool();
-        let free_mem = pool.mem_mb.saturating_sub(
-            running
-                .iter()
-                .map(|j| j.entry.order.requirements.mem_mb)
-                .sum(),
-        );
-        let free_cpu = pool
-            .cpu
-            .saturating_sub(running.iter().map(|j| j.entry.order.requirements.cpu).sum());
-        self.runners
-            .iter()
-            .map(|(name, slot)| {
-                let mut held_tags = Vec::new();
-                for job in self
-                    .active
-                    .iter()
-                    .filter(|j| j.runner.as_deref() == Some(name))
-                {
-                    let req = &job.entry.order.requirements;
-                    let shown = match self.access_to(viewer, &job.key.client) {
-                        Access::Hidden => JobId(String::new()),
-                        _ => job.key.job.clone(),
-                    };
-                    for tag in req.tags.iter().chain(req.exclusive.iter()) {
-                        held_tags.push(HeldTag {
-                            tag: tag.clone(),
-                            job: shown.clone(),
-                            exclusive: req.exclusive.contains(tag)
-                                || pool.exclusive_tags.contains(tag),
-                        });
-                    }
-                }
-                RunnerInfo {
-                    name: name.clone(),
-                    online: slot.conn.is_some(),
-                    caps: slot.wire.clone(),
-                    last_seen: Some(slot.last_seen),
-                    free_mem_mb: free_mem,
-                    free_cpu,
-                    held_tags,
-                    services: Vec::new(),
-                    unmet: Vec::new(),
-                }
-            })
-            .collect()
-    }
-
-    pub(crate) fn capabilities(&self, conn: ConnId, client: &Client, q: CapabilitiesQuery) {
-        let runners = self
-            .runners
-            .iter()
-            .map(|(name, slot)| RunnerCaps {
-                name: name.clone(),
-                online: slot.conn.is_some(),
-                zone: self.site.zone_between(&client.endpoint, &slot.endpoint),
-                caps: slot.wire.clone(),
-            })
-            .collect();
-        self.send(
-            conn,
-            &BrokerToHub::CapabilitiesReply(CapabilitiesReply {
-                req: q.req,
-                zone: self.zone_of_peer(&client.endpoint),
-                runners,
-            }),
-        );
+fn scan() -> JobFilter {
+    JobFilter {
+        limit: Some(SCAN_LIMIT),
+        ..JobFilter::default()
     }
 }
 

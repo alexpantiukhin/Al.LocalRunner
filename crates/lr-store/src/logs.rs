@@ -147,3 +147,20 @@ pub(crate) fn read(conn: &Connection, dir: &Path, key: &JobKey) -> R<Vec<u8>> {
     data.truncate(bytes as usize);
     Ok(data)
 }
+
+pub(crate) fn read_tail(conn: &Connection, dir: &Path, key: &JobKey, max: u64) -> R<Vec<u8>> {
+    exists(conn, key)?;
+    let Some((rel, bytes)) = row(conn, key)? else {
+        return Ok(Vec::new());
+    };
+    let path = dir.join(rel);
+    let fail = |e: std::io::Error| io_error(format!("log file {}: {e}", path.display()));
+    let mut file = OpenOptions::new().read(true).open(&path).map_err(fail)?;
+    let from = bytes.saturating_sub(max);
+    file.seek(SeekFrom::Start(from)).map_err(fail)?;
+    let mut data = Vec::new();
+    file.take(bytes - from)
+        .read_to_end(&mut data)
+        .map_err(fail)?;
+    Ok(data)
+}

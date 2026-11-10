@@ -66,6 +66,10 @@ pub struct HubCancel {
     pub code: ReasonCode,
     /// Free text given by the user.
     pub reason: Option<String>,
+    /// Client key of the run, when the canceller is the broker owner and several clients use
+    /// this JobId; without it the own run is meant, else the only other one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
 }
 
 /// What the broker gives a runner to execute: admitted secret names only, never values.

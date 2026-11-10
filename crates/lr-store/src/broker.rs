@@ -133,6 +133,13 @@ impl BrokerStore for SqliteBrokerStore {
             .await
     }
 
+    async fn read_log_tail(&self, key: &JobKey, max_bytes: u64) -> Result<Vec<u8>, StoreError> {
+        let (key, dir) = (key.clone(), self.db.dir());
+        self.db
+            .run(move |c| read(c, |c| logs::read_tail(c, &dir, &key, max_bytes)))
+            .await
+    }
+
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError> {
         let key = key.clone();
         self.db

@@ -384,6 +384,7 @@ pub fn hub_to_broker() -> Vec<HubToBroker> {
             force: true,
             code: ReasonCode::SenderGone,
             reason: Some("stuck".into()),
+            client: Some("local:bob".into()),
         }),
         HubToBroker::Resume(resume()),
         HubToBroker::Ack(ack(5)),

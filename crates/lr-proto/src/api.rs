@@ -129,11 +129,17 @@ pub enum ReadRequest {
     HistoryShow {
         /// The job.
         job: JobId,
+        /// Client key of the run when several clients use this JobId.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// Why a job waits.
     Explain {
         /// The job.
         job: JobId,
+        /// Client key of the run when several clients use this JobId.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// The stored log; with `follow` a running job's log is streamed as `log_chunk`.
     Log {
@@ -145,6 +151,9 @@ pub enum ReadRequest {
         tail: Option<u64>,
         /// Keep streaming.
         follow: bool,
+        /// Client key of the run when several clients use this JobId.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// Statistics and saturation.
     Stats(StatsFilter),

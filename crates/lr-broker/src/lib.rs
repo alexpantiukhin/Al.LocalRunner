@@ -4,4 +4,7 @@ pub mod api;
 pub mod engine;
 pub mod policy;
 
-pub use engine::{Broker, BrokerDeps, BusEvent, ExactLocalUsers, LocalAdmission, LocalClient};
+pub use engine::{
+    Broker, BrokerDeps, BusEvent, ExactLocalUsers, LocalAdmission, LocalClient, MAX_SUBSCRIPTIONS,
+    OUT_QUEUE_FRAMES,
+};

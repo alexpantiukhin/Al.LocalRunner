@@ -78,6 +78,15 @@ pub trait BrokerStore: Send + Sync {
     /// The run's stored log; empty when none was written or it was pruned.
     async fn read_log(&self, key: &JobKey) -> Result<Vec<u8>, StoreError>;
 
+    /// At most the last `max_bytes` of the run's stored log, so a short tail does not read a
+    /// long log whole. The default reads the whole log and cuts it.
+    async fn read_log_tail(&self, key: &JobKey, max_bytes: u64) -> Result<Vec<u8>, StoreError> {
+        let mut data = self.read_log(key).await?;
+        let cut = data.len().saturating_sub(max_bytes as usize);
+        data.drain(..cut);
+        Ok(data)
+    }
+
     /// One run with all its rows.
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError>;
 

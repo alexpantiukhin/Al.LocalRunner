@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
+pub mod faulty;
 pub mod harness;
+pub mod listeners;
 pub mod msgs;
 
 use lr_broker::policy::{load, HostResources, PolicyError, PolicyFile};

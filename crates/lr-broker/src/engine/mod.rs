@@ -1,76 +1,54 @@
 //! The broker engine (spec 13.2): one owner of the queue, the runner registry and the job
-//! states, fed by a command channel from the connection tasks; changes go out on a broadcast
-//! bus for the read API.
+//! states, fed by a bounded command channel from the connection tasks; changes go out on a
+//! broadcast bus for the read API.
 
 mod assign;
+mod cancel;
 mod conn;
 mod events;
 mod hello;
+mod inspect;
+mod local;
 mod orders;
 mod read;
 mod runners;
+mod wire;
 
 pub use events::BusEvent;
+pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 
-use crate::policy::{ActivePolicy, ListenValue, LocalUserEntry};
-use conn::{Command, ConnId, Out};
+use crate::policy::{ActivePolicy, ListenValue};
+use conn::{Command, ConnId, Outlet, COMMAND_QUEUE};
 use lr_abstractions::{
-    BrokerStore, Clock, Frame, JobKey, Listener, Peer, SecretSource, TransportError,
+    BrokerStore, Clock, JobKey, Level, Listener, LogSink, Peer, Record, SecretSource,
+    TransportError,
 };
 use lr_core::{Endpoint, JobId, QueueEntry, ServeLog, Site, Timestamp};
-use lr_proto::{OrderSpec, ProtocolError, ProtocolErrorCode, Topic};
+use lr_proto::{OrderSpec, Topic};
 use runners::RunnerSlot;
-use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
-/// The client record of an admitted local IPC peer (spec 3.8).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocalClient {
-    /// Client key: `local:` and the OS user.
-    pub key: String,
-    /// Label from its `[[local_user]]` entry.
-    pub label: String,
-    /// Whether the OS user owns the broker (rights on its state directory): it sees every run
-    /// and log and may cancel other clients' orders under `[cancel] others = "owner"`.
-    pub owner: bool,
-}
+/// Frames waiting to be written to one connection; a peer that lets more pile up is too slow
+/// and is disconnected.
+pub const OUT_QUEUE_FRAMES: usize = 1024;
 
-/// Decides which local IPC peers the broker serves; the OS user comes from the kernel.
-pub trait LocalAdmission: Send + Sync {
-    /// The client record of `os_user`, `None` when it may not use the broker.
-    fn admit(&self, os_user: &str, users: &[LocalUserEntry]) -> Option<LocalClient>;
-}
+/// Event subscriptions one connection may hold at once.
+pub const MAX_SUBSCRIPTIONS: usize = 16;
 
-/// Admits the OS users named exactly in `[[local_user]]`, plus the broker owners given at
-/// construction.
-#[derive(Debug, Clone, Default)]
-pub struct ExactLocalUsers {
-    owners: BTreeSet<String>,
-}
+const ACCEPT_ERRORS_BEFORE_BACKOFF: u32 = 3;
+const ACCEPT_BACKOFF_MAX_MS: u64 = 5_000;
 
-impl ExactLocalUsers {
-    /// Admission with these OS users as broker owners.
-    pub fn with_owners(owners: impl IntoIterator<Item = String>) -> ExactLocalUsers {
-        ExactLocalUsers {
-            owners: owners.into_iter().collect(),
-        }
-    }
-}
+struct NoLog;
 
-impl LocalAdmission for ExactLocalUsers {
-    fn admit(&self, os_user: &str, users: &[LocalUserEntry]) -> Option<LocalClient> {
-        let listed = users.iter().find(|u| u.name == os_user);
-        let owner = self.owners.contains(os_user);
-        if listed.is_none() && !owner {
-            return None;
-        }
-        Some(LocalClient {
-            key: format!("local:{os_user}"),
-            label: listed.map(|u| u.label.clone()).unwrap_or_default(),
-            owner,
-        })
+impl LogSink for NoLog {
+    fn write(&self, _: &Record) {}
+
+    fn dropped(&self) -> u64 {
+        0
     }
 }
 
@@ -93,14 +71,14 @@ pub struct BrokerDeps {
 pub struct Broker {
     engine: Engine,
     listener: Arc<dyn Listener>,
-    tx: mpsc::UnboundedSender<Command>,
-    rx: mpsc::UnboundedReceiver<Command>,
+    tx: mpsc::Sender<Command>,
+    rx: mpsc::Receiver<Command>,
 }
 
 impl Broker {
     /// A broker over `deps`, admitting local users named exactly in `[[local_user]]`.
     pub fn new(deps: BrokerDeps) -> Broker {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
         let file = deps.policy.file();
         let site = Site {
             broker_addrs: file
@@ -121,6 +99,7 @@ impl Broker {
                 policy: deps.policy,
                 site,
                 local: Arc::new(ExactLocalUsers::default()),
+                log: Arc::new(NoLog),
                 bus: broadcast::channel(1024).0,
                 conns: HashMap::new(),
                 hubs: HashMap::new(),
@@ -129,6 +108,7 @@ impl Broker {
                 active: Vec::new(),
                 served: ServeLog::default(),
                 waits: HashMap::new(),
+                slow_peers: AtomicU64::new(0),
                 next_id: 0,
                 next_sub: 0,
             },
@@ -142,6 +122,13 @@ impl Broker {
     /// IPC implementation).
     pub fn with_local_admission(mut self, admission: Arc<dyn LocalAdmission>) -> Broker {
         self.engine.local = admission;
+        self
+    }
+
+    /// Sends the broker's diagnostic events (slow peers dropped, storage failures, late
+    /// messages) to `sink`; without it they are discarded.
+    pub fn with_log_sink(mut self, sink: Arc<dyn LogSink>) -> Broker {
+        self.engine.log = sink;
         self
     }
 
@@ -159,16 +146,38 @@ impl Broker {
             mut rx,
         } = self;
         let clock = engine.clock.clone();
+        let log = engine.log.clone();
         let accept = async move {
             let mut id: ConnId = 0;
+            let mut failures = 0u32;
             loop {
                 match listener.accept().await {
                     Ok(t) => {
+                        failures = 0;
                         id += 1;
-                        conn::spawn(id, t, tx.clone(), clock.clone());
+                        conn::spawn(id, t, tx.clone(), clock.clone()).await;
                     }
                     Err(TransportError::Closed) => break,
-                    Err(_) => tokio::task::yield_now().await,
+                    Err(e) => {
+                        failures = failures.saturating_add(1);
+                        if failures < ACCEPT_ERRORS_BEFORE_BACKOFF {
+                            continue;
+                        }
+                        let step = (failures - ACCEPT_ERRORS_BEFORE_BACKOFF).min(6);
+                        let ms = (100u64 << step).min(ACCEPT_BACKOFF_MAX_MS);
+                        log.write(
+                            &Record::new(
+                                clock.now(),
+                                Level::Warn,
+                                lr_abstractions::Role::Broker,
+                                "engine",
+                                "accepting connections fails; retrying later",
+                            )
+                            .field("error", &e.to_string())
+                            .field("retry_ms", &ms.to_string()),
+                        );
+                        clock.sleep(Duration::from_millis(ms)).await;
+                    }
                 }
             }
         };
@@ -202,7 +211,7 @@ pub(crate) enum Role {
 }
 
 pub(crate) struct Conn {
-    out: mpsc::UnboundedSender<Out>,
+    outlet: Outlet,
     pub(crate) peer: Peer,
     pub(crate) role: Role,
     pub(crate) subs: BTreeMap<u64, Vec<Topic>>,
@@ -214,6 +223,7 @@ pub(crate) struct Cancel {
     pub(crate) reason: String,
     pub(crate) code: lr_proto::ReasonCode,
     pub(crate) detail: Option<String>,
+    pub(crate) sent: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -234,6 +244,7 @@ pub(crate) struct Engine {
     pub(crate) policy: ActivePolicy,
     pub(crate) site: Site,
     pub(crate) local: Arc<dyn LocalAdmission>,
+    pub(crate) log: Arc<dyn LogSink>,
     pub(crate) bus: broadcast::Sender<BusEvent>,
     pub(crate) conns: HashMap<ConnId, Conn>,
     pub(crate) hubs: HashMap<String, ConnId>,
@@ -242,6 +253,7 @@ pub(crate) struct Engine {
     pub(crate) active: Vec<Job>,
     pub(crate) served: ServeLog,
     pub(crate) waits: HashMap<JobKey, String>,
+    pub(crate) slow_peers: AtomicU64,
     next_id: u64,
     next_sub: u64,
 }
@@ -251,11 +263,11 @@ const MIB: u64 = 1024 * 1024;
 impl Engine {
     async fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Opened { conn, peer, out } => {
+            Command::Opened { conn, peer, outlet } => {
                 self.conns.insert(
                     conn,
                     Conn {
-                        out,
+                        outlet,
                         peer,
                         role: Role::Pending,
                         subs: BTreeMap::new(),
@@ -307,40 +319,6 @@ impl Engine {
     pub(crate) fn sub_id(&mut self) -> u64 {
         self.next_sub += 1;
         self.next_sub
-    }
-
-    pub(crate) fn send<M: Serialize>(&self, conn: ConnId, msg: &M) {
-        if let Ok(frame) = Frame::json(msg) {
-            self.send_frame(conn, frame);
-        }
-    }
-
-    pub(crate) fn send_frame(&self, conn: ConnId, frame: Frame) {
-        if let Some(c) = self.conns.get(&conn) {
-            let _ = c.out.send(Out::Frame(frame));
-        }
-    }
-
-    pub(crate) fn close(&self, conn: ConnId) {
-        if let Some(c) = self.conns.get(&conn) {
-            let _ = c.out.send(Out::Close);
-        }
-    }
-
-    pub(crate) fn error(&self, conn: ConnId, code: ProtocolErrorCode, message: String) {
-        self.send(
-            conn,
-            &lr_proto::BrokerToHub::Error(ProtocolError {
-                code,
-                message,
-                supported: None,
-            }),
-        );
-    }
-
-    pub(crate) fn refuse(&self, conn: ConnId, code: ProtocolErrorCode, message: String) {
-        self.error(conn, code, message);
-        self.close(conn);
     }
 
     pub(crate) fn outbox_limit(&self) -> u64 {

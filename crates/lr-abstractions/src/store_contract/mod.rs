@@ -80,6 +80,7 @@ macro_rules! broker_store_contract {
             seq::broker_to_runner_seq_counts_per_run,
             broker::log_is_appended_and_read_back,
             broker::log_cut_at_limit_with_mark_then_dropped,
+            broker::log_tail_reads_only_the_end,
             broker_history::history_is_newest_first_filtered_and_limited,
             broker_history::stats_count_final_runs_with_median_and_p95,
             broker_history::prune_removes_rows_and_logs_by_age,

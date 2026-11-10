@@ -47,6 +47,8 @@ pub enum ProtocolErrorCode {
     RateLimited,
     /// A runner of this name is already registered by another machine.
     NameTaken,
+    /// The receiver could not do it now (its storage failed); the sender may retry later.
+    Unavailable,
     /// A code of a newer minor version; never a command.
     #[serde(other)]
     Other,

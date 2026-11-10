@@ -87,6 +87,7 @@ fn seq_is_counted_per_direction_so_equal_numbers_do_not_collide() {
             force: false,
             code: ReasonCode::CancelledByUser,
             reason: None,
+            client: None,
         }),
     )
     .unwrap();

@@ -42,6 +42,7 @@ async fn log_of(c: &mut Conn, job: &str) -> Result<String, ReadReply> {
             step: None,
             tail: None,
             follow: false,
+            client: None,
         },
     }))
     .await;
@@ -63,6 +64,7 @@ async fn log_of(c: &mut Conn, job: &str) -> Result<String, ReadReply> {
 fn show(job: &str) -> ReadRequest {
     ReadRequest::HistoryShow {
         job: JobId(job.into()),
+        client: None,
     }
 }
 
@@ -280,6 +282,7 @@ async fn explain_names_the_rule_that_holds_the_order() {
     let ReadReply::Explain { job, text } = alex
         .read(ReadRequest::Explain {
             job: JobId("j2".into()),
+            client: None,
         })
         .await
     else {
