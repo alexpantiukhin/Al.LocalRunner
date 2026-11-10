@@ -3,7 +3,7 @@
 //! are remembered in `roles` of the state directory (`autostart on` without a role, `up`).
 
 use crate::paths::Layout;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// File of the state directory listing the roles `init` created, one per line.
 pub const ROLES_FILE: &str = "roles";
@@ -138,9 +138,25 @@ fn write_new(path: PathBuf, contents: &str) -> Result<Created, String> {
     })
 }
 
-/// Creates the state directory, `machine-id` and the templates of `roles` for OS user `user`.
+/// Makes the state directory reachable for its owner only (spec 10.3): mode 0700 on Unix; on
+/// Windows the user's profile directory already is private.
+pub fn close_to_owner(dir: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+    Ok(())
+}
+
+/// Creates the state directory (closed to its owner), `machine-id` and the templates of
+/// `roles` for OS user `user`.
 pub fn init(layout: &Layout, roles: &[NodeRole], user: &str) -> Result<Vec<Created>, String> {
     std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
+    close_to_owner(&layout.root)?;
     crate::host::machine_id(&layout.root)?;
     let mut out = vec![write_new(
         layout.config_file("logging.toml"),

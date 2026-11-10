@@ -4,11 +4,17 @@
 //! one ([`OsSystem`]) or one that only prints ([`DryRun`]), so tests never touch the machine.
 
 mod actions;
+pub mod autostart;
 pub mod plans;
+pub mod programs;
+pub mod quote;
+pub mod trust;
 #[cfg(windows)]
 pub mod windows_host;
 
-pub use actions::{apply_all, ensure_local_user, DryRun, OsSystem};
+pub use actions::{
+    apply_all, ensure_local_user, path_script, profile_line, profile_without, DryRun, OsSystem,
+};
 
 use lr_net::ServerIdentity;
 use std::fmt;
@@ -116,12 +122,14 @@ pub fn background_console() {
 /// Whether the broker service is registered with the OS.
 pub fn service_installed(os: Os) -> bool {
     match os {
-        Os::Windows => std::process::Command::new("sc.exe")
-            .args(["query", service_name(os)])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success()),
+        Os::Windows => programs::program_path("sc.exe").is_ok_and(|sc| {
+            std::process::Command::new(sc)
+                .args(["query", service_name(os)])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        }),
         Os::Linux => {
             PathBuf::from(format!("/etc/systemd/system/{}.service", service_name(os))).exists()
         }
@@ -131,15 +139,80 @@ pub fn service_installed(os: Os) -> bool {
     }
 }
 
-/// The OS user who asked: under `sudo` the user who ran it (spec 3.8), else this process's
-/// user.
-pub fn original_user() -> Result<String, String> {
-    if !cfg!(windows) {
-        if let Some(u) = std::env::var_os("SUDO_USER").filter(|u| !u.is_empty()) {
-            return Ok(u.to_string_lossy().into_owned());
-        }
+/// The user an installation is for (spec 3.8): the one who ran `sudo`; for an elevated
+/// Windows process (UAC, possibly with another administrator's credentials) the user logged on
+/// to the session; else the user of this process.
+pub fn choose_user(
+    sudo_user: Option<String>,
+    session_user: Option<String>,
+    current: String,
+    elevated: bool,
+) -> String {
+    let given = |u: Option<String>| u.filter(|u| !u.is_empty());
+    if let Some(u) = given(sudo_user) {
+        return u;
     }
-    lr_net::current_os_user().map_err(|e| e.to_string())
+    match given(session_user) {
+        Some(u) if elevated => u,
+        _ => current,
+    }
+}
+
+#[cfg(windows)]
+fn session_user() -> Option<String> {
+    use windows_sys::Win32::System::RemoteDesktop::{
+        WTSDomainName, WTSFreeMemory, WTSQuerySessionInformationW, WTSUserName,
+        WTS_CURRENT_SESSION, WTS_INFO_CLASS,
+    };
+    let query = |class: WTS_INFO_CLASS| -> Option<String> {
+        let mut buf: windows_sys::core::PWSTR = std::ptr::null_mut();
+        let mut bytes = 0u32;
+        let ok = unsafe {
+            WTSQuerySessionInformationW(
+                std::ptr::null_mut(),
+                WTS_CURRENT_SESSION,
+                class,
+                &mut buf,
+                &mut bytes,
+            )
+        };
+        if ok == 0 || buf.is_null() {
+            return None;
+        }
+        let mut len = 0;
+        while unsafe { *buf.add(len) } != 0 {
+            len += 1;
+        }
+        let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(buf, len) });
+        unsafe { WTSFreeMemory(buf as *mut std::ffi::c_void) };
+        Some(text)
+    };
+    let user = query(WTSUserName).filter(|u| !u.is_empty())?;
+    Some(match query(WTSDomainName).filter(|d| !d.is_empty()) {
+        Some(domain) => format!("{domain}\\{user}"),
+        None => user,
+    })
+}
+
+#[cfg(not(windows))]
+fn session_user() -> Option<String> {
+    None
+}
+
+/// The OS user who asked (see [`choose_user`]).
+pub fn original_user() -> Result<String, String> {
+    let sudo = if cfg!(windows) {
+        None
+    } else {
+        std::env::var_os("SUDO_USER").map(|u| u.to_string_lossy().into_owned())
+    };
+    let current = lr_net::current_os_user().map_err(|e| e.to_string())?;
+    Ok(choose_user(
+        sudo,
+        session_user(),
+        current,
+        crate::host::is_elevated(),
+    ))
 }
 
 /// The user's home directory.
@@ -194,7 +267,8 @@ pub enum Action {
         /// Its contents.
         contents: String,
     },
-    /// Copies a file unless the target exists or the source is missing.
+    /// Copies a file unless the target exists or the source is missing; an existing target that
+    /// someone other than the administrators or the service controls is refused.
     CopyIfMissing {
         /// Source.
         from: PathBuf,
@@ -222,6 +296,24 @@ pub enum Action {
     /// Puts a directory on the user's `PATH` (Windows: the user environment; Unix: a line in
     /// `~/.profile`).
     AddToUserPath(PathBuf),
+    /// Takes a directory off the user's `PATH` again.
+    RemoveFromUserPath(PathBuf),
+    /// Writes a file as UTF-16 with a byte order mark (Task Scheduler XML), replacing it.
+    WriteUtf16 {
+        /// The file.
+        path: PathBuf,
+        /// Its contents.
+        contents: String,
+    },
+    /// Checks the broker service's state directory (refusing one that a link, another owner or
+    /// another writer controls), creates it when missing and closes it to the service account
+    /// and the administrators.
+    SecureServiceDir {
+        /// The directory.
+        path: PathBuf,
+        /// The service account.
+        account: String,
+    },
     /// Creates the macOS service account and group when missing.
     EnsureMacAccount {
         /// Account and group name.
@@ -284,6 +376,13 @@ impl fmt::Display for Action {
                 write!(f, "add [[local_user]] {user} to {}", policy.display())
             }
             Action::AddToUserPath(p) => write!(f, "add {} to PATH", p.display()),
+            Action::RemoveFromUserPath(p) => write!(f, "remove {} from PATH", p.display()),
+            Action::WriteUtf16 { path, .. } => write!(f, "write {}", path.display()),
+            Action::SecureServiceDir { path, account } => write!(
+                f,
+                "check {} and close it to {account} and the administrators",
+                path.display()
+            ),
             Action::EnsureMacAccount { name, .. } => write!(f, "create account {name}"),
         }
     }

@@ -98,14 +98,23 @@ pub fn entries(layout: &Layout, role: NodeRole) -> Vec<Entry> {
 
 /// The autostart plan of `entry` for this user.
 pub fn autostart_plan(layout: &Layout, entry: Entry, on: bool) -> Result<Vec<Action>, String> {
+    let exe = exe()?;
+    let launcher = exe.with_file_name(crate::os_service::autostart::WINDOWS_LAUNCHER);
+    if on && Os::current() == Os::Windows && !launcher.is_file() {
+        return Err(format!(
+            "{} is missing next to this binary; install both files again",
+            launcher.display()
+        ));
+    }
     let inputs = AutostartInputs {
         os: Os::current(),
-        exe: exe()?,
+        exe,
         entry,
         state_dir: layout.root.clone(),
         config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
         home: home_dir()?,
         uid: current_uid(),
+        user: lr_net::current_os_user().map_err(|e| e.to_string())?,
     };
     Ok(if on {
         plans::autostart_on(&inputs)
@@ -114,15 +123,42 @@ pub fn autostart_plan(layout: &Layout, entry: Entry, on: bool) -> Result<Vec<Act
     })
 }
 
-/// `autostart on|off [role] [--dry-run]`: the broker becomes or stops being the OS service,
-/// hubs and runners start at the user's logon.
+fn task_hint(e: String) -> String {
+    if Os::current() != Os::Windows {
+        return e;
+    }
+    format!(
+        "{e}\nTask Scheduler did not take the task. Run the command as the user the role is for, \
+         in that user's session; where the machine's policy lets only administrators create \
+         tasks, run it from an elevated prompt of that same user"
+    )
+}
+
+/// `autostart on|off [role [runner-name]] [--dry-run]`: the broker becomes or stops being the
+/// OS service, hubs and runners start at the user's logon; `runner <name>` is one runner.
 pub fn autostart(
     layout: &Layout,
     switch: Switch,
     role: Option<RoleArg>,
+    runner: Option<String>,
     dry_run: bool,
 ) -> Result<i32, String> {
     let on = switch == Switch::On;
+    if let Some(name) = runner {
+        if role != Some(RoleArg::Runner) {
+            return Err(
+                "a name only goes with the role `runner`: autostart on runner <name>".into(),
+            );
+        }
+        crate::runner_config::check_runner_name(&name)?;
+        let entry = Entry::Runner(Some(name));
+        let label = entry.name();
+        apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
+        if !dry_run {
+            println!("autostart {}: {label}", if on { "on" } else { "off" });
+        }
+        return Ok(0);
+    }
     for role in chosen_roles(layout, role)? {
         if role == NodeRole::Broker {
             if on {
@@ -135,7 +171,7 @@ pub fn autostart(
         }
         for entry in entries(layout, role) {
             let name = entry.name();
-            apply(&autostart_plan(layout, entry, on)?, dry_run)?;
+            apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
             if !dry_run {
                 let state = if on { "on" } else { "off" };
                 println!("autostart {state}: {name}");

@@ -236,6 +236,8 @@ pub enum Command {
         /// The role; the roles `init` created when omitted.
         #[arg(value_enum)]
         role: Option<RoleArg>,
+        /// One runner of this installation (with the role `runner`).
+        runner: Option<String>,
         /// Print what would be done and change nothing.
         #[arg(long)]
         dry_run: bool,
@@ -309,8 +311,12 @@ pub async fn run(cli: Cli) -> i32 {
             HubAction::Join {
                 address,
                 code,
+                code_file,
                 name,
-            } => join_cmd::hub_join(&layout, &address, &code, name).await,
+            } => match join_cmd::join_code(code, code_file) {
+                Ok(code) => join_cmd::hub_join(&layout, &address, &code, name).await,
+                Err(e) => Err(e),
+            },
         },
         Command::Broker { action } => match action {
             BrokerAction::Run {
@@ -345,13 +351,14 @@ pub async fn run(cli: Cli) -> i32 {
             RunnerAction::Join {
                 address,
                 code,
+                code_file,
                 name,
                 count,
                 config,
                 platforms,
                 tags,
             } => {
-                let join = join_cmd::RunnerJoin {
+                let join = join_cmd::join_code(code, code_file).map(|code| join_cmd::RunnerJoin {
                     address,
                     code,
                     name,
@@ -359,8 +366,11 @@ pub async fn run(cli: Cli) -> i32 {
                     config,
                     platforms,
                     tags,
-                };
-                join_cmd::runner_join(&layout, join).await
+                });
+                match join {
+                    Ok(join) => join_cmd::runner_join(&layout, join).await,
+                    Err(e) => Err(e),
+                }
             }
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
@@ -393,8 +403,9 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Autostart {
             switch,
             role,
+            runner,
             dry_run,
-        } => service_cmd::autostart(&layout, switch, role, dry_run),
+        } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };
     match result {

@@ -108,17 +108,48 @@ impl Dialer for RoutingDialer {
     }
 }
 
+/// Whether an OS user administers this machine.
+pub type AdminCheck = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// Admits local IPC peers named in `[[local_user]]` with the OS rules of `lr-net` (bare Windows
 /// names are local accounts of this computer, SIDs allowed), plus the broker owners: the OS
-/// users with rights on the broker's state directory.
+/// users with rights on the broker's state directory (spec 3.5, 3.9) — the account the broker
+/// runs as (a person, or the service account) and the administrators of the machine. Only
+/// local IPC peers come here; network peers never become owners.
 pub struct NetAdmission {
     owners: Vec<String>,
+    admin: AdminCheck,
+    known: std::sync::Mutex<std::collections::HashMap<String, bool>>,
 }
 
 impl NetAdmission {
-    /// Admission with these OS users (kernel spelling) as broker owners.
+    /// Admission with these OS users (kernel spelling) as broker owners, and no administrator.
     pub fn new(owners: Vec<String>) -> NetAdmission {
-        NetAdmission { owners }
+        NetAdmission {
+            owners,
+            admin: Arc::new(|_| false),
+            known: Default::default(),
+        }
+    }
+
+    /// The same admission where users `admin` says administer this machine are owners too
+    /// (normally [`lr_net::is_machine_admin`]); answers are remembered per user.
+    pub fn with_admins(mut self, admin: AdminCheck) -> NetAdmission {
+        self.admin = admin;
+        self
+    }
+
+    fn is_owner(&self, os_user: &str) -> bool {
+        if self.owners.iter().any(|o| same(o, os_user)) {
+            return true;
+        }
+        let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(answer) = known.get(os_user) {
+            return *answer;
+        }
+        let answer = (self.admin)(os_user);
+        known.insert(os_user.to_string(), answer);
+        answer
     }
 }
 
@@ -149,7 +180,7 @@ impl LocalAdmission for NetAdmission {
             access: PeerAccess::Local,
         };
         let listed = list.admit(&peer).ok();
-        let owner = self.owners.iter().any(|o| same(o, os_user));
+        let owner = self.is_owner(os_user);
         if listed.is_none() && !owner {
             return None;
         }

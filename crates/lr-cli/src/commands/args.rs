@@ -35,8 +35,12 @@ pub enum HubAction {
     Join {
         /// `host:port` printed by `broker add`.
         address: String,
-        /// The one-time code.
-        code: String,
+        /// The one-time code; better `--code-file`, `LOCALRUNNER_JOIN_CODE` or standard input,
+        /// since other local users see the command line.
+        code: Option<String>,
+        /// File with the code; `-` reads it from standard input.
+        #[arg(long)]
+        code_file: Option<PathBuf>,
         /// Name of the broker in this hub's list and `hub-policy.toml` (default: the address).
         #[arg(long)]
         name: Option<String>,
@@ -100,8 +104,12 @@ pub enum RunnerAction {
     Join {
         /// `host:port` printed by `broker add`.
         address: String,
-        /// The one-time code.
-        code: String,
+        /// The one-time code; better `--code-file`, `LOCALRUNNER_JOIN_CODE` or standard input,
+        /// since other local users see the command line.
+        code: Option<String>,
+        /// File with the code; `-` reads it from standard input.
+        #[arg(long)]
+        code_file: Option<PathBuf>,
         /// Runner name.
         #[arg(long)]
         name: Option<String>,

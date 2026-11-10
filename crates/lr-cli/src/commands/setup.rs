@@ -3,6 +3,7 @@
 use super::service_cmd::{autostart_plan, entries, uninstall_service_plan};
 use super::RoleArg;
 use crate::init::{self, NodeRole};
+use crate::os_service::autostart::WINDOWS_LAUNCHER;
 use crate::os_service::plans::Entry;
 use crate::os_service::{
     apply_all, original_user, service_installed, Action, DryRun, Os, OsSystem, System,
@@ -50,15 +51,24 @@ fn binary_name() -> &'static str {
     }
 }
 
-/// The plan of `install`: the binary into `dir`, `dir` on the user's `PATH`.
+fn binaries() -> Vec<&'static str> {
+    let mut out = vec![binary_name()];
+    if cfg!(windows) {
+        out.push(WINDOWS_LAUNCHER);
+    }
+    out
+}
+
+/// The plan of `install`: the binary (on Windows with its windowless launcher) into `dir`,
+/// `dir` on the user's `PATH`.
 pub fn install_plan(exe: PathBuf, dir: PathBuf) -> Vec<Action> {
-    let target = dir.join(binary_name());
     let mut out = vec![Action::CreateDir(dir.clone())];
-    if exe != target {
-        out.push(Action::Copy {
-            from: exe,
-            to: target,
-        });
+    for name in binaries() {
+        let from = exe.with_file_name(name);
+        let to = dir.join(name);
+        if from != to {
+            out.push(Action::Copy { from, to });
+        }
     }
     out.push(Action::AddToUserPath(dir));
     out
@@ -143,7 +153,10 @@ pub fn uninstall_plan(
     if with_service {
         out.extend(uninstall_service_plan());
     }
-    out.push(Action::RemoveFile(dir.join(binary_name())));
+    for name in binaries() {
+        out.push(Action::RemoveFile(dir.join(name)));
+    }
+    out.push(Action::RemoveFromUserPath(dir));
     if purge {
         out.push(Action::RemoveDirAll(layout.root.clone()));
     }

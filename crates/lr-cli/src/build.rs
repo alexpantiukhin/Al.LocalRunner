@@ -176,7 +176,9 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         secrets: Arc::new(ConfigSecrets::default()),
         policy,
     })
-    .with_local_admission(Arc::new(NetAdmission::new(vec![owner])))
+    .with_local_admission(Arc::new(
+        NetAdmission::new(vec![owner]).with_admins(Arc::new(lr_net::is_machine_admin)),
+    ))
     .with_log_sink(logger.clone());
     let handle = broker.handle();
     let admin = Arc::new(BrokerAdmin {

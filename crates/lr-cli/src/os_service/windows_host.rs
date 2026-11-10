@@ -6,8 +6,9 @@ use super::{service_name, Os};
 use crate::paths::Layout;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::sync::watch;
 use windows_sys::core::PWSTR;
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
@@ -24,7 +25,8 @@ const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
 static LAYOUT: OnceLock<Layout> = OnceLock::new();
 static STATUS: AtomicUsize = AtomicUsize::new(0);
 static CHECKPOINT: AtomicU32 = AtomicU32::new(0);
-static STOP: Mutex<Option<Sender<()>>> = Mutex::new(None);
+static STOP: OnceLock<watch::Sender<bool>> = OnceLock::new();
+const BROKER_ENDED: u32 = 2;
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
@@ -67,8 +69,8 @@ unsafe extern "system" fn handler(control: u32, _: u32, _: *mut c_void, _: *mut 
     match control {
         SERVICE_CONTROL_STOP | SERVICE_CONTROL_SHUTDOWN => {
             report(SERVICE_STOP_PENDING, 0, 15_000);
-            if let Some(tx) = STOP.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                let _ = tx.send(());
+            if let Some(tx) = STOP.get() {
+                tx.send_replace(true);
             }
             NO_ERROR
         }
@@ -77,20 +79,42 @@ unsafe extern "system" fn handler(control: u32, _: u32, _: *mut c_void, _: *mut 
     }
 }
 
-async fn serve(layout: &Layout, stop: std::sync::mpsc::Receiver<()>) -> u32 {
+fn log(layout: Option<&Layout>, text: &str) {
+    let Some(layout) = layout else {
+        return;
+    };
+    let dir = layout.root.join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("service.log"))
+    {
+        let _ = writeln!(f, "{at} {text}");
+    }
+}
+
+async fn serve(layout: &Layout, mut stop: watch::Receiver<bool>) -> u32 {
     let running = match crate::roles::start_broker(layout, false).await {
         Ok(r) => r,
-        Err(_) => return 1,
+        Err(e) => {
+            log(Some(layout), &format!("the broker did not start: {e}"));
+            return 1;
+        }
     };
     report(SERVICE_RUNNING, 0, 0);
-    let stopped = tokio::task::spawn_blocking(move || {
-        let _ = stop.recv();
-    });
     tokio::select! {
-        _ = stopped => {}
-        _ = running.wait() => {}
+        _ = stop.wait_for(|s| *s) => 0,
+        _ = running.wait() => {
+            log(Some(layout), "the broker ended on its own");
+            BROKER_ENDED
+        }
     }
-    0
 }
 
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
@@ -102,16 +126,23 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     STATUS.store(handle as usize, Ordering::SeqCst);
     report(SERVICE_START_PENDING, 0, 15_000);
     let _ = lr_exec::ensure_console();
-    let (tx, rx) = channel();
-    *STOP.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
-    let code = match (
-        LAYOUT.get(),
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build(),
-    ) {
-        (Some(layout), Ok(rt)) => rt.block_on(serve(layout, rx)),
-        _ => 1,
+    let (tx, rx) = watch::channel(false);
+    let _ = STOP.set(tx);
+    let layout = LAYOUT.get();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build();
+    let code = match (layout, runtime) {
+        (Some(layout), Ok(rt)) => {
+            let code = rt.block_on(serve(layout, rx));
+            rt.shutdown_timeout(Duration::from_secs(10));
+            code
+        }
+        (_, Err(e)) => {
+            log(layout, &format!("no async runtime: {e}"));
+            1
+        }
+        (None, _) => 1,
     };
     report(SERVICE_STOPPED, code, 0);
 }

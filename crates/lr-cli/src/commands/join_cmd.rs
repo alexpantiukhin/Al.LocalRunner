@@ -12,6 +12,74 @@ use lr_store::SqliteHubStore;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Variable that can carry the join code instead of the command line.
+pub const JOIN_CODE_ENV: &str = "LOCALRUNNER_JOIN_CODE";
+
+/// Where the join code came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodeFrom {
+    /// `--code-file` (a file, or `-` for standard input).
+    File,
+    /// [`JOIN_CODE_ENV`].
+    Env,
+    /// The command line, where other local users can see it while the join runs.
+    Argv,
+}
+
+/// The join code by priority: `--code-file`, then [`JOIN_CODE_ENV`], then the command line;
+/// blank values do not count.
+pub fn pick_code(
+    file: Option<String>,
+    env: Option<String>,
+    argv: Option<String>,
+) -> Option<(String, CodeFrom)> {
+    let given = |v: Option<String>| v.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    given(file)
+        .map(|c| (c, CodeFrom::File))
+        .or_else(|| given(env).map(|c| (c, CodeFrom::Env)))
+        .or_else(|| given(argv).map(|c| (c, CodeFrom::Argv)))
+}
+
+fn read_stdin_line(prompt: bool) -> Result<String, String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if prompt && std::io::stdin().is_terminal() {
+        eprint!("join code: ");
+        let _ = std::io::stderr().flush();
+    }
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .map_err(|e| format!("standard input: {e}"))?;
+    Ok(line)
+}
+
+/// The join code of `hub join` or `runner join` (spec 3.8): from `--code-file` (`-` reads
+/// standard input), [`JOIN_CODE_ENV`] or the command line (with a warning); without any, it
+/// is read from standard input.
+pub fn join_code(argv: Option<String>, file: Option<PathBuf>) -> Result<String, String> {
+    let from_file = match &file {
+        Some(p) if p.as_os_str() == "-" => Some(read_stdin_line(false)?),
+        Some(p) => Some(std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?),
+        None => None,
+    };
+    let env = std::env::var(JOIN_CODE_ENV).ok();
+    match pick_code(from_file, env, argv) {
+        Some((code, from)) => {
+            if from == CodeFrom::Argv {
+                eprintln!(
+                    "warning: a code on the command line is visible to other users of this \
+                     machine and stays in the shell history; use --code-file or {JOIN_CODE_ENV}"
+                );
+            }
+            Ok(code)
+        }
+        None => pick_code(Some(read_stdin_line(true)?), None, None)
+            .map(|(c, _)| c)
+            .ok_or_else(|| format!("no join code: give --code-file, {JOIN_CODE_ENV} or type it")),
+    }
+}
+
 /// The participant key at `path`, created on first use.
 pub fn key_at(path: &Path) -> Result<Arc<ClientKey>, String> {
     let key = if path.exists() {
@@ -35,6 +103,7 @@ pub async fn hub_join(
     name: Option<String>,
 ) -> Result<i32, String> {
     std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
+    crate::init::close_to_owner(&layout.root)?;
     let key = key_at(&layout.root.join(KEY_FILE))?;
     let who = Joiner {
         role: Role::Hub,

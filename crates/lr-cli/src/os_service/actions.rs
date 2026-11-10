@@ -1,5 +1,8 @@
-use super::{Action, System, Tolerate};
-use std::path::Path;
+use super::programs::program_path;
+use super::quote::shell_word;
+use super::trust::{require_trusted, secure_service_dir};
+use super::{service_account, Action, Os, System, Tolerate};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 /// Carries out `actions` in order and stops at the first failure.
@@ -28,7 +31,12 @@ fn io(path: &Path, e: std::io::Error) -> String {
 }
 
 fn run(program: &str, args: &[String], tolerate: &Tolerate) -> Result<(), String> {
-    let out = Command::new(program)
+    let exe = match (program_path(program), tolerate) {
+        (Ok(p), _) => p,
+        (Err(_), Tolerate::Anything) => return Ok(()),
+        (Err(e), _) => return Err(e),
+    };
+    let out = Command::new(&exe)
         .args(args)
         .stdin(Stdio::null())
         .output()
@@ -83,41 +91,90 @@ pub fn ensure_local_user(text: &str, user: &str) -> Result<Option<String>, Strin
     Ok(Some(out))
 }
 
-fn add_to_path(dir: &Path) -> Result<(), String> {
-    let text = dir.to_string_lossy().into_owned();
+/// The Windows PowerShell script that adds `dir` to (or, with `add` false, removes it from)
+/// the user's `Path`, keeping the value's `%VARIABLE%` references (it is read unexpanded and
+/// written as `REG_EXPAND_SZ`), then tells running programs the environment changed.
+pub fn path_script(dir: &Path, add: bool) -> String {
+    let quoted = dir.to_string_lossy().replace('\'', "''");
+    let change = if add {
+        "if ($parts -notcontains $d) { $parts += $d }"
+    } else {
+        "$parts = @($parts | Where-Object { $_ -ne $d })"
+    };
+    format!(
+        "$k=[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); $p=$k.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames); $d='{quoted}'; $parts=@($p -split ';' | Where-Object {{ $_ -ne '' }}); {change}; $k.SetValue('Path', ($parts -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString); $k.Close(); [Environment]::SetEnvironmentVariable('AlLocalRunnerRefresh','1','User'); [Environment]::SetEnvironmentVariable('AlLocalRunnerRefresh',$null,'User')"
+    )
+}
+
+/// The line `install` adds to shell profiles: `dir` in single quotes, so nothing in it expands.
+pub fn profile_line(dir: &Path) -> String {
+    format!(
+        "export PATH={}:\"$PATH\" # al-localrunner\n",
+        shell_word(&dir.to_string_lossy())
+    )
+}
+
+/// `text` without the lines [`profile_line`] added for `dir`.
+pub fn profile_without(text: &str, dir: &Path) -> String {
+    let line = profile_line(dir);
+    let line = line.trim_end();
+    text.lines()
+        .filter(|l| l.trim_end() != line)
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
+fn profiles(home: &Path) -> Vec<PathBuf> {
+    let mut out = vec![home.join(".profile")];
+    for name in [".bash_profile", ".zprofile"] {
+        let p = home.join(name);
+        if p.exists() || (name == ".zprofile" && cfg!(target_os = "macos")) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+fn user_path(dir: &Path, add: bool) -> Result<(), String> {
     if cfg!(windows) {
-        let quoted = text.replace('\'', "''");
-        let script = format!(
-            "$p=[Environment]::GetEnvironmentVariable('Path','User'); if ($null -eq $p) {{ $p='' }}; \
-             if (($p -split ';') -notcontains '{quoted}') {{ \
-             [Environment]::SetEnvironmentVariable('Path', (($p.TrimEnd(';') + ';{quoted}').TrimStart(';')), 'User') }}"
-        );
+        let script = path_script(dir, add);
         let args = ["-NoProfile", "-NonInteractive", "-Command", &script].map(String::from);
         return run("powershell", &args, &Tolerate::Nothing);
     }
-    let on_path =
-        std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d == dir));
-    if on_path {
-        return Ok(());
-    }
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-    let profile = Path::new(&home).join(".profile");
-    let line = format!("export PATH=\"{text}:$PATH\" # al-localrunner\n");
-    let current = std::fs::read_to_string(&profile).unwrap_or_default();
-    if current.contains(line.trim_end()) {
-        return Ok(());
+    let line = profile_line(dir);
+    for profile in profiles(Path::new(&home)) {
+        let current = std::fs::read_to_string(&profile).unwrap_or_default();
+        let next = if add {
+            if current.lines().any(|l| l.trim_end() == line.trim_end()) {
+                continue;
+            }
+            let mut next = current.clone();
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next + &line
+        } else {
+            if !current.contains(line.trim_end()) {
+                continue;
+            }
+            profile_without(&current, dir)
+        };
+        std::fs::write(&profile, next).map_err(|e| io(&profile, e))?;
     }
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&profile)
-        .map_err(|e| io(&profile, e))?;
-    f.write_all(line.as_bytes()).map_err(|e| io(&profile, e))
+    Ok(())
+}
+
+fn utf16_with_bom(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    out
 }
 
 fn dscl_ids(kind: &str, attr: &str) -> Result<Vec<u32>, String> {
-    let out = Command::new("dscl")
+    let out = Command::new(program_path("dscl")?)
         .args([".", "-list", kind, attr])
         .output()
         .map_err(|e| format!("dscl: {e}"))?;
@@ -130,8 +187,9 @@ fn dscl_ids(kind: &str, attr: &str) -> Result<Vec<u32>, String> {
 fn ensure_mac_account(name: &str, home: &Path) -> Result<(), String> {
     let user = format!("/Users/{name}");
     let group = format!("/Groups/{name}");
+    let dscl = program_path("dscl")?;
     let exists = |path: &str| {
-        Command::new("dscl")
+        Command::new(&dscl)
             .args([".", "-read", path])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -188,7 +246,10 @@ impl System for OsSystem {
                 std::fs::write(path, contents).map_err(|e| io(path, e))
             }
             Action::CopyIfMissing { from, to } => {
-                if to.exists() || !from.exists() {
+                if std::fs::symlink_metadata(to).is_ok() {
+                    return require_trusted(to, service_account(Os::current()));
+                }
+                if !from.exists() {
                     return Ok(());
                 }
                 std::fs::copy(from, to).map(|_| ()).map_err(|e| io(to, e))
@@ -218,7 +279,15 @@ impl System for OsSystem {
                     None => Ok(()),
                 }
             }
-            Action::AddToUserPath(dir) => add_to_path(dir),
+            Action::AddToUserPath(dir) => user_path(dir, true),
+            Action::RemoveFromUserPath(dir) => user_path(dir, false),
+            Action::WriteUtf16 { path, contents } => {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+                }
+                std::fs::write(path, utf16_with_bom(contents)).map_err(|e| io(path, e))
+            }
+            Action::SecureServiceDir { path, account } => secure_service_dir(path, account),
             Action::EnsureMacAccount { name, home } => ensure_mac_account(name, home),
         }
     }

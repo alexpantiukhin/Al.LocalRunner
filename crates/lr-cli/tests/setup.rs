@@ -153,3 +153,50 @@ fn doctor_json_reports_a_broken_runner_config_and_fails() {
     assert_eq!(find("state directory")["status"], "ok");
     assert!(find("process tree")["status"] != "fail");
 }
+
+#[test]
+fn autostart_of_one_named_runner_and_uninstall_take_off_only_their_entries() {
+    let dir = TempDir::new("one-runner");
+    let out = localrunner(&dir, &["autostart", "on", "runner", "box", "--dry-run"]);
+    let all = text(&out);
+    assert!(out.status.success(), "{all}");
+    assert!(all.contains("runner-box"), "{all}");
+    if cfg!(windows) {
+        assert!(all.contains("schtasks") && all.contains("/Create"), "{all}");
+        assert!(!all.contains(r"CurrentVersion\Run"), "{all}");
+    }
+    let off = localrunner(&dir, &["autostart", "off", "runner", "box", "--dry-run"]);
+    assert!(text(&off).contains("runner-box"), "{}", text(&off));
+    let hub = localrunner(&dir, &["autostart", "on", "hub", "box", "--dry-run"]);
+    assert!(!hub.status.success());
+    assert!(text(&hub).contains("runner"), "{}", text(&hub));
+    let bad = localrunner(&dir, &["autostart", "on", "runner", "CON", "--dry-run"]);
+    assert!(!bad.status.success());
+
+    let bin = dir.path().join("bin");
+    let out = localrunner(
+        &dir,
+        &["uninstall", "--dry-run", "--dir", bin.to_str().unwrap()],
+    );
+    let all = text(&out);
+    assert!(all.contains("from PATH"), "{all}");
+    if cfg!(windows) {
+        assert!(all.contains("localrunnerw.exe"), "{all}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn init_closes_the_state_directory_to_its_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("mode");
+    let layout = layout(&dir);
+    std::fs::create_dir_all(&layout.root).unwrap();
+    std::fs::set_permissions(&layout.root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    init::init(&layout, &[NodeRole::Hub], "alex").unwrap();
+    let mode = std::fs::metadata(&layout.root)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o700);
+}

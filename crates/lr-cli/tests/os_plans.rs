@@ -30,9 +30,19 @@ fn runs(plan: &[Action]) -> Vec<String> {
 fn written(plan: &[Action]) -> Vec<(PathBuf, String)> {
     plan.iter()
         .filter_map(|a| match a {
-            Action::WriteFile { path, contents } => Some((path.clone(), contents.clone())),
+            Action::WriteFile { path, contents } | Action::WriteUtf16 { path, contents } => {
+                Some((path.clone(), contents.clone()))
+            }
             _ => None,
         })
+        .collect()
+}
+
+fn position(plan: &[Action], what: impl Fn(&Action) -> bool) -> Vec<usize> {
+    plan.iter()
+        .enumerate()
+        .filter(|(_, a)| what(a))
+        .map(|(i, _)| i)
         .collect()
 }
 
@@ -53,10 +63,6 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
             }),
             "{os:?}: the installing user is not admitted"
         );
-        assert!(plan.contains(&Action::CopyIfMissing {
-            from: Path::new("/home/alex/.local/share/al-localrunner").join("policy.toml"),
-            to: Path::new("/var/lib/al-localrunner").join("policy.toml"),
-        }));
         assert!(plan.contains(&Action::Copy {
             from: PathBuf::from("/home/alex/.local/bin/localrunner"),
             to: PathBuf::from("/usr/local/libexec/al-localrunner/localrunner"),
@@ -74,26 +80,30 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
                     create.contains("broker run --service --state-dir"),
                     "{create}"
                 );
-                assert!(runs.iter().any(
-                    |r| r.starts_with("icacls") && r.contains(&format!("/setowner {account}"))
-                ));
-                let grant = runs.iter().find(|r| r.contains("/grant:r")).unwrap();
-                assert!(grant.contains("/inheritance:r") && grant.contains("S-1-5-32-544"));
+                assert!(runs.contains(&"sc.exe failureflag AlLocalRunnerBroker 1".to_string()));
+                assert!(
+                    !runs.iter().any(|r| r.starts_with("icacls")),
+                    "the DACL is set whole, not patched with icacls: {runs:?}"
+                );
             }
             Os::Linux => {
                 assert!(runs
                     .iter()
                     .any(|r| r.starts_with("useradd --system") && r.ends_with(account)));
                 assert!(runs.iter().any(|r| r == "usermod -aG al-localrunner alex"));
-                assert!(runs.iter().any(|r| r.starts_with(&format!(
-                    "chown -R {account}:al-localrunner /var/lib/al-localrunner"
-                ))));
+                assert!(runs
+                    .iter()
+                    .any(|r| r
+                        == &format!("chown -R {account}:al-localrunner /var/lib/al-localrunner")));
+                assert!(runs.contains(&"chmod -R go-rwx /var/lib/al-localrunner".to_string()));
+                assert!(runs.contains(&"chmod 0700 /var/lib/al-localrunner".to_string()));
                 let (path, unit) = written(&plan).pop().unwrap();
                 assert_eq!(
                     path,
                     PathBuf::from("/etc/systemd/system/al-localrunner-broker.service")
                 );
                 assert!(unit.contains(&format!("User={account}")), "{unit}");
+                assert!(unit.contains("UMask=0077"), "{unit}");
                 assert!(unit.contains("RuntimeDirectory=al-localrunner"), "{unit}");
                 assert!(unit.contains("\"broker\" \"run\" \"--service\""), "{unit}");
                 assert!(runs
@@ -105,13 +115,57 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
                     a,
                     Action::EnsureMacAccount { name, .. } if name == account
                 )));
+                assert!(runs.contains(&"chmod 0710 /var/lib/al-localrunner".to_string()));
+                let ipc = Path::new("/var/lib/al-localrunner").join("ipc");
+                assert!(runs.contains(&format!("chmod 0750 {}", ipc.display())));
                 let (path, daemon) = written(&plan).pop().unwrap();
                 assert!(path.starts_with("/Library/LaunchDaemons"));
                 assert!(daemon.contains(&format!("<string>{account}</string>")));
+                assert!(daemon.contains("<key>Umask</key>\n  <integer>63</integer>"));
                 assert!(runs
                     .iter()
                     .any(|r| r.starts_with("launchctl bootstrap system")));
             }
+        }
+    }
+}
+
+#[test]
+fn the_state_directory_is_checked_and_closed_before_any_configuration_goes_in() {
+    for os in ALL {
+        let plan = install_service(&inputs(os));
+        let secured = position(&plan, |a| {
+            matches!(a, Action::SecureServiceDir { path, account }
+                if path == Path::new("/var/lib/al-localrunner") && account == service_account(os))
+        });
+        let writes = position(&plan, |a| {
+            matches!(
+                a,
+                Action::CopyIfMissing { .. } | Action::EnsureLocalUser { .. }
+            )
+        });
+        assert!(!secured.is_empty(), "{os:?}");
+        assert_eq!(writes.len(), 3, "{os:?}");
+        assert!(secured[0] < writes[0], "{os:?}: {plan:#?}");
+        assert!(
+            !plan.iter().any(
+                |a| matches!(a, Action::CreateDir(p) if p == Path::new("/var/lib/al-localrunner"))
+            ),
+            "{os:?}: the directory is only created by the check"
+        );
+        if os == Os::Windows {
+            let created = position(
+                &plan,
+                |a| matches!(a, Action::Run { program, args, .. } if program == "sc.exe" && args[0] == "create"),
+            );
+            assert!(
+                created[0] < secured[0],
+                "the service account exists before the directory is given to it"
+            );
+            assert!(
+                *secured.last().unwrap() > *writes.last().unwrap(),
+                "copied files end up owned by the service"
+            );
         }
     }
 }
@@ -139,28 +193,73 @@ fn autostart(os: Os, entry: Entry) -> AutostartInputs {
         os,
         exe: PathBuf::from("/opt/bin/localrunner"),
         entry,
-        state_dir: PathBuf::from("/home/alex/state"),
+        state_dir: PathBuf::from("/home/alex/state & more"),
         config_dir: None,
         home: PathBuf::from("/home/alex"),
         uid: 1000,
+        user: r"PC\alex".into(),
     }
 }
 
 #[test]
-fn autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
-    let hub = autostart(Os::Windows, Entry::Hub);
-    let on = runs(&autostart_on(&hub));
-    assert_eq!(on.len(), 1);
-    assert!(on[0].starts_with(r"reg add HKCU\Software\Microsoft\Windows\CurrentVersion\Run"));
-    assert!(on[0].contains("/v Al.LocalRunner hub"), "{}", on[0]);
-    assert!(
-        on[0].contains("/opt/bin/localrunner hub run --background --state-dir /home/alex/state"),
-        "{}",
-        on[0]
+fn windows_autostart_is_a_logon_task_of_the_user_restarted_on_failure_without_a_window() {
+    let runner = autostart(Os::Windows, Entry::Runner(Some("box".into())));
+    let plan = autostart_on(&runner);
+    let (file, task) = written(&plan).pop().unwrap();
+    assert_eq!(
+        file,
+        Path::new("/home/alex/state & more").join("autostart-runner-box.xml")
     );
-    let off = runs(&autostart_off(&hub));
-    assert!(off[0].starts_with("reg delete"), "{off:?}");
+    assert!(matches!(plan[0], Action::WriteUtf16 { .. }));
+    let launcher = format!(
+        "<Command>{}</Command>",
+        Path::new("/opt/bin/localrunner")
+            .with_file_name("localrunnerw.exe")
+            .display()
+    );
+    assert!(task.contains(&launcher), "{task}");
+    for part in [
+        "<LogonTrigger>",
+        r"<UserId>PC\alex</UserId>",
+        "<LogonType>InteractiveToken</LogonType>",
+        "<RunLevel>LeastPrivilege</RunLevel>",
+        "<RestartOnFailure>",
+        "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
+        "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+        "<Arguments>runner run --name box --background --state-dir &quot;/home/alex/state &amp; more&quot;</Arguments>",
+    ] {
+        assert!(task.contains(part), "{part} missing in {task}");
+    }
+    let runs = runs(&plan);
+    assert_eq!(
+        runs,
+        vec![format!(
+            "schtasks /Create /TN Al.LocalRunner runner-box /XML {} /F",
+            file.display()
+        )]
+    );
+    assert_eq!(plan.last(), Some(&Action::RemoveFile(file)));
+    let off = autostart_off(&runner);
+    assert_eq!(
+        off,
+        vec![Action::Run {
+            program: "schtasks".into(),
+            args: ["/Delete", "/TN", "Al.LocalRunner runner-box", "/F"]
+                .map(String::from)
+                .to_vec(),
+            tolerate: Tolerate::Anything,
+        }]
+    );
+    let hub = autostart_off(&autostart(Os::Windows, Entry::Hub));
+    assert!(runs_of(&hub)[0].contains("Al.LocalRunner hub"));
+}
 
+fn runs_of(plan: &[Action]) -> Vec<String> {
+    runs(plan)
+}
+
+#[test]
+fn unix_autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
     let runner = autostart(Os::Linux, Entry::Runner(Some("box".into())));
     let plan = autostart_on(&runner);
     let (path, unit) = written(&plan).pop().unwrap();
@@ -172,6 +271,7 @@ fn autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
         unit.contains("\"runner\" \"run\" \"--name\" \"box\" \"--background\""),
         "{unit}"
     );
+    assert!(unit.contains("UMask=0077"), "{unit}");
     assert!(
         runs(&plan).contains(&"systemctl --user enable al-localrunner-runner-box.service".into())
     );
@@ -185,6 +285,7 @@ fn autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
         PathBuf::from("/home/alex/Library/LaunchAgents/com.al-localrunner.runner.plist")
     );
     assert!(agent.contains("<string>runner</string>") && !agent.contains("UserName"));
+    assert!(agent.contains("<string>/home/alex/state &amp; more</string>"));
     assert!(runs(&plan)
         .iter()
         .any(|r| r.starts_with("launchctl bootstrap gui/1000")));
