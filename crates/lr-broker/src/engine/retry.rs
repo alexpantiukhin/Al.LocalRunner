@@ -1,7 +1,7 @@
 use super::{Cancel, Engine, Job};
 use lr_abstractions::{JobKey, Level, StoreError};
 use lr_core::Timestamp;
-use lr_proto::JobResult;
+use lr_proto::{JobResult, ReasonCode};
 use std::collections::HashSet;
 
 const RETRY_AFTER_S: u64 = 1;
@@ -9,7 +9,7 @@ const RETRY_AFTER_S: u64 = 1;
 pub(crate) enum Retry {
     Requeue(Job),
     Cancel(Job, Cancel),
-    Lose(Job),
+    Lose(Job, ReasonCode),
     Result(Job, Box<JobResult>, Timestamp),
 }
 
@@ -18,7 +18,7 @@ impl Retry {
         match self {
             Retry::Requeue(job)
             | Retry::Cancel(job, _)
-            | Retry::Lose(job)
+            | Retry::Lose(job, _)
             | Retry::Result(job, _, _) => &job.key,
         }
     }
@@ -69,9 +69,9 @@ impl Engine {
             match retry {
                 Retry::Requeue(job) => self.requeue_or_retry(job).await,
                 Retry::Cancel(job, cancel) => self.cancel_waiting(job, cancel).await,
-                Retry::Lose(job) => {
+                Retry::Lose(job, code) => {
                     let now = self.now();
-                    self.lose(job, now).await
+                    self.lose(job, now, code).await
                 }
                 Retry::Result(job, r, at) => self.job_result(job, &r, at).await,
             }

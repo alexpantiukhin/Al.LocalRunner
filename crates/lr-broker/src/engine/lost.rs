@@ -35,7 +35,7 @@ impl Engine {
         let mut changed = !due.is_empty();
         for i in due.into_iter().rev() {
             let job = self.active.remove(i);
-            self.lose(job, now).await;
+            self.lose(job, now, ReasonCode::RunnerLost).await;
         }
         if self.restored && now >= self.booted_at.plus_secs(grace_s) {
             self.restored = false;
@@ -49,28 +49,25 @@ impl Engine {
         }
     }
 
-    pub(crate) async fn lose(&mut self, mut job: Job, now: Timestamp) {
+    pub(crate) async fn lose(&mut self, mut job: Job, now: Timestamp, code: ReasonCode) {
         if job.start_unsaved {
             if let StartWrite::Pending(e) = self.save_start(&mut job, false).await {
-                return self.retry_later("mark a run lost", &e, Retry::Lose(job));
+                return self.retry_later("mark a run lost", &e, Retry::Lose(job, code));
             }
         }
         let mut t = Transition::to(JobState::Lost, now);
-        t.cancel_reason = Some(ReasonCode::RunnerLost.to_string());
+        t.cancel_reason = Some(code.to_string());
         match self.store.transition(&job.key, t).await {
             Ok(Applied::Changed) => {}
             Ok(Applied::Ignored) => return,
-            Err(e) => return self.retry_later("mark a run lost", &e, Retry::Lose(job)),
+            Err(e) => return self.retry_later("mark a run lost", &e, Retry::Lose(job, code)),
         }
-        self.finish(
-            &job.key,
-            JobState::Lost,
-            None,
-            Some(ReasonCode::RunnerLost),
-            job.runner
-                .map(|r| format!("раннер {r} не отчитался в срок")),
-        )
-        .await;
+        let detail = job.runner.map(|r| match code {
+            ReasonCode::RunnerRemoved => format!("раннер {r} удалён"),
+            _ => format!("раннер {r} не отчитался в срок"),
+        });
+        self.finish(&job.key, JobState::Lost, None, Some(code), detail)
+            .await;
     }
 
     async fn orphans(&mut self, now: Timestamp) -> bool {

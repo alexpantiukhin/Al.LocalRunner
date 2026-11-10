@@ -2,7 +2,7 @@ use super::conn::Command;
 use super::{Engine, Role};
 use crate::policy::{Applied, PolicyError};
 use lr_abstractions::Level;
-use lr_proto::BrokerToRunner;
+use lr_proto::{BrokerToRunner, ReasonCode};
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) enum AdminCommand {
@@ -35,7 +35,9 @@ impl BrokerHandle {
         rx.await.map_err(|_| stopped())?
     }
 
-    /// The key of machine `name` was revoked: its live connections are closed at once.
+    /// The key of machine `name` was revoked: its live connections are closed at once, and a
+    /// job running on one of its runners is `lost` with `runner_removed` right away, its
+    /// resources back in the pool (spec 3.9). Waiting orders stay queued for other runners.
     pub async fn revoked(&self, name: &str) {
         let (reply, rx) = oneshot::channel();
         let cmd = Command::Admin(AdminCommand::Revoked {
@@ -82,7 +84,31 @@ impl Engine {
                 for conn in conns {
                     self.close(conn);
                 }
+                let removed: Vec<String> = self
+                    .runners
+                    .iter()
+                    .filter(|(_, r)| r.persisted && r.owner == name)
+                    .map(|(n, _)| n.clone())
+                    .collect();
+                let now = self.now();
+                let mut i = 0;
+                while i < self.active.len() {
+                    let on_removed = self.active[i]
+                        .runner
+                        .as_ref()
+                        .is_some_and(|r| removed.contains(r));
+                    if on_removed {
+                        let job = self.active.remove(i);
+                        self.lose(job, now, ReasonCode::RunnerRemoved).await;
+                    } else {
+                        i += 1;
+                    }
+                }
+                for r in &removed {
+                    self.runners.remove(r);
+                }
                 let _ = reply.send(());
+                self.plan().await;
             }
         }
     }

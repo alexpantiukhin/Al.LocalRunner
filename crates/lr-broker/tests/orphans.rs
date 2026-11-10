@@ -85,8 +85,8 @@ async fn running_with_absent_hub(h: &Harness) -> Conn {
     for _ in 0..2 {
         h.clock.advance(Duration::from_secs(30));
         r.send(&RunnerToBroker::Heartbeat).await;
+        h.poke().await;
     }
-    h.poke().await;
     r
 }
 
