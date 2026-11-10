@@ -45,6 +45,26 @@ fn check_path(path: &str) -> Result<(), RepositoryError> {
     }
 }
 
+/// `url` without credentials: an `http(s)` URL loses its whole userinfo (`user:TOKEN@`,
+/// `TOKEN@`), any other `scheme://` URL keeps only the user name; scp-like addresses
+/// (`git@host:path`) carry no secret and stay as they are. The origin travels to the broker
+/// and to runners of other machines, so a token must not.
+pub fn without_credentials(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let Some((userinfo, host)) = authority.rsplit_once('@') else {
+        return url.to_string();
+    };
+    let web = scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https");
+    match userinfo.split_once(':').map(|(u, _)| u).or(Some(userinfo)) {
+        Some(user) if !web && !user.is_empty() => format!("{scheme}://{user}@{host}{tail}"),
+        _ => format!("{scheme}://{host}{tail}"),
+    }
+}
+
 struct Output {
     ok: bool,
     stdout: Vec<u8>,
@@ -54,8 +74,14 @@ struct Output {
 async fn git(root: PathBuf, args: Vec<String>) -> Result<Output, RepositoryError> {
     tokio::task::spawn_blocking(move || {
         let mut cmd = Command::new("git");
-        for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
-            cmd.env_remove(var);
+        for (var, _) in std::env::vars_os() {
+            if var
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("GIT_")
+            {
+                cmd.env_remove(var);
+            }
         }
         cmd.env("GIT_TERMINAL_PROMPT", "0")
             .arg("-C")
@@ -151,6 +177,9 @@ impl Repository for GitRepository {
             vec!["remote".into(), "get-url".into(), "origin".into()],
         )
         .await?;
-        Ok(out.ok.then(|| text(&out.stdout)).filter(|u| !u.is_empty()))
+        Ok(out
+            .ok
+            .then(|| without_credentials(&text(&out.stdout)))
+            .filter(|u| !u.is_empty()))
     }
 }

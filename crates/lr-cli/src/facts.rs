@@ -50,7 +50,8 @@ fn main_root(common_dir: &Path, fallback: &Path) -> PathBuf {
 pub(crate) fn git_facts(cwd: &Path) -> Option<GitFacts> {
     let worktree_root = native_path(&run_git(cwd, &["rev-parse", "--show-toplevel"])?);
     let branch = run_git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|b| b != "HEAD");
-    let origin = run_git(cwd, &["remote", "get-url", "origin"]);
+    let origin = run_git(cwd, &["remote", "get-url", "origin"])
+        .map(|o| crate::git_repo::without_credentials(&o));
     let repo_root = run_git(
         cwd,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],

@@ -2,7 +2,7 @@ mod common;
 
 use common::{git, init_repo, TempDir};
 use lr_abstractions::Repository;
-use lr_cli::git_repo::GitRepository;
+use lr_cli::git_repo::{without_credentials, GitRepository};
 
 #[tokio::test]
 async fn reads_head_committed_file_and_origin() {
@@ -58,4 +58,45 @@ async fn refuses_values_that_are_not_a_commit_or_a_plain_path() {
         .head(std::path::Path::new("relative/dir"))
         .await
         .is_err());
+}
+
+#[test]
+fn origin_credentials_never_leave_the_machine() {
+    assert_eq!(
+        without_credentials("https://user:TOKEN@github.com/o/r.git"),
+        "https://github.com/o/r.git"
+    );
+    assert_eq!(
+        without_credentials("https://TOKEN@github.com/o/r.git"),
+        "https://github.com/o/r.git"
+    );
+    assert_eq!(
+        without_credentials("ssh://git:secret@host:22/o/r.git"),
+        "ssh://git@host:22/o/r.git"
+    );
+    assert_eq!(
+        without_credentials("git@github.com:o/r.git"),
+        "git@github.com:o/r.git"
+    );
+    assert_eq!(
+        without_credentials("https://example.com/a@b/r.git"),
+        "https://example.com/a@b/r.git"
+    );
+}
+
+#[tokio::test]
+async fn origin_url_drops_the_token() {
+    let dir = TempDir::new("repo");
+    init_repo(dir.path());
+    git(
+        dir.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://bot:ghp_secret@example.com/o/r.git",
+        ],
+    );
+    let url = GitRepository.origin_url(dir.path()).await.unwrap();
+    assert_eq!(url.as_deref(), Some("https://example.com/o/r.git"));
 }
