@@ -12,6 +12,7 @@ const GATE: &str = "LR_EXEC_GATE";
 const COUNT: &str = "LR_EXEC_COUNT";
 const DETACH: &str = "LR_EXEC_DETACH";
 const PIDFILE: &str = "LR_EXEC_PIDFILE";
+const READY: &str = "LR_EXEC_READY";
 const TEST_NAME: &str = "common::helper_process";
 
 static SOFT: AtomicBool = AtomicBool::new(false);
@@ -122,6 +123,9 @@ pub fn run_if_requested() {
         let _ = SOFT_MARKER.set(std::ffi::CString::new(path).unwrap());
     }
     install_soft_handler();
+    if let Ok(path) = std::env::var(READY) {
+        let _ = std::fs::write(path, b"ready");
+    }
     match mode.as_str() {
         "ignore" => {
             announce(&role);
@@ -245,12 +249,21 @@ fn ignore_loop(role: &str) {
 fn spawn_grandchild() {
     let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
     cmd.args(["--exact", TEST_NAME, "--nocapture", "--quiet"]);
-    cmd.env(MODE, "ignore").env(ROLE, "grandchild");
+    let ready = std::env::temp_dir().join(format!("lr-exec-ready-{}", std::process::id()));
+    let _ = std::fs::remove_file(&ready);
+    cmd.env(MODE, "ignore")
+        .env(ROLE, "grandchild")
+        .env(READY, &ready);
     let detach = std::env::var(DETACH).map(|v| v == "1").unwrap_or(true);
     if detach {
         detach_command(&mut cmd);
     }
     let child = cmd.spawn().unwrap();
+    let started = Instant::now();
+    while !ready.exists() && started.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = std::fs::remove_file(&ready);
     say(&format!(
         "grandchild-pid={} grandchild-pid-end\n",
         child.id()
