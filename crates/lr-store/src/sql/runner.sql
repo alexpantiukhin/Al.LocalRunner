@@ -5,8 +5,12 @@ CREATE TABLE runner_outbox (
     payload_json TEXT NOT NULL,
     created_at   INTEGER NOT NULL,
     acked_at     INTEGER,
-    recv_seq     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (job_id, seq)
+);
+
+CREATE TABLE runner_recv (
+    job_id   TEXT PRIMARY KEY,
+    recv_seq INTEGER NOT NULL
 );
 
 CREATE TABLE service_registry (

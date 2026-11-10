@@ -174,34 +174,17 @@ fn compact(conn: &Connection, t: Table) -> R<()> {
     Ok(())
 }
 
-/// Deletes every entry of a recipient, closed ones included; returns how many were pending.
-pub(crate) fn drop_recipient(conn: &Connection, t: Table, scope: &str) -> R<usize> {
-    let f = t.filter(scope, None);
-    let sql = format!(
-        "SELECT count(*) FROM {} WHERE acked_at IS NULL AND seq > 0 AND {}",
-        t.name, f.sql
-    );
-    let n: i64 = conn.query_row(&sql, params_from_iter(f.args.iter()), |r| r.get(0))?;
-    conn.execute(
-        &format!("DELETE FROM {} WHERE {}", t.name, f.sql),
-        params_from_iter(f.args.iter()),
-    )?;
-    Ok(n as usize)
-}
-
-/// Deletes entries created before `before` and returns how many of them were pending.
+/// Closes entries created before `before`, as an ack would, and returns how many were
+/// pending. The closed entry with the greatest seq of a job stays: it is the only record of
+/// the job's counter.
 pub(crate) fn expire(conn: &Connection, t: Table, before: Timestamp) -> R<usize> {
-    let n: i64 = conn.query_row(
+    let closed = conn.execute(
         &format!(
-            "SELECT count(*) FROM {} WHERE acked_at IS NULL AND seq > 0 AND created_at < ?1",
+            "UPDATE {} SET acked_at = created_at, payload_json = ''              WHERE acked_at IS NULL AND seq > 0 AND created_at < ?1",
             t.name
         ),
         [time(before)],
-        |r| r.get(0),
     )?;
-    conn.execute(
-        &format!("DELETE FROM {} WHERE seq > 0 AND created_at < ?1", t.name),
-        [time(before)],
-    )?;
-    Ok(n as usize)
+    compact(conn, t)?;
+    Ok(closed)
 }

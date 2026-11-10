@@ -90,8 +90,9 @@ fn runner_db_has_the_tables_and_columns_of_the_er_diagram() {
     let want = expect(&[
         (
             "runner_outbox",
-            "job_id, seq, kind, payload_json, created_at, acked_at, recv_seq",
+            "job_id, seq, kind, payload_json, created_at, acked_at",
         ),
+        ("runner_recv", "job_id, recv_seq"),
         (
             "service_registry",
             "name, pid, pid_start, state, started_at, expires_at, mem_mb",

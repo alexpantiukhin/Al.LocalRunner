@@ -64,6 +64,14 @@ pub(crate) fn write<T>(conn: &mut Connection, f: impl FnOnce(&Transaction<'_>) -
     Ok(out)
 }
 
+/// Runs `f` in a deferred transaction so several queries see one snapshot.
+pub(crate) fn read<T>(conn: &Connection, f: impl FnOnce(&Connection) -> R<T>) -> R<T> {
+    let tx = conn.unchecked_transaction()?;
+    let out = f(&tx)?;
+    tx.commit()?;
+    Ok(out)
+}
+
 pub(crate) struct Db {
     conn: Arc<Mutex<Option<Connection>>>,
     path: PathBuf,

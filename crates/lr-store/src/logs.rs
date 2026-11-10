@@ -14,10 +14,20 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+const RESERVED: [&str; 4] = ["con", "prn", "aux", "nul"];
+
+fn reserved(name: &str) -> bool {
+    let numbered = |p: &str| {
+        name.strip_prefix(p)
+            .is_some_and(|n| n.len() == 1 && matches!(n.as_bytes()[0], b'1'..=b'9'))
+    };
+    RESERVED.contains(&name) || numbered("com") || numbered("lpt")
+}
+
 fn encode(part: &str) -> String {
     let mut out = String::new();
     for b in part.bytes() {
-        if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' {
+        if b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' {
             out.push(b as char);
         } else {
             out.push_str(&format!("%{b:02X}"));
@@ -26,11 +36,17 @@ fn encode(part: &str) -> String {
     if out.is_empty() {
         out.push_str("%00");
     }
+    if reserved(&out) {
+        out.insert(0, '_');
+    }
     out
 }
 
-/// Path of the log relative to the database directory; every byte outside `[A-Za-z0-9_-]` of
-/// the client key and job id is percent-encoded, so no id can leave `logs/`.
+/// Path of the log relative to the database directory; every byte outside `[a-z0-9-]` of the
+/// client key and job id is percent-encoded with upper-case hex, so no id can leave `logs/`,
+/// two ids differing in case get different names on case-insensitive file systems, and a name
+/// that is a Windows device name (`con`, `nul`, `com1`) gets a `_` prefix, which the encoding
+/// never emits otherwise.
 pub(crate) fn log_path(key: &JobKey) -> String {
     format!("logs/{}/{}.log", encode(&key.client), encode(&key.job.0))
 }

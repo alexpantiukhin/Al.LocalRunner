@@ -13,6 +13,8 @@
 mod broker;
 mod codec;
 mod db;
+#[cfg(test)]
+mod db_tests;
 mod hub;
 mod job_read;
 mod job_write;

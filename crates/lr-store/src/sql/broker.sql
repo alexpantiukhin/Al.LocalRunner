@@ -73,7 +73,7 @@ CREATE INDEX job_state_finished ON job (state, finished_at);
 
 CREATE TRIGGER job_final_state_is_written_once
 BEFORE UPDATE OF state, finished_at, exit_code ON job
-WHEN OLD.state IN ('passed', 'failed', 'timeout', 'cancelled', 'lost')
+WHEN OLD.state IN {FINAL}
 BEGIN
     SELECT RAISE(ABORT, 'the final state of a job is written once');
 END;

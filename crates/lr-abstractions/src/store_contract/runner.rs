@@ -119,3 +119,50 @@ pub async fn cache_index_keyed_by_client_project_and_name(store: &dyn RunnerStor
         Err(StoreError::NotFound(_))
     ));
 }
+
+/// A job whose last entry is an acknowledged result is forgotten once the keep period has
+/// passed, with its counters; unfinished jobs and jobs with pending entries stay.
+pub async fn finished_jobs_are_forgotten_after_the_keep_period(store: &dyn RunnerStore) {
+    let (done, busy, waiting) = (id("done"), id("busy"), id("waiting"));
+    store
+        .push_outbox(&done, OutboxKind::Chunk, "x".into(), at(1))
+        .await
+        .unwrap();
+    store
+        .push_outbox(&done, OutboxKind::JobResult, "r".into(), at(2))
+        .await
+        .unwrap();
+    store.accept_seq(&done, 1).await.unwrap();
+    store
+        .push_outbox(&busy, OutboxKind::Chunk, "x".into(), at(2))
+        .await
+        .unwrap();
+    store
+        .push_outbox(&waiting, OutboxKind::JobResult, "r".into(), at(2))
+        .await
+        .unwrap();
+    store.ack_outbox(&done, 2).await.unwrap();
+    store.ack_outbox(&busy, 1).await.unwrap();
+    assert_eq!(store.forget_finished(at(2)).await.unwrap(), 0);
+    assert_eq!(store.forget_finished(at(100)).await.unwrap(), 1);
+    assert_eq!(store.last_seq(&done).await.unwrap(), 0);
+    let again = store
+        .push_outbox(&done, OutboxKind::Chunk, "x".into(), at(200))
+        .await
+        .unwrap();
+    assert_eq!(again, 1);
+    let busy_next = store
+        .push_outbox(&busy, OutboxKind::Chunk, "x".into(), at(200))
+        .await
+        .unwrap();
+    assert_eq!(busy_next, 2);
+    let pending: Vec<_> = store
+        .pending_outbox()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.job)
+        .collect();
+    assert!(pending.contains(&waiting));
+    assert_eq!(store.forget_finished(at(100)).await.unwrap(), 0);
+}

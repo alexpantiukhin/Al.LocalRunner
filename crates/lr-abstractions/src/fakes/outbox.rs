@@ -5,6 +5,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub(crate) struct MemoryOutbox {
     counters: HashMap<(String, JobId), u64>,
+    last: HashMap<(String, JobId), (OutboxKind, Timestamp)>,
     entries: Vec<(String, OutboxEntry)>,
 }
 
@@ -23,6 +24,8 @@ impl MemoryOutbox {
             .or_insert(0);
         *counter += 1;
         let seq = *counter;
+        self.last
+            .insert((recipient.to_string(), job.clone()), (kind, at));
         self.entries.push((
             recipient.to_string(),
             OutboxEntry {
@@ -34,6 +37,24 @@ impl MemoryOutbox {
             },
         ));
         seq
+    }
+
+    pub(crate) fn forget_finished(&mut self, before: Timestamp) -> Vec<JobId> {
+        let done: Vec<(String, JobId)> = self
+            .last
+            .iter()
+            .filter(|((r, j), (kind, at))| {
+                *kind == OutboxKind::JobResult
+                    && *at < before
+                    && !self.entries.iter().any(|(er, e)| er == r && &e.job == j)
+            })
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in &done {
+            self.last.remove(key);
+            self.counters.remove(key);
+        }
+        done.into_iter().map(|(_, j)| j).collect()
     }
 
     pub(crate) fn bytes_for(&self, recipient: &str) -> u64 {

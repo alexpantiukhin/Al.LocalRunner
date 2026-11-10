@@ -431,4 +431,9 @@ pub struct PruneReport {
     pub rows_removed: usize,
     /// Log bytes freed.
     pub bytes_freed: u64,
+    /// Log files without a row (left by an interrupted write or removal) that were swept.
+    pub orphans_removed: usize,
+    /// Files that should have been removed but could not be; they are retried by the next
+    /// prune as orphans.
+    pub files_failed: usize,
 }

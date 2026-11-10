@@ -1,6 +1,8 @@
 //! Reads of runs: one record with all its rows, the filtered history, statistics.
 
-use crate::codec::{col_enum, col_json, col_opt_time, col_opt_u64, col_time, col_u64, time, Text};
+use crate::codec::{
+    col_enum, col_json, col_opt_time, col_opt_u64, col_time, col_u64, final_list, time, Text,
+};
 use crate::db::R;
 use lr_abstractions::store::compute_stats;
 use lr_abstractions::{
@@ -10,8 +12,6 @@ use lr_abstractions::{
 use lr_core::JobId;
 use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection, OptionalExtension, Row};
-
-const FINAL: &str = "('passed', 'failed', 'timeout', 'cancelled', 'lost')";
 
 const JOB_COLUMNS: &str = "client_key, id, project, source, label, note, branch, cwd, profile, \
     platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, \
@@ -161,7 +161,7 @@ pub(crate) fn jobs(conn: &Connection, filter: &JobFilter) -> R<Vec<JobRecord>> {
         sql.push_str(&format!(" AND queued_at >= ?{}", args.len()));
     }
     if filter.active_only {
-        sql.push_str(&format!(" AND state NOT IN {FINAL}"));
+        sql.push_str(&format!(" AND state NOT IN {}", final_list()));
     }
     sql.push_str(" ORDER BY queued_at DESC, client_key DESC, id DESC");
     if let Some(limit) = filter.limit {

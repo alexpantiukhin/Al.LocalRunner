@@ -98,6 +98,13 @@ pub trait RunnerStore: Send + Sync {
     /// The last seq of `job` accepted from the broker, 0 when none; sent in `resume`.
     async fn last_seq(&self, job: &JobId) -> Result<u64, StoreError>;
 
+    /// Forgets the jobs that are done: no entry is pending, the last entry pushed is a
+    /// [`OutboxKind::JobResult`] created before `before`. Their closed entries, seq counters
+    /// and received seq are removed so `runner.db` does not grow with every job; returns how
+    /// many jobs were forgotten. A job that is forgotten and then appears again counts from
+    /// seq 1.
+    async fn forget_finished(&self, before: Timestamp) -> Result<usize, StoreError>;
+
     /// Adds or replaces a service by name.
     async fn upsert_service(&self, service: ServiceRow) -> Result<(), StoreError>;
 

@@ -2,10 +2,15 @@
 //! runs only. Database rows go in one transaction; the files follow once it is committed, so a
 //! crash leaves at worst an orphan file, never a row pointing at nothing.
 
+use crate::codec::final_list;
 use crate::db::{write, R};
 use lr_abstractions::{PruneLimits, PruneReport};
 use rusqlite::{params_from_iter, Connection, Transaction};
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+const ORPHAN_GRACE_MS: u64 = 24 * 60 * 60 * 1000;
 
 struct Doomed {
     client: String,
@@ -22,9 +27,10 @@ fn select(tx: &Transaction<'_>, extra: &str, args: &[i64]) -> R<Vec<Doomed>> {
     let sql = format!(
         "SELECT j.client_key, j.id, l.path, l.bytes FROM job j \
          LEFT JOIN job_log l ON l.client_key = j.client_key AND l.job_id = j.id \
-         WHERE j.state IN ('passed', 'failed', 'timeout', 'cancelled', 'lost') \
+         WHERE j.state IN {} \
          AND j.finished_at IS NOT NULL {extra} \
-         ORDER BY j.finished_at, j.client_key, j.id"
+         ORDER BY j.finished_at, j.client_key, j.id",
+        final_list()
     );
     let mut stmt = tx.prepare(&sql)?;
     let rows = stmt
@@ -100,12 +106,74 @@ pub(crate) fn prune(conn: &mut Connection, dir: &Path, limits: PruneLimits) -> R
         }
         Ok(work)
     })?;
+    let mut report = work.report;
+    let mut failed = HashSet::new();
     for file in &work.files {
         let path = dir.join(file);
-        let _ = std::fs::remove_file(&path);
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::remove_dir(parent);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                report.files_failed += 1;
+                failed.insert(path.clone());
+            }
         }
+        remove_empty_parent(&path);
     }
-    Ok(work.report)
+    sweep_orphans(conn, dir, limits, &failed, &mut report)?;
+    Ok(report)
+}
+
+fn remove_empty_parent(path: &Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
+}
+
+fn modified_ms(path: &Path) -> Option<u64> {
+    let t = std::fs::metadata(path).ok()?.modified().ok()?;
+    let ms = t.duration_since(UNIX_EPOCH).ok()?.as_millis();
+    Some(u64::try_from(ms).unwrap_or(u64::MAX))
+}
+
+fn sweep_orphans(
+    conn: &Connection,
+    dir: &Path,
+    limits: PruneLimits,
+    failed: &HashSet<PathBuf>,
+    report: &mut PruneReport,
+) -> R<()> {
+    let known: HashSet<PathBuf> = {
+        let mut stmt = conn.prepare("SELECT path FROM job_log")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .map(|p| dir.join(p))
+            .collect()
+    };
+    let Ok(clients) = std::fs::read_dir(dir.join("logs")) else {
+        return Ok(());
+    };
+    for client in clients.flatten() {
+        let Ok(files) = std::fs::read_dir(client.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            if known.contains(&path) || failed.contains(&path) {
+                continue;
+            }
+            let old = modified_ms(&path)
+                .is_some_and(|m| limits.now.0.saturating_sub(m) > ORPHAN_GRACE_MS);
+            if !old {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => report.orphans_removed += 1,
+                Err(_) => report.files_failed += 1,
+            }
+        }
+        remove_empty_parent(&client.path().join("x"));
+    }
+    Ok(())
 }

@@ -50,6 +50,26 @@ text_enum!(OutboxKind {
     StepResult => "step_result", JobResult => "job_result", CancelAck => "cancel_ack",
 });
 
+const ALL_JOB_STATES: [JobState; 8] = [
+    JobState::Queued,
+    JobState::Running,
+    JobState::Cancelling,
+    JobState::Passed,
+    JobState::Failed,
+    JobState::Timeout,
+    JobState::Cancelled,
+    JobState::Lost,
+];
+
+pub(crate) fn final_list() -> String {
+    let names: Vec<String> = ALL_JOB_STATES
+        .iter()
+        .filter(|s| s.is_final())
+        .map(|s| format!("'{}'", s.text()))
+        .collect();
+    format!("({})", names.join(", "))
+}
+
 pub(crate) fn conversion(idx: usize, ty: Type, what: String) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(idx, ty, what.into())
 }

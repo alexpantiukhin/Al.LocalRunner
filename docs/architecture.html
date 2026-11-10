@@ -997,6 +997,7 @@ fields = ["command", "env", "token"]
 <li>Запись запуска остаётся на брокере в пределах хранения. Hub хранит только outbox и копию лога: запись из outbox удаляется по <code>Accepted</code> брокера, а брокер не знает, что лежит в outbox hub.</li>
 <li>Хранение истории на брокере: 30 дней и 2 ГБ логов, 365 дней строк по умолчанию (политика); чистка идёт с самых старых и не трогает активные джобы.</li>
 <li><code>order</code> хранит только очередь до выдачи; состояние запуска ведёт <code>job.state</code>, и после выдачи строка заказа удаляется.</li>
+<li>Принятый seq хранится рядом с тем, что он нумерует: у брокера в <code>job.recv_seq_hub</code> и <code>job.recv_seq_runner</code> (исходящий к раннеру — <code>job.send_seq_runner</code>; при повторной постановке в очередь счётчики раннера обнуляются), у hub в <code>active_order.last_seq</code>, у раннера в <code>runner_recv</code> (по строке на джобу; чистится вместе с завершёнными джобами по сроку хранения). Подтверждённая запись outbox не удаляется, а закрывается (<code>acked_at</code>), и остаётся закрытая запись с наибольшим seq джобы: следующий seq всегда на единицу больше, даже если очередь пуста.</li>
 <li>В <code>machine</code> хранятся только публичные ключи и ярлыки клиентов; токен регистрации <code>ci</code>-раннера не пишется никуда.</li>
 </ul>
 
@@ -1142,13 +1143,14 @@ machine:{x:680,y:60,w:220,f:["PK name","machine_id","kind","label","public_key",
 join_code:{x:680,y:250,w:220,f:["PK code_hash","kind","name","label","uses_left","issued_at","expires_at","redeemed_at","FK machine_name"]},
 runner:{x:940,y:60,w:210,f:["PK name","FK machine_name","programs","platforms","tags","max_timeout_s","cache_max_mb","cache_used_mb","free_disk_mb","services","accept","last_seen","state"]},
 result_outbox:{x:680,y:440,w:220,f:["PK client_machine","PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
-order:{x:940,y:450,w:210,f:["PK client_key","PK job_id","client_machine","spec_json","platform","same_machine","priority_hint","enqueued_at","state"]},
-outbox:{x:30,y:740,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
+order:{x:940,y:450,w:210,f:["PK/FK client_key","PK/FK job_id","client_machine","spec_json","platform","same_machine","priority_hint","enqueued_at","state"]},
+outbox:{x:30,y:740,w:260,f:["PK/FK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 active_order:{x:330,y:740,w:260,f:["PK job_id","broker","last_seq","label","os_user","submitter_pid","submitter_start","handle_path","detached"]},
 broker_link:{x:630,y:740,w:260,f:["PK broker","address","fingerprint","key_id","machine_id","last_zone"]},
-runner_outbox:{x:30,y:960,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at","recv_seq"]},
+runner_outbox:{x:30,y:960,w:260,f:["PK job_id","PK seq","kind","payload_json","created_at","acked_at"]},
 service_registry:{x:330,y:960,w:260,f:["PK name","pid","pid_start","state","started_at","expires_at","mem_mb"]},
-cache_index:{x:630,y:960,w:260,f:["PK client","PK project","PK name","path","bytes","last_used"]}
+cache_index:{x:630,y:960,w:260,f:["PK client","PK project","PK name","path","bytes","last_used"]},
+runner_recv:{x:920,y:960,w:240,f:["PK job_id","recv_seq"]}
 };
 const svg=document.getElementById("er");
 svg.appendChild(el("rect",{class:"grp",x:10,y:30,width:620,height:610,rx:10}));

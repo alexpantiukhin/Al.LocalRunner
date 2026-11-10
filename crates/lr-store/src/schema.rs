@@ -130,7 +130,11 @@ fn prepare(conn: &mut Connection, schema: &Schema, create: bool) -> Result<(), P
     conn.pragma_update(None, "foreign_keys", "ON")?;
     if fresh {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch(schema.create)?;
+        tx.execute_batch(
+            &schema
+                .create
+                .replace("{FINAL}", &crate::codec::final_list()),
+        )?;
         stamp(&tx, schema, schema.version)?;
         tx.commit()?;
     } else if version < schema.version {

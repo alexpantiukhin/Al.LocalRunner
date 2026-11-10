@@ -8,17 +8,29 @@ use lr_abstractions::{
 };
 use lr_core::{JobState, StepState, Timestamp};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Snapshot {
+    spec_json: String,
+    client_machine: String,
+    platform: Option<String>,
+    same_machine: bool,
+    priority_hint: Option<i64>,
+    enqueued_at: u64,
+    state: String,
+}
 
 fn order_snapshot(o: &OrderRow) -> String {
-    json(&serde_json::json!({
-        "spec_json": o.spec_json,
-        "client_machine": o.client_machine,
-        "platform": o.platform,
-        "same_machine": o.same_machine,
-        "priority_hint": o.priority_hint,
-        "enqueued_at": o.enqueued_at.0,
-        "state": o.state,
-    }))
+    json(&Snapshot {
+        spec_json: o.spec_json.clone(),
+        client_machine: o.client_machine.clone(),
+        platform: o.platform.clone(),
+        same_machine: o.same_machine,
+        priority_hint: o.priority_hint,
+        enqueued_at: o.enqueued_at.0,
+        state: o.state.clone(),
+    })
 }
 
 fn insert_order(tx: &Transaction<'_>, o: &OrderRow) -> R<()> {
@@ -200,22 +212,24 @@ pub(crate) fn requeue(conn: &mut Connection, key: &JobKey) -> R<()> {
             [&key.client, &key.job.0],
             |r| r.get(0),
         )?;
-        let v: serde_json::Value = serde_json::from_str(&snapshot).map_err(|e| {
-            Fail::Store(StoreError::Io(format!("stored order of {}: {e}", key.job)))
+        let v: Snapshot = serde_json::from_str(&snapshot).map_err(|e| {
+            Fail::Store(StoreError::Io(format!(
+                "the stored order of {}/{} is damaged: {e}",
+                key.client, key.job
+            )))
         })?;
-        let text = |name: &str| v[name].as_str().unwrap_or_default().to_string();
         let order = OrderRow {
             key: key.clone(),
-            client_machine: text("client_machine"),
-            spec_json: text("spec_json"),
-            platform: v["platform"].as_str().map(str::to_string),
-            same_machine: v["same_machine"].as_bool().unwrap_or(false),
-            priority_hint: v["priority_hint"].as_i64(),
-            enqueued_at: Timestamp(v["enqueued_at"].as_u64().unwrap_or(0)),
-            state: text("state"),
+            client_machine: v.client_machine,
+            spec_json: v.spec_json,
+            platform: v.platform,
+            same_machine: v.same_machine,
+            priority_hint: v.priority_hint,
+            enqueued_at: Timestamp(v.enqueued_at),
+            state: v.state,
         };
         tx.execute(
-            "UPDATE job SET runner_name = NULL WHERE client_key = ?1 AND id = ?2",
+            "UPDATE job SET runner_name = NULL, send_seq_runner = 0, recv_seq_runner = 0              WHERE client_key = ?1 AND id = ?2",
             [&key.client, &key.job.0],
         )?;
         insert_order(tx, &order)

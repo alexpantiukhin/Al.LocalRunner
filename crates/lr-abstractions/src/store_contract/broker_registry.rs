@@ -326,3 +326,36 @@ pub async fn expired_results_removed(store: &dyn BrokerStore) {
     assert_eq!(store.expire_results(at(3)).await.unwrap(), 2);
     assert_eq!(store.pending_results("c1").await.unwrap()[0].seq, 3);
 }
+
+/// A result seq is never used twice for a client and job, whatever removed the entries:
+/// an ack, the keep period or a revocation.
+pub async fn result_seq_never_reused_after_expire_or_revoke(store: &dyn BrokerStore) {
+    let job = JobId("j1".into());
+    let push = |client: &'static str, t: u64| async move {
+        store
+            .push_result(
+                client,
+                &job_id(),
+                OutboxKind::Chunk,
+                "x".into(),
+                at(t),
+                1 << 20,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    fn job_id() -> JobId {
+        JobId("j1".into())
+    }
+    assert_eq!(push("c1", 1).await, 1);
+    store.ack_results("c1", &job, 1).await.unwrap();
+    assert_eq!(store.expire_results(at(100)).await.unwrap(), 0);
+    assert_eq!(push("c1", 200).await, 2);
+    assert_eq!(store.expire_results(at(300)).await.unwrap(), 1);
+    assert_eq!(push("c1", 400).await, 3);
+    joined(store, "c1", MachineKind::Hub).await;
+    store.revoke("c1", at(500)).await.unwrap();
+    assert!(store.pending_results("c1").await.unwrap().is_empty());
+    assert_eq!(push("c1", 600).await, 4);
+}

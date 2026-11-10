@@ -313,3 +313,22 @@ pub async fn log_cut_at_limit_with_mark_then_dropped(store: &dyn BrokerStore) {
     expected.extend_from_slice(LOG_TRUNCATED_MARK);
     assert_eq!(store.read_log(&key).await.unwrap(), expected);
 }
+
+/// A requeued run starts a new message stream for its next runner: the seq from the runner
+/// and the seq to the runner restart, the seq from the hub is kept.
+pub async fn requeue_starts_a_new_stream_for_the_next_runner(store: &dyn BrokerStore) {
+    use crate::store::Inbound;
+    let key = queued(store, "c1", "j1").await;
+    store.grant(&key, "r1").await.unwrap();
+    store.accept_seq(&key, Inbound::Runner, 1).await.unwrap();
+    store.accept_seq(&key, Inbound::Runner, 2).await.unwrap();
+    store.accept_seq(&key, Inbound::Hub, 1).await.unwrap();
+    assert_eq!(store.next_seq_to_runner(&key).await.unwrap(), 1);
+    assert_eq!(store.next_seq_to_runner(&key).await.unwrap(), 2);
+    store.requeue(&key).await.unwrap();
+    store.grant(&key, "r2").await.unwrap();
+    assert_eq!(store.last_seq(&key, Inbound::Runner).await.unwrap(), 0);
+    assert!(store.accept_seq(&key, Inbound::Runner, 1).await.unwrap());
+    assert_eq!(store.next_seq_to_runner(&key).await.unwrap(), 1);
+    assert_eq!(store.last_seq(&key, Inbound::Hub).await.unwrap(), 1);
+}

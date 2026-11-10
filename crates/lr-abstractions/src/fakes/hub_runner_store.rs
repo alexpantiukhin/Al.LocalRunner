@@ -254,6 +254,15 @@ impl RunnerStore for MemoryRunnerStore {
             .unwrap_or(0))
     }
 
+    async fn forget_finished(&self, before: Timestamp) -> Result<usize, StoreError> {
+        let mut s = self.state.lock().unwrap();
+        let done = s.outbox.forget_finished(before);
+        for job in &done {
+            s.received.remove(job);
+        }
+        Ok(done.len())
+    }
+
     async fn upsert_service(&self, service: ServiceRow) -> Result<(), StoreError> {
         self.state
             .lock()

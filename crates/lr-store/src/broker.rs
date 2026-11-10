@@ -1,4 +1,4 @@
-use crate::db::Db;
+use crate::db::{read, Db};
 use crate::outbox::{self, RESULTS};
 use crate::{job_read, job_write, logs, prune, registry, schema};
 use async_trait::async_trait;
@@ -63,7 +63,7 @@ impl BrokerStore for SqliteBrokerStore {
     }
 
     async fn orders(&self) -> Result<Vec<OrderRow>, StoreError> {
-        self.db.run(|c| job_read::orders(c)).await
+        self.db.run(|c| read(c, job_read::orders)).await
     }
 
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError> {
@@ -128,22 +128,30 @@ impl BrokerStore for SqliteBrokerStore {
 
     async fn read_log(&self, key: &JobKey) -> Result<Vec<u8>, StoreError> {
         let (key, dir) = (key.clone(), self.db.dir());
-        self.db.run(move |c| logs::read(c, &dir, &key)).await
+        self.db
+            .run(move |c| read(c, |c| logs::read(c, &dir, &key)))
+            .await
     }
 
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError> {
         let key = key.clone();
-        self.db.run(move |c| job_read::job(c, &key)).await
+        self.db
+            .run(move |c| read(c, |c| job_read::job(c, &key)))
+            .await
     }
 
     async fn jobs(&self, filter: &JobFilter) -> Result<Vec<JobRecord>, StoreError> {
         let filter = filter.clone();
-        self.db.run(move |c| job_read::jobs(c, &filter)).await
+        self.db
+            .run(move |c| read(c, |c| job_read::jobs(c, &filter)))
+            .await
     }
 
     async fn stats(&self, query: &StatsQuery) -> Result<Stats, StoreError> {
         let query = query.clone();
-        self.db.run(move |c| job_read::stats(c, &query)).await
+        self.db
+            .run(move |c| read(c, |c| job_read::stats(c, &query)))
+            .await
     }
 
     async fn prune(&self, limits: PruneLimits) -> Result<PruneReport, StoreError> {

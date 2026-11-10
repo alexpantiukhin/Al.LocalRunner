@@ -106,6 +106,8 @@ impl BrokerState {
             )));
         }
         job.runner = None;
+        run.received.remove(&Inbound::Runner);
+        run.to_runner = 0;
         self.orders.insert(key, order);
         Ok(())
     }

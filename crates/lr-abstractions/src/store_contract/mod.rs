@@ -73,6 +73,7 @@ macro_rules! broker_store_contract {
             broker::cancelling_run_of_vanished_runner_ends_lost,
             broker::unstarted_granted_run_can_be_requeued,
             broker::started_run_cannot_be_requeued,
+            broker::requeue_starts_a_new_stream_for_the_next_runner,
             broker::step_updates_stop_at_step_end_and_run_end,
             seq::broker_seq_counted_per_run_and_direction,
             seq::broker_seq_gap_is_refused,
@@ -98,6 +99,7 @@ macro_rules! broker_store_contract {
             broker_registry::result_outbox_seq_per_client_and_job_and_ack_removes,
             broker_registry::chunks_over_limit_dropped_results_kept,
             broker_registry::expired_results_removed,
+            broker_registry::result_seq_never_reused_after_expire_or_revoke,
         );
         $crate::__store_reopen_cases!($make, $reopen;
             broker_seq_counters_survive_reopen,
@@ -134,6 +136,7 @@ macro_rules! runner_store_contract {
         $crate::__store_contract_cases!($make;
             runner::runner_outbox_keeps_order_until_acked,
             runner::runner_outbox_discard_and_clear,
+            runner::finished_jobs_are_forgotten_after_the_keep_period,
             runner::service_registry_upsert_list_remove,
             runner::cache_index_keyed_by_client_project_and_name,
             seq::runner_received_seq_per_job,

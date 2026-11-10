@@ -13,8 +13,7 @@ use std::any::Any;
 use std::path::Path;
 
 /// `runner.db` on SQLite: the outbox of output and results, the service registry and the
-/// cache index. The per-job counter of what the broker sent lives in the `recv_seq` column of
-/// the job's `seq = 0` row of `runner_outbox`, which is never a message.
+/// cache index. The per-job counter of what the broker sent lives in `runner_recv`.
 pub struct SqliteRunnerStore {
     db: Db,
 }
@@ -57,7 +56,7 @@ impl SqliteRunnerStore {
 fn received(conn: &Connection, job: &JobId) -> R<u64> {
     let n: Option<i64> = conn
         .query_row(
-            "SELECT recv_seq FROM runner_outbox WHERE job_id = ?1 AND seq = 0",
+            "SELECT recv_seq FROM runner_recv WHERE job_id = ?1",
             [&job.0],
             |r| r.get(0),
         )
@@ -116,9 +115,7 @@ impl RunnerStore for SqliteRunnerStore {
                     let next = decide(received(tx, &job)?, seq)?;
                     if next {
                         tx.execute(
-                            "INSERT INTO runner_outbox (job_id, seq, kind, payload_json, \
-                             created_at, acked_at, recv_seq) VALUES (?1, 0, 'state', '', 0, 0, ?2) \
-                             ON CONFLICT (job_id, seq) DO UPDATE SET recv_seq = excluded.recv_seq",
+                            "INSERT INTO runner_recv (job_id, recv_seq) VALUES (?1, ?2)                              ON CONFLICT (job_id) DO UPDATE SET recv_seq = excluded.recv_seq",
                             params![job.0, int(seq)],
                         )?;
                     }
@@ -131,6 +128,27 @@ impl RunnerStore for SqliteRunnerStore {
     async fn last_seq(&self, job: &JobId) -> Result<u64, StoreError> {
         let job = job.clone();
         self.db.run(move |c| received(c, &job)).await
+    }
+
+    async fn forget_finished(&self, before: Timestamp) -> Result<usize, StoreError> {
+        self.db
+            .run(move |c| {
+                write(c, |tx| {
+                    let jobs = {
+                        let mut stmt = tx.prepare(
+                            "SELECT job_id FROM runner_outbox o WHERE acked_at IS NOT NULL                              AND kind = 'job_result' AND created_at < ?1 AND seq =                              (SELECT MAX(seq) FROM runner_outbox m WHERE m.job_id = o.job_id)",
+                        )?;
+                        let rows = stmt.query_map([time(before)], |r| r.get::<_, String>(0))?;
+                        rows.collect::<Result<Vec<_>, _>>()?
+                    };
+                    for job in &jobs {
+                        tx.execute("DELETE FROM runner_outbox WHERE job_id = ?1", [job])?;
+                        tx.execute("DELETE FROM runner_recv WHERE job_id = ?1", [job])?;
+                    }
+                    Ok(jobs.len())
+                })
+            })
+            .await
     }
 
     async fn upsert_service(&self, s: ServiceRow) -> Result<(), StoreError> {

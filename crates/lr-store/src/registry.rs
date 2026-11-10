@@ -235,7 +235,7 @@ pub(crate) fn revoke(conn: &mut Connection, name: &str, at: Timestamp) -> R<Revo
             "UPDATE runner SET state = 'removed' WHERE machine_name = ?1",
             [name],
         )?;
-        let outbox_removed = outbox::drop_recipient(tx, RESULTS, name)?;
+        let outbox_removed = outbox::close(tx, RESULTS, name, None, None)?;
         Ok(Revoked {
             runners,
             outbox_removed,
