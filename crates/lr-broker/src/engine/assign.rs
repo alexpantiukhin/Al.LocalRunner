@@ -140,7 +140,7 @@ impl Engine {
             .await;
         if let (Ok(Some(seq)), Some(&conn)) = (pushed, self.hubs.get(client)) {
             if let Some(frame) = with_seq(&payload, seq) {
-                self.send_frame(conn, frame);
+                self.send_ordered(conn, [frame]);
             }
         }
     }

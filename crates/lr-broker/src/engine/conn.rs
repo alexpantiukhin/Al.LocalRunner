@@ -1,5 +1,6 @@
 use lr_abstractions::{Clock, Frame, Peer, Transport};
 use lr_proto::{HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -16,6 +17,7 @@ pub(crate) enum Out {
 pub(crate) struct Outlet {
     pub(crate) out: mpsc::Sender<Out>,
     pub(crate) kill: watch::Sender<bool>,
+    pub(crate) drain: Arc<AtomicBool>,
 }
 
 pub(crate) enum Command {
@@ -29,6 +31,9 @@ pub(crate) enum Command {
         frame: Frame,
     },
     Closed {
+        conn: ConnId,
+    },
+    Drained {
         conn: ConnId,
     },
 }
@@ -54,10 +59,13 @@ pub(crate) async fn spawn(
     let t: Arc<dyn Transport> = Arc::from(transport);
     let (out, mut rx) = mpsc::channel(super::OUT_QUEUE_FRAMES);
     let (kill, kill_rx) = watch::channel(false);
+    let drain = Arc::new(AtomicBool::new(false));
+    let wants = drain.clone();
+    let notify = cmds.clone();
     let opened = Command::Opened {
         conn: id,
         peer: t.peer().clone(),
-        outlet: Outlet { out, kill },
+        outlet: Outlet { out, kill, drain },
     };
     if cmds.send(opened).await.is_err() {
         return;
@@ -85,6 +93,12 @@ pub(crate) async fn spawn(
             tokio::select! {
                 sent = writer.send(frame) => if sent.is_err() { break },
                 _ = killed(&mut writer_kill) => break,
+            }
+            if rx.len() <= super::REPLAY_WINDOW / 2
+                && wants.swap(false, Ordering::SeqCst)
+                && notify.send(Command::Drained { conn: id }).await.is_err()
+            {
+                break;
             }
         }
     });

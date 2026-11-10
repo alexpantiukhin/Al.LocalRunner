@@ -145,3 +145,26 @@ async fn denied_cancels_leave_no_outbox_rows() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn cancel_is_sent_again_when_the_runner_reconnects_over_a_live_connection() {
+    let h = Harness::start("");
+    let (mut r, mut hub) = busy_pool(&h).await;
+    r.send(&started("j1", 1)).await;
+    hub.started_notice().await;
+    hub.send(&cancel("j1", 2)).await;
+    loop {
+        if let BrokerToRunner::Cancel(_) = r.runner().await {
+            break;
+        }
+    }
+    let mut back = h.dial(member_peer("pk-r1", "10.0.0.7")).await;
+    back.send(&hello("r1", Some(linux()))).await;
+    back.welcome().await;
+    let c = loop {
+        if let BrokerToRunner::Cancel(c) = back.runner().await {
+            break c;
+        }
+    };
+    assert_eq!(c.job, JobId("j1".into()));
+}

@@ -57,6 +57,15 @@ impl Engine {
         if self.runners.get(name).is_some_and(|s| s.owner != owner) {
             return Err(name_taken(name));
         }
+        if let Some(old) = self.runners.get(name).and_then(|s| s.conn) {
+            if old != conn {
+                if let Some(c) = self.conns.get_mut(&old) {
+                    c.role = Role::Pending;
+                }
+                self.close(old);
+                self.runner_gone(name).await;
+            }
+        }
         let now = self.now();
         wire.machine = machine.map(MachineRef);
         if persisted {
@@ -66,14 +75,6 @@ impl Engine {
                 .await
             {
                 return Err(name_taken(name));
-            }
-        }
-        if let Some(old) = self.runners.get(name).and_then(|s| s.conn) {
-            if old != conn {
-                if let Some(c) = self.conns.get_mut(&old) {
-                    c.role = Role::Pending;
-                }
-                self.close(old);
             }
         }
         let endpoint = self

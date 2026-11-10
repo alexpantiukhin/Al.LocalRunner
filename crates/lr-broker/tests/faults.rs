@@ -59,3 +59,23 @@ async fn late_message_for_a_job_not_on_the_runner_is_logged() {
         .expect("late message logged");
     assert!(rec.message.contains("late"), "{}", rec.message);
 }
+
+#[tokio::test]
+async fn repeated_order_at_seq_0_is_malformed() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    FaultyStore::set(&h.faults.fail_accept_seq);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    unavailable(hub.hub().await);
+    h.faults.fail_accept_seq.store(false, Ordering::SeqCst);
+    let HubToBroker::Order(mut o) = order("j1", req(512, 1, 60)) else {
+        unreachable!()
+    };
+    o.seq = 0;
+    hub.send(&HubToBroker::Order(o)).await;
+    match hub.hub().await {
+        BrokerToHub::Error(e) => assert_eq!(e.code, ProtocolErrorCode::Malformed),
+        other => panic!("expected malformed, got {other:?}"),
+    }
+}

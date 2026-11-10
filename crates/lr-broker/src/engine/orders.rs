@@ -302,7 +302,7 @@ impl Engine {
             Ok(last) => last,
             Err(e) => return self.unavailable(conn, key, "read the order seq", &e),
         };
-        if o.seq > last.max(1) {
+        if o.seq == 0 || o.seq > last.max(1) {
             return self.error(
                 conn,
                 ProtocolErrorCode::Malformed,
@@ -329,6 +329,7 @@ impl Engine {
             return;
         };
         let mut acked = Vec::new();
+        let mut frames = Vec::new();
         for entry in pending {
             let last = r.last_seq(&entry.job);
             if entry.seq <= last {
@@ -338,9 +339,8 @@ impl Engine {
                 }
                 continue;
             }
-            if let Some(frame) = with_seq(&entry.payload, entry.seq) {
-                self.send_frame(conn, frame);
-            }
+            frames.extend(with_seq(&entry.payload, entry.seq));
         }
+        self.send_ordered(conn, frames);
     }
 }

@@ -5,7 +5,7 @@ use crate::api::{
     wire_source, Access, Viewer,
 };
 use crate::MAX_SUBSCRIPTIONS;
-use lr_abstractions::{JobFilter, JobKey, JobRecord, StatsQuery};
+use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
     split_text, BrokerToHub, HistoryFilter, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer,
@@ -159,15 +159,18 @@ impl Engine {
         ReadReply::Subscribed { sub }
     }
 
-    fn send_log(&self, conn: ConnId, req: u64, text: &str) {
+    fn send_log(&mut self, conn: ConnId, req: u64, text: &str) {
         let parts = split_text(text, CHUNK_TEXT_LIMIT);
         let last = parts.len().saturating_sub(1);
-        if parts.is_empty() {
-            self.send(conn, &log_chunk(req, String::new(), true));
+        let mut frames: Vec<_> = parts
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, part)| Frame::json(&log_chunk(req, part.to_string(), i == last)).ok())
+            .collect();
+        if frames.is_empty() {
+            frames.extend(Frame::json(&log_chunk(req, String::new(), true)).ok());
         }
-        for (i, part) in parts.into_iter().enumerate() {
-            self.send(conn, &log_chunk(req, part.to_string(), i == last));
-        }
+        self.send_ordered(conn, frames);
     }
 
     async fn status(&self, viewer: &Viewer, f: StatusFilter) -> StatusView {

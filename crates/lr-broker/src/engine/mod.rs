@@ -26,7 +26,7 @@ use lr_abstractions::{
 use lr_core::{Endpoint, JobId, QueueEntry, ServeLog, Site, Timestamp};
 use lr_proto::{OrderSpec, Topic};
 use runners::RunnerSlot;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +38,9 @@ pub const OUT_QUEUE_FRAMES: usize = 1024;
 
 /// Event subscriptions one connection may hold at once.
 pub const MAX_SUBSCRIPTIONS: usize = 16;
+
+pub(crate) const REPLAY_WINDOW: usize = 256;
+pub(crate) const BACKLOG_MAX_FRAMES: usize = 100_000;
 
 const ACCEPT_ERRORS_BEFORE_BACKOFF: u32 = 3;
 const ACCEPT_BACKOFF_MAX_MS: u64 = 5_000;
@@ -213,6 +216,7 @@ pub(crate) enum Role {
 pub(crate) struct Conn {
     outlet: Outlet,
     pub(crate) peer: Peer,
+    backlog: VecDeque<lr_abstractions::Frame>,
     pub(crate) role: Role,
     pub(crate) subs: BTreeMap<u64, Vec<Topic>>,
 }
@@ -269,6 +273,7 @@ impl Engine {
                     Conn {
                         outlet,
                         peer,
+                        backlog: VecDeque::new(),
                         role: Role::Pending,
                         subs: BTreeMap::new(),
                     },
@@ -285,6 +290,7 @@ impl Engine {
                 }
             }
             Command::Closed { conn } => self.closed(conn).await,
+            Command::Drained { conn } => self.pump(conn),
         }
     }
 
