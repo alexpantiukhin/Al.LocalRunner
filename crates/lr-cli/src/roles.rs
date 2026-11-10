@@ -6,6 +6,7 @@ use crate::paths::Layout;
 use crate::runner_config::{instance_names, RunnerConfig};
 use crate::{admin, build, control};
 use lr_abstractions::Listener;
+use lr_net::IpcListener;
 use lr_obs::Logger;
 use lr_runner::AgentExit;
 use std::net::SocketAddr;
@@ -23,6 +24,7 @@ pub struct Running {
     pub runners: Vec<String>,
     exits: Vec<JoinHandle<AgentExit>>,
     stop_signal: Option<Arc<Notify>>,
+    listeners: Vec<Arc<IpcListener>>,
 }
 
 impl Running {
@@ -71,6 +73,9 @@ impl Running {
         for e in self.exits.drain(..) {
             e.abort();
         }
+        for l in self.listeners.drain(..) {
+            l.close();
+        }
         for l in self.loggers.drain(..) {
             l.shutdown();
         }
@@ -87,6 +92,7 @@ impl Drop for Running {
 pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, String> {
     let parts = build::broker(layout, foreground).await?;
     let broker_task = tokio::spawn(parts.broker.run());
+    let listeners = vec![parts.admin_ipc.clone(), parts.admin.ipc.clone()];
     let admin_ipc: Arc<dyn Listener> = parts.admin_ipc;
     let stop = parts.admin.stop.clone();
     let admin_task = tokio::spawn(admin::serve(admin_ipc, parts.admin));
@@ -97,6 +103,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
         runners: Vec::new(),
         exits: Vec::new(),
         stop_signal: Some(stop),
+        listeners,
     })
 }
 
@@ -111,6 +118,7 @@ pub async fn start_hub(layout: &Layout, foreground: bool) -> Result<Running, Str
         runners: Vec::new(),
         exits: Vec::new(),
         stop_signal: None,
+        listeners: vec![parts.ipc],
     })
 }
 
@@ -161,6 +169,7 @@ pub async fn start_runners(
         runners: Vec::new(),
         exits: Vec::new(),
         stop_signal: None,
+        listeners: Vec::new(),
     };
     for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;
@@ -168,6 +177,7 @@ pub async fn start_runners(
             eprintln!("runner {n}: {p}");
         }
         let control = parts.agent.control();
+        running.listeners.push(parts.control.clone());
         let listener: Arc<dyn Listener> = parts.control;
         running
             .tasks

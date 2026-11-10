@@ -38,7 +38,9 @@ async fn answers(address: &str, channel: IpcChannel) -> bool {
     }
 }
 
-async fn broker_answers(layout: &Layout) -> bool {
+/// Whether a broker of `layout` answers: its IPC (a real connect, so a socket file left behind
+/// does not count) or its admin channel.
+pub async fn broker_answers(layout: &Layout) -> bool {
     if let Ok(servers) = crate::os_service::broker_servers() {
         let dialer = lr_net::IpcDialer::new(servers);
         if let Ok(t) = dialer.dial(&layout.broker_ipc(), None).await {

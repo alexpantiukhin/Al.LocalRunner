@@ -180,3 +180,49 @@ fn uninstall_stops_short_when_a_role_did_not_stop() {
     let failed = uninstall_may_go_on(Err("no principal".into())).unwrap_err();
     assert!(failed.contains("no principal"), "{failed}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_closed_listener_stops_answering_while_still_held() {
+    use lr_cli::commands::up_cmd::broker_answers;
+    let dir = TempDir::new("closed-listener");
+    let layout = layout(&dir);
+    layout.prepare_ipc().unwrap();
+    let held = Arc::new(
+        IpcListener::bind(&layout.broker_ipc(), IpcAccess::OwnerOnly)
+            .await
+            .expect("broker IPC"),
+    );
+    assert!(broker_answers(&layout).await);
+    held.close();
+    let mut gone = false;
+    for _ in 0..50 {
+        if !broker_answers(&layout).await {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(gone, "a closed listener answers while something holds it");
+    drop(held);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_socket_file_left_behind_is_not_a_running_broker() {
+    use lr_cli::commands::up_cmd::{broker_answers, running_roles};
+    use std::os::unix::net::UnixListener;
+    let dir = TempDir::new("stale-socket");
+    let layout = layout(&dir);
+    layout.prepare_ipc().unwrap();
+    for path in [layout.broker_ipc(), layout.admin_ipc()] {
+        drop(UnixListener::bind(&path).expect("bind"));
+        assert!(std::path::Path::new(&path).exists(), "{path} stays behind");
+    }
+    assert!(!broker_answers(&layout).await);
+    assert!(!running_roles(&layout).await.broker);
+    std::fs::remove_file(layout.broker_ipc()).unwrap();
+    let live = UnixListener::bind(layout.broker_ipc()).expect("bind");
+    assert!(broker_answers(&layout).await, "a listening socket answers");
+    drop(live);
+    assert!(!broker_answers(&layout).await);
+}

@@ -133,7 +133,8 @@ async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
     }
 }
 
-/// Tells the broker of `layout` to stop and waits until its admin channel is gone. `None`
+/// Tells the broker of `layout` to stop and waits until neither its IPC nor its admin channel
+/// answers. `None`
 /// when no broker answers; otherwise the broker's warnings (a broker run as an OS service
 /// keeps running and says so). A broker that stops before its answer leaves counts as
 /// stopping.
@@ -151,7 +152,7 @@ pub async fn stop_broker(layout: &Layout) -> Result<Option<Vec<String>>, String>
     c.close().await;
     if warnings.is_empty() {
         let start = tokio::time::Instant::now();
-        while IpcClient::connect_broker_admin(&address).await.is_ok() {
+        while super::up_cmd::broker_answers(layout).await {
             if start.elapsed() >= ROLE_GONE_WITHIN {
                 return Err("still answers after it was told to stop".into());
             }

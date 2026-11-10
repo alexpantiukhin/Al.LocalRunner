@@ -227,6 +227,8 @@ pub struct HubParts {
     pub hub: Hub,
     /// Diagnostics.
     pub logger: Arc<Logger>,
+    /// Its CLI channel, closed when the role stops.
+    pub ipc: Arc<IpcListener>,
 }
 
 /// Builds the hub of the current OS user: `hub.db`, its CLI IPC, the broker of this machine
@@ -250,7 +252,7 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
     let hub = Hub::new(HubDeps {
         clock,
         store,
-        ipc,
+        ipc: ipc.clone(),
         dialer: dialer(&layout.root.join(KEY_FILE))?,
         local_broker: Some(layout.broker_ipc()),
         inspector: Arc::new(OsProcessInspector),
@@ -260,7 +262,7 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         policy,
         name: crate::facts::host_name(),
     });
-    Ok(HubParts { hub, logger })
+    Ok(HubParts { hub, logger, ipc })
 }
 
 /// A runner ready to run, with its control channel.

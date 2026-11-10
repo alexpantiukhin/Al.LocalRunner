@@ -2,6 +2,7 @@ use crate::error::NetError;
 use crate::stream::StreamTransport;
 use async_trait::async_trait;
 use lr_abstractions::{Dialer, Listener, Transport, TransportError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::{mpsc, Mutex};
@@ -147,6 +148,7 @@ pub struct IpcListener {
     access: platform::AccessCell,
     #[cfg_attr(not(unix), allow(dead_code))]
     path: String,
+    closed: AtomicBool,
 }
 
 impl IpcListener {
@@ -160,6 +162,7 @@ impl IpcListener {
             task,
             access: cell,
             path: address.to_string(),
+            closed: AtomicBool::new(false),
         })
     }
 
@@ -170,11 +173,23 @@ impl IpcListener {
     }
 }
 
-impl Drop for IpcListener {
-    fn drop(&mut self) {
+impl IpcListener {
+    /// Stops accepting at once and, on Unix, removes the socket file, even while something
+    /// else still holds this listener: a stopped role no longer answers on its address.
+    /// Connections already accepted stay.
+    pub fn close(&self) {
+        if self.closed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         self.task.abort();
         #[cfg(unix)]
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+impl Drop for IpcListener {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
