@@ -129,6 +129,7 @@ impl Broker {
                 follows: Vec::new(),
                 retries: Vec::new(),
                 retry_at: Timestamp(0),
+                retry_round: false,
             },
             listener: deps.listener,
             tx,
@@ -293,6 +294,7 @@ pub(crate) struct Engine {
     pub(crate) follows: Vec<follow::Follow>,
     pub(crate) retries: Vec<retry::Retry>,
     pub(crate) retry_at: Timestamp,
+    pub(crate) retry_round: bool,
 }
 
 const MIB: u64 = 1024 * 1024;

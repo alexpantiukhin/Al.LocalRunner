@@ -313,11 +313,7 @@ impl Engine {
 
     async fn started(&mut self, i: usize, runner: &str, now: Timestamp) {
         let key = self.active[i].key.clone();
-        let changed = self
-            .store
-            .transition(&key, Transition::to(JobState::Running, now))
-            .await;
-        if !matches!(changed, Ok(Applied::Changed)) {
+        if !self.write_start(key.clone(), now).await {
             return;
         }
         self.active[i].started_at = Some(now);
@@ -325,7 +321,9 @@ impl Engine {
             let mut t = Transition::to(JobState::Cancelling, now);
             t.cancelled_by = Some(c.by);
             t.cancel_reason = Some(c.reason);
-            let _ = self.store.transition(&key, t).await;
+            if let Err(e) = self.store.transition(&key, t).await {
+                self.store_failed("record the cancel of a started run", &key, &e);
+            }
         }
         let msg = BrokerToHub::Started(StartedNotice {
             job: key.job.clone(),
@@ -388,11 +386,16 @@ impl Engine {
     }
 
     async fn job_result(&mut self, job: Job, r: &JobResult, now: Timestamp) {
-        if job.started_at.is_none() && r.state != JobState::Cancelled {
-            let _ = self
-                .store
-                .transition(&job.key, Transition::to(JobState::Running, now))
-                .await;
+        if r.state == JobState::Cancelled {
+            self.take_pending_start(&job.key);
+        } else if job.started_at.is_some() {
+            self.settle_start(&job).await;
+        } else if let Err(e) = self
+            .store
+            .transition(&job.key, Transition::to(JobState::Running, now))
+            .await
+        {
+            self.store_failed("record the start of a reported run", &job.key, &e);
         }
         let cancel = job
             .cancel

@@ -49,6 +49,7 @@ impl Engine {
     }
 
     pub(crate) async fn lose(&mut self, job: Job, now: Timestamp) {
+        self.settle_start(&job).await;
         let mut t = Transition::to(JobState::Lost, now);
         t.cancel_reason = Some(ReasonCode::RunnerLost.to_string());
         match self.store.transition(&job.key, t).await {

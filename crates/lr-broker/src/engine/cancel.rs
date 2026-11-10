@@ -2,7 +2,7 @@ use super::conn::ConnId;
 use super::retry::Retry;
 use super::{Cancel, Client, Engine, Job};
 use crate::policy::CancelOthers;
-use lr_abstractions::{Applied, Inbound, JobKey, Level, OutboxKind, StoreError, Transition};
+use lr_abstractions::{Applied, Inbound, JobKey, OutboxKind, StoreError, Transition};
 use lr_core::JobState;
 use lr_proto::{
     Ack, BrokerToHub, BrokerToRunner, CancelAck, CancelOutcome, HubCancel, ProtocolErrorCode,
@@ -43,9 +43,13 @@ impl Engine {
             .queue
             .iter()
             .chain(self.active.iter())
-            .filter(|j| j.key.job == c.job && j.key.client != client.key)
-            .filter(|j| c.client.as_deref().is_none_or(|k| k == j.key.client))
-            .map(|j| j.key.clone())
+            .map(|j| &j.key)
+            .chain(self.parked_keys())
+            .filter(|k| k.job == c.job && k.client != client.key)
+            .filter(|k| c.client.as_deref().is_none_or(|w| w == k.client))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
             .collect();
         let allowed = client.owner && self.policy.file().cancel.others == CancelOthers::Owner;
         let denial = match matches.as_slice() {
@@ -128,6 +132,18 @@ impl Engine {
             self.cancel_waiting(job, cancel).await;
             return self.plan().await;
         }
+        if let Some(fresh) = self.cancel_parked(key, &cancel) {
+            if fresh {
+                if let Err(e) = self
+                    .store
+                    .record_cancel(key, &cancel.by, &cancel.reason)
+                    .await
+                {
+                    self.store_failed("record a cancel; it holds in memory only", key, &e);
+                }
+            }
+            return;
+        }
         let Some(i) = self.active.iter().position(|j| &j.key == key) else {
             return;
         };
@@ -151,14 +167,10 @@ impl Engine {
                 .await
         };
         if let Err(e) = written {
-            self.diag(
-                Level::Error,
-                "storage failed: could not record a cancel; it holds until a restart",
-                &[
-                    ("client", &key.client),
-                    ("job", &key.job.0),
-                    ("error", &e.to_string()),
-                ],
+            self.store_failed(
+                "record a cancel; it holds in memory only and is lost on a restart",
+                &key,
+                &e,
             );
         }
         self.send_cancel(i).await;
