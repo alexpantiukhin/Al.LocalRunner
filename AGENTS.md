@@ -12,7 +12,7 @@ See `README.md` and `docs/architecture.html`: the single design document (archit
 - Never read, print or copy files under `secrets/`
 - No agent attribution (`Co-Authored-By`, "Generated with") in commits and pull requests
 - Plugins are installed at project scope only (`--scope project`)
-- Only third-party libraries with a free commercial-use license (MIT, Apache 2.0, BSD, ISC; MPL-2.0 unmodified)
+- Only third-party libraries with a free commercial-use license (MIT, Apache 2.0, BSD, ISC, Zlib; MPL-2.0 unmodified)
 - **Generic core.** The daemon, queue and scheduler MUST NOT name or branch on a specific consumer, language, toolchain or test framework. All specificity comes from consumer-supplied profiles (`.localrunner/profiles.toml`)
 - Diagrams in Markdown files use Mermaid
 - Follow the `development-standards` plugin for process phases (enabled in `.claude/settings.json`)
