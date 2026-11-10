@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+{{CSP}}
+<meta name="lr-csrf" content="{{CSRF}}">
+<title>LocalRunner queue</title>
+{{STYLE}}
+</head>
+<body>
+<header class="bar">
+  <h1>LocalRunner</h1>
+  <span id="conn" class="conn" role="status">snapshot {{TAKEN}}</span>
+  <span class="grow"></span>
+  <button type="button" id="pause" class="live-only">Pause</button>
+  <button type="button" id="export-csv">CSV</button>
+  <button type="button" id="export-json">JSON</button>
+  <a id="save-snapshot" class="button live-only" href="/snapshot.html" download="queue.html">Save snapshot</a>
+  <button type="button" id="help" aria-label="Keyboard shortcuts">?</button>
+</header>
+<nav class="tabs" role="tablist">
+  <button type="button" role="tab" data-tab="queue">Queue</button>
+  <button type="button" role="tab" data-tab="history">History</button>
+  <button type="button" role="tab" data-tab="stats">Stats</button>
+  <button type="button" role="tab" data-tab="runners">Runners</button>
+  <button type="button" role="tab" data-tab="brokers">Brokers</button>
+</nav>
+<section class="filters" aria-label="Filters">
+  <input id="f-text" type="search" placeholder="Search ( / )" aria-label="Search">
+  <input id="f-project" placeholder="project" aria-label="Project">
+  <select id="f-source" aria-label="Source"><option value="">any source</option><option>session</option><option>github</option></select>
+  <input id="f-label" placeholder="label" aria-label="Label">
+  <input id="f-runner" placeholder="runner" aria-label="Runner">
+  <input id="f-profile" placeholder="profile" aria-label="Profile">
+  <input id="f-state" placeholder="state" aria-label="State or result">
+  <select id="f-period" aria-label="Period"><option value="">any time</option><option value="3600">1 hour</option><option value="86400">1 day</option><option value="604800">7 days</option></select>
+  <button type="button" id="cancel-filtered" class="live-only">Cancel filtered…</button>
+</section>
+<main>
+  <section id="tab-queue" class="tab">
+    <div class="scroll"><table id="queue-table">
+      <thead><tr><th data-sort="position">#</th><th data-sort="job">Job</th><th data-sort="state">State</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="broker">Broker</th><th data-sort="wait">Waiting / elapsed</th></tr></thead>
+      <tbody id="queue-body">{{QUEUE_ROWS}}</tbody>
+    </table></div>
+  </section>
+  <section id="tab-history" class="tab" hidden>
+    <div class="scroll"><table id="history-table">
+      <thead><tr><th data-sort="job">Job</th><th data-sort="state">Result</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="runner">Runner</th><th data-sort="queued">Queued</th><th data-sort="duration">Duration</th></tr></thead>
+      <tbody id="history-body"></tbody>
+    </table></div>
+  </section>
+  <section id="tab-stats" class="tab" hidden></section>
+  <section id="tab-runners" class="tab" hidden></section>
+  <section id="tab-brokers" class="tab" hidden></section>
+</main>
+<aside id="card" class="card" hidden aria-label="Job card">
+  <div class="bar"><h2 id="card-title"></h2><span class="grow"></span><button type="button" id="card-cancel" class="danger live-only">Cancel job</button><button type="button" id="card-close" aria-label="Close">×</button></div>
+  <dl id="card-fields"></dl>
+  <div id="card-steps" class="steps"></div>
+  <div class="bar">
+    <strong>Log</strong><span class="grow"></span>
+    <label class="live-only"><input type="checkbox" id="log-follow" checked> follow</label>
+    <input id="log-search" type="search" placeholder="find in log" aria-label="Find in log">
+    <button type="button" id="log-copy">Copy</button>
+    <button type="button" id="log-download">Download</button>
+  </div>
+  <pre id="log" class="log" tabindex="0"></pre>
+</aside>
+<dialog id="cancel-dialog">
+  <h2>Cancel</h2>
+  <p>These jobs will be cancelled (counts as <code>--force</code>):</p>
+  <ul id="cancel-list"></ul>
+  <label>Reason <input id="cancel-reason" maxlength="200"></label>
+  <p id="cancel-error" class="error" role="alert"></p>
+  <div class="bar"><span class="grow"></span><button type="button" id="cancel-no">Keep running</button><button type="button" id="cancel-yes" class="danger">Cancel jobs</button></div>
+</dialog>
+<dialog id="help-dialog">
+  <h2>Keyboard</h2>
+  <dl class="keys"><dt>/</dt><dd>search</dd><dt>j / k</dt><dd>next / previous row</dd><dt>Enter</dt><dd>open card</dd><dt>Esc</dt><dd>close</dd><dt>g q | h | s | r</dt><dd>queue, history, stats, runners</dd><dt>?</dt><dd>this list</dd></dl>
+  <div class="bar"><span class="grow"></span><button type="button" id="help-close">Close</button></div>
+</dialog>
+<script type="application/json" id="lr-config">{{CONFIG}}</script>
+<script type="application/json" id="lr-data">{{DATA}}</script>
+{{SCRIPT}}
+</body>
+</html>

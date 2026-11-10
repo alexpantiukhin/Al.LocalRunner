@@ -5,6 +5,7 @@ mod api;
 mod auth;
 mod caps;
 mod common;
+mod dashboard;
 mod frame;
 mod hub;
 mod ipc;
@@ -19,6 +20,7 @@ pub use api::*;
 pub use auth::{AuthFromBroker, AuthToBroker};
 pub use caps::{WireCapabilities, WireServiceStatus};
 pub use common::*;
+pub use dashboard::*;
 pub use frame::{
     decode, decode_for_peer, encode, encode_frame, parse_prefix, read_frame, receive, write_frame,
     DecodeError, FrameError, Message, PeerKind, Received, ADMIN_TYPES, FRAME_LIMIT, PREFIX_LEN,
