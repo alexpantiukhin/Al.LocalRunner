@@ -12,7 +12,8 @@ use windows_sys::Win32::NetworkManagement::NetManagement::{
     MAX_PREFERRED_LENGTH,
 };
 use windows_sys::Win32::Security::Authorization::{
-    GetNamedSecurityInfoW, ProgressInvokeNever, TreeResetNamedSecurityInfoW, SE_FILE_OBJECT,
+    GetNamedSecurityInfoW, ProgressInvokeNever, SetNamedSecurityInfoW, TreeResetNamedSecurityInfoW,
+    SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
     AdjustTokenPrivileges, GetAce, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
@@ -146,10 +147,11 @@ fn enable_privilege(name: &str) -> Result<(), NetError> {
     Ok(())
 }
 
-/// Gives the directory tree at `path` the security of [`service_dir_sddl`]: the directory gets
-/// the protected DACL and the service account as owner, every file and directory below loses
-/// its explicit entries, inherits that DACL and gets the same owner. Needs an elevated process.
-pub fn lock_service_dir(path: &Path, service_sid: &str) -> Result<(), NetError> {
+/// Gives `path` the security of [`service_dir_sddl`]: the protected DACL and the service
+/// account as owner. With `whole_tree`, every file and directory below also loses its explicit
+/// entries, inherits that DACL and gets the same owner; without it, those keep their owners and
+/// explicit entries (so they can still be checked). Needs an elevated process.
+pub fn lock_service_dir(path: &Path, service_sid: &str, whole_tree: bool) -> Result<(), NetError> {
     enable_privilege("SeRestorePrivilege")?;
     let sd = Descriptor::from_sddl(&service_dir_sddl(service_sid))?;
     let mut present = 0;
@@ -163,6 +165,30 @@ pub fn lock_service_dir(path: &Path, service_sid: &str) -> Result<(), NetError> 
         return Err(last_error("GetSecurityDescriptorOwner"));
     }
     let name = wide(&path.to_string_lossy());
+    let what = OWNER_SECURITY_INFORMATION
+        | DACL_SECURITY_INFORMATION
+        | PROTECTED_DACL_SECURITY_INFORMATION;
+    if !whole_tree {
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                what,
+                owner,
+                null_mut(),
+                dacl,
+                null_mut(),
+            )
+        };
+        if status != 0 {
+            return Err(NetError::Io(format!(
+                "SetNamedSecurityInfo {}: {}",
+                path.display(),
+                std::io::Error::from_raw_os_error(status as i32)
+            )));
+        }
+        return Ok(());
+    }
     let status = unsafe {
         TreeResetNamedSecurityInfoW(
             name.as_ptr(),
