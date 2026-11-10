@@ -81,7 +81,8 @@ fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
 impl RunnerConfig {
     /// Reads `text`. The name is `name` when given (`--name`), else `name` of the file, else
     /// `default_name` (the host name). Without `mem_mb` or `cpu` the runner offers all of
-    /// `host`: one runner runs one job at a time and gives it everything it declares.
+    /// `host`: one runner runs one job at a time and gives it everything it declares. Without
+    /// `[env] path` jobs get the `PATH` of the runner process, where `[programs]` are looked up.
     pub fn parse(
         text: &str,
         name: Option<&str>,
@@ -110,6 +111,9 @@ impl RunnerConfig {
         let mut settings = RunnerSettings::from_toml(&text, state_dir)?;
         settings.mem_mb = mem_mb;
         settings.cpu = u32::try_from(cpu).unwrap_or(u32::MAX);
+        if settings.path.is_none() {
+            settings.path = std::env::var("PATH").ok();
+        }
         let secrets = extra
             .secret
             .iter()

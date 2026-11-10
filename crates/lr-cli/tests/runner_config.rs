@@ -139,3 +139,12 @@ fn elevated_start_needs_allow_elevated() {
     let refused = elevation_allowed(true, false).unwrap_err();
     assert!(refused.contains("allow_elevated"), "{refused}");
 }
+
+#[test]
+fn jobs_get_the_runner_path_unless_env_path_is_set() {
+    let inherited = std::env::var("PATH").ok();
+    assert!(inherited.is_some());
+    assert_eq!(parse("", None).settings.path, inherited);
+    let set = parse("[env]\npath = \"/opt/tools/bin\"\n", None);
+    assert_eq!(set.settings.path.as_deref(), Some("/opt/tools/bin"));
+}
