@@ -197,3 +197,66 @@ async fn dropping_a_running_job_kills_its_tree() {
     }
     assert!(!alive, "tree survived a dropped run_job");
 }
+
+#[cfg(target_os = "linux")]
+fn systemd_scope_works() -> bool {
+    std::path::Path::new("/sys/fs/cgroup/cgroup.controllers").is_file()
+        && std::process::Command::new("systemd-run")
+            .args(["--user", "--scope", "--quiet", "--collect", "--"])
+            .args(["/bin/sh", "-c", ":"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_containment_is_a_cgroup_scope_exactly_when_systemd_run_works() {
+    let expected = if systemd_scope_works() {
+        lr_exec::Containment::CgroupScope
+    } else {
+        lr_exec::Containment::ProcessGroup
+    };
+    assert_eq!(lr_exec::containment(), expected);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linux_detached_leftover_descendant_dies_with_the_cgroup_scope() {
+    if lr_exec::containment() != lr_exec::Containment::CgroupScope {
+        eprintln!("no systemd user scope here: the process-group fallback is covered elsewhere");
+        return;
+    }
+    let (_manual, clock) = clock();
+    let cmd = helper_command(&Helper::new("spawn-exit"));
+    let spec = job("cg", 600, vec![step("s", &cmd, 300)]);
+    let (task, out, _stop) = start(spec, clock);
+    let grand = out.pid_of("grandchild").await;
+    let outcome = finish(task).await;
+    let mut alive = true;
+    for _ in 0..50 {
+        alive = pid_alive(grand);
+        if !alive {
+            break;
+        }
+        real_sleep(100).await;
+    }
+    assert!(!alive, "detached leftover {grand} escaped the scope");
+    assert_eq!(outcome.state, JobState::Passed);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linux_job_environment_gets_no_bus_variables_from_the_scope_wrapper() {
+    let (_manual, clock) = clock();
+    let spec = job("env", 600, vec![step("s", "env", 30)]);
+    let (task, out, _stop) = start(spec, clock);
+    let outcome = finish(task).await;
+    assert_eq!(outcome.state, JobState::Passed);
+    let text = out.text();
+    assert!(!text.contains("DBUS_SESSION_BUS_ADDRESS="), "{text}");
+    assert!(!text.contains("XDG_RUNTIME_DIR="), "{text}");
+    assert!(text.contains("PATH="), "{text}");
+}

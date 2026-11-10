@@ -1,12 +1,42 @@
 use crate::guard::Reaped;
 use crate::os_unix::signal;
 use crate::probe::{descendants, probe, Probe};
+#[cfg(target_os = "linux")]
+use crate::scope_linux::Scope;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io;
 use std::sync::Mutex;
 use tokio::process::{Child, Command};
 
+#[cfg(not(target_os = "linux"))]
+struct Scope;
+
+#[cfg(not(target_os = "linux"))]
+impl Scope {
+    fn wrap(_: &str, _: &[&str]) -> Option<(Command, Vec<(OsString, OsString)>, Scope)> {
+        None
+    }
+
+    fn of_pid(_: u32) -> Option<Scope> {
+        None
+    }
+
+    fn observe(&self, _: u32) {}
+
+    fn signal(&self, _: u32, _: libc::c_int) -> bool {
+        false
+    }
+
+    fn is_empty(&self, _: u32) -> Option<bool> {
+        None
+    }
+}
+
+pub(crate) struct Placement(Option<Scope>);
+
 pub(crate) struct Tree {
+    scope: Option<Scope>,
     pgid: i32,
     root: u32,
     start: Option<u64>,
@@ -16,11 +46,23 @@ pub(crate) struct Tree {
 }
 
 impl Tree {
+    pub(crate) fn shell(
+        command: &str,
+        job_vars: &[&str],
+    ) -> (Command, Vec<(OsString, OsString)>, Placement) {
+        if let Some((cmd, extra, scope)) = Scope::wrap(command, job_vars) {
+            return (cmd, extra, Placement(Some(scope)));
+        }
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg(command);
+        (cmd, Vec::new(), Placement(None))
+    }
+
     pub(crate) fn prepare(cmd: &mut Command) {
         cmd.process_group(0);
     }
 
-    pub(crate) fn attach(child: &Child) -> io::Result<Tree> {
+    pub(crate) fn attach(child: &Child, placement: Placement) -> io::Result<Tree> {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("process already exited"))?;
@@ -28,13 +70,17 @@ impl Tree {
             Probe::Alive(start) => Some(start),
             _ => None,
         };
-        Ok(Tree::new(pid, start, true, true))
+        let mut tree = Tree::new(pid, start, true, true);
+        tree.scope = placement.0;
+        Ok(tree)
     }
 
     pub(crate) fn adopt(pid: u32, start: u64) -> Tree {
         let leader = pid <= i32::MAX as u32
             && unsafe { libc::getpgid(pid as libc::pid_t) } == pid as libc::pid_t;
-        Tree::new(pid, Some(start), leader, false)
+        let mut tree = Tree::new(pid, Some(start), leader, false);
+        tree.scope = Scope::of_pid(pid);
+        tree
     }
 
     fn new(pid: u32, start: Option<u64>, leader: bool, owned: bool) -> Tree {
@@ -44,6 +90,7 @@ impl Tree {
         }
         let known = start.map(|s| (pid, s)).into_iter().collect();
         Tree {
+            scope: None,
             pgid: if leader { pid as i32 } else { 0 },
             root: pid,
             start,
@@ -58,6 +105,9 @@ impl Tree {
     }
 
     pub(crate) fn observe(&self) {
+        if let Some(scope) = &self.scope {
+            scope.observe(self.root);
+        }
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         let mut roots: Vec<(u32, u64)> = known.iter().map(|(p, s)| (*p, *s)).collect();
         if let Some(start) = self.start {
@@ -70,6 +120,9 @@ impl Tree {
 
     fn signal_all(&self, sig: libc::c_int) {
         self.observe();
+        if let Some(scope) = &self.scope {
+            scope.signal(self.root, sig);
+        }
         if self.pgid > 0 {
             self.group_gone.run_if_alive(|| unsafe {
                 libc::killpg(self.pgid, sig);
@@ -103,7 +156,12 @@ impl Tree {
         }
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         known.retain(|pid, start| probe(*pid) == Probe::Alive(*start));
-        (self.group_gone.is_marked() || !self.owned) && known.is_empty()
+        let scope_empty = self
+            .scope
+            .as_ref()
+            .and_then(|s| s.is_empty(self.root))
+            .unwrap_or(true);
+        scope_empty && (self.group_gone.is_marked() || !self.owned) && known.is_empty()
     }
 }
 

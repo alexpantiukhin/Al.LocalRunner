@@ -159,7 +159,8 @@ pub fn run_if_requested() {
             wait_gate();
             std::process::exit(0);
         }
-        "no-console-cancel" => super::no_console::run(),
+        "no-console-cancel" => super::no_console::run(false),
+        "no-console-hosted" => super::no_console::run(true),
         "big" => {
             let mut out = std::io::stdout().lock();
             out.write_all(&[0xff, 0xfe]).unwrap();

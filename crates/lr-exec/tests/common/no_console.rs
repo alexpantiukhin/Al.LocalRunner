@@ -6,7 +6,11 @@ use lr_exec::{ExecRunner, SystemClock, SOFT_STOP_NOT_DELIVERED};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub fn run() -> ! {
+pub fn run(hosted: bool) -> ! {
+    if hosted {
+        let created = lr_exec::ensure_console().unwrap();
+        say(&format!("console-created={created} console-end\n"));
+    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -30,8 +34,9 @@ pub fn run() -> ! {
             .unwrap()
             .unwrap();
         let reported = out.text().contains(SOFT_STOP_NOT_DELIVERED);
+        let got = out.text().contains("child-got-soft");
         say(&format!(
-            "outcome={:?} soft-not-delivered={reported} report-end\n",
+            "outcome={:?} soft-not-delivered={reported} got-soft={got} report-end\n",
             outcome.state
         ));
     });

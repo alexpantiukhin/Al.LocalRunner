@@ -21,6 +21,8 @@ use windows_sys::Win32::System::Threading::{
     THREAD_SUSPEND_RESUME,
 };
 
+pub(crate) struct Placement;
+
 pub(crate) struct Tree {
     job: HANDLE,
     pid: u32,
@@ -36,6 +38,16 @@ fn has_console() -> bool {
 }
 
 impl Tree {
+    pub(crate) fn shell(
+        command: &str,
+        _job_vars: &[&str],
+    ) -> (Command, Vec<(String, String)>, Placement) {
+        let comspec = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
+        let mut cmd = Command::new(comspec);
+        cmd.raw_arg(format!("/D /S /C \"{command}\""));
+        (cmd, Vec::new(), Placement)
+    }
+
     pub(crate) fn prepare(cmd: &mut Command) {
         let mut flags = CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED;
         if !has_console() {
@@ -44,7 +56,7 @@ impl Tree {
         cmd.creation_flags(flags);
     }
 
-    pub(crate) fn attach(child: &Child) -> io::Result<Tree> {
+    pub(crate) fn attach(child: &Child, _placement: Placement) -> io::Result<Tree> {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("process already exited"))?;

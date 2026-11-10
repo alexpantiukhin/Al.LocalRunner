@@ -299,3 +299,20 @@ fn soft_stop_that_cannot_be_delivered_is_reported_in_the_job_output() {
     assert!(text.contains("outcome=Cancelled"), "{text}");
     assert!(text.contains("soft-not-delivered=true"), "{text}");
 }
+
+#[cfg(windows)]
+#[test]
+fn runner_started_without_a_console_gets_a_hidden_one_and_soft_stop_reaches_the_step() {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+    let out = common::helper::helper_process(&Helper::new("no-console-hosted"))
+        .creation_flags(DETACHED_PROCESS)
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("console-created=true"), "{text}");
+    assert!(text.contains("outcome=Cancelled"), "{text}");
+    assert!(text.contains("soft-not-delivered=false"), "{text}");
+    assert!(text.contains("got-soft=true"), "{text}");
+}

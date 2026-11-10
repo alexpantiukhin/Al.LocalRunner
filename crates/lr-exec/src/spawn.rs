@@ -9,9 +9,9 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 #[cfg(unix)]
-pub(crate) use crate::tree_unix::Tree;
+pub(crate) use crate::tree_unix::{Placement, Tree};
 #[cfg(windows)]
-pub(crate) use crate::tree_windows::Tree;
+pub(crate) use crate::tree_windows::{Placement, Tree};
 
 /// Largest piece of output passed to a [`lr_abstractions::JobOutput`] in one event when the
 /// job has no secrets; masking can grow a piece by the length of the mask per hidden value.
@@ -33,34 +33,26 @@ pub(crate) struct Launch<'a> {
     pub(crate) secrets: &'a [(String, SecretValue)],
 }
 
-#[cfg(windows)]
-fn shell(command: &str) -> Command {
-    let comspec = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
-    let mut cmd = Command::new(comspec);
-    cmd.raw_arg(format!("/D /S /C \"{command}\""));
-    cmd
-}
-
-#[cfg(unix)]
-fn shell(command: &str) -> Command {
-    let mut cmd = Command::new("/bin/sh");
-    cmd.arg("-c").arg(command);
-    cmd
-}
-
-fn command(launch: &Launch<'_>) -> Command {
-    let mut cmd = shell(launch.command);
+fn command(launch: &Launch<'_>) -> (Command, Placement) {
+    let names: Vec<&str> = launch
+        .env
+        .iter()
+        .map(|(k, _)| k.as_str())
+        .chain(launch.secrets.iter().map(|(k, _)| k.as_str()))
+        .collect();
+    let (mut cmd, extra, placement) = Tree::shell(launch.command, &names);
     cmd.current_dir(launch.cwd)
         .env_clear()
         .envs(launch.env.iter().map(|(k, v)| (k, v)))
         .envs(launch.secrets.iter().map(|(k, v)| (k, v.expose())))
+        .envs(extra)
         .stdin(Stdio::null())
         .kill_on_drop(true);
     Tree::prepare(&mut cmd);
-    cmd
+    (cmd, placement)
 }
 
-fn start(mut cmd: Command) -> io::Result<(Child, Tree)> {
+fn start(mut cmd: Command, placement: Placement) -> io::Result<(Child, Tree)> {
     if cmd.as_std().get_current_dir().is_some_and(|d| !d.is_dir()) {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -68,7 +60,7 @@ fn start(mut cmd: Command) -> io::Result<(Child, Tree)> {
         ));
     }
     let mut child = cmd.spawn()?;
-    match Tree::attach(&child) {
+    match Tree::attach(&child, placement) {
         Ok(tree) => Ok((child, tree)),
         Err(err) => {
             let _ = child.start_kill();
@@ -78,9 +70,9 @@ fn start(mut cmd: Command) -> io::Result<(Child, Tree)> {
 }
 
 pub(crate) fn spawn_step(launch: &Launch<'_>, mask: &[&SecretValue]) -> io::Result<Spawned> {
-    let mut cmd = command(launch);
+    let (mut cmd, placement) = command(launch);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let (mut child, tree) = start(cmd)?;
+    let (mut child, tree) = start(cmd, placement)?;
     let (tx, rx) = mpsc::channel(CHANNEL);
     let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
@@ -98,9 +90,9 @@ pub(crate) fn spawn_step(launch: &Launch<'_>, mask: &[&SecretValue]) -> io::Resu
 }
 
 pub(crate) fn spawn_service(launch: &Launch<'_>) -> io::Result<(Child, Tree)> {
-    let mut cmd = command(launch);
+    let (mut cmd, placement) = command(launch);
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    start(cmd)
+    start(cmd, placement)
 }
 
 fn forward<R>(mut stream: R, mut masker: Masker, out: mpsc::Sender<Vec<u8>>) -> JoinHandle<()>
