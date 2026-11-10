@@ -191,3 +191,86 @@ async fn resource_override_within_pool_is_accepted() {
     hub.send(&overridden("j1", req(6144, 4, 60), over)).await;
     assert_eq!(hub.accepted().await.job.0, "j1");
 }
+
+#[tokio::test]
+async fn both_overrides_above_pool_are_named() {
+    let h = Harness::start("");
+    let _r = h
+        .member_runner("r1", "10.0.0.7", caps(&["linux"], 65536, 32))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    let both = ResourceOverride {
+        mem_mb: Some(20000),
+        cpu: Some(12),
+    };
+    hub.send(&overridden("j1", req(20000, 12, 60), both)).await;
+    let r = hub.rejected().await;
+    assert_eq!(
+        r.code,
+        ReasonCode::Rejected(RejectReason::OverrideAbovePool)
+    );
+    for part in ["--mem 20000", "16384", "--cpu 12", "8 CPU"] {
+        assert!(r.detail.contains(part), "{part}: {}", r.detail);
+    }
+}
+
+#[tokio::test]
+async fn profile_cpu_above_pool_keeps_the_pool_code_under_a_mem_override() {
+    let h = Harness::start("");
+    let _r = h
+        .member_runner("r1", "10.0.0.7", caps(&["linux"], 65536, 32))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    let mem_only = ResourceOverride {
+        mem_mb: Some(2048),
+        cpu: None,
+    };
+    hub.send(&overridden("j1", req(2048, 12, 60), mem_only))
+        .await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code, ReasonCode::Rejected(RejectReason::PoolCpu));
+}
+
+#[tokio::test]
+async fn overrides_within_pool_meet_reserve_and_quota_with_their_own_codes() {
+    let mem = ResourceOverride {
+        mem_mb: Some(9000),
+        cpu: None,
+    };
+    let h = Harness::start(
+        "[[rule]]\nname = \"ci-reserve\"\nwhen = { client_label = \"ci\" }\n\
+         reserve = { mem_mb = 8192 }\n",
+    );
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&overridden("j1", req(9000, 1, 60), mem)).await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code, ReasonCode::Rejected(RejectReason::Reserved));
+
+    let h = Harness::start("[[rule]]\nname = \"small\"\nquota = { max_mem_mb = 4096 }\n");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&overridden("j1", req(9000, 1, 60), mem)).await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code, ReasonCode::Rejected(RejectReason::Quota));
+}
+
+#[tokio::test]
+async fn override_with_an_exclusive_tag_is_accepted_not_rejected() {
+    let h = Harness::start("");
+    let mut emu = linux();
+    emu.tags.insert("emu".into());
+    let _r = h.member_runner("r1", "10.0.0.7", emu.clone()).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", emu).await;
+    let mut hub = h.local_hub("alex").await;
+    let over = ResourceOverride {
+        mem_mb: Some(2048),
+        cpu: Some(2),
+    };
+    for job in ["j1", "j2"] {
+        let mut r = req(2048, 2, 60);
+        r.exclusive.insert("emu".into());
+        hub.send(&overridden(job, r, over)).await;
+        assert_eq!(hub.accepted().await.job.0, job);
+    }
+}

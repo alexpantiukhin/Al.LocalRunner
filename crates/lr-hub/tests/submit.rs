@@ -388,3 +388,18 @@ async fn zero_mem_or_cpu_flag_is_malformed() {
         }
     }
 }
+
+#[tokio::test]
+async fn mem_flag_may_lower_the_profile_value() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    let mut low = submit("unit", None);
+    low.mem_mb = Some(512);
+    rig.cli().await.submit(low).await;
+    eventually("order sent", || local.orders().len() == 1).await;
+    let spec = &local.orders()[0].spec;
+    assert_eq!(spec.requirements.mem_mb, 512);
+    assert_eq!(spec.overrides.mem_mb, Some(512));
+    assert_eq!(spec.overrides.cpu, None);
+}

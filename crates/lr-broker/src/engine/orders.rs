@@ -7,8 +7,8 @@ use lr_abstractions::{
     SourceKind, StepRow, StoreError,
 };
 use lr_core::{
-    check_runners, ClientView, Declared, JobState, MachineRef, QueueEntry, Reject, Source,
-    StepState,
+    check_runners, ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject,
+    Requirements, Source, StepState,
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
@@ -27,17 +27,34 @@ fn reject_reason(r: &Reject) -> RejectReason {
     }
 }
 
-fn overridden(r: &Reject, over: &ResourceOverride) -> Option<(RejectReason, String)> {
-    let text = match r {
-        Reject::PoolMemory { needed, limit } if over.mem_mb.is_some() => {
-            format!("--mem {needed} МБ больше пула: максимум в пуле {limit} МБ")
-        }
-        Reject::PoolCpu { needed, limit } if over.cpu.is_some() => {
-            format!("--cpu {needed} больше пула: максимум в пуле {limit} CPU")
-        }
-        _ => return None,
+fn overridden(
+    r: &Reject,
+    over: &ResourceOverride,
+    req: &Requirements,
+    pool: &PoolLimits,
+) -> Option<(RejectReason, String)> {
+    let caused = match r {
+        Reject::PoolMemory { .. } => over.mem_mb.is_some(),
+        Reject::PoolCpu { .. } => over.cpu.is_some(),
+        _ => false,
     };
-    Some((RejectReason::OverrideAbovePool, text))
+    if !caused {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if over.mem_mb.is_some() && req.mem_mb > pool.mem_mb {
+        parts.push(format!(
+            "--mem {} МБ больше пула: максимум в пуле {} МБ",
+            req.mem_mb, pool.mem_mb
+        ));
+    }
+    if over.cpu.is_some() && req.cpu > pool.cpu {
+        parts.push(format!(
+            "--cpu {} больше пула: максимум в пуле {} CPU",
+            req.cpu, pool.cpu
+        ));
+    }
+    Some((RejectReason::OverrideAbovePool, parts.join("; ")))
 }
 
 fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -> Intake {
@@ -202,10 +219,16 @@ impl Engine {
         }
         self.allowed(entry, spec)?;
         let fail = |r: Reject| (reject_reason(&r), r.to_string());
-        self.policy
-            .policy()
-            .admit(&entry.order, &entry.client)
-            .map_err(|r| overridden(&r, &spec.overrides).unwrap_or_else(|| fail(r)))?;
+        let policy = self.policy.policy();
+        policy.admit(&entry.order, &entry.client).map_err(|r| {
+            overridden(
+                &r,
+                &spec.overrides,
+                &entry.order.requirements,
+                policy.pool(),
+            )
+            .unwrap_or_else(|| fail(r))
+        })?;
         check_runners(entry, &self.runner_views(), &self.site).map_err(fail)
     }
 
