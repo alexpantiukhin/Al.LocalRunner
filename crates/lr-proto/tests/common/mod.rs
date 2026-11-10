@@ -144,6 +144,7 @@ pub fn summary() -> JobSummary {
         project: Some("owner/repo".into()),
         label: Some("agent-1".into()),
         profile: Some("build".into()),
+        source: Some(WireSource::Session),
     }
 }
 

@@ -2,6 +2,7 @@
 //! states, fed by a bounded command channel from the connection tasks; changes go out on a
 //! broadcast bus for the read API.
 
+mod admin;
 mod allow;
 mod assign;
 mod cancel;
@@ -23,6 +24,7 @@ mod services;
 mod start;
 mod wire;
 
+pub use admin::BrokerHandle;
 pub use events::BusEvent;
 pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 
@@ -151,6 +153,11 @@ impl Broker {
     pub fn with_log_sink(mut self, sink: Arc<dyn LogSink>) -> Broker {
         self.engine.log = sink;
         self
+    }
+
+    /// Administrative access for the local admin channel; valid while [Broker::run] runs.
+    pub fn handle(&self) -> BrokerHandle {
+        BrokerHandle(self.tx.clone())
     }
 
     /// Receives every change of jobs and runners from now on.
@@ -332,6 +339,7 @@ impl Engine {
             }
             Command::Closed { conn } => self.closed(conn).await,
             Command::Drained { conn } => self.pump(conn),
+            Command::Admin(cmd) => self.admin(cmd).await,
         }
     }
 

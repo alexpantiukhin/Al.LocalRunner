@@ -37,6 +37,7 @@ pub(crate) enum Command {
         conn: ConnId,
     },
     Tick,
+    Admin(super::admin::AdminCommand),
 }
 
 fn heartbeat() -> Frame {

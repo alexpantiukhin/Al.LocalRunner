@@ -65,6 +65,7 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.project = None;
             s.label = None;
             s.profile = None;
+            s.source = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -150,6 +151,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         project: Some(row.project.clone()),
         label: Some(row.label.clone()),
         profile: Some(row.profile.clone()),
+        source: Some(wire_source(row.source)),
     }
 }
 
@@ -205,6 +207,10 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         project: Some(job.spec.identity.project.clone()),
         label: Some(job.spec.identity.label.clone()),
         profile: Some(job.spec.profile.clone()),
+        source: Some(match job.spec.identity.source {
+            lr_core::Source::Session => WireSource::Session,
+            lr_core::Source::Github(_) => WireSource::Github,
+        }),
     }
 }
 

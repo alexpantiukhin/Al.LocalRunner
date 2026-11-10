@@ -9,7 +9,7 @@ use lr_abstractions::{
     PeerAccess, Transport,
 };
 use lr_broker::policy::{ActivePolicy, HostResources};
-use lr_broker::{Broker, BrokerDeps, BusEvent, ExactLocalUsers};
+use lr_broker::{Broker, BrokerDeps, BrokerHandle, BusEvent, ExactLocalUsers};
 use lr_core::{Endpoint, Timestamp};
 use lr_proto::*;
 use serde::Serialize;
@@ -41,6 +41,7 @@ pub struct Harness {
     pub log: Arc<MemoryLogSink>,
     pub net: FakeNetwork,
     pub events: broadcast::Receiver<BusEvent>,
+    pub handle: BrokerHandle,
     task: tokio::task::JoinHandle<()>,
     extra: String,
     owners: Vec<String>,
@@ -139,6 +140,7 @@ impl Harness {
         )))
         .with_log_sink(log.clone());
         let events = broker.subscribe();
+        let handle = broker.handle();
         let task = tokio::spawn(broker.run());
         Harness {
             clock,
@@ -147,6 +149,7 @@ impl Harness {
             log,
             net,
             events,
+            handle,
             task,
             extra: extra.to_string(),
             owners: owners.iter().map(|s| s.to_string()).collect(),

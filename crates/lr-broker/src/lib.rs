@@ -5,6 +5,6 @@ pub mod engine;
 pub mod policy;
 
 pub use engine::{
-    Broker, BrokerDeps, BusEvent, ExactLocalUsers, LocalAdmission, LocalClient, MAX_SUBSCRIPTIONS,
-    OUT_QUEUE_FRAMES,
+    Broker, BrokerDeps, BrokerHandle, BusEvent, ExactLocalUsers, LocalAdmission, LocalClient,
+    MAX_SUBSCRIPTIONS, OUT_QUEUE_FRAMES,
 };

@@ -204,6 +204,10 @@ pub struct JobSummary {
     pub label: Option<String>,
     /// Profile; hidden at `summary`.
     pub profile: Option<String>,
+    /// Source of the identity (session or GitHub); hidden at `summary`. Absent from older
+    /// peers.
+    #[serde(default)]
+    pub source: Option<WireSource>,
 }
 
 /// A step of a run.

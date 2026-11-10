@@ -40,6 +40,7 @@ fn job(
                 project: Some(project.into()),
                 label: Some(label.into()),
                 profile: Some("unit".into()),
+                source: None,
             },
             note: Some(XSS.into()),
             branch: Some("main".into()),

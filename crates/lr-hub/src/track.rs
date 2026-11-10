@@ -112,6 +112,10 @@ impl Track {
             project: spec.map(|s| s.identity.project.clone()),
             label: Some(self.order.label.clone()),
             profile: spec.map(|s| s.profile.clone()),
+            source: spec.map(|s| match s.identity.source {
+                lr_core::Source::Session => lr_proto::WireSource::Session,
+                lr_core::Source::Github(_) => lr_proto::WireSource::Github,
+            }),
         }
     }
 }

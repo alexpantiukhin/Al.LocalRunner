@@ -100,6 +100,7 @@ async fn read_api_hides_others_orders_per_visibility() {
     assert_eq!(run.summary.project, None);
     assert_eq!(run.summary.label, None);
     assert_eq!(run.summary.profile, None);
+    assert_eq!(run.summary.source, None);
     assert!(run.steps.is_empty() && run.last_lines.is_empty());
     assert_eq!(s.queue[0].wait_reason, None);
     let hist = history(
@@ -130,6 +131,13 @@ async fn read_api_hides_others_orders_per_visibility() {
     let s = status(bob.read(ReadRequest::Status(StatusFilter::default())).await);
     assert_eq!(s.running[0].summary.project.as_deref(), Some("owner/repo"));
     assert_eq!(s.running[0].summary.label.as_deref(), Some("agent-1"));
+    assert_eq!(s.running[0].summary.source, Some(WireSource::Session));
+    assert!(history(
+        bob.read(ReadRequest::History(HistoryFilter::default()))
+            .await
+    )
+    .iter()
+    .all(|j| j.source == Some(WireSource::Session)));
     assert!(s.running[0].last_lines.is_empty());
     let ReadReply::Job(d) = bob.read(show("j1")).await else {
         panic!("full shows the run")
