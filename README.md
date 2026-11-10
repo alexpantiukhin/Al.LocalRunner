@@ -40,8 +40,8 @@ The binary is `target/release/localrunner` (`localrunner.exe` on Windows).
 ## Install
 
 ```
-localrunner install --dry-run   # show what will be done
-localrunner install             # copy the binary to the user directory, extend the user PATH, run init
+target/release/localrunner install --dry-run   # show what will be done
+target/release/localrunner install             # copy the binary to the user directory, extend the user PATH, run init
 localrunner init                # state directory and config templates (--role hub|broker|runner|all)
 localrunner doctor              # check this node
 localrunner autostart on        # start the roles with the OS (off to disable)
