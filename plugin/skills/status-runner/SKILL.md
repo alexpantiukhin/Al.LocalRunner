@@ -1,18 +1,20 @@
 ---
 name: status-runner
 description: >-
-  Use to see the runner queue: running and waiting jobs with their steps, waiting time and reason,
-  free memory and CPU, as text, JSON, an HTML snapshot or a live page. Triggers: "runner status",
+  Use to see the queue: running and waiting jobs with steps, waiting time and reason, runners and
+  free resources, as text, JSON, an HTML snapshot or a live page. Triggers: "runner status",
   "что в очереди", "статус раннера", "покажи очередь в html".
 ---
 
 # status-runner
 
-Read only; changes nothing.
+Read only; changes nothing. Read commands take `--json`.
 
-- Default: text, per level: workers up or down, running jobs (id, profile, submitter directory, elapsed vs timeout, steps with state), queued jobs (position, waiting time, why it waits), held resource tags, free memory and CPU.
-- Each job is shown with its project, source (`session` or `github`, with the run link) and submitter label. Filters: `--project`, `--source`, `--as`.
-- `--json`: the same data for scripts.
-- `--html [path]`: one self-contained HTML file, default `temp/runner/queue.html`. Give the user its full path.
-- History: `history` (filters `--project`, `--source`, `--as`, `--profile`, `--result`, `--since`, `--limit`), `history show <job-id>`, `log <job-id> [--step NAME] [--tail N]`, and `stats` for pass rate, waiting time and duration per profile. Read the log with `--tail` or a step, never whole.
-- `dashboard`: interactive page (Queue, History, Stats, Runners tabs; filters, live log, steps timeline, cancel with confirmation) on `127.0.0.1` with a per-start token; `?as=<label>` opens it focused on your own jobs. Start it as its own background task, give the user the URL from its output, and stop it when the user is done. Never expose it beyond loopback.
+- `localrunner status`: queue and running jobs with steps and the wait reason. Filters: `--project`, `--source session|github`, `--as <label>`, `--broker <name>`.
+- `status --html [path]`: one self-contained HTML file, default `temp/runner/queue.html`; add `--history` for the history table. `--with-logs` embeds job logs, which may hold secrets of profile commands: use it only when the user asks. Give the user the printed path.
+- `localrunner explain <job-id>`: why a job waits, naming the policy rule.
+- `localrunner runners [--broker B]`: state, platforms, programs, pool load, tags, services. `localrunner brokers`: known brokers, availability, orders in the outbox.
+- `localrunner history [--project --source --as --profile --result --since --limit --platform --runner --broker]`; `--all` shows every run the visibility policy allows; `history show <job-id>` is the full record. `localrunner stats [--project --profile --client --since]` for pass rate, waiting time and saturation.
+- `localrunner log <job-id> [--step NAME] [--tail N] [-f]`: read with `--tail` or a step, never whole.
+- `localrunner dashboard`: live page on loopback only (127.0.0.1 and ::1). Start it as its own background task, give the user the URL from its output, stop it when the user is done. Never expose it beyond loopback.
+- If nothing answers, run `localrunner doctor`.

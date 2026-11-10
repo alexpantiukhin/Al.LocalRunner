@@ -1,6 +1,6 @@
 # macOS
 
-Used by `install-runner`, `up-runner`, `down-runner`. Shell: zsh or bash.
+Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell: zsh or bash.
 
 | Item | Value |
 |---|---|

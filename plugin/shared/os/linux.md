@@ -1,6 +1,6 @@
 # Linux
 
-Used by `install-runner`, `up-runner`, `down-runner`. Shell: bash.
+Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell: bash.
 
 | Item | Value |
 |---|---|

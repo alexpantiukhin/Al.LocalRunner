@@ -1,6 +1,6 @@
 # Windows
 
-Used by `install-runner`, `up-runner`, `down-runner`. Shell: PowerShell 7.
+Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell: PowerShell 7.
 
 | Item | Value |
 |---|---|

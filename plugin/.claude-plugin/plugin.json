@@ -1,5 +1,5 @@
 {
   "name": "al-localrunner",
   "version": "0.1.0",
-  "description": "Local queued runners (light, heavy, ci): install, start, stop, inspect, and submit runs from parallel agent sessions"
+  "description": "Local queued runners: install, start, stop, autostart, inspect and submit runs from parallel agent sessions through one shared queue"
 }
