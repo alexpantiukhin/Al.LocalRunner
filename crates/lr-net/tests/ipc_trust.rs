@@ -4,7 +4,8 @@ use common::*;
 use lr_abstractions::{Dialer, Listener, Peer, PeerAccess, TransportError};
 use lr_core::{Endpoint, Site, Zone};
 use lr_net::{
-    current_os_user, IpcAccess, IpcDialer, IpcListener, LocalUser, LocalUsers, ServerIdentity,
+    current_os_principal, current_os_user, IpcAccess, IpcDialer, IpcListener, LocalUser,
+    LocalUsers, ServerIdentity,
 };
 use lr_proto::RejectReason;
 use std::time::Duration;
@@ -47,10 +48,7 @@ async fn server_of_another_identity_refused_before_anything_is_sent() {
     let accepted = tokio::time::timeout(Duration::from_secs(1), listener.accept()).await;
     assert!(accepted.is_err(), "not even the preamble was sent");
 
-    let trusted = ServerIdentity::principal(stranger()).or_admins();
-    let me = ServerIdentity::current_user().unwrap();
-    assert_ne!(trusted, me);
-    IpcDialer::new(me)
+    IpcDialer::new(ServerIdentity::principal(stranger()).or(current_os_principal().unwrap()))
         .dial(&addr, None)
         .await
         .expect("the expected owner is accepted");
@@ -93,6 +91,7 @@ async fn principals_access_admits_listed_users_and_reloads() {
     assert_eq!(first.peer().access, PeerAccess::Local);
     listener
         .set_access(IpcAccess::Principals(vec![me.clone()]))
+        .await
         .unwrap();
     dialer.dial(&addr, None).await.expect("still after reload");
     listener.accept().await.unwrap();
@@ -112,6 +111,7 @@ async fn unknown_account_in_the_list_refused() {
         .unwrap();
     assert!(listener
         .set_access(IpcAccess::Principals(vec![bogus]))
+        .await
         .is_err());
 }
 
@@ -180,4 +180,43 @@ fn zone_compares_qualified_users() {
     let local = ipc(r"PC\alex").endpoint;
     assert_eq!(site.zone_between(&corp, &corp), Zone::Local);
     assert_ne!(site.zone_between(&corp, &local), Zone::Local);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn sid_entry_matches_the_account_it_names() {
+    let sid = current_os_principal().unwrap();
+    let (users, unknown, lower) = tokio::task::spawn_blocking(move || {
+        (
+            LocalUsers::new(vec![entry(&sid)]),
+            LocalUsers::new(vec![entry("S-1-5-21-1-2-3-4242")]),
+            LocalUsers::new(vec![entry(&sid.to_lowercase())]),
+        )
+    })
+    .await
+    .unwrap();
+    let addr = address();
+    let listener = IpcListener::bind(&addr, IpcAccess::OwnerOnly)
+        .await
+        .unwrap();
+    IpcDialer::new(ServerIdentity::current_user().unwrap())
+        .dial(&addr, None)
+        .await
+        .unwrap();
+    let server = listener.accept().await.unwrap();
+    let me = users
+        .admit(server.peer())
+        .expect("the SID of the connecting user");
+    assert_eq!(me.os_user, current_os_user().unwrap());
+    assert!(lower.admit(server.peer()).is_ok());
+    assert_eq!(
+        unknown.admit(server.peer()),
+        Err(RejectReason::LocalUserUnknown)
+    );
+    let raw = LocalUsers::with_machine(vec![entry("S-1-5-21-1-2-3-4242")], "PC");
+    assert_eq!(
+        raw.admit(&ipc(r"PC\S-1-5-21-1-2-3-4242")),
+        Err(RejectReason::LocalUserUnknown),
+        "a SID is never taken for a local account name"
+    );
 }

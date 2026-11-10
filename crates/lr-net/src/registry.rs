@@ -10,7 +10,7 @@ use lr_abstractions::{
 use lr_core::Timestamp;
 use lr_proto::{ProtocolError, ProtocolErrorCode};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Longest machine name.
 pub const MAX_NAME_LEN: usize = 64;
@@ -110,9 +110,10 @@ impl fmt::Display for RegistryError {
             RegistryError::KeyNotProven => {
                 f.write_str("the joining key is not the key proven on this connection")
             }
-            RegistryError::MachineIdClash => {
-                f.write_str("the joining MachineId is the broker's own; give the installation its own state directory")
-            }
+            RegistryError::MachineIdClash => f.write_str(concat!(
+                "the joining MachineId is the broker's own; ",
+                "give the installation its own state directory"
+            )),
             RegistryError::Invalid(why) => f.write_str(why),
             RegistryError::Store(e) => e.fmt(f),
         }
@@ -144,6 +145,11 @@ pub fn check_name(name: &str) -> Result<(), RegistryError> {
     }
 }
 
+/// How long the handshake gate trusts its last look at the join codes, in milliseconds. A
+/// flood of unknown keys reads the codes at most once per interval; issuing or redeeming a
+/// code through the registry refreshes the answer at once.
+pub const OPEN_CODE_CACHE_MS: u64 = 1000;
+
 /// The broker's machine registry (spec 3.8, 13.2): issues join codes, redeems them into key
 /// records, revokes keys, and as a [`KeyGate`] refuses revoked keys at the handshake and lets
 /// an unknown key in to join only while a join code is open.
@@ -152,6 +158,7 @@ pub struct Registry {
     clock: Arc<dyn Clock>,
     own_machine_id: String,
     fingerprint: Fingerprint,
+    open_code: Mutex<Option<(Timestamp, bool)>>,
 }
 
 impl Registry {
@@ -167,6 +174,7 @@ impl Registry {
             clock,
             own_machine_id: own_machine_id.into(),
             fingerprint,
+            open_code: Mutex::new(None),
         }
     }
 
@@ -201,6 +209,7 @@ impl Registry {
                 machine_name: None,
             })
             .await?;
+        self.forget_open_code();
         Ok(code)
     }
 
@@ -240,14 +249,32 @@ impl Registry {
             last_seen: Some(now),
             revoked_at: None,
         };
-        Ok(self
+        let joined = self
             .store
             .redeem(Join {
                 code_hash: code.hash(),
                 at: now,
                 machine,
             })
-            .await?)
+            .await;
+        self.forget_open_code();
+        Ok(joined?)
+    }
+
+    fn forget_open_code(&self) {
+        *self.open_code.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    async fn code_open_cached(&self, now: Timestamp) -> Result<bool, RegistryError> {
+        let cached = *self.open_code.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, open)) = cached {
+            if at.0 <= now.0 && now.0 < at.0.saturating_add(OPEN_CODE_CACHE_MS) {
+                return Ok(open);
+            }
+        }
+        let open = self.code_open(now).await?;
+        *self.open_code.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, open));
+        Ok(open)
     }
 
     /// Revokes the key of machine `name` at once (`runner remove`, `client remove`).
@@ -302,7 +329,7 @@ impl KeyGate for Registry {
                 supported: None,
             }),
             Ok(Some(_)) => Admit::Member,
-            Ok(None) => match self.code_open(self.clock.now()).await {
+            Ok(None) => match self.code_open_cached(self.clock.now()).await {
                 Ok(true) => Admit::Joining,
                 Ok(false) => Admit::Refused(ProtocolError {
                     code: ProtocolErrorCode::JoinCodeUnknown,

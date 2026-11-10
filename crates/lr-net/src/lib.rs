@@ -44,8 +44,8 @@ pub use error::NetError;
 pub use files::{read_private, write_private, write_public};
 pub use fingerprint::Fingerprint;
 pub use ipc::{
-    current_os_user, local_machine_name, IpcAccess, IpcDialer, IpcListener, ServerIdentity,
-    PREAMBLE, PREAMBLE_TIMEOUT,
+    current_os_principal, current_os_user, local_machine_name, IpcAccess, IpcDialer, IpcListener,
+    ServerIdentity, PREAMBLE, PREAMBLE_TIMEOUT,
 };
 pub use keys::{
     canonical_public_key, challenge_message, fresh_nonce, parse_public_key, verify_challenge,
@@ -54,7 +54,9 @@ pub use keys::{
 pub use listen_addr::{ListenAddr, DEFAULT_PORT};
 pub use listener::TlsListener;
 pub use local_users::{peer_kind, LocalClient, LocalUser, LocalUsers, LOCAL_CLIENT_PREFIX};
-pub use registry::{check_name, CodeRequest, JoinRequest, Registry, RegistryError, MAX_NAME_LEN};
+pub use registry::{
+    check_name, CodeRequest, JoinRequest, Registry, RegistryError, MAX_NAME_LEN, OPEN_CODE_CACHE_MS,
+};
 pub use slots::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
 pub use stream::StreamTransport;
 pub use tls::{

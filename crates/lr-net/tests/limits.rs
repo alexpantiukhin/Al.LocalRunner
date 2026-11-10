@@ -146,3 +146,47 @@ async fn handshake_timeout_drops_idle_connections_and_frees_the_slot() {
     b.dial(&k).await.expect("the slot is free again");
     b.accept().await;
 }
+
+#[tokio::test]
+async fn both_pools_full_of_junk_from_one_member_source_spare_other_members() {
+    let b = broker_with(Limits {
+        general_slots: 4,
+        reserved_slots: 3,
+        per_ip: 3,
+        reserved_per_ip: 1,
+        handshake_timeout: Duration::from_secs(20),
+        ..Limits::default()
+    })
+    .await;
+    let (a, other) = (key(), key());
+    b.register(&a, "light").await;
+    b.register(&other, "heavy").await;
+    b.dial(&a).await.expect("member A from 127.0.0.1");
+    b.accept().await;
+    let (_kept, verdict) = prove_from(&b, "127.0.0.2", &other).await;
+    assert_eq!(verdict, Some(lr_proto::AuthFromBroker::Authenticated));
+    b.accept().await;
+
+    let mut junk = Vec::new();
+    for _ in 0..4 {
+        junk.push(junk_from("127.0.0.1", &b.addr).await);
+    }
+    junk.push(junk_from("127.0.0.3", &b.addr).await);
+    settle().await;
+    let mut over = junk_from("127.0.0.1", &b.addr).await;
+    assert!(
+        dropped_within(&mut over, Duration::from_secs(2)).await,
+        "A's source used its general share and its reserved share"
+    );
+    assert!(
+        b.dial(&a).await.is_err(),
+        "junk from A's own source can lock A out: it cannot be told apart before the proof"
+    );
+    let (_b2, verdict) = prove_from(&b, "127.0.0.2", &other).await;
+    assert_eq!(
+        verdict,
+        Some(lr_proto::AuthFromBroker::Authenticated),
+        "another member still has a reserved slot"
+    );
+    drop(junk);
+}

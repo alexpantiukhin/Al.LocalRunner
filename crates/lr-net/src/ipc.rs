@@ -29,8 +29,10 @@ pub enum IpcAccess {
     /// The broker service: these accounts (the `[[local_user]]` names) plus the owner, SYSTEM
     /// and Administrators. Windows: a protected DACL with the SID of each account, which may
     /// read and write but not create pipe instances; a bare name is a local account of this
-    /// computer, and a SID (`S-1-...`) may be given instead of a name. Unix: socket mode `0660`; the installer gives the socket the `al-localrunner`
-    /// group, whose members are the listed users (the names are not used by the socket).
+    /// computer, and a SID (`S-1-...`) may be given instead of a name (it matches in
+    /// [`crate::LocalUsers`] too). Unix: socket mode `0660`; the installer gives the socket the
+    /// `al-localrunner` group, whose members are the listed users (the names are not used by
+    /// the socket).
     Principals(Vec<String>),
 }
 
@@ -95,6 +97,16 @@ pub fn current_os_user() -> Result<String, NetError> {
     platform::current_user()
 }
 
+/// The security principal of this process: the SID (`S-1-5-...`) on Windows, the numeric uid
+/// on Unix; the form [`ServerIdentity::principal`] takes.
+pub fn current_os_principal() -> Result<String, NetError> {
+    platform::current_principal()
+}
+
+pub(crate) fn account_of_sid(sid: &str) -> Option<String> {
+    platform::account_of_sid(sid)
+}
+
 /// The computer name that qualifies a bare `[[local_user]]` name on Windows; empty elsewhere.
 pub fn local_machine_name() -> String {
     platform::machine_name()
@@ -135,8 +147,8 @@ impl IpcListener {
 
     /// Changes who may connect from now on (`policy reload` changed `[[local_user]]`): new
     /// pipe instances get the new DACL; connections already open stay.
-    pub fn set_access(&self, access: IpcAccess) -> Result<(), NetError> {
-        platform::update_access(&self.access, &access)
+    pub async fn set_access(&self, access: IpcAccess) -> Result<(), NetError> {
+        platform::update_access(&self.access, &access).await
     }
 }
 

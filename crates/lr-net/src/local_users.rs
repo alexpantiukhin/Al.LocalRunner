@@ -34,21 +34,27 @@ pub struct LocalClient {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LocalUsers {
     users: Vec<LocalUser>,
-    machine: String,
+    matches: Vec<Option<String>>,
+}
+
+fn is_sid(name: &str) -> bool {
+    cfg!(windows) && (name.starts_with("S-1-") || name.starts_with("s-1-"))
 }
 
 impl LocalUsers {
     /// The list from the policy; bare Windows names are qualified with this computer's name.
+    /// Looks up the accounts of SID entries, so call it off the async runtime.
     pub fn new(users: Vec<LocalUser>) -> LocalUsers {
         LocalUsers::with_machine(users, crate::ipc::local_machine_name())
     }
 
-    /// The list with an explicit computer name for bare Windows names.
+    /// The list with an explicit computer name for bare Windows names. A Windows entry may be a
+    /// SID (`S-1-5-21-...`): it matches the account that SID belongs to, resolved here; a SID
+    /// that names no account matches nobody.
     pub fn with_machine(users: Vec<LocalUser>, machine: impl Into<String>) -> LocalUsers {
-        LocalUsers {
-            users,
-            machine: machine.into(),
-        }
+        let machine = machine.into();
+        let matches = users.iter().map(|u| qualified(&u.name, &machine)).collect();
+        LocalUsers { users, matches }
     }
 
     /// The client record of `peer`. Only a local IPC peer whose kernel-reported OS user is in
@@ -62,7 +68,9 @@ impl LocalUsers {
         let user = self
             .users
             .iter()
-            .find(|u| self.same_user(&u.name, os_user))
+            .zip(&self.matches)
+            .find(|(_, m)| m.as_deref().is_some_and(|m| same_user(m, os_user)))
+            .map(|(u, _)| u)
             .ok_or(RejectReason::LocalUserUnknown)?;
         Ok(LocalClient {
             os_user: os_user.clone(),
@@ -70,18 +78,27 @@ impl LocalUsers {
             label: user.label.clone(),
         })
     }
+}
 
-    fn same_user(&self, entry: &str, os_user: &str) -> bool {
-        if cfg!(windows) {
-            let entry = if entry.contains('\\') {
-                entry.to_string()
-            } else {
-                format!("{}\\{entry}", self.machine)
-            };
-            entry.to_lowercase() == os_user.to_lowercase()
-        } else {
-            entry == os_user
-        }
+fn qualified(entry: &str, machine: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return Some(entry.to_string());
+    }
+    if is_sid(entry) {
+        return crate::ipc::account_of_sid(entry);
+    }
+    Some(if entry.contains('\\') {
+        entry.to_string()
+    } else {
+        format!("{machine}\\{entry}")
+    })
+}
+
+fn same_user(entry: &str, os_user: &str) -> bool {
+    if cfg!(windows) {
+        entry.to_lowercase() == os_user.to_lowercase()
+    } else {
+        entry == os_user
     }
 }
 

@@ -129,19 +129,43 @@ pub(crate) fn set_handle_dacl(handle: HANDLE, sddl: &str) -> Result<(), NetError
     Ok(())
 }
 
-/// Whether every access-allowed entry of the DACL of `path` names the current user, SYSTEM or
-/// Administrators. A missing DACL (everyone) or any other allowed SID makes the file insecure.
-pub(crate) fn owner_only(path: &Path) -> Result<bool, NetError> {
-    let own = token_sid_string(&process_token()?)?;
+/// What the security descriptor of a file says about who can reach it.
+pub(crate) struct FileAccess {
+    /// Owner SID; the owner can always rewrite the DACL.
+    pub(crate) owner: Option<String>,
+    /// SIDs of the access-allowed entries; `None` when the DACL is missing (everyone) or holds
+    /// an entry of a kind that is not plain allow or deny.
+    pub(crate) allowed: Option<Vec<String>>,
+}
+
+impl FileAccess {
+    /// Whether only `own`, SYSTEM and Administrators own the file and are allowed into it.
+    pub(crate) fn private_to(&self, own: &str) -> bool {
+        let trusted = |sid: &str| {
+            [own, SYSTEM_SID, ADMINISTRATORS_SID]
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(sid))
+        };
+        let owner_ok = self.owner.as_deref().is_some_and(trusted);
+        let allowed_ok = self
+            .allowed
+            .as_ref()
+            .is_some_and(|sids| sids.iter().all(|s| trusted(s)));
+        owner_ok && allowed_ok
+    }
+}
+
+fn file_access(path: &Path) -> Result<FileAccess, NetError> {
     let name = wide(&path.to_string_lossy());
+    let mut owner: PSID = null_mut();
     let mut dacl: *mut ACL = null_mut();
     let mut sd: PSECURITY_DESCRIPTOR = null_mut();
     let status = unsafe {
         GetNamedSecurityInfoW(
             name.as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            null_mut(),
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
             null_mut(),
             &mut dacl,
             null_mut(),
@@ -156,9 +180,18 @@ pub(crate) fn owner_only(path: &Path) -> Result<bool, NetError> {
         )));
     }
     let _free = Descriptor(sd);
+    let owner = if owner.is_null() {
+        None
+    } else {
+        Some(sid_to_string(owner)?)
+    };
     if dacl.is_null() {
-        return Ok(false);
+        return Ok(FileAccess {
+            owner,
+            allowed: None,
+        });
     }
+    let mut allowed = Vec::new();
     let count = unsafe { (*dacl).AceCount } as u32;
     for i in 0..count {
         let mut ace: *mut c_void = null_mut();
@@ -168,19 +201,31 @@ pub(crate) fn owner_only(path: &Path) -> Result<bool, NetError> {
         let header = unsafe { &*(ace as *const ACE_HEADER) };
         match header.AceType {
             0 => {
-                let allowed = ace as *const ACCESS_ALLOWED_ACE;
-                let sid = unsafe { &(*allowed).SidStart } as *const u32 as PSID;
-                let sid = sid_to_string(sid)?;
-                let trusted = [own.as_str(), SYSTEM_SID, ADMINISTRATORS_SID];
-                if !trusted.iter().any(|t| t.eq_ignore_ascii_case(&sid)) {
-                    return Ok(false);
-                }
+                let entry = ace as *const ACCESS_ALLOWED_ACE;
+                let sid = unsafe { &(*entry).SidStart } as *const u32 as PSID;
+                allowed.push(sid_to_string(sid)?);
             }
             1 => {}
-            _ => return Ok(false),
+            _ => {
+                return Ok(FileAccess {
+                    owner,
+                    allowed: None,
+                })
+            }
         }
     }
-    Ok(true)
+    Ok(FileAccess {
+        owner,
+        allowed: Some(allowed),
+    })
+}
+
+/// Whether `path` is owned by the current user, SYSTEM or Administrators and every
+/// access-allowed entry of its DACL names one of them. A missing DACL (everyone), another
+/// owner or any other allowed SID makes the file insecure.
+pub(crate) fn owner_only(path: &Path) -> Result<bool, NetError> {
+    let own = token_sid_string(&process_token()?)?;
+    Ok(file_access(path)?.private_to(&own))
 }
 
 /// String SID of the owner of a kernel object handle (a pipe).

@@ -128,6 +128,7 @@ async fn reload_changes_the_dacl_for_new_clients() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     listener
         .set_access(IpcAccess::Principals(vec![USERS_SID.into()]))
+        .await
         .unwrap();
     let second = open();
     let after = handle_sddl(second.as_raw_handle() as HANDLE);
@@ -135,9 +136,49 @@ async fn reload_changes_the_dacl_for_new_clients() {
         after.contains("BU)") || after.contains(USERS_SID),
         "{after}"
     );
-    listener.set_access(IpcAccess::OwnerOnly).unwrap();
+    listener.set_access(IpcAccess::OwnerOnly).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let third = open();
     let back = handle_sddl(third.as_raw_handle() as HANDLE);
     assert!(!back.contains("BU)") && !back.contains(USERS_SID), "{back}");
+}
+
+fn access(owner: Option<&str>, allowed: Option<&[&str]>) -> FileAccess {
+    FileAccess {
+        owner: owner.map(str::to_string),
+        allowed: allowed.map(|a| a.iter().map(|s| s.to_string()).collect()),
+    }
+}
+
+#[test]
+fn private_file_needs_a_trusted_owner_and_trusted_entries() {
+    let me = "S-1-5-21-7-7-7-1001";
+    let other = "S-1-5-21-7-7-7-1002";
+    assert!(access(Some(me), Some(&[me])).private_to(me));
+    assert!(access(Some(SYSTEM_SID), Some(&[me, ADMINISTRATORS_SID])).private_to(me));
+    assert!(access(Some(ADMINISTRATORS_SID), Some(&[me])).private_to(me));
+    assert!(
+        !access(Some(other), Some(&[me])).private_to(me),
+        "another owner can rewrite the DACL"
+    );
+    assert!(!access(None, Some(&[me])).private_to(me));
+    assert!(!access(Some(me), Some(&[me, other])).private_to(me));
+    assert!(
+        !access(Some(me), None).private_to(me),
+        "no DACL is everyone"
+    );
+}
+
+#[test]
+fn own_key_file_reads_back_as_private() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../temp")
+        .join(format!("lr-acl-own-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("k");
+    crate::files::write_private(&path, b"x").unwrap();
+    let got = file_access(&path).unwrap();
+    assert_eq!(got.owner.as_deref(), Some(own_sid().as_str()));
+    assert!(owner_only(&path).unwrap());
+    std::fs::remove_dir_all(&dir).unwrap();
 }

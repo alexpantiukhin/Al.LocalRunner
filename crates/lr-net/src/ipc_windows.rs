@@ -53,8 +53,19 @@ pub(crate) fn admin_principals() -> &'static [&'static str] {
     &[SYSTEM_SID, ADMINISTRATORS_SID]
 }
 
+pub(crate) fn account_of_sid(sid: &str) -> Option<String> {
+    sid_text_account_name(sid).ok()
+}
+
 pub(crate) fn machine_name() -> String {
     computer_name().unwrap_or_default()
+}
+
+async fn sddl_off_runtime(access: &IpcAccess) -> Result<String, NetError> {
+    let access = access.clone();
+    tokio::task::spawn_blocking(move || sddl(&access))
+        .await
+        .map_err(|e| NetError::Io(e.to_string()))?
 }
 
 fn sddl(access: &IpcAccess) -> Result<String, NetError> {
@@ -93,7 +104,7 @@ pub(crate) async fn listen(
     access: &IpcAccess,
     tx: mpsc::Sender<StreamTransport>,
 ) -> Result<(JoinHandle<()>, AccessCell), NetError> {
-    let sddl = sddl(access)?;
+    let sddl = sddl_off_runtime(access).await?;
     let mut server = create(name, &sddl, true)?;
     let cell: AccessCell = Arc::new(Mutex::new(AccessState {
         sddl,
@@ -131,8 +142,8 @@ pub(crate) async fn listen(
     Ok((task, cell))
 }
 
-pub(crate) fn update_access(cell: &AccessCell, access: &IpcAccess) -> Result<(), NetError> {
-    let new = sddl(access)?;
+pub(crate) async fn update_access(cell: &AccessCell, access: &IpcAccess) -> Result<(), NetError> {
+    let new = sddl_off_runtime(access).await?;
     let mut state = lock(cell);
     set_handle_dacl(state.waiting as HANDLE, &new)?;
     state.sddl = new;

@@ -26,6 +26,10 @@ pub(crate) fn admin_principals() -> &'static [&'static str] {
     &["0"]
 }
 
+pub(crate) fn account_of_sid(_sid: &str) -> Option<String> {
+    None
+}
+
 pub(crate) fn machine_name() -> String {
     String::new()
 }
@@ -99,7 +103,7 @@ pub(crate) async fn listen(
     Ok((task, path.to_path_buf()))
 }
 
-pub(crate) fn update_access(cell: &AccessCell, access: &IpcAccess) -> Result<(), NetError> {
+pub(crate) async fn update_access(cell: &AccessCell, access: &IpcAccess) -> Result<(), NetError> {
     std::fs::set_permissions(cell, std::fs::Permissions::from_mode(mode(access)))?;
     Ok(())
 }
@@ -140,10 +144,11 @@ pub(crate) async fn dial(
         .write_all(PREAMBLE)
         .await
         .map_err(|e| TransportError::Io(e.to_string()))?;
+    let os_user = tokio::task::spawn_blocking(move || user_name(uid))
+        .await
+        .map_err(|e| TransportError::Io(e.to_string()))?;
     let peer = Peer {
-        endpoint: Endpoint::Ipc {
-            os_user: user_name(uid),
-        },
+        endpoint: Endpoint::Ipc { os_user },
         key: None,
         access: PeerAccess::Local,
     };

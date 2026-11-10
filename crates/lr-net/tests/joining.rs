@@ -177,3 +177,51 @@ async fn members_are_not_limited_to_join() {
         .unwrap();
     server.recv().await.expect("the full frame limit applies");
 }
+
+#[tokio::test]
+async fn open_code_check_is_cached_briefly_and_refreshed_by_issue() {
+    use lr_abstractions::{BrokerStore, JoinCodeRow};
+    let b = broker().await;
+    let err = b.dial(&key()).await.err().expect("no code yet");
+    assert_eq!(refusal_code(&err), Some(ProtocolErrorCode::JoinCodeUnknown));
+    b.store
+        .issue_code(JoinCodeRow {
+            code_hash: "sha256:00".into(),
+            kind: MachineKind::Runner,
+            name: None,
+            label: None,
+            uses_left: 1,
+            issued_at: T0,
+            expires_at: at_min(60),
+            redeemed_at: None,
+            machine_name: None,
+        })
+        .await
+        .unwrap();
+    let err = b.dial(&key()).await.err().expect("the cached answer holds");
+    assert_eq!(refusal_code(&err), Some(ProtocolErrorCode::JoinCodeUnknown));
+    b.clock
+        .advance(Duration::from_millis(lr_net::OPEN_CODE_CACHE_MS));
+    b.dial(&key()).await.expect("the cache expired");
+    b.accept().await;
+
+    let b = broker().await;
+    assert!(b.dial(&key()).await.is_err());
+    b.issue(MachineKind::Runner, 1).await;
+    b.dial(&key())
+        .await
+        .expect("issuing through the registry refreshes the answer at once");
+    b.accept().await;
+
+    let b = broker().await;
+    let code = b.issue(MachineKind::Runner, 1).await;
+    b.dial(&key()).await.expect("the code is open");
+    b.accept().await;
+    let k = key();
+    b.registry
+        .redeem(join_request(&code, "light", &k), &k.public_key(), T0)
+        .await
+        .unwrap();
+    let err = b.dial(&key()).await.err().expect("the last use is spent");
+    assert_eq!(refusal_code(&err), Some(ProtocolErrorCode::JoinCodeUnknown));
+}

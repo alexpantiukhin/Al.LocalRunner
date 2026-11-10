@@ -177,3 +177,49 @@ pub async fn send_proof(tls: &mut TlsStream<TcpStream>, proof: &AuthToBroker) ->
     write_frame(tls, &encode(proof).unwrap()).await.unwrap();
     decode(&read_frame(tls).await.unwrap()).unwrap()
 }
+
+pub async fn tcp_from(source: &str, addr: &str) -> TcpStream {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind(format!("{source}:0").parse().unwrap()).unwrap();
+    socket.connect(addr.parse().unwrap()).await.unwrap()
+}
+
+/// A key proof made from `source`: the broker's verdict, or `None` when the broker dropped
+/// the connection before answering. The stream is kept open while the caller holds it.
+pub async fn prove_from(
+    b: &Broker,
+    source: &str,
+    k: &ClientKey,
+) -> (Option<TlsStream<TcpStream>>, Option<AuthFromBroker>) {
+    let config = pinned_client_config(b.identity.fingerprint()).unwrap();
+    let tcp = tcp_from(source, &b.addr).await;
+    let Ok(mut tls) = TlsConnector::from(config).connect(server_name(), tcp).await else {
+        return (None, None);
+    };
+    let Ok(Ok(frame)) = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut tls)).await
+    else {
+        return (None, None);
+    };
+    let Ok(AuthFromBroker::Challenge { nonce }) = decode::<AuthFromBroker>(&frame) else {
+        return (None, None);
+    };
+    let nonce = URL_SAFE_NO_PAD.decode(nonce).unwrap();
+    let binding = lr_net::channel_binding(tls.get_ref().1).unwrap();
+    let proof = AuthToBroker::Proof {
+        public_key: k.public_key(),
+        signature: k.sign_challenge(&b.identity.fingerprint(), &binding, &nonce),
+    };
+    if write_frame(&mut tls, &encode(&proof).unwrap())
+        .await
+        .is_err()
+    {
+        return (None, None);
+    }
+    match read_frame(&mut tls).await {
+        Ok(reply) => {
+            let verdict = decode::<AuthFromBroker>(&reply).ok();
+            (Some(tls), verdict)
+        }
+        Err(_) => (None, None),
+    }
+}

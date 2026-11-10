@@ -1,12 +1,14 @@
 use crate::auth::AUTH_FRAME_LIMIT;
 use crate::codec::{read_frame, read_frame_limited, write_end, write_frame};
+use crate::slots::Slot;
 use async_trait::async_trait;
 use lr_abstractions::{Frame, Peer, Transport, TransportError, MAX_FRAME_BYTES};
 use lr_proto::{AuthFromBroker, FrameError, ProtocolError, ProtocolErrorCode};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
@@ -22,12 +24,15 @@ const DONE: u8 = 3;
 /// A joining connection ([`lr_abstractions::PeerAccess::Joining`]) is one request and one
 /// answer (spec 3.8): the first frame must be a `join` of at most
 /// [`AUTH_FRAME_LIMIT`] bytes arriving within the join timeout, the first frame sent is the
-/// last, and the transport closes the connection after it.
+/// last, and the transport closes the connection after it. It also shuts the connection down
+/// when its lifetime ends, whatever the role does, and gives back its joining slot then or
+/// when it closes, whichever comes first.
 pub struct StreamTransport {
     peer: Peer,
     reader: Mutex<Reader>,
-    writer: Mutex<Writer>,
-    closed: AtomicBool,
+    writer: Arc<Mutex<Writer>>,
+    closed: Arc<AtomicBool>,
+    done: Arc<Notify>,
     phase: AtomicU8,
     join_timeout: Duration,
 }
@@ -41,17 +46,41 @@ impl StreamTransport {
         StreamTransport {
             peer,
             reader: Mutex::new(Box::new(r)),
-            writer: Mutex::new(Box::new(w)),
-            closed: AtomicBool::new(false),
+            writer: Arc::new(Mutex::new(Box::new(w))),
+            closed: Arc::new(AtomicBool::new(false)),
+            done: Arc::new(Notify::new()),
             phase: AtomicU8::new(OPEN),
             join_timeout: Duration::ZERO,
         }
     }
 
-    pub(crate) fn join_only(mut self, timeout: Duration) -> StreamTransport {
+    pub(crate) fn join_only(
+        mut self,
+        timeout: Duration,
+        lifetime: Duration,
+        slot: Slot,
+    ) -> StreamTransport {
         self.phase = AtomicU8::new(AWAIT_JOIN);
         self.join_timeout = timeout;
+        let (writer, closed, done) = (self.writer.clone(), self.closed.clone(), self.done.clone());
+        tokio::spawn(async move {
+            let ended = tokio::time::timeout(lifetime, done.notified()).await;
+            if ended.is_err() && !closed.swap(true, Ordering::SeqCst) {
+                let shut = async {
+                    let mut w = writer.lock().await;
+                    let _ = write_end(&mut *w).await;
+                    let _ = w.shutdown().await;
+                };
+                let _ = tokio::time::timeout(Duration::from_secs(1), shut).await;
+            }
+            drop(slot);
+        });
         self
+    }
+
+    fn mark_closed(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        self.done.notify_one();
     }
 
     async fn refuse_not_join(&self) -> TransportError {
@@ -97,7 +126,7 @@ impl Transport for StreamTransport {
         }
         let result = self.write(frame.as_bytes()).await;
         if matches!(result, Err(TransportError::Closed | TransportError::Io(_))) {
-            self.closed.store(true, Ordering::SeqCst);
+            self.mark_closed();
         }
         if self.phase.load(Ordering::SeqCst) != OPEN {
             self.phase.store(DONE, Ordering::SeqCst);
@@ -131,7 +160,7 @@ impl Transport for StreamTransport {
         let bytes = match read {
             Ok(bytes) => bytes,
             Err(e) => {
-                self.closed.store(true, Ordering::SeqCst);
+                self.mark_closed();
                 return Err(match e {
                     FrameError::Closed => TransportError::Closed,
                     FrameError::TooLarge { len } => TransportError::TooLarge { len: len as usize },
@@ -153,10 +182,17 @@ impl Transport for StreamTransport {
 
     async fn close(&self) {
         let was_closed = self.closed.swap(true, Ordering::SeqCst);
+        self.done.notify_one();
         let mut w = self.writer.lock().await;
         if !was_closed {
             let _ = write_end(&mut *w).await;
         }
         let _ = w.shutdown().await;
+    }
+}
+
+impl Drop for StreamTransport {
+    fn drop(&mut self) {
+        self.done.notify_one();
     }
 }

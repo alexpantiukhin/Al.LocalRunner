@@ -2,12 +2,13 @@ use crate::auth::{accept_proof, Admit, KeyGate};
 use crate::error::NetError;
 use crate::fingerprint::Fingerprint;
 use crate::listen_addr::ListenAddr;
-use crate::slots::{Limits, Slots};
+use crate::slots::{Limits, Slot, Slots};
 use crate::stream::StreamTransport;
 use crate::tls::{channel_binding, BrokerIdentity};
 use async_trait::async_trait;
 use lr_abstractions::{Listener, Peer, PeerAccess, Transport, TransportError};
 use lr_core::Endpoint;
+use lr_proto::{ProtocolError, ProtocolErrorCode};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,7 +21,9 @@ use tokio_rustls::TlsAcceptor;
 /// The broker's TLS listener (spec 3.8, 3.9). Every accepted connection has passed TLS with
 /// the broker certificate and the signed-nonce key proof; the peer is its source address, the
 /// proven key and its [`PeerAccess`]. Handshakes run in background tasks under the
-/// [`Limits`], so a slow or flooding peer delays no other.
+/// [`Limits`], so a slow or flooding peer delays no other. A handshake keeps its slot until
+/// the role took the transport; one the role does not take within `handover_timeout` is
+/// closed.
 pub struct TlsListener {
     local: SocketAddr,
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
@@ -60,7 +63,7 @@ impl TlsListener {
             gate,
             slots: Slots::new(limits),
         });
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, rx) = mpsc::channel(1);
         let task = tokio::spawn(accept_loop(tcp, shared, tx));
         Ok(TlsListener {
             local,
@@ -97,12 +100,14 @@ async fn accept_loop(tcp: TcpListener, shared: Arc<Shared>, tx: mpsc::Sender<Str
         };
         let (shared, tx) = (shared.clone(), tx.clone());
         tokio::spawn(async move {
-            let timeout = shared.slots.limits().handshake_timeout;
-            let done = tokio::time::timeout(timeout, handshake(stream, ip, &shared)).await;
-            drop(slot);
+            let limits = shared.slots.limits().clone();
+            let done =
+                tokio::time::timeout(limits.handshake_timeout, handshake(stream, ip, &shared))
+                    .await;
             if let Ok(Some(transport)) = done {
-                let _ = tx.send(transport).await;
+                let _ = tokio::time::timeout(limits.handover_timeout, tx.send(transport)).await;
             }
+            drop(slot);
         });
     }
 }
@@ -115,7 +120,13 @@ async fn handshake(
     let _ = stream.set_nodelay(true);
     let mut tls = shared.acceptor.accept(stream).await.ok()?;
     let binding = channel_binding(tls.get_ref().1).ok()?;
-    let proof = accept_proof(&mut tls, &shared.own, &binding, shared.gate.as_ref()).await;
+    let gate = JoiningGate {
+        inner: shared.gate.as_ref(),
+        slots: &shared.slots,
+        ip,
+        slot: std::sync::Mutex::new(None),
+    };
+    let proof = accept_proof(&mut tls, &shared.own, &binding, &gate).await;
     let (key, admit) = match proof {
         Ok(x) => x,
         Err(_) => {
@@ -136,10 +147,39 @@ async fn handshake(
         access,
     };
     let transport = StreamTransport::new(tls, peer);
-    Some(match access {
-        PeerAccess::Joining => transport.join_only(shared.slots.limits().join_timeout),
-        _ => transport,
-    })
+    if access != PeerAccess::Joining {
+        return Some(transport);
+    }
+    let slot = gate.slot.lock().unwrap_or_else(|e| e.into_inner()).take()?;
+    let limits = shared.slots.limits();
+    Some(transport.join_only(limits.join_timeout, limits.joining_lifetime, slot))
+}
+
+struct JoiningGate<'a> {
+    inner: &'a dyn KeyGate,
+    slots: &'a Arc<Slots>,
+    ip: std::net::IpAddr,
+    slot: std::sync::Mutex<Option<Slot>>,
+}
+
+#[async_trait]
+impl KeyGate for JoiningGate<'_> {
+    async fn admit(&self, public_key: &str) -> Admit {
+        match self.inner.admit(public_key).await {
+            Admit::Joining => match self.slots.acquire_joining(self.ip) {
+                Some(slot) => {
+                    *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(slot);
+                    Admit::Joining
+                }
+                None => Admit::Refused(ProtocolError {
+                    code: ProtocolErrorCode::RateLimited,
+                    message: "too many joining connections; try again later".into(),
+                    supported: None,
+                }),
+            },
+            other => other,
+        }
+    }
 }
 
 #[async_trait]
