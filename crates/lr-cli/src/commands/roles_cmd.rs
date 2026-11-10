@@ -1,10 +1,7 @@
-//! `hub run`, `broker run`, `runner run` (roles in the foreground, spec 11.1) and `down` for
-//! runners through their local control channel (spec 3.9).
+//! `hub run`, `broker run`, `runner run`: roles in the foreground (spec 11.1).
 
-use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use crate::roles::{self, Running};
-use lr_proto::{ControlReply, DownMode, IpcChannel, RunnerControl};
 use lr_runner::AgentExit;
 use std::path::PathBuf;
 
@@ -90,46 +87,4 @@ pub async fn runner_run(
         roles::start_runners(layout, name.as_deref(), count, config.as_deref(), true).await?;
     eprintln!("runners running: {}", running.runners.join(", "));
     until_interrupted(running).await
-}
-
-/// `down [names] [--drain | --cancel]` for runners of this installation.
-pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i32, String> {
-    let names = if names.is_empty() {
-        layout.runner_names()
-    } else {
-        names
-    };
-    if names.is_empty() {
-        return Err("no runners on this installation".into());
-    }
-    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
-    let mode = if cancel {
-        DownMode::Cancel
-    } else {
-        DownMode::Drain
-    };
-    let mut code = 0;
-    for name in names {
-        if let Err(e) = crate::runner_config::check_runner_name(&name) {
-            eprintln!("{e}");
-            code = 1;
-            continue;
-        }
-        let address = layout.runner_ipc(&principal, &name);
-        let reply = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
-            Ok(c) => {
-                c.call::<_, ControlReply>(&RunnerControl::Down { mode })
-                    .await
-            }
-            Err(e) => Err(e),
-        };
-        match reply {
-            Ok(ControlReply::Ok) => println!("{name}: stopping ({mode:?})"),
-            Ok(ControlReply::Failed { message }) | Err(message) => {
-                eprintln!("{name}: {message}");
-                code = 1;
-            }
-        }
-    }
-    Ok(code)
 }

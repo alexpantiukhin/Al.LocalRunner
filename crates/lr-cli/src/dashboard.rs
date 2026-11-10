@@ -4,6 +4,7 @@
 
 use crate::commands::jobs::hub;
 use crate::commands::view::{known_brokers, read};
+use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use async_trait::async_trait;
 use lr_abstractions::{CancelRequest, DataError, DataSource, EventStream};
@@ -90,6 +91,85 @@ impl EventStream<DashboardEvent> for Ticks {
     }
 }
 
+/// The model of the dashboard and of `status --html` from every reachable broker: running jobs
+/// and the queue (filtered by `filter`), finished runs when `history`, runners and statistics.
+pub async fn build_snapshot(
+    client: &IpcClient,
+    filter: &StatusFilter,
+    history: bool,
+) -> Result<DashboardSnapshot, String> {
+    let brokers = known_brokers(client).await?;
+    let mut snap = DashboardSnapshot {
+        taken_at: now(),
+        brokers: brokers.clone(),
+        jobs: Vec::new(),
+        runners: Vec::new(),
+        stats: StatsView {
+            profiles: Vec::new(),
+            clients: Vec::new(),
+        },
+    };
+    for b in brokers.iter().filter(|b| b.available) {
+        let name = b.name.as_str();
+        let status = read(client, name, ReadRequest::Status(filter.clone())).await;
+        let Ok(ReadReply::Status(status)) = status else {
+            continue;
+        };
+        for r in status.running {
+            let mut j = job(
+                name,
+                DashboardList::Running,
+                detail_of(r.summary, r.steps, None),
+            );
+            j.last_lines = r.last_lines;
+            snap.jobs.push(j);
+        }
+        for q in status.queue {
+            let mut j = job(
+                name,
+                DashboardList::Queued,
+                detail_of(q.summary, Vec::new(), q.wait_reason),
+            );
+            j.position = Some(q.position);
+            snap.jobs.push(j);
+        }
+        let finished = HistoryFilter {
+            project: filter.project.clone(),
+            source: filter.source,
+            label: filter.label.clone(),
+            limit: Some(100),
+            ..HistoryFilter::default()
+        };
+        let answer = match history {
+            true => Some(read(client, name, ReadRequest::History(finished)).await),
+            false => None,
+        };
+        if let Some(Ok(ReadReply::History { jobs, .. })) = answer {
+            for s in jobs.into_iter().filter(|s| s.state.is_final()) {
+                snap.jobs.push(job(
+                    name,
+                    DashboardList::History,
+                    detail_of(s, Vec::new(), None),
+                ));
+            }
+        }
+        if let Ok(ReadReply::Runners { runners }) = read(client, name, ReadRequest::Runners).await {
+            snap.runners.push(BrokerRunners {
+                broker: name.to_string(),
+                pool: status.pool,
+                runners,
+                stale: false,
+            });
+        }
+        if let Ok(ReadReply::Stats(s)) =
+            read(client, name, ReadRequest::Stats(StatsFilter::default())).await
+        {
+            merge_stats(&mut snap.stats, s);
+        }
+    }
+    Ok(snap)
+}
+
 #[async_trait]
 impl DataSource for HubSource {
     type Snapshot = DashboardSnapshot;
@@ -97,74 +177,9 @@ impl DataSource for HubSource {
 
     async fn snapshot(&self) -> Result<DashboardSnapshot, DataError> {
         let client = hub(&self.layout).await.map_err(unavailable)?;
-        let brokers = known_brokers(&client).await.map_err(unavailable)?;
-        let mut snap = DashboardSnapshot {
-            taken_at: now(),
-            brokers: brokers.clone(),
-            jobs: Vec::new(),
-            runners: Vec::new(),
-            stats: StatsView {
-                profiles: Vec::new(),
-                clients: Vec::new(),
-            },
-        };
-        for b in brokers.iter().filter(|b| b.available) {
-            let name = b.name.as_str();
-            let status = read(&client, name, ReadRequest::Status(StatusFilter::default())).await;
-            let Ok(ReadReply::Status(status)) = status else {
-                continue;
-            };
-            for r in status.running {
-                let mut j = job(
-                    name,
-                    DashboardList::Running,
-                    detail_of(r.summary, r.steps, None),
-                );
-                j.last_lines = r.last_lines;
-                snap.jobs.push(j);
-            }
-            for q in status.queue {
-                let mut j = job(
-                    name,
-                    DashboardList::Queued,
-                    detail_of(q.summary, Vec::new(), q.wait_reason),
-                );
-                j.position = Some(q.position);
-                snap.jobs.push(j);
-            }
-            let history = HistoryFilter {
-                limit: Some(100),
-                ..HistoryFilter::default()
-            };
-            if let Ok(ReadReply::History { jobs, .. }) =
-                read(&client, name, ReadRequest::History(history)).await
-            {
-                for s in jobs.into_iter().filter(|s| s.state.is_final()) {
-                    snap.jobs.push(job(
-                        name,
-                        DashboardList::History,
-                        detail_of(s, Vec::new(), None),
-                    ));
-                }
-            }
-            if let Ok(ReadReply::Runners { runners }) =
-                read(&client, name, ReadRequest::Runners).await
-            {
-                snap.runners.push(BrokerRunners {
-                    broker: name.to_string(),
-                    pool: status.pool,
-                    runners,
-                    stale: false,
-                });
-            }
-            if let Ok(ReadReply::Stats(s)) =
-                read(&client, name, ReadRequest::Stats(StatsFilter::default())).await
-            {
-                merge_stats(&mut snap.stats, s);
-            }
-        }
+        let snap = build_snapshot(&client, &StatusFilter::default(), true).await;
         client.close().await;
-        Ok(snap)
+        snap.map_err(unavailable)
     }
 
     async fn subscribe(&self) -> Result<Box<dyn EventStream<DashboardEvent>>, DataError> {

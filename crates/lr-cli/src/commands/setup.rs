@@ -163,7 +163,7 @@ pub fn uninstall_plan(
     Ok(out)
 }
 
-/// `uninstall [--purge] [--yes] [--dir] [--dry-run]` (spec 10.5): stops the runners, removes
+/// `uninstall [--purge] [--yes] [--dir] [--dry-run]` (spec 10.5): stops the roles (`down`), removes
 /// autostart, the broker service (as administrator) and the binary; keys and history stay
 /// unless `--purge` is confirmed. Keys stay registered at brokers until `runner remove`.
 pub async fn uninstall(
@@ -178,9 +178,9 @@ pub async fn uninstall(
         None => default_bin_dir()?,
     };
     let mut code = 0;
-    if !dry_run && !layout.runner_names().is_empty() {
-        if let Err(e) = super::roles_cmd::down(layout, Vec::new(), false).await {
-            eprintln!("stopping runners: {e}");
+    if !dry_run {
+        if let Err(e) = super::down_cmd::down(layout, Vec::new(), false).await {
+            eprintln!("stopping the roles: {e}");
         }
     }
     let service = service_installed(Os::current());
@@ -200,7 +200,7 @@ pub async fn uninstall(
         }
     }
     if !dry_run {
-        println!("uninstalled; hubs and brokers started by hand stop with Ctrl+C or `down`");
+        println!("uninstalled");
     }
     Ok(code)
 }

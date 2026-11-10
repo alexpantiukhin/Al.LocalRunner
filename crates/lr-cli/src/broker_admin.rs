@@ -146,7 +146,15 @@ pub struct BrokerAdmin {
     /// Serializes `policy reload`: the file read, the engine's policy and the IPC access
     /// always change together and in order.
     pub reloads: tokio::sync::Mutex<()>,
+    /// Signalled by `down` (`shutdown`): the process running this broker stops it.
+    pub stop: Arc<tokio::sync::Notify>,
+    /// The broker runs under the OS service manager: `down` leaves it to that manager.
+    pub service: bool,
 }
+
+/// The warning `down` gets from a broker that runs as an OS service and stays.
+pub const SERVICE_STAYS: &str =
+    "the broker runs as an OS service and keeps running: stop it with `localrunner autostart off broker` (administrator) or the OS service manager";
 
 fn failed(message: impl Into<String>) -> AdminReply {
     AdminReply::Failed {
@@ -276,6 +284,18 @@ impl BrokerAdmin {
         }
     }
 
+    fn shutdown(&self) -> AdminReply {
+        if self.service {
+            return AdminReply::Ok {
+                warnings: vec![SERVICE_STAYS.to_string()],
+            };
+        }
+        self.stop.notify_one();
+        AdminReply::Ok {
+            warnings: Vec::new(),
+        }
+    }
+
     async fn names(&self, kind: MachineKind) -> AdminReply {
         match self.registry.machines().await {
             Err(e) => failed(e.to_string()),
@@ -307,6 +327,7 @@ impl AdminApi for BrokerAdmin {
             AdminRequest::ClientRemove { name } => self.remove(&name, MachineKind::Hub).await,
             AdminRequest::RunnerList => self.names(MachineKind::Runner).await,
             AdminRequest::ClientList => self.names(MachineKind::Hub).await,
+            AdminRequest::Shutdown => self.shutdown(),
         }
     }
 }

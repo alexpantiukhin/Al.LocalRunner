@@ -11,6 +11,7 @@ use lr_runner::AgentExit;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 /// A role running in this process.
@@ -21,6 +22,7 @@ pub struct Running {
     /// Names of the started runners (empty for hub and broker).
     pub runners: Vec<String>,
     exits: Vec<JoinHandle<AgentExit>>,
+    stop_signal: Option<Arc<Notify>>,
 }
 
 impl Running {
@@ -29,7 +31,8 @@ impl Running {
         self.tls.as_ref().map(|t| t.bound()).unwrap_or_default()
     }
 
-    /// Waits until the role ends on its own (a runner after `down`, a refused key).
+    /// Waits until the role ends on its own (a runner after `down`, a refused key, a hub or
+    /// broker told to stop by `down`).
     pub async fn wait(mut self) -> Vec<AgentExit> {
         let mut out = Vec::new();
         for e in std::mem::take(&mut self.exits) {
@@ -38,8 +41,18 @@ impl Running {
             }
         }
         if out.is_empty() {
-            for t in std::mem::take(&mut self.tasks) {
-                let _ = t.await;
+            let tasks = &mut self.tasks;
+            let all = async {
+                for t in tasks.iter_mut() {
+                    let _ = t.await;
+                }
+            };
+            match self.stop_signal.clone() {
+                Some(stop) => tokio::select! {
+                    _ = all => {}
+                    _ = stop.notified() => {}
+                },
+                None => all.await,
             }
         }
         self.stop();
@@ -75,6 +88,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
     let parts = build::broker(layout, foreground).await?;
     let broker_task = tokio::spawn(parts.broker.run());
     let admin_ipc: Arc<dyn Listener> = parts.admin_ipc;
+    let stop = parts.admin.stop.clone();
     let admin_task = tokio::spawn(admin::serve(admin_ipc, parts.admin));
     Ok(Running {
         tasks: vec![broker_task, admin_task],
@@ -82,6 +96,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
         tls: Some(parts.tls),
         runners: Vec::new(),
         exits: Vec::new(),
+        stop_signal: Some(stop),
     })
 }
 
@@ -95,6 +110,7 @@ pub async fn start_hub(layout: &Layout, foreground: bool) -> Result<Running, Str
         tls: None,
         runners: Vec::new(),
         exits: Vec::new(),
+        stop_signal: None,
     })
 }
 
@@ -144,6 +160,7 @@ pub async fn start_runners(
         tls: None,
         runners: Vec::new(),
         exits: Vec::new(),
+        stop_signal: None,
     };
     for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;

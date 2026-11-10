@@ -197,6 +197,8 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         clock,
         host,
         reloads: tokio::sync::Mutex::new(()),
+        stop: Arc::new(tokio::sync::Notify::new()),
+        service: layout.is_service(),
     });
     Ok(BrokerParts {
         broker,

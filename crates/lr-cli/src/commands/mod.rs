@@ -2,14 +2,23 @@
 
 pub mod admin_cmd;
 pub mod args;
+pub mod down_cmd;
+pub mod history_cmd;
 pub mod jobs;
 pub mod join_cmd;
+pub mod log_cmd;
+pub mod read_args;
+pub mod read_cmd;
 pub mod roles_cmd;
 pub mod service_cmd;
 pub mod setup;
+pub mod snapshot_cmd;
+pub mod timefmt;
+pub mod up_cmd;
 pub mod view;
 
 pub use args::*;
+pub use read_args::*;
 
 use crate::paths::Layout;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -142,6 +151,25 @@ pub enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// The HTML snapshot instead of text.
+        #[command(flatten)]
+        html: SnapshotArgs,
+    },
+    /// Why an order waits, naming the policy rule that holds it.
+    Explain(ExplainArgs),
+    /// Runs of this client, newest first; `history show <job>` is the full record.
+    History(HistoryArgs),
+    /// The stored log of a job; `-f` follows a running job.
+    Log(LogArgs),
+    /// Statistics and pool saturation.
+    Stats(StatsArgs),
+    /// Runners: state, platforms, programs, pool load, tags, services, cache.
+    Runners(RunnersArgs),
+    /// Start the hub, the broker and the runners as separate processes, except those running.
+    Up {
+        /// The role; the roles `init` created when omitted.
+        #[arg(value_enum)]
+        role: Option<RoleArg>,
     },
     /// Known brokers: zone, availability, orders in the outbox.
     Brokers {
@@ -151,9 +179,10 @@ pub enum Command {
     },
     /// Live dashboard on loopback.
     Dashboard,
-    /// Stop runners: finish the current job (default) or cancel it.
+    /// Stop runners, the hub and the broker: runners finish the current job (default) or
+    /// cancel it.
     Down {
-        /// Runner names; all runners of this installation when omitted.
+        /// Runner names, `hub` or `broker`; every role of this installation when omitted.
         names: Vec<String>,
         /// Finish the current job first (default).
         #[arg(long, conflicts_with = "cancel")]
@@ -299,10 +328,23 @@ pub async fn run(cli: Cli) -> i32 {
             label,
             broker,
             json,
-        } => view::status(&layout, project, source, label, broker, json).await,
+            html,
+        } => match html.html.clone() {
+            Some(path) => snapshot_cmd::write(&layout, project, source, label, path, &html).await,
+            None => view::status(&layout, project, source, label, broker, json).await,
+        },
+        Command::Explain(a) => read_cmd::explain_cmd(&layout, a).await,
+        Command::History(h) => match h.action {
+            Some(HistoryAction::Show(s)) => history_cmd::show(&layout, s).await,
+            None => history_cmd::history(&layout, h.filters).await,
+        },
+        Command::Log(a) => log_cmd::log(&layout, a).await,
+        Command::Stats(a) => read_cmd::stats(&layout, a).await,
+        Command::Runners(a) => read_cmd::runners(&layout, a).await,
+        Command::Up { role } => up_cmd::up(&layout, role).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
         Command::Dashboard => crate::dashboard::run(&layout).await,
-        Command::Down { names, cancel, .. } => roles_cmd::down(&layout, names, cancel).await,
+        Command::Down { names, cancel, .. } => down_cmd::down(&layout, names, cancel).await,
         Command::Policy { action } => match action {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
             PolicyAction::Reload => {

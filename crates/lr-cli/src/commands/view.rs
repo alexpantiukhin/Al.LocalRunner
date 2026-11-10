@@ -95,6 +95,50 @@ pub async fn known_brokers(client: &IpcClient) -> Result<Vec<BrokerStatus>, Stri
     }
 }
 
+/// The reachable brokers to ask (only `broker` when given) and a line per broker that is not
+/// reachable or not known.
+pub async fn reachable(
+    client: &IpcClient,
+    broker: Option<&str>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut names = Vec::new();
+    let mut problems = Vec::new();
+    for b in known_brokers(client).await? {
+        if broker.is_some_and(|w| w != b.name) {
+            continue;
+        }
+        if b.available {
+            names.push(b.name);
+        } else {
+            problems.push(format!("broker {} is unreachable", b.name));
+        }
+    }
+    if let Some(w) = broker.filter(|_| names.is_empty() && problems.is_empty()) {
+        problems.push(format!("broker {w} is not known to this hub"));
+    }
+    Ok((names, problems))
+}
+
+/// One line for an answer of `broker` that is not the data asked for.
+pub fn problem(broker: &str, reply: &ReadReply) -> String {
+    match reply {
+        ReadReply::NotFound { what } => format!("broker {broker}: {what} not found"),
+        ReadReply::Denied { reason } => format!("broker {broker}: refused: {reason}"),
+        ReadReply::Failed { message } => format!("broker {broker}: {message}"),
+        ReadReply::Unknown => format!("broker {broker}: the broker does not know this request"),
+        other => format!("broker {broker}: unexpected answer {other:?}"),
+    }
+}
+
+/// Prints `value` as pretty JSON.
+pub fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
 /// Asks one broker through the hub.
 pub async fn read(
     client: &IpcClient,

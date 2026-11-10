@@ -1,8 +1,8 @@
 mod common;
 
 use common::TempDir;
+use lr_cli::commands::down_cmd::down;
 use lr_cli::commands::jobs::hub;
-use lr_cli::commands::roles_cmd::down;
 use lr_cli::commands::view::{known_brokers, read};
 use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
