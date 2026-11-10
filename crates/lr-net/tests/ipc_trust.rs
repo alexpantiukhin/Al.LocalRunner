@@ -4,9 +4,11 @@ use common::*;
 use lr_abstractions::{Dialer, Listener, Peer, PeerAccess, TransportError};
 use lr_core::{Endpoint, Site, Zone};
 use lr_net::{
-    current_os_principal, current_os_user, IpcAccess, IpcDialer, IpcListener, LocalUser,
-    LocalUsers, ServerIdentity,
+    current_os_principal, current_os_user, IpcAccess, IpcDialer, IpcListener, ServerIdentity,
 };
+#[cfg(windows)]
+use lr_net::{LocalUser, LocalUsers};
+#[cfg(windows)]
 use lr_proto::RejectReason;
 use std::time::Duration;
 
@@ -132,6 +134,7 @@ fn ipc(os_user: &str) -> Peer {
     }
 }
 
+#[cfg(windows)]
 fn entry(name: &str) -> LocalUser {
     LocalUser {
         name: name.into(),
