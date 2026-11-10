@@ -134,12 +134,30 @@ pub fn require_trusted(path: &Path, account: &str) -> Result<(), String> {
     judge(path, &facts(path)?, &trusted_principals(account))
 }
 
+/// Creates the service directory `path` with mode 0700 (its parents as needed). Only `path`
+/// itself is created exclusively: one that appeared meanwhile is judged like an existing
+/// directory instead of being taken over.
+#[cfg(unix)]
+pub fn create_service_leaf(path: &Path, trusted: &[String]) -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            judge(path, &facts(path)?, trusted)
+        }
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// Checks and closes the service state directory `path`; a missing one is created already
 /// closed (Windows: with the service's protected security descriptor, Unix: mode 0700).
 /// Windows: an existing directory is checked and closed first, so nobody can add to it, then
 /// everything below is checked (links and files with several hard links refused) and finally
-/// reset to the directory's DACL and owner. Unix: the whole tree is checked, the directory
-/// gets mode 0700.
+/// reset to the directory's DACL and owner. Unix: the directory gets mode 0700 first, then
+/// everything below is checked.
 pub fn secure_service_dir(path: &Path, account: &str) -> Result<(), String> {
     let trusted = trusted_principals(account);
     let exists = std::fs::symlink_metadata(path).is_ok();
@@ -163,17 +181,12 @@ pub fn secure_service_dir(path: &Path, account: &str) -> Result<(), String> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        if exists {
-            check_children(path, &trusted)?;
-        } else {
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(path)
-                .map_err(|e| format!("{}: {e}", path.display()))?;
+        use std::os::unix::fs::PermissionsExt;
+        if !exists {
+            create_service_leaf(path, &trusted)?;
         }
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("{}: {e}", path.display()))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        check_children(path, &trusted)
     }
 }

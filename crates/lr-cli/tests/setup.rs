@@ -200,3 +200,30 @@ fn init_closes_the_state_directory_to_its_owner() {
         .mode();
     assert_eq!(mode & 0o777, 0o700);
 }
+
+#[test]
+fn an_existing_state_directory_does_not_stop_a_role_from_starting() {
+    let dir = TempDir::new("existing");
+    let root = dir.path().join("state");
+    std::fs::create_dir_all(&root).unwrap();
+    init::ensure_state_dir(&root).expect("an existing directory is used as it is");
+    let fresh = dir.path().join("fresh").join("state");
+    init::ensure_state_dir(&fresh).expect("a missing directory is created");
+    assert!(fresh.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn only_a_state_directory_created_now_is_closed() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let dir = TempDir::new("mode-existing");
+    let shared = dir.path().join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o770)).unwrap();
+    init::ensure_state_dir(&shared).unwrap();
+    assert_eq!(mode(&shared), 0o770, "an existing directory is not changed");
+    let created = dir.path().join("created");
+    init::ensure_state_dir(&created).unwrap();
+    assert_eq!(mode(&created), 0o700);
+}

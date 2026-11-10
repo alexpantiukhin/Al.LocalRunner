@@ -234,3 +234,48 @@ fn administrators_of_the_machine_own_the_broker_and_others_need_the_list() {
         assert_eq!(alex.label, "dev");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_service_directory_that_appears_meanwhile_is_judged_not_adopted() {
+    use lr_cli::os_service::trust::create_service_leaf;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("leaf");
+    let trusted = trusted_principals("no-such-service-account-lr");
+    let fresh = dir.path().join("a").join("svc");
+    create_service_leaf(&fresh, &trusted).unwrap();
+    let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let raced = dir.path().join("raced");
+    std::fs::create_dir(&raced).unwrap();
+    std::fs::set_permissions(&raced, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(create_service_leaf(&raced, &trusted).is_err());
+    let link = dir.path().join("linked");
+    std::os::unix::fs::symlink("/etc", &link).unwrap();
+    assert!(create_service_leaf(&link, &trusted)
+        .unwrap_err()
+        .contains("link"));
+}
+
+#[cfg(unix)]
+#[test]
+fn service_directory_contents_are_checked_after_it_is_closed() {
+    use lr_cli::os_service::trust::secure_service_dir;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("svc-after");
+    let svc = dir.path().join("svc");
+    std::fs::create_dir(&svc).unwrap();
+    std::fs::set_permissions(&svc, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::os::unix::fs::symlink("/etc", svc.join("link")).unwrap();
+    let account = "no-such-service-account-lr";
+    assert!(secure_service_dir(&svc, account)
+        .unwrap_err()
+        .contains("link"));
+    let mode = std::fs::metadata(&svc).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    std::fs::remove_file(svc.join("link")).unwrap();
+    secure_service_dir(&svc, account).unwrap();
+    let fresh = dir.path().join("fresh");
+    secure_service_dir(&fresh, account).unwrap();
+    assert!(fresh.is_dir());
+}
