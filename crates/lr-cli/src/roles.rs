@@ -145,7 +145,7 @@ pub async fn start_runners(
         runners: Vec::new(),
         exits: Vec::new(),
     };
-    for n in instance_names(&base, count) {
+    for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;
         for p in &parts.problems {
             eprintln!("runner {n}: {p}");

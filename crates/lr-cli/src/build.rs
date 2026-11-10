@@ -7,7 +7,7 @@ use crate::git_repo::GitRepository;
 use crate::host;
 use crate::net::{MergedListener, NetAdmission, RoutingDialer};
 use crate::paths::Layout;
-use crate::runner_config::RunnerConfig;
+use crate::runner_config::{check_runner_name, elevation_allowed, RunnerConfig};
 use crate::secrets::ConfigSecrets;
 use lr_abstractions::{Clock, Dialer, Listener, Role};
 use lr_broker::policy::{ActivePolicy, HostResources};
@@ -186,6 +186,7 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         logger: logger.clone(),
         clock,
         host,
+        reloads: tokio::sync::Mutex::new(()),
     });
     Ok(BrokerParts {
         broker,
@@ -307,6 +308,7 @@ pub async fn runner(
     config: Option<&Path>,
     foreground: bool,
 ) -> Result<RunnerParts, String> {
+    check_runner_name(name)?;
     let dir = layout.runner_dir(name);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     layout.prepare_ipc().map_err(|e| e.to_string())?;
@@ -317,12 +319,8 @@ pub async fn runner(
     let host: HostResources = host::resources();
     let mut cfg = RunnerConfig::parse(&text, Some(name), name, dir.clone(), host)
         .map_err(|e| e.to_string())?;
-    if host::is_elevated() && !cfg.allow_elevated {
-        return Err(format!(
-            "runner {name} refuses to start as root or administrator; \
-             set allow_elevated = true in runner.toml to allow it (spec 3.12)"
-        ));
-    }
+    elevation_allowed(host::is_elevated(), cfg.allow_elevated)
+        .map_err(|e| format!("runner {name}: {e}"))?;
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
     cfg.settings.home = std::env::var("HOME")

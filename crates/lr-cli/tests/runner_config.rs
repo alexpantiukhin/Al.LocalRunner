@@ -1,5 +1,7 @@
 use lr_broker::policy::HostResources;
-use lr_cli::runner_config::{instance_names, RunnerConfig, SecretFrom};
+use lr_cli::runner_config::{
+    check_runner_name, elevation_allowed, instance_names, RunnerConfig, SecretFrom, MAX_COUNT,
+};
 use std::path::PathBuf;
 
 const HOST: HostResources = HostResources {
@@ -40,8 +42,17 @@ fn name_flag_beats_the_file_and_the_host() {
 
 #[test]
 fn count_makes_numbered_names() {
-    assert_eq!(instance_names("box", 1), ["box"]);
-    assert_eq!(instance_names("box", 3), ["box-1", "box-2", "box-3"]);
+    assert_eq!(instance_names("box", 1).unwrap(), ["box"]);
+    assert_eq!(
+        instance_names("box", 3).unwrap(),
+        ["box-1", "box-2", "box-3"]
+    );
+    assert!(instance_names("box", 0).is_err());
+    assert_eq!(
+        instance_names("box", MAX_COUNT).unwrap().len(),
+        MAX_COUNT as usize
+    );
+    assert!(instance_names("box", MAX_COUNT + 1).is_err());
 }
 
 #[test]
@@ -81,4 +92,37 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
     assert!(!c.settings.programs.contains("surely-missing-program-xyz"));
     assert!(!c.settings.programs.contains("failing"));
     assert_eq!(problems.len(), 2, "{problems:?}");
+}
+
+#[test]
+fn names_that_leave_the_runner_directory_are_refused() {
+    for bad in [".", "..", "...", "a/b", "a\\b", ""] {
+        assert!(check_runner_name(bad).is_err(), "{bad:?} accepted");
+    }
+    assert!(check_runner_name("box-1").is_ok());
+    assert!(RunnerConfig::parse("", Some(".."), "h", PathBuf::new(), HOST).is_err());
+}
+
+#[test]
+fn resources_above_the_host_or_an_unmeasured_host_are_refused() {
+    let err = |text: &str, host: HostResources| {
+        RunnerConfig::parse(text, None, "h", PathBuf::new(), host)
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(err("mem_mb = 65536\n", HOST).contains("mem_mb"));
+    assert!(err("cpu = 13\n", HOST).contains("cpu"));
+    let unmeasured = HostResources { mem_mb: 0, cpu: 4 };
+    assert!(err("", unmeasured).contains("mem_mb"));
+    let declared = RunnerConfig::parse("mem_mb = 2048\n", None, "h", PathBuf::new(), unmeasured)
+        .expect("a declared size needs no measurement");
+    assert_eq!(declared.settings.mem_mb, 2048);
+}
+
+#[test]
+fn elevated_start_needs_allow_elevated() {
+    assert!(elevation_allowed(false, false).is_ok());
+    assert!(elevation_allowed(true, true).is_ok());
+    let refused = elevation_allowed(true, false).unwrap_err();
+    assert!(refused.contains("allow_elevated"), "{refused}");
 }

@@ -25,6 +25,7 @@ pub struct TlsListening {
     merged: Arc<MergedListener>,
     addresses: Vec<ListenAddr>,
     bound: Mutex<Option<Vec<SocketAddr>>>,
+    starting: tokio::sync::Mutex<()>,
 }
 
 impl TlsListening {
@@ -41,24 +42,31 @@ impl TlsListening {
             merged,
             addresses,
             bound: Mutex::new(None),
+            starting: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Starts listening if it has not yet; returns the bound addresses in `[listen]` order.
+    /// Calls are serialized; when one address fails, none is kept, so a later call retries
+    /// them all.
     pub async fn ensure(&self) -> Result<Vec<SocketAddr>, String> {
+        let _one_at_a_time = self.starting.lock().await;
         if let Some(b) = self.bound.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Ok(b);
         }
         if self.addresses.is_empty() {
             return Err("policy.toml has no [listen] address; the broker cannot be joined".into());
         }
-        let mut bound = Vec::new();
+        let mut listeners = Vec::new();
         for addr in &self.addresses {
             let gate: Arc<dyn lr_net::KeyGate> = self.registry.clone();
             let l = TlsListener::bind(*addr, &self.identity, gate)
                 .await
                 .map_err(|e| format!("listen {}: {e}", addr.socket_addr()))?;
-            bound.push(l.local_addr());
+            listeners.push(l);
+        }
+        let bound: Vec<SocketAddr> = listeners.iter().map(|l| l.local_addr()).collect();
+        for l in listeners {
             self.merged.add(Arc::new(l) as Arc<dyn Listener>);
         }
         *self.bound.lock().unwrap_or_else(|e| e.into_inner()) = Some(bound.clone());
@@ -122,6 +130,9 @@ pub struct BrokerAdmin {
     pub clock: Arc<dyn Clock>,
     /// What the host has.
     pub host: HostResources,
+    /// Serializes `policy reload`: the file read, the engine's policy and the IPC access
+    /// always change together and in order.
+    pub reloads: tokio::sync::Mutex<()>,
 }
 
 fn failed(message: impl Into<String>) -> AdminReply {
@@ -140,6 +151,7 @@ fn read(path: &PathBuf) -> Result<String, String> {
 
 impl BrokerAdmin {
     async fn reload(&self) -> AdminReply {
+        let _in_order = self.reloads.lock().await;
         let text = match read(&self.policy_path) {
             Ok(t) => t,
             Err(e) => return failed(e),

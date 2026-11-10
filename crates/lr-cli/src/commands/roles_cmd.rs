@@ -75,6 +75,11 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
     };
     let mut code = 0;
     for name in names {
+        if let Err(e) = crate::runner_config::check_runner_name(&name) {
+            eprintln!("{e}");
+            code = 1;
+            continue;
+        }
         let address = layout.runner_ipc(&principal, &name);
         let reply = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
             Ok(c) => {

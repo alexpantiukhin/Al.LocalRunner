@@ -87,6 +87,7 @@ fn free_bytes(_: &Path) -> Option<u64> {
 }
 
 /// Whether this process runs as root, an elevated administrator or `SYSTEM` (spec 3.12).
+/// When the token cannot be read the answer is `true`: the guarantee fails closed.
 #[cfg(windows)]
 pub fn is_elevated() -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
@@ -96,7 +97,7 @@ pub fn is_elevated() -> bool {
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     let mut token: HANDLE = std::ptr::null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return false;
+        return true;
     }
     let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
     let mut len = 0u32;
@@ -110,8 +111,8 @@ pub fn is_elevated() -> bool {
         )
     };
     unsafe { CloseHandle(token) };
-    let system = lr_net::current_os_principal().is_ok_and(|sid| sid == "S-1-5-18");
-    system || (ok != 0 && elevation.TokenIsElevated != 0)
+    let system = lr_net::current_os_principal().map_or(true, |sid| sid == "S-1-5-18");
+    system || ok == 0 || elevation.TokenIsElevated != 0
 }
 
 /// Whether this process runs as root, an elevated administrator or `SYSTEM` (spec 3.12).

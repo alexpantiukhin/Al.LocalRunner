@@ -99,15 +99,17 @@ impl RunnerConfig {
             .map(str::to_string)
             .or(extra.name)
             .unwrap_or_else(|| default_name.to_string());
-        lr_net::check_name(&chosen).map_err(|e| SettingsError(e.to_string()))?;
+        check_runner_name(&chosen).map_err(SettingsError)?;
         if extra.mem_mb == Some(0) || extra.cpu == Some(0) {
             return Err(SettingsError("mem_mb and cpu must be above 0".into()));
         }
+        let mem_mb = declared("mem_mb", extra.mem_mb, host.mem_mb)?;
+        let cpu = declared("cpu", extra.cpu.map(u64::from), u64::from(host.cpu))?;
         table.insert("name".into(), toml::Value::String(chosen));
         let text = toml::to_string(&table).map_err(|e| SettingsError(e.to_string()))?;
         let mut settings = RunnerSettings::from_toml(&text, state_dir)?;
-        settings.mem_mb = extra.mem_mb.unwrap_or(host.mem_mb);
-        settings.cpu = extra.cpu.unwrap_or(host.cpu);
+        settings.mem_mb = mem_mb;
+        settings.cpu = u32::try_from(cpu).unwrap_or(u32::MAX);
         let secrets = extra
             .secret
             .iter()
@@ -144,13 +146,52 @@ impl RunnerConfig {
     }
 }
 
+/// The most runners one `--count` starts.
+pub const MAX_COUNT: u32 = 64;
+
 /// Names of `count` runners made from `base`: `base` alone for one, else `base-1` … `base-N`
-/// (spec 11.1, `runner join --count`).
-pub fn instance_names(base: &str, count: u32) -> Vec<String> {
-    if count <= 1 {
-        return vec![base.to_string()];
+/// (spec 11.1, `runner join --count`); `count` is 1 to [`MAX_COUNT`].
+pub fn instance_names(base: &str, count: u32) -> Result<Vec<String>, String> {
+    match count {
+        0 => Err("--count must be at least 1".into()),
+        1 => Ok(vec![base.to_string()]),
+        n if n > MAX_COUNT => Err(format!("--count is at most {MAX_COUNT}")),
+        n => Ok((1..=n).map(|i| format!("{base}-{i}")).collect()),
     }
-    (1..=count).map(|i| format!("{base}-{i}")).collect()
+}
+
+/// A runner name is also the name of its state directory: besides the key name rules it must
+/// not be made of dots only, so it never points at the installation root or above it.
+pub fn check_runner_name(name: &str) -> Result<(), String> {
+    lr_net::check_name(name).map_err(|e| e.to_string())?;
+    let path_like = name.chars().all(|c| c == '.') || name.contains(['/', '\\']);
+    if path_like {
+        return Err(format!("`{name}` is not a valid runner name"));
+    }
+    Ok(())
+}
+
+/// The elevation guarantee (spec 3.12): a runner running as root, an elevated administrator
+/// or `SYSTEM` starts only with `allow_elevated = true`.
+pub fn elevation_allowed(elevated: bool, allow_elevated: bool) -> Result<(), String> {
+    if elevated && !allow_elevated {
+        return Err("the runner refuses to start as root or administrator; set allow_elevated = true in runner.toml to allow it (spec 3.12)"
+            .into());
+    }
+    Ok(())
+}
+
+fn declared(key: &str, value: Option<u64>, host: u64) -> Result<u64, SettingsError> {
+    match value {
+        Some(v) if host > 0 && v > host => Err(SettingsError(format!(
+            "{key} = {v} is more than this host has ({host}); declare at most {host}"
+        ))),
+        Some(v) => Ok(v),
+        None if host == 0 => Err(SettingsError(format!(
+            "the host's {key} could not be measured; declare {key} in runner.toml"
+        ))),
+        None => Ok(host),
+    }
 }
 
 fn executable_names(name: &str) -> Vec<String> {
