@@ -260,3 +260,36 @@ async fn linux_job_environment_gets_no_bus_variables_from_the_scope_wrapper() {
     assert!(!text.contains("XDG_RUNTIME_DIR="), "{text}");
     assert!(text.contains("PATH="), "{text}");
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linux_job_with_its_own_runtime_dir_runs_in_a_process_group_and_keeps_it() {
+    let (_manual, clock) = clock();
+    let mut spec = job(
+        "own-xdg",
+        600,
+        vec![step("s", "echo xdg=$XDG_RUNTIME_DIR", 30)],
+    );
+    spec.env
+        .push(("XDG_RUNTIME_DIR".into(), "/nonexistent-runtime".into()));
+    let (task, out, _stop) = start(spec, clock);
+    let outcome = finish(task).await;
+    assert_eq!(outcome.state, JobState::Passed, "{}", out.text());
+    assert!(
+        out.text().contains("xdg=/nonexistent-runtime"),
+        "{}",
+        out.text()
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "current_thread")]
+async fn linux_scope_probe_does_not_stall_a_single_threaded_runtime() {
+    let (_manual, clock) = clock();
+    let spec = job("single", 600, vec![step("s", "true", 30)]);
+    let (task, _out, _stop) = start(spec, clock);
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), finish(task))
+        .await
+        .expect("the job finished");
+    assert_eq!(outcome.state, JobState::Passed);
+}

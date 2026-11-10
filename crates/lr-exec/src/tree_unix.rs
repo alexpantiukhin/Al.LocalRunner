@@ -22,13 +22,9 @@ impl Scope {
         None
     }
 
-    fn observe(&self, _: u32) {}
+    fn signal(&self, _: libc::c_int) {}
 
-    fn signal(&self, _: u32, _: libc::c_int) -> bool {
-        false
-    }
-
-    fn is_empty(&self, _: u32) -> Option<bool> {
+    fn is_empty(&self) -> Option<bool> {
         None
     }
 }
@@ -105,9 +101,6 @@ impl Tree {
     }
 
     pub(crate) fn observe(&self) {
-        if let Some(scope) = &self.scope {
-            scope.observe(self.root);
-        }
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
         let mut roots: Vec<(u32, u64)> = known.iter().map(|(p, s)| (*p, *s)).collect();
         if let Some(start) = self.start {
@@ -121,7 +114,7 @@ impl Tree {
     fn signal_all(&self, sig: libc::c_int) {
         self.observe();
         if let Some(scope) = &self.scope {
-            scope.signal(self.root, sig);
+            scope.signal(sig);
         }
         if self.pgid > 0 {
             self.group_gone.run_if_alive(|| unsafe {
@@ -159,8 +152,8 @@ impl Tree {
         let scope_empty = self
             .scope
             .as_ref()
-            .and_then(|s| s.is_empty(self.root))
-            .unwrap_or(true);
+            .map_or(Some(true), |s| s.is_empty())
+            .unwrap_or(false);
         scope_empty && (self.group_gone.is_marked() || !self.owned) && known.is_empty()
     }
 }
