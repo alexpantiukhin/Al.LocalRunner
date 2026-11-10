@@ -1,8 +1,13 @@
 use super::conn::ConnId;
+use super::recovery::unknown_address;
 use super::{Engine, Role};
 use lr_abstractions::{RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
-use lr_proto::{ProtocolError, ProtocolErrorCode, QueueEvent, WireCapabilities, WireServiceStatus};
+use lr_proto::{
+    ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities,
+    WireServiceStatus,
+};
+use std::collections::BTreeSet;
 
 pub(crate) struct RunnerSlot {
     pub(crate) owner: String,
@@ -12,9 +17,33 @@ pub(crate) struct RunnerSlot {
     pub(crate) endpoint: Endpoint,
     pub(crate) conn: Option<ConnId>,
     pub(crate) last_seen: Timestamp,
+    pub(crate) draining: bool,
+    pub(crate) services: Vec<ServiceReport>,
+    pub(crate) stopping: BTreeSet<String>,
 }
 
-fn row_of(name: &str, owner: &str, wire: &WireCapabilities, at: Timestamp) -> RunnerRow {
+impl RunnerSlot {
+    pub(crate) fn offline(row: &RunnerRow, wire: WireCapabilities) -> RunnerSlot {
+        RunnerSlot {
+            owner: row.machine_name.clone(),
+            persisted: true,
+            caps: wire.clone().into_capabilities(Zone::Remote),
+            wire,
+            endpoint: unknown_address(),
+            conn: None,
+            last_seen: row.last_seen.unwrap_or(Timestamp(0)),
+            draining: false,
+            services: Vec::new(),
+            stopping: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) fn takes_work(&self) -> bool {
+        self.conn.is_some() && !self.draining
+    }
+}
+
+pub(crate) fn row_of(name: &str, owner: &str, wire: &WireCapabilities, at: Timestamp) -> RunnerRow {
     RunnerRow {
         name: name.to_string(),
         machine_name: owner.to_string(),
@@ -94,6 +123,9 @@ impl Engine {
                 endpoint,
                 conn: Some(conn),
                 last_seen: now,
+                draining: false,
+                services: Vec::new(),
+                stopping: BTreeSet::new(),
             },
         );
         if let Some(c) = self.conns.get_mut(&conn) {
@@ -127,7 +159,7 @@ impl Engine {
                 name: name.clone(),
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
-                online: s.conn.is_some(),
+                online: s.takes_work(),
             })
             .collect()
     }
@@ -142,11 +174,13 @@ impl Engine {
             return;
         };
         slot.last_seen = now;
+        let state = if slot.draining {
+            RunnerState::Draining
+        } else {
+            RunnerState::Online
+        };
         if slot.persisted {
-            let _ = self
-                .store
-                .set_runner_state(name, RunnerState::Online, now)
-                .await;
+            let _ = self.store.set_runner_state(name, state, now).await;
         }
     }
 
@@ -191,6 +225,7 @@ impl Engine {
                 None => self.queue.push(job),
             }
         }
+        self.return_stranded().await;
         self.plan().await;
     }
 }

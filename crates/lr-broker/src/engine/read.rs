@@ -110,8 +110,18 @@ impl Engine {
             ReadRequest::Explain { job, client } => {
                 self.explain(&viewer, job, client.as_deref()).await
             }
-            ReadRequest::Log { follow: true, .. } => ReadReply::Failed {
-                message: "follow not supported yet".into(),
+            ReadRequest::Log {
+                job,
+                step,
+                tail,
+                client,
+                follow: true,
+            } => match self
+                .follow_log(conn, &viewer, call.req, &job, client.as_deref(), step, tail)
+                .await
+            {
+                Ok(()) => return,
+                Err(reply) => reply,
             },
             ReadRequest::Log {
                 job,
@@ -146,7 +156,7 @@ impl Engine {
     }
 
     fn subscribe(&mut self, conn: ConnId, topics: Vec<lr_proto::Topic>) -> ReadReply {
-        let held = self.conns.get(&conn).map_or(0, |c| c.subs.len());
+        let held = self.held_streams(conn);
         if held >= MAX_SUBSCRIPTIONS {
             return ReadReply::Failed {
                 message: format!("at most {MAX_SUBSCRIPTIONS} subscriptions per connection"),
@@ -159,7 +169,7 @@ impl Engine {
         ReadReply::Subscribed { sub }
     }
 
-    fn send_log(&mut self, conn: ConnId, req: u64, text: &str) {
+    pub(crate) fn send_log(&mut self, conn: ConnId, req: u64, text: &str) {
         let parts = split_text(text, CHUNK_TEXT_LIMIT);
         let last = parts.len().saturating_sub(1);
         let mut frames: Vec<_> = parts
@@ -296,7 +306,7 @@ impl Engine {
         ReadReply::History { jobs, next }
     }
 
-    async fn run_of(
+    pub(crate) async fn run_of(
         &self,
         viewer: &Viewer,
         job: &JobId,
@@ -365,7 +375,7 @@ impl Engine {
         ReadReply::Explain { job, text }
     }
 
-    async fn log(
+    pub(crate) async fn log(
         &self,
         viewer: &Viewer,
         job: &JobId,

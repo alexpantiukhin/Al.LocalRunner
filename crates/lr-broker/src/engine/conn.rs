@@ -36,6 +36,7 @@ pub(crate) enum Command {
     Drained {
         conn: ConnId,
     },
+    Tick,
 }
 
 fn heartbeat() -> Frame {

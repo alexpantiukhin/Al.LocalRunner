@@ -133,12 +133,17 @@ impl Engine {
         if self.active[i].cancel.is_some() {
             return;
         }
+        self.mark_cancel(i, cancel).await;
+    }
+
+    pub(crate) async fn mark_cancel(&mut self, i: usize, cancel: Cancel) {
+        let key = self.active[i].key.clone();
         self.active[i].cancel = Some(cancel.clone());
         if self.active[i].started_at.is_some() {
             let mut t = Transition::to(JobState::Cancelling, self.now());
             t.cancelled_by = Some(cancel.by);
             t.cancel_reason = Some(cancel.reason);
-            let _ = self.store.transition(key, t).await;
+            let _ = self.store.transition(&key, t).await;
         }
         self.send_cancel(i).await;
     }

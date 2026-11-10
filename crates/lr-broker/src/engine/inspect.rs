@@ -61,7 +61,7 @@ impl Engine {
                     free_mem_mb: free_mem,
                     free_cpu,
                     held_tags,
-                    services: Vec::new(),
+                    services: slot.services.clone(),
                     unmet: Vec::new(),
                 }
             })

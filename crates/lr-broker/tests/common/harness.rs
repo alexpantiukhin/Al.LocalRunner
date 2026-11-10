@@ -42,6 +42,8 @@ pub struct Harness {
     pub net: FakeNetwork,
     pub events: broadcast::Receiver<BusEvent>,
     task: tokio::task::JoinHandle<()>,
+    extra: String,
+    owners: Vec<String>,
 }
 
 impl Drop for Harness {
@@ -74,6 +76,36 @@ impl Harness {
         wrap: impl FnOnce(FakeListener) -> Arc<dyn Listener>,
     ) -> Harness {
         let clock = ManualClock::new(Timestamp(START));
+        Harness::over(
+            Arc::new(MemoryBrokerStore::new()),
+            clock,
+            extra,
+            owners,
+            wrap,
+        )
+    }
+
+    pub async fn restart(&self) -> Harness {
+        self.task.abort();
+        let owners: Vec<&str> = self.owners.iter().map(String::as_str).collect();
+        let h = Harness::over(
+            self.store.clone(),
+            self.clock.clone(),
+            &self.extra,
+            &owners,
+            |l| Arc::new(l),
+        );
+        h.poke().await;
+        h
+    }
+
+    fn over(
+        store: Arc<MemoryBrokerStore>,
+        clock: ManualClock,
+        extra: &str,
+        owners: &[&str],
+        wrap: impl FnOnce(FakeListener) -> Arc<dyn Listener>,
+    ) -> Harness {
         let net = FakeNetwork::new(Arc::new(clock.clone()));
         let listener = net.listen(
             ADDR,
@@ -83,10 +115,10 @@ impl Harness {
                 access: PeerAccess::PinnedBroker,
             },
         );
-        let store = Arc::new(MemoryBrokerStore::new());
         let faults = Arc::new(FaultyStore::new(store.clone()));
         let log = Arc::new(MemoryLogSink::new());
-        let (active, _) = ActivePolicy::start(&policy(extra), HOST_RES).expect("policy loads");
+        let (active, _) =
+            ActivePolicy::start(&policy(extra), HOST_RES, false).expect("policy loads");
         let broker = Broker::new(BrokerDeps {
             clock: Arc::new(clock.clone()),
             store: faults.clone(),
@@ -108,6 +140,8 @@ impl Harness {
             net,
             events,
             task,
+            extra: extra.to_string(),
+            owners: owners.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -194,6 +228,29 @@ impl Harness {
         c.send(&hello(name, Some(caps))).await;
         c.welcome().await;
         c
+    }
+
+    pub async fn poke(&self) {
+        let mut c = self.connect_local("root").await;
+        c.send(&hello("root", None)).await;
+        c.welcome().await;
+    }
+
+    pub async fn until_state(
+        &self,
+        client: &str,
+        job: &str,
+        state: lr_core::JobState,
+    ) -> lr_abstractions::JobRecord {
+        for _ in 0..2000 {
+            if let Some(r) = self.job_row(client, job).await {
+                if r.job.state == state {
+                    return r;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("job {job} never became {state:?}");
     }
 
     pub async fn job_row(&self, client: &str, job: &str) -> Option<lr_abstractions::JobRecord> {

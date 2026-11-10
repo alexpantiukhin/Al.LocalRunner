@@ -168,6 +168,7 @@ impl Engine {
             let _ = self.store.touch_machine(name, self.now()).await;
         }
         self.hubs.insert(client.key.clone(), conn);
+        self.refresh_client(&client);
         if let Some(c) = self.conns.get_mut(&conn) {
             c.role = Role::Hub(client);
         }

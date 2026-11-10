@@ -134,7 +134,7 @@ fn defaults_applied_grace_3_aging_30() {
 #[test]
 fn listen_change_on_reload_reported_not_applied() {
     let (mut active, _) =
-        ActivePolicy::start("[listen]\naddress = \"192.168.1.10:7443\"\n", HOST).unwrap();
+        ActivePolicy::start("[listen]\naddress = \"192.168.1.10:7443\"\n", HOST, false).unwrap();
     let applied = active
         .reload("[listen]\naddress = \"10.0.0.5:7443\"\n")
         .unwrap();
@@ -150,7 +150,7 @@ fn listen_change_on_reload_reported_not_applied() {
 
 #[test]
 fn invalid_reload_keeps_previous() {
-    let (mut active, _) = ActivePolicy::start("[grace]\nlost_min = 7\n", HOST).unwrap();
+    let (mut active, _) = ActivePolicy::start("[grace]\nlost_min = 7\n", HOST, false).unwrap();
     let e = active.reload("[grace]\nlost_mni = 9\n").unwrap_err();
     assert_eq!(e.table.as_deref(), Some("grace"));
     assert_eq!(active.file().grace.lost_min.get(), 7);
@@ -179,6 +179,16 @@ fn container_listen_value_accepted() {
     let e = f.listen.check_at_start(false).unwrap_err();
     assert_eq!(e.table.as_deref(), Some("listen"));
     assert_eq!(e.key.as_deref(), Some("address"));
+}
+
+#[test]
+fn service_start_refuses_container_listen_outside_a_container() {
+    let text = "[listen]\naddress = \"container\"\n";
+    let e = ActivePolicy::start(text, HOST, false).unwrap_err();
+    assert_eq!(e.table.as_deref(), Some("listen"));
+    assert_eq!(e.key.as_deref(), Some("address"));
+    let (active, _) = ActivePolicy::start(text, HOST, true).unwrap();
+    assert_eq!(active.file().listen.addresses, [ListenValue::Container]);
 }
 
 #[test]

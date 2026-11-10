@@ -69,6 +69,7 @@ impl Engine {
                 Some((key, self.wait_text(wait)))
             })
             .collect();
+        self.evict_idle(plan.waiting.first().map(|(_, w)| w));
         for a in plan.assignments {
             self.assign(a, now).await;
         }
@@ -163,6 +164,7 @@ impl Engine {
         });
         self.notify_hub(&key.client, &key.job, OutboxKind::JobResult, &msg)
             .await;
+        self.end_follows(key);
         self.publish(
             Some(&key.client),
             QueueEvent::JobFinished {
@@ -267,6 +269,7 @@ impl Engine {
                     .store
                     .append_log(&key, c.text.as_bytes(), now, limit)
                     .await;
+                self.feed_follows(&key, c.step, &c.text);
                 let msg = BrokerToHub::Chunk(Chunk {
                     seq: 0,
                     ..c.clone()
@@ -291,6 +294,11 @@ impl Engine {
                 self.ack_runner(conn, &r.job, r.seq);
                 self.plan().await;
             }
+            RunnerToBroker::Drain => self.drain(&name).await,
+            RunnerToBroker::CapabilitiesUpdate(u) => {
+                self.capabilities_update(&name, u.capabilities).await
+            }
+            RunnerToBroker::ServicesReport(r) => self.services_report(&name, r).await,
             RunnerToBroker::Hello(_) | RunnerToBroker::Join(_) => self.send(
                 conn,
                 &BrokerToRunner::Error(ProtocolError {

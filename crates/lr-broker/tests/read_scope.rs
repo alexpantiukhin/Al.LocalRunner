@@ -65,16 +65,6 @@ async fn log_step_filter_returns_only_that_step() {
 }
 
 #[tokio::test]
-async fn log_follow_is_refused_for_now() {
-    let h = Harness::start("");
-    let (_r, mut hub) = running(&h).await;
-    match log_reply(&mut hub, None, true).await {
-        Err(ReadReply::Failed { message }) => assert!(message.contains("follow"), "{message}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-}
-
-#[tokio::test]
 async fn status_reads_only_the_tail_of_a_running_log() {
     let h = Harness::start("");
     let (mut r, mut hub) = running(&h).await;

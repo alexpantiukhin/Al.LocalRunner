@@ -78,6 +78,9 @@ impl Engine {
             c.backlog.clear();
             return;
         }
+        if !c.backlog.is_empty() {
+            c.outlet.drain.store(true, Ordering::SeqCst);
+        }
         while OUT_QUEUE_FRAMES - c.outlet.out.capacity() < REPLAY_WINDOW {
             let Some(frame) = c.backlog.pop_front() else {
                 break;
@@ -89,9 +92,9 @@ impl Engine {
                 break;
             }
         }
-        c.outlet
-            .drain
-            .store(!c.backlog.is_empty(), Ordering::SeqCst);
+        if !c.backlog.is_empty() {
+            c.outlet.drain.store(true, Ordering::SeqCst);
+        }
     }
 
     pub(crate) fn error(&self, conn: ConnId, code: ProtocolErrorCode, message: String) {

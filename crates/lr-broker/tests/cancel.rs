@@ -168,3 +168,39 @@ async fn cancel_is_sent_again_when_the_runner_reconnects_over_a_live_connection(
     };
     assert_eq!(c.job, JobId("j1".into()));
 }
+
+#[tokio::test]
+async fn cancel_by_wrong_key_refused() {
+    let h = Harness::start("[cancel]\nothers = \"owner\"\n");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut owner = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    owner.send(&order("j1", req(512, 1, 60))).await;
+    owner.accepted().await;
+    owner.send(&order("j2", req(512, 1, 60))).await;
+    owner.accepted().await;
+    let mut other = h.member_hub("desk", "agent", "10.0.0.21").await;
+    other.send(&cancel_for("j2", 1, "laptop")).await;
+    let ack = cancel_ack(&mut other).await;
+    assert_eq!(ack.outcome, CancelOutcome::Denied);
+    assert!(ack.denial.unwrap().contains("[cancel] others"));
+    assert_eq!(
+        h.job_row("laptop", "j2").await.unwrap().job.state,
+        JobState::Queued
+    );
+}
+
+#[tokio::test]
+async fn sender_gone_cancel_keeps_its_reason_code() {
+    let h = Harness::start("");
+    let (_r, mut hub) = busy_pool(&h).await;
+    let HubToBroker::Cancel(mut c) = cancel("j2", 2) else {
+        unreachable!()
+    };
+    c.code = ReasonCode::SenderGone;
+    c.reason = None;
+    hub.send(&HubToBroker::Cancel(c)).await;
+    assert_eq!(cancel_ack(&mut hub).await.outcome, CancelOutcome::Applied);
+    let row = h.job_row(ALEX, "j2").await.unwrap();
+    assert_eq!(row.job.state, JobState::Cancelled);
+    assert_eq!(row.job.cancel_reason.as_deref(), Some("sender_gone"));
+}

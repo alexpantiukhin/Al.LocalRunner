@@ -16,19 +16,21 @@ lost_min = 3
 "#;
 
 fn started() -> ActivePolicy {
-    ActivePolicy::start(START, HOST).expect("start policy").0
+    ActivePolicy::start(START, HOST, false)
+        .expect("start policy")
+        .0
 }
 
 #[test]
 fn start_refuses_an_invalid_file() {
-    let e = ActivePolicy::start("[grace]\nlost_min = \"x\"\n", HOST).unwrap_err();
+    let e = ActivePolicy::start("[grace]\nlost_min = \"x\"\n", HOST, false).unwrap_err();
     assert_eq!(e.key.as_deref(), Some("lost_min"));
 }
 
 #[test]
 fn start_returns_warnings() {
     let text = "[[rule]]\npriority = 1\n[[rule]]\npriority = 2\n";
-    let (_, warnings) = ActivePolicy::start(text, HOST).unwrap();
+    let (_, warnings) = ActivePolicy::start(text, HOST, false).unwrap();
     assert!(
         warnings.iter().any(|w| w.message.contains("never")),
         "{warnings:?}"

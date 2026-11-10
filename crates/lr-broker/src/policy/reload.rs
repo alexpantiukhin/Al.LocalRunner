@@ -43,11 +43,15 @@ impl std::fmt::Debug for ActivePolicy {
 
 impl ActivePolicy {
     /// Loads the file at service start; `[listen]` and `[networks]` take effect now.
+    /// `in_container` tells whether the service runs inside a container, where alone
+    /// `address = "container"` is accepted.
     pub fn start(
         text: &str,
         host: HostResources,
+        in_container: bool,
     ) -> Result<(ActivePolicy, Vec<PolicyWarning>), PolicyError> {
         let file = load(text)?;
+        file.listen.check_at_start(in_container)?;
         let warnings = check(&file, &host);
         let policy = into_policy(&file, &host);
         Ok((ActivePolicy { file, policy, host }, warnings))

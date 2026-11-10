@@ -117,6 +117,7 @@ impl Engine {
         client: Client,
         frame: lr_abstractions::Frame,
     ) {
+        self.client_seen.insert(client.key.clone(), self.now());
         let msg = match receive::<HubToBroker>(frame.as_bytes(), peer_kind(&client.endpoint)) {
             Ok(Received::Message(m)) => m,
             Ok(Received::Ignored(_)) => return,
@@ -172,7 +173,7 @@ impl Engine {
         );
     }
 
-    fn admit(&self, entry: &QueueEntry) -> Result<(), (RejectReason, String)> {
+    fn admit(&self, entry: &QueueEntry, spec: &OrderSpec) -> Result<(), (RejectReason, String)> {
         let limit = self.policy.file().limits.max_active_per_client.get() as usize;
         let active = self
             .queue
@@ -186,6 +187,7 @@ impl Engine {
                 format!("активных заказов у клиента {active}, предел {limit}"),
             ));
         }
+        self.allowed(entry, spec)?;
         let fail = |r: Reject| (reject_reason(&r), r.to_string());
         self.policy
             .policy()
@@ -268,7 +270,7 @@ impl Engine {
             );
         }
         let job = self.job_of(client, &key, *o.spec.clone());
-        if let Err((reason, detail)) = self.admit(&job.entry) {
+        if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
             return self.send(
                 conn,
                 &BrokerToHub::Rejected(Rejected {

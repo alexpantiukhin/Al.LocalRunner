@@ -2,16 +2,23 @@
 //! states, fed by a bounded command channel from the connection tasks; changes go out on a
 //! broadcast bus for the read API.
 
+mod allow;
 mod assign;
 mod cancel;
 mod conn;
+mod drain;
 mod events;
+mod follow;
 mod hello;
 mod inspect;
 mod local;
+mod lost;
 mod orders;
 mod read;
+mod recovery;
 mod runners;
+mod same_machine;
+mod services;
 mod wire;
 
 pub use events::BusEvent;
@@ -42,6 +49,7 @@ pub const MAX_SUBSCRIPTIONS: usize = 16;
 pub(crate) const REPLAY_WINDOW: usize = 256;
 pub(crate) const BACKLOG_MAX_FRAMES: usize = 100_000;
 
+const TICK: Duration = Duration::from_secs(1);
 const ACCEPT_ERRORS_BEFORE_BACKOFF: u32 = 3;
 const ACCEPT_BACKOFF_MAX_MS: u64 = 5_000;
 
@@ -66,7 +74,7 @@ pub struct BrokerDeps {
     /// Secret store; the broker never reads secret values (spec 3.13), it only decides which
     /// names a client may request.
     pub secrets: Arc<dyn SecretSource>,
-    /// The policy applied at start; the caller has run `ListenSection::check_at_start`.
+    /// The policy applied at start, from [`ActivePolicy::start`].
     pub policy: ActivePolicy,
 }
 
@@ -114,6 +122,10 @@ impl Broker {
                 slow_peers: AtomicU64::new(0),
                 next_id: 0,
                 next_sub: 0,
+                booted_at: Timestamp(0),
+                restored: false,
+                client_seen: HashMap::new(),
+                follows: Vec::new(),
             },
             listener: deps.listener,
             tx,
@@ -148,8 +160,19 @@ impl Broker {
             tx,
             mut rx,
         } = self;
+        engine.recover().await;
         let clock = engine.clock.clone();
         let log = engine.log.clone();
+        let ticks = tx.clone();
+        let tick_clock = clock.clone();
+        let ticker = async move {
+            loop {
+                tick_clock.sleep(TICK).await;
+                if ticks.send(Command::Tick).await.is_err() {
+                    break;
+                }
+            }
+        };
         let accept = async move {
             let mut id: ConnId = 0;
             let mut failures = 0u32;
@@ -192,6 +215,7 @@ impl Broker {
         tokio::select! {
             _ = accept => {}
             _ = work => {}
+            _ = ticker => {}
         }
     }
 }
@@ -260,13 +284,19 @@ pub(crate) struct Engine {
     pub(crate) slow_peers: AtomicU64,
     next_id: u64,
     next_sub: u64,
+    pub(crate) booted_at: Timestamp,
+    pub(crate) restored: bool,
+    pub(crate) client_seen: HashMap<String, Timestamp>,
+    pub(crate) follows: Vec<follow::Follow>,
 }
 
 const MIB: u64 = 1024 * 1024;
 
 impl Engine {
     async fn handle(&mut self, cmd: Command) {
+        self.expire().await;
         match cmd {
+            Command::Tick => {}
             Command::Opened { conn, peer, outlet } => {
                 self.conns.insert(
                     conn,
@@ -298,6 +328,7 @@ impl Engine {
         let Some(c) = self.conns.remove(&conn) else {
             return;
         };
+        self.follows.retain(|f| f.conn != conn);
         match c.role {
             Role::Hub(client) => {
                 if self.hubs.get(&client.key) == Some(&conn) {
