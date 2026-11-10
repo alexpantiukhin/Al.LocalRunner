@@ -41,7 +41,11 @@ async fn wait_lines(path: &Path, count: usize) -> Vec<(String, u32)> {
         }
         real_sleep(100).await;
     }
-    panic!("{} never got {count} lines", path.display());
+    panic!(
+        "{} never got {count} lines: {:?}",
+        path.display(),
+        std::fs::read_to_string(path)
+    );
 }
 
 fn pid(lines: &[(String, u32)], role: &str) -> u32 {

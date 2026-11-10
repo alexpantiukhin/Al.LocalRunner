@@ -123,9 +123,6 @@ pub fn run_if_requested() {
         let _ = SOFT_MARKER.set(std::ffi::CString::new(path).unwrap());
     }
     install_soft_handler();
-    if let Ok(path) = std::env::var(READY) {
-        let _ = std::fs::write(path, b"ready");
-    }
     match mode.as_str() {
         "ignore" => {
             announce(&role);
@@ -205,15 +202,31 @@ pub fn say(text: &str) {
     let _ = out.flush();
 }
 
-fn announce(role: &str) {
-    let pid = std::process::id();
-    if let Ok(path) = std::env::var(PIDFILE) {
-        let mut file = std::fs::OpenOptions::new()
+fn append_line(path: &str, line: &str) {
+    let started = Instant::now();
+    loop {
+        let written = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
-            .unwrap();
-        writeln!(file, "{role} {pid}").unwrap();
+            .and_then(|mut file| file.write_all(line.as_bytes()));
+        match written {
+            Ok(()) => return,
+            Err(e) if started.elapsed() > Duration::from_secs(10) => {
+                panic!("cannot append to {path}: {e}")
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
+fn announce(role: &str) {
+    let pid = std::process::id();
+    if let Ok(path) = std::env::var(PIDFILE) {
+        append_line(&path, &format!("{role} {pid}\n"));
+    }
+    if let Ok(path) = std::env::var(READY) {
+        let _ = std::fs::write(path, b"ready");
     }
     say(&format!("{role}-pid={pid} {role}-pid-end\n"));
 }
