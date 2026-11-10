@@ -1,4 +1,4 @@
-use crate::log::header_line;
+use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
 use lr_abstractions::{
@@ -32,12 +32,12 @@ impl<'a> Job<'a> {
             .await;
     }
 
-    async fn header(&mut self, index: usize, step: &JobStep, stop: &mut StopSignal) {
+    async fn line(&mut self, index: usize, text: &str, stop: &mut StopSignal) {
         let mut line = Vec::new();
         if self.emitter.line_open {
             line.push(b'\n');
         }
-        line.extend(header_line(&step.spec.name, &self.spec.header).into_bytes());
+        line.extend_from_slice(text.as_bytes());
         let line = mask_secrets(&line, &self.secrets);
         self.output(index, line, stop).await;
     }
@@ -76,7 +76,12 @@ impl<'a> Job<'a> {
             grace: self.spec.cancel_grace,
             clock: self.clock,
         };
-        match supervise(spawned, limits, index, stop, &mut self.emitter).await {
+        let finished = supervise(spawned, limits, index, stop, &mut self.emitter).await;
+        if finished.soft_failed {
+            let text = format!("{SOFT_STOP_NOT_DELIVERED}; killed after the grace\n");
+            self.line(index, &text, stop).await;
+        }
+        match finished.ended {
             Ended::Exited(0) => (StepState::Passed, Some(0)),
             Ended::Exited(code) => (StepState::Failed, Some(code)),
             Ended::Timeout => (StepState::Timeout, None),
@@ -128,7 +133,8 @@ pub(crate) async fn run_job(
             at: now,
         };
         job.emitter.send(started, &mut stop).await;
-        job.header(index, step, &mut stop).await;
+        let header = header_line(&step.spec.name, &spec.header);
+        job.line(index, &header, &mut stop).await;
         let (step_state, code) = job.run_step(index, step, limit, &mut stop).await;
         let outcome = StepOutcome {
             name: step.spec.name.clone(),
@@ -139,6 +145,11 @@ pub(crate) async fn run_job(
         };
         if code.is_some() {
             exit_code = code;
+        }
+        if step_state == StepState::Cancelled {
+            let reason = stop.reason();
+            let trailer = cancel_line(&step.spec.name, clock.now(), reason.as_deref());
+            job.line(index, &trailer, &mut stop).await;
         }
         match step_state {
             StepState::Failed => {

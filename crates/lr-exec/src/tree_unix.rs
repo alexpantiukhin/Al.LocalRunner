@@ -81,8 +81,9 @@ impl Tree {
         }
     }
 
-    pub(crate) fn soft_stop(&self) {
+    pub(crate) fn soft_stop(&self) -> bool {
         self.signal_all(libc::SIGTERM);
+        true
     }
 
     pub(crate) fn kill(&self) {

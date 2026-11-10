@@ -183,3 +183,19 @@ async fn kill_tree_does_not_kill_reused_pid() {
         .unwrap();
     assert_eq!(inspector.liveness(300, 2), Liveness::Alive);
 }
+
+#[test]
+fn stop_reason_is_kept_from_the_first_request_that_gives_one() {
+    let (handle, stop) = stop_signal();
+    assert_eq!(stop.reason(), None);
+    handle.stop(Stop::Cancel);
+    assert_eq!(stop.reason(), None);
+    handle.stop_with_reason(Stop::Cancel, "bob at 12:00: stale");
+    assert_eq!(stop.current(), Some(Stop::Cancel));
+    assert_eq!(stop.reason().as_deref(), Some("bob at 12:00: stale"));
+    handle.stop_with_reason(Stop::Kill, "later");
+    assert_eq!(stop.current(), Some(Stop::Kill));
+    assert_eq!(stop.reason().as_deref(), Some("bob at 12:00: stale"));
+    handle.stop_with_reason(Stop::Cancel, "weaker");
+    assert_eq!(stop.current(), Some(Stop::Kill));
+}

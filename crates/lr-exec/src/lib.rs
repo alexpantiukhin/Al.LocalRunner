@@ -27,7 +27,7 @@ mod tree_unix;
 mod tree_windows;
 
 pub use clock::SystemClock;
-pub use log::{header_line, LogWriter, MAX_LINE};
+pub use log::{cancel_line, header_line, LogWriter, MAX_LINE, SOFT_STOP_NOT_DELIVERED};
 pub use mask::Masker;
 pub use probe::{process_start, OsProcessInspector};
 pub use runner::ExecRunner;

@@ -216,3 +216,86 @@ async fn system_clock_reads_wall_time_and_sleeps() {
         .await;
     assert!(before.elapsed() < Duration::from_millis(100));
 }
+
+#[test]
+fn start_fingerprint_is_the_same_seen_from_the_process_and_from_outside() {
+    use std::io::{BufRead, BufReader};
+    let gate = fresh_file("services", "start.gate");
+    let mut child = common::helper::helper_process(&Helper::new("print-start").gate(&gate))
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut own = String::new();
+    for line in BufReader::new(child.stdout.take().unwrap()).lines() {
+        let line = line.unwrap();
+        if line.contains("start-end") {
+            own = line;
+            break;
+        }
+    }
+    let outside = process_start(child.id());
+    std::fs::write(&gate, b"go").unwrap();
+    child.wait().unwrap();
+    assert!(outside.is_some());
+    assert!(
+        own.contains(&format!("start={outside:?} ")),
+        "inside {own}, outside {outside:?}"
+    );
+}
+
+#[test]
+fn process_exiting_with_code_259_is_dead() {
+    let gate = fresh_file("services", "259.gate");
+    let mut child =
+        common::helper::helper_process(&Helper::new("wait-file").gate(&gate).count(259))
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+    let pid = child.id();
+    let start = process_start(pid).unwrap();
+    std::fs::write(&gate, b"go").unwrap();
+    let mut state = Liveness::Alive;
+    for _ in 0..100 {
+        state = OsProcessInspector.liveness(pid, start);
+        if state == Liveness::Dead {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(state, Liveness::Dead);
+    child.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn service_that_exits_by_itself_leaves_the_registry() {
+    let runner = runner();
+    let gate = fresh_file("services", "sweep.gate");
+    let cmd = helper_command(&Helper::new("wait-file").gate(&gate));
+    runner.spawn(service(&cmd)).await.unwrap();
+    assert_eq!(runner.service_count(), 1);
+    std::fs::write(&gate, b"go").unwrap();
+    let mut count = 1;
+    for _ in 0..100 {
+        count = runner.service_count();
+        if count == 0 {
+            break;
+        }
+        real_sleep(50).await;
+    }
+    assert_eq!(count, 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn soft_stop_that_cannot_be_delivered_is_reported_in_the_job_output() {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+    let out = common::helper::helper_process(&Helper::new("no-console-cancel"))
+        .creation_flags(DETACHED_PROCESS)
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("outcome=Cancelled"), "{text}");
+    assert!(text.contains("soft-not-delivered=true"), "{text}");
+}

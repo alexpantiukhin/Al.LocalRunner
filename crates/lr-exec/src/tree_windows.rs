@@ -85,12 +85,10 @@ impl Tree {
 
     pub(crate) fn observe(&self) {}
 
-    pub(crate) fn soft_stop(&self) {
-        if self.pid != 0 && !self.is_empty() {
-            unsafe {
-                GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid);
-            }
-        }
+    pub(crate) fn soft_stop(&self) -> bool {
+        self.pid != 0
+            && has_console()
+            && unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.pid) } != 0
     }
 
     pub(crate) fn kill(&self) {
@@ -109,7 +107,7 @@ impl Tree {
                 size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
                 null_mut(),
             );
-            ok == 0 || info.ActiveProcesses == 0
+            ok != 0 && info.ActiveProcesses == 0
         }
     }
 }

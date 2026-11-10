@@ -132,6 +132,10 @@ pub enum JobEvent {
 /// Receives the output and step boundaries of a job. This is job data (spec 8), not
 /// diagnostics: it never goes to a [`crate::LogSink`] (spec 12). A slow receiver
 /// back-pressures the job.
+///
+/// `emit` must be cancel safe: after a stop or a timeout the runner waits for an event only a
+/// bounded time and then drops the unfinished `emit` future, so dropping it must leave the
+/// receiver consistent (the event is either taken whole or not at all).
 #[async_trait]
 pub trait JobOutput: Send + Sync {
     /// Takes one event.
@@ -148,30 +152,51 @@ pub enum Stop {
     Kill,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct StopState {
+    stop: Option<Stop>,
+    reason: Option<String>,
+}
+
 /// Requests a stop of a running job.
 #[derive(Debug)]
-pub struct StopHandle(watch::Sender<Option<Stop>>);
+pub struct StopHandle(watch::Sender<StopState>);
 
 /// Watched by a running job for stop requests.
 #[derive(Debug, Clone)]
-pub struct StopSignal(watch::Receiver<Option<Stop>>);
+pub struct StopSignal(watch::Receiver<StopState>);
 
 /// A connected stop handle and signal.
 pub fn stop_signal() -> (StopHandle, StopSignal) {
-    let (tx, rx) = watch::channel(None);
+    let (tx, rx) = watch::channel(StopState::default());
     (StopHandle(tx), StopSignal(rx))
 }
 
 impl StopHandle {
     /// Requests `stop`; a weaker request never replaces a stronger one.
     pub fn stop(&self, stop: Stop) {
+        self.request(stop, None);
+    }
+
+    /// Requests `stop` with the cancel reason for the job log (who, when and `--reason`,
+    /// spec 7.3). The first reason given is kept; a weaker request still never replaces a
+    /// stronger stop.
+    pub fn stop_with_reason(&self, stop: Stop, reason: &str) {
+        self.request(stop, Some(reason.to_string()));
+    }
+
+    fn request(&self, stop: Stop, reason: Option<String>) {
         self.0.send_if_modified(|cur| {
-            if cur.is_none_or(|c| stop > c) {
-                *cur = Some(stop);
-                true
-            } else {
-                false
+            let mut changed = false;
+            if cur.stop.is_none_or(|c| stop > c) {
+                cur.stop = Some(stop);
+                changed = true;
             }
+            if cur.reason.is_none() && reason.is_some() {
+                cur.reason = reason;
+                changed = true;
+            }
+            changed
         });
     }
 }
@@ -179,14 +204,19 @@ impl StopHandle {
 impl StopSignal {
     /// The strongest stop requested so far.
     pub fn current(&self) -> Option<Stop> {
-        *self.0.borrow()
+        self.0.borrow().stop
+    }
+
+    /// The reason given with a stop request, if any.
+    pub fn reason(&self) -> Option<String> {
+        self.0.borrow().reason.clone()
     }
 
     /// Completes once a stop at least as strong as `level` is requested; never completes when
     /// the handle is dropped without one.
     pub async fn reached(&mut self, level: Stop) -> Stop {
         loop {
-            if let Some(stop) = *self.0.borrow_and_update() {
+            if let Some(stop) = self.0.borrow_and_update().stop {
                 if stop >= level {
                     return stop;
                 }

@@ -29,19 +29,29 @@ struct Service {
 /// Containers: Windows puts the process, created suspended, into a Job Object that kills
 /// every descendant, detached ones included (full guarantee). Unix starts a new process group
 /// and also tracks descendants by walking parent links (`/proc` on Linux, `proc_pidinfo` on
-/// macOS), so children that leave the group are killed while they were seen; a child that
-/// detaches and loses its parent before it is seen escapes (best effort; cgroup v2 is not
-/// used yet).
+/// macOS), so children that leave the group are killed while they were seen (best effort).
 ///
-/// Stops: a step timeout kills the tree at once without a soft signal; [`lr_abstractions::Stop::Cancel`]
-/// sends Ctrl+Break to the process group on Windows or SIGTERM to the group and the tracked
-/// descendants elsewhere, then kills the tree after `cancel_grace` on the runner clock. Ctrl+Break
-/// reaches the step only through the console the runner shares with it, so the daemon is
-/// started with a (hidden) console; a runner without one gives steps a hidden console of their
-/// own and a cancel then ends with the kill. A step ends only when its tree is empty; leftover
-/// descendants of a step that exited by itself are killed too. Output after a stop or timeout is
-/// passed on for at most one second, so a blocked consumer cannot delay the result. Dropping
-/// a running `run_job` future kills its tree.
+/// Known limitation: Linux cgroup v2 (`systemd-run --user --scope`, the full guarantee of
+/// spec 6 and 10) is not used yet, so on Linux a child that detaches (`setsid`, double fork)
+/// and loses its parent between two scans (100 ms) escapes the kill.
+///
+/// Stops: a step timeout kills the tree at once without a soft signal; a
+/// [`lr_abstractions::Stop::Cancel`] sends Ctrl+Break to the process group on Windows or
+/// SIGTERM to the group and the tracked descendants elsewhere, then kills the tree after
+/// `cancel_grace` on the runner clock. A cancelled step's output ends with a [`crate::cancel_line`]
+/// carrying the reason of the stop request.
+///
+/// Ctrl+Break reaches a step only through the console the runner shares with it, so the
+/// process hosting the runner (the daemon, the Windows service host) must allocate a hidden
+/// console. Without one, steps get a hidden console of their own, the soft signal cannot be
+/// delivered, and the step output says so with a line starting with
+/// [`crate::SOFT_STOP_NOT_DELIVERED`]; the tree is then killed after the grace.
+///
+/// A step ends only when its tree is empty, or 10 s after the kill when a process refuses to
+/// die (for example in uninterruptible sleep); leftover descendants of a step that exited by
+/// itself are killed too. Output after a stop or timeout is passed on for at most one second,
+/// so a blocked consumer cannot delay the result. Dropping a running `run_job` future kills
+/// its tree. Services that exited by themselves are dropped from the registry.
 pub struct ExecRunner {
     clock: Arc<dyn Clock>,
     services: Mutex<HashMap<ProcessRef, Service>>,
@@ -57,10 +67,28 @@ impl ExecRunner {
     }
 
     fn take_service(&self, process: &ProcessRef) -> Option<Service> {
+        self.sweep();
         self.services
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(process)
+    }
+
+    fn sweep(&self) {
+        self.services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, s| !(matches!(s.child.try_wait(), Ok(Some(_))) && s.tree.is_empty()));
+    }
+
+    /// Number of services started by [`ProcessRunner::spawn`] that still run; services whose
+    /// whole tree has exited are dropped from the registry first.
+    pub fn service_count(&self) -> usize {
+        self.sweep();
+        self.services
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 }
 
@@ -132,6 +160,7 @@ impl ProcessRunner for ExecRunner {
             wait_empty(&tree, Some(&mut child)).await;
             return Err(ProcessError::Unverifiable(pid));
         }
+        self.sweep();
         self.services
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -145,7 +174,7 @@ impl ProcessRunner for ExecRunner {
             .ok_or(ProcessError::Unverifiable(process.pid))?;
         if let Some(mut service) = self.take_service(process) {
             wait_empty(&service.tree, Some(&mut service.child)).await;
-            let _ = service.child.wait().await;
+            let _ = tokio::time::timeout(KILL_LIMIT, service.child.wait()).await;
             return Ok(());
         }
         match probe(process.pid) {

@@ -34,21 +34,18 @@ mod imp {
         })
     }
 
-    fn boot_and_tick() -> Option<(u64, u64)> {
-        static CACHE: OnceLock<Option<(u64, u64)>> = OnceLock::new();
+    const TICK_BITS: u32 = 40;
+
+    fn boot_tag() -> u64 {
+        static CACHE: OnceLock<u64> = OnceLock::new();
         *CACHE.get_or_init(|| {
-            let stat = std::fs::read_to_string("/proc/stat").ok()?;
-            let btime = stat
-                .lines()
-                .find_map(|l| l.strip_prefix("btime "))?
-                .trim()
-                .parse()
-                .ok()?;
-            let tick = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
-            if tick <= 0 {
-                return None;
+            let id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for byte in id.trim().bytes() {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0100_0000_01b3);
             }
-            Some((btime, tick as u64))
+            hash >> TICK_BITS
         })
     }
 
@@ -61,13 +58,13 @@ mod imp {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Probe::Gone,
             Err(_) => return Probe::Unreadable,
         };
-        let (Some(stat), Some((btime, tick))) = (parse(&text), boot_and_tick()) else {
+        let Some(stat) = parse(&text) else {
             return Probe::Unreadable;
         };
         if stat.state == 'Z' || stat.state == 'X' {
             return Probe::Gone;
         }
-        Probe::Alive(btime * 1000 + stat.start_ticks * 1000 / tick)
+        Probe::Alive((boot_tag() << TICK_BITS) | (stat.start_ticks & ((1 << TICK_BITS) - 1)))
     }
 
     pub(crate) fn parents() -> HashMap<u32, u32> {

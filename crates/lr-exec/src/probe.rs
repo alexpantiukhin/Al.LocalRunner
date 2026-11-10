@@ -16,9 +16,16 @@ pub(crate) fn probe(pid: u32) -> Probe {
     os::probe(pid)
 }
 
-/// The start fingerprint of a running process (Windows: creation time from `GetProcessTimes`;
-/// Linux: start time from `/proc/<pid>/stat` made absolute with the boot time, in ms; macOS:
-/// start time from `proc_pidinfo`, in µs); `None` when the process is gone or unreadable.
+/// The start fingerprint of a running process; `None` when the process is gone or its start
+/// cannot be read. It is an opaque value, compared only for equality with another value from
+/// this function on the same machine, and stable across processes and calls:
+///
+/// - Windows: creation time from `GetProcessTimes` (100 ns units since 1601);
+/// - Linux: `starttime` of `/proc/<pid>/stat` in raw clock ticks since boot (low 40 bits) tagged
+///   with a hash of `/proc/sys/kernel/random/boot_id` (high 24 bits), so a value from an
+///   earlier boot never matches; no wall-clock conversion, which would drift with `btime`;
+/// - macOS: start time from `proc_pidinfo` in µs since the epoch.
+///
 /// The CLI records it for the submitting process and the runner for its services, so a reused
 /// pid is never mistaken for the original process (spec 7.3).
 pub fn process_start(pid: u32) -> Option<u64> {

@@ -1,3 +1,4 @@
+use lr_core::Timestamp;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::Path;
@@ -17,6 +18,23 @@ pub fn header_line(step: &str, fields: &[(String, String)]) -> String {
     line.push_str(" ===\n");
     line
 }
+
+/// The line that ends the output of a step stopped by a cancel (spec 7.3): when the runner
+/// stopped it, on the runner clock, and the reason given with the stop (who, when and
+/// `--reason`), as `=== step <name> cancelled at <time> | reason=<reason> ===`.
+pub fn cancel_line(step: &str, at: Timestamp, reason: Option<&str>) -> String {
+    let mut line = format!("=== step {} cancelled at {at}", one_line(step));
+    if let Some(reason) = reason {
+        line.push_str(&format!(" | reason={}", one_line(reason)));
+    }
+    line.push_str(" ===\n");
+    line
+}
+
+/// Start of the output line that tells a cancel could not deliver the soft signal (on
+/// Windows: the runner has no console, so Ctrl+Break cannot reach the step); the tree is then
+/// killed after the grace.
+pub const SOFT_STOP_NOT_DELIVERED: &str = "localrunner: soft stop not delivered";
 
 fn one_line(text: &str) -> String {
     text.chars()

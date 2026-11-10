@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod helper;
+pub mod no_console;
 
 use async_trait::async_trait;
 use lr_abstractions::fakes::ManualClock;

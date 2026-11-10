@@ -1,13 +1,14 @@
 mod common;
 
 use common::{
-    clock, fresh_file, helper_command, job, pid_alive, real_sleep, step, Helper, Recorder,
+    clock, fresh_file, helper_command, job, pid_alive, real_sleep, step, Helper, Recorder, T0,
 };
 use lr_abstractions::{
     stop_signal, Clock, JobOutcome, JobSpec, ProcessRunner, Stop, StopHandle, DEFAULT_CANCEL_GRACE,
 };
+use lr_core::Timestamp;
 use lr_core::{JobState, StepState};
-use lr_exec::ExecRunner;
+use lr_exec::{cancel_line, ExecRunner, SOFT_STOP_NOT_DELIVERED};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -72,7 +73,7 @@ async fn cancel_sends_soft_signal_then_kills_after_grace_10s() {
     let (task, out, stop) = start(spec, clock);
     let child = out.pid_of("child").await;
     let grand = out.pid_of("grandchild").await;
-    stop.stop(Stop::Cancel);
+    stop.stop_with_reason(Stop::Cancel, "bob at 12:00: stale");
     out.wait_for("child-got-soft").await;
     assert!(m1.exists());
     real_sleep(500).await;
@@ -92,6 +93,9 @@ async fn cancel_sends_soft_signal_then_kills_after_grace_10s() {
         vec![StepState::Cancelled, StepState::Skipped]
     );
     assert!(!out.text().contains("never"));
+    let trailer = cancel_line("s", Timestamp(T0.0 + 10_000), Some("bob at 12:00: stale"));
+    assert!(out.text().ends_with(&trailer), "{}", out.text());
+    assert!(!out.text().contains(SOFT_STOP_NOT_DELIVERED));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -125,6 +129,11 @@ async fn kill_stops_the_tree_at_once_without_soft_signal() {
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);
     real_sleep(300).await;
     assert!(!m1.exists());
+    assert!(
+        out.text().ends_with(&cancel_line("s", T0, None)),
+        "{}",
+        out.text()
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

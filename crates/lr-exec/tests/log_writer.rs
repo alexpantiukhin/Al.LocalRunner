@@ -178,3 +178,16 @@ fn dropping_terminates_a_trailing_line_so_append_cannot_glue_a_header() {
         )
     );
 }
+
+#[test]
+fn cancel_line_text_is_pinned() {
+    let at = lr_core::Timestamp(1_700_000_010_000);
+    assert_eq!(
+        lr_exec::cancel_line("build", at, Some("bob at 12:00: stale\nx")),
+        format!("=== step build cancelled at {at} | reason=bob at 12:00: stale x ===\n")
+    );
+    assert_eq!(
+        lr_exec::cancel_line("build", at, None),
+        format!("=== step build cancelled at {at} ===\n")
+    );
+}

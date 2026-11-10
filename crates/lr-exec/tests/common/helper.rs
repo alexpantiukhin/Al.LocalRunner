@@ -145,12 +145,17 @@ pub fn run_if_requested() {
         }
         "wait-file" => {
             announce(&role);
-            let gate = PathBuf::from(std::env::var(GATE).unwrap());
-            while !gate.exists() {
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            wait_gate();
+            let code = std::env::var(COUNT).ok().and_then(|c| c.parse().ok());
+            std::process::exit(code.unwrap_or(0));
+        }
+        "print-start" => {
+            let start = lr_exec::process_start(std::process::id());
+            say(&format!("start={start:?} start-end\n"));
+            wait_gate();
             std::process::exit(0);
         }
+        "no-console-cancel" => super::no_console::run(),
         "big" => {
             let mut out = std::io::stdout().lock();
             out.write_all(&[0xff, 0xfe]).unwrap();
@@ -182,7 +187,14 @@ pub fn run_if_requested() {
     }
 }
 
-fn say(text: &str) {
+fn wait_gate() {
+    let gate = PathBuf::from(std::env::var(GATE).unwrap());
+    while !gate.exists() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+pub fn say(text: &str) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(text.as_bytes());
     let _ = out.flush();

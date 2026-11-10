@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::mem::{size_of, zeroed};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
-    STILL_ACTIVE, WAIT_OBJECT_0,
+    STILL_ACTIVE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
@@ -45,13 +45,27 @@ pub(crate) fn handle_start(handle: HANDLE) -> Option<u64> {
     }
 }
 
-fn has_exited(handle: HANDLE, synchronize: bool) -> bool {
+enum Exit {
+    Running,
+    Exited,
+    Unknown,
+}
+
+fn exit_state(handle: HANDLE, synchronize: bool) -> Exit {
     unsafe {
         if synchronize {
-            return WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+            return match WaitForSingleObject(handle, 0) {
+                WAIT_OBJECT_0 => Exit::Exited,
+                WAIT_TIMEOUT => Exit::Running,
+                _ => Exit::Unknown,
+            };
         }
         let mut code = 0u32;
-        GetExitCodeProcess(handle, &mut code) != 0 && code != STILL_ACTIVE as u32
+        if GetExitCodeProcess(handle, &mut code) == 0 || code == STILL_ACTIVE as u32 {
+            Exit::Unknown
+        } else {
+            Exit::Exited
+        }
     }
 }
 
@@ -69,12 +83,10 @@ pub(crate) fn probe(pid: u32) -> Probe {
                 Err(_) => return Probe::Unreadable,
             },
         };
-    if has_exited(handle.0, synchronize) {
-        return Probe::Gone;
-    }
-    match handle_start(handle.0) {
-        Some(start) => Probe::Alive(start),
-        None => Probe::Unreadable,
+    match (exit_state(handle.0, synchronize), handle_start(handle.0)) {
+        (Exit::Exited, _) => Probe::Gone,
+        (Exit::Running, Some(start)) => Probe::Alive(start),
+        _ => Probe::Unreadable,
     }
 }
 
