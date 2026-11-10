@@ -104,6 +104,19 @@ fn names_that_leave_the_runner_directory_are_refused() {
 }
 
 #[test]
+fn names_windows_cannot_hold_as_a_directory_are_refused() {
+    for bad in [
+        "CON", "con", "NUL", "nul.txt", "Con.txt", "PRN", "AUX", "COM1", "com9", "LPT1",
+        "lpt9.log", "COM¹", "CONIN$", "box.", "box ", "box..",
+    ] {
+        assert!(check_runner_name(bad).is_err(), "{bad:?} accepted");
+    }
+    for good in ["console", "com10", "nullable", "box.1", "a.b"] {
+        assert!(check_runner_name(good).is_ok(), "{good:?} refused");
+    }
+}
+
+#[test]
 fn resources_above_the_host_or_an_unmeasured_host_are_refused() {
     let err = |text: &str, host: HostResources| {
         RunnerConfig::parse(text, None, "h", PathBuf::new(), host)

@@ -10,19 +10,8 @@ pub(crate) struct GitFacts {
     pub origin: Option<String>,
 }
 
-const SCRUBBED_GIT_VARS: [&str; 3] = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"];
-
-fn git_command(cwd: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    for var in SCRUBBED_GIT_VARS {
-        cmd.env_remove(var);
-    }
-    cmd.arg("-C").arg(cwd);
-    cmd
-}
-
 fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let out = git_command(cwd).args(args).output().ok()?;
+    let out = crate::git_repo::git_command(cwd).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -307,15 +296,41 @@ mod tests {
     }
 
     #[test]
-    fn git_command_scrubs_repository_overrides() {
-        let cmd = git_command(Path::new("."));
+    fn facts_and_repository_scrub_every_git_variable() {
+        let env = [
+            "GIT_DIR",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+            "git_object_directory",
+            "PATH",
+        ]
+        .map(std::ffi::OsString::from);
+        let cmd = crate::git_repo::git_command_in(Path::new("."), env);
         let removed: Vec<String> = cmd
             .get_envs()
             .filter(|(_, value)| value.is_none())
             .map(|(name, _)| name.to_string_lossy().into_owned())
             .collect();
-        for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
-            assert!(removed.iter().any(|r| r == var), "{var} not scrubbed");
+        for var in [
+            "GIT_DIR",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
+        ] {
+            assert!(
+                removed.iter().any(|r| r.eq_ignore_ascii_case(var)),
+                "{var} not scrubbed"
+            );
         }
+        assert!(removed
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case("git_object_directory")));
+        assert!(!removed.iter().any(|r| r == "PATH"));
+        let prompt = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "GIT_TERMINAL_PROMPT")
+            .and_then(|(_, v)| v);
+        assert_eq!(prompt, Some(std::ffi::OsStr::new("0")));
     }
 }

@@ -65,6 +65,32 @@ pub fn without_credentials(url: &str) -> String {
     }
 }
 
+/// A `git -C <cwd>` command that ignores the caller's repository overrides: every `GIT_*`
+/// variable of `env` (any case) is removed and `GIT_TERMINAL_PROMPT=0` set, so neither
+/// `GIT_DIR`, `GIT_COMMON_DIR`, `GIT_CONFIG_*` nor the like can point git elsewhere.
+pub fn git_command_in<I>(cwd: &Path, env: I) -> Command
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut cmd = Command::new("git");
+    for var in env {
+        if var
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            cmd.env_remove(var);
+        }
+    }
+    cmd.env("GIT_TERMINAL_PROMPT", "0").arg("-C").arg(cwd);
+    cmd
+}
+
+/// [`git_command_in`] over the environment of this process.
+pub fn git_command(cwd: &Path) -> Command {
+    git_command_in(cwd, std::env::vars_os().map(|(k, _)| k))
+}
+
 struct Output {
     ok: bool,
     stdout: Vec<u8>,
@@ -73,21 +99,8 @@ struct Output {
 
 async fn git(root: PathBuf, args: Vec<String>) -> Result<Output, RepositoryError> {
     tokio::task::spawn_blocking(move || {
-        let mut cmd = Command::new("git");
-        for (var, _) in std::env::vars_os() {
-            if var
-                .to_string_lossy()
-                .to_ascii_uppercase()
-                .starts_with("GIT_")
-            {
-                cmd.env_remove(var);
-            }
-        }
-        cmd.env("GIT_TERMINAL_PROMPT", "0")
-            .arg("-C")
-            .arg(&root)
-            .args(&args);
-        let out = cmd
+        let out = git_command(&root)
+            .args(&args)
             .output()
             .map_err(|e| bad(format!("cannot run git: {e}")))?;
         Ok(Output {

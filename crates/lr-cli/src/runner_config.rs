@@ -160,13 +160,30 @@ pub fn instance_names(base: &str, count: u32) -> Result<Vec<String>, String> {
     }
 }
 
-/// A runner name is also the name of its state directory: besides the key name rules it must
-/// not be made of dots only, so it never points at the installation root or above it.
+fn windows_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let stem = stem.trim_end();
+    matches!(stem, "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || ["COM", "LPT"].iter().any(|p| {
+            stem.strip_prefix(p).is_some_and(|n| {
+                n.len() == 1 && n.bytes().all(|b| b.is_ascii_digit()) && n != "0"
+                    || ["¹", "²", "³"].contains(&n)
+            })
+        })
+}
+
+/// A runner name is also the name of its state directory on every OS: besides the key name
+/// rules it must not be made of dots only (the installation root or above it), must not be a
+/// Windows device name (`CON`, `NUL`, `COM1`, `con.txt`, ...) and must not end with a dot or a
+/// space, which Windows drops (`box.` would share the directory of `box`).
 pub fn check_runner_name(name: &str) -> Result<(), String> {
+    let invalid = || Err(format!("`{name}` is not a valid runner name"));
+    if name.ends_with(['.', ' ']) || name.contains(['/', '\\']) || windows_reserved(name) {
+        return invalid();
+    }
     lr_net::check_name(name).map_err(|e| e.to_string())?;
-    let path_like = name.chars().all(|c| c == '.') || name.contains(['/', '\\']);
-    if path_like {
-        return Err(format!("`{name}` is not a valid runner name"));
+    if name.chars().all(|c| c == '.') {
+        return invalid();
     }
     Ok(())
 }
