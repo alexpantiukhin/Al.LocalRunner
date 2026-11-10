@@ -37,17 +37,18 @@ fn session_collects_process_facts() {
     assert_eq!(id.source, Source::Session);
     assert_eq!(id.cwd, tmp.path());
     let start = id.sender_start.expect("parent process start time");
-    if cfg!(target_os = "linux") {
-        assert!(lr_cli::facts::process_start_is_stable());
-        assert_eq!(lr_cli::facts::process_start_ms(id.sender_pid), Some(start));
-        return;
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    assert!(
-        start <= now + 2000 && now.saturating_sub(start) < 24 * 3600 * 1000,
-        "{start} vs {now}"
+    assert_eq!(lr_exec::process_start(id.sender_pid), Some(start));
+}
+
+#[test]
+fn the_hub_inspector_sees_a_live_session_sender_alive() {
+    use lr_abstractions::{Liveness, ProcessInspector};
+    let tmp = TempDir::new("d");
+    let id = session("a", None, tmp.path()).unwrap();
+    let start = id.sender_start.expect("parent process start time");
+    assert_eq!(
+        lr_exec::OsProcessInspector.liveness(id.sender_pid, start),
+        Liveness::Alive,
+        "the dead-submitter rule compares the same fingerprint the CLI recorded"
     );
 }
