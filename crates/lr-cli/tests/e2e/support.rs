@@ -17,14 +17,17 @@ use std::time::{Duration, Instant};
 pub const LABEL: &str = "e2e";
 pub const SECRET_NAME: &str = "e2e_token";
 pub const SECRET_VAR: &str = "LR_E2E_SECRET_SOURCE";
-pub const SECRET_VALUE: &str = "qzv7e2esecretvalue91";
+/// Set for every process cargo runs by `[env]` of `.cargo/config.toml`, so the test never
+/// changes its own environment while other test threads read it.
+pub const SECRET_VALUE: &str = env!("LR_E2E_SECRET_SOURCE");
 
-static ENV: std::sync::Once = std::sync::Once::new();
-
-/// Sets the variable the runners read their test secret from, once per test binary, before any
-/// role starts.
+/// The runners read the test secret from the environment cargo gave this process.
 pub fn init() {
-    ENV.call_once(|| std::env::set_var(SECRET_VAR, SECRET_VALUE));
+    assert_eq!(
+        std::env::var(SECRET_VAR).as_deref(),
+        Ok(SECRET_VALUE),
+        "run the end-to-end tests through cargo: {SECRET_VAR} comes from .cargo/config.toml"
+    );
 }
 
 /// A machine of the test: its state and configuration directories under one temporary dir.
@@ -225,4 +228,24 @@ pub async fn helper_pid(pids: &Path, role: &str) -> u32 {
         || async { crate::helper::recorded_pid(pids, role) },
     )
     .await
+}
+
+/// Removes the test directory once the stopped roles and job processes let go of it: their
+/// tasks end after the abort, so files can stay open for a moment (Windows refuses to delete
+/// open files).
+pub async fn remove(dir: TempDir) {
+    let root = dir.path().parent().unwrap().to_path_buf();
+    eventually(
+        "the test directory to be removed",
+        Duration::from_secs(20),
+        || {
+            let gone = match std::fs::remove_dir_all(&root) {
+                Ok(()) => true,
+                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            };
+            async move { gone.then_some(()) }
+        },
+    )
+    .await;
+    drop(dir);
 }

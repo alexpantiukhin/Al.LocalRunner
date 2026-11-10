@@ -6,8 +6,8 @@ use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::JobState;
 use lr_exec::{process_start, OsProcessInspector};
 use lr_proto::ReasonCode;
-use std::path::Path;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 fn helper_profile(name: &str, mode: Mode, dir: &TempDir, timeout_s: u64) -> String {
     let pids = dir.path().join(format!("{name}.pid"));
@@ -26,18 +26,44 @@ fn open_gate(dir: &TempDir) {
     std::fs::write(dir.path().join("gate"), b"open").unwrap();
 }
 
-struct GateOnDrop<'a>(&'a Path);
+/// Opens the gate of the helpers when the test ends, even by a panic, and waits until the job
+/// processes it watches are gone, so none of them holds the temporary directory.
+struct Release {
+    dir: PathBuf,
+    watched: Vec<(u32, u64)>,
+}
 
-impl Drop for GateOnDrop<'_> {
+impl Release {
+    fn new(dir: &TempDir) -> Release {
+        Release {
+            dir: dir.path().to_path_buf(),
+            watched: Vec::new(),
+        }
+    }
+
+    fn watch(&mut self, pid: u32) {
+        if let Some(start) = process_start(pid) {
+            self.watched.push((pid, start));
+        }
+    }
+}
+
+impl Drop for Release {
     fn drop(&mut self) {
-        let _ = std::fs::write(self.0.join("gate"), b"open");
+        let _ = std::fs::write(self.dir.join("gate"), b"open");
+        let started = Instant::now();
+        while self.watched.iter().any(|&(p, s)| alive(p, s))
+            && started.elapsed() < Duration::from_secs(20)
+        {
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kill_runner_mid_job_marks_lost_after_deadline() {
     let dir = TempDir::new("e2e-lost");
-    let _gate = GateOnDrop(dir.path());
+    let mut release = Release::new(&dir);
     let layout = layout(
         &dir,
         "machine",
@@ -58,7 +84,7 @@ async fn kill_runner_mid_job_marks_lost_after_deadline() {
     );
     let repo = repo(&dir, &profiles);
     let (held_client, held) = submit(&layout, &repo, "held", None).await;
-    helper_pid(&pids(&dir, "held"), "child").await;
+    release.watch(helper_pid(&pids(&dir, "held"), "child").await);
     let second = start_runners(&layout, Some("r2"), 1, None, false)
         .await
         .expect("r2 starts");
@@ -103,12 +129,14 @@ async fn kill_runner_mid_job_marks_lost_after_deadline() {
     second.stop();
     hub_role.stop();
     broker.stop();
+    drop(release);
+    remove(dir).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn broker_restart_keeps_queue() {
     let dir = TempDir::new("e2e-restart");
-    let _gate = GateOnDrop(dir.path());
+    let mut release = Release::new(&dir);
     let layout = layout(&dir, "machine", "");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -124,7 +152,7 @@ async fn broker_restart_keeps_queue() {
     );
     let repo = repo(&dir, &profiles);
     let (first_client, first) = submit(&layout, &repo, "first", None).await;
-    helper_pid(&pids(&dir, "first"), "child").await;
+    release.watch(helper_pid(&pids(&dir, "first"), "child").await);
     let (next_client, next) = submit(&layout, &repo, "next", None).await;
     eventually("the next job queued", Duration::from_secs(30), || async {
         let v = status(&layout).await?;
@@ -159,6 +187,8 @@ async fn broker_restart_keeps_queue() {
     runner.stop();
     hub_role.stop();
     broker.stop();
+    drop(release);
+    remove(dir).await;
 }
 
 fn alive(pid: u32, start: u64) -> bool {
@@ -168,7 +198,7 @@ fn alive(pid: u32, start: u64) -> bool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn timeout_kills_grandchildren() {
     let dir = TempDir::new("e2e-timeout");
-    let _gate = GateOnDrop(dir.path());
+    let mut release = Release::new(&dir);
     let layout = layout(&dir, "machine", "");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -178,7 +208,7 @@ async fn timeout_kills_grandchildren() {
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    let repo = repo(&dir, &helper_profile("tree", Mode::Tree, &dir, 5));
+    let repo = repo(&dir, &helper_profile("tree", Mode::Tree, &dir, 20));
     let (client, job) = submit(&layout, &repo, "tree", None).await;
     let file = pids(&dir, "tree");
     let grandchild = helper_pid(&file, "grandchild").await;
@@ -189,6 +219,7 @@ async fn timeout_kills_grandchildren() {
         .collect();
     assert_eq!(tree.len(), 2, "both helpers run before the timeout");
     assert!(tree.iter().all(|&(p, s)| alive(p, s)));
+    release.watched.extend(tree.iter().copied());
 
     let ended = until_exit(client, &job, Duration::from_secs(60)).await;
     assert_eq!(ended.state, JobState::Timeout, "{ended:?}");
@@ -203,4 +234,6 @@ async fn timeout_kills_grandchildren() {
     runner.stop();
     hub_role.stop();
     broker.stop();
+    drop(release);
+    remove(dir).await;
 }

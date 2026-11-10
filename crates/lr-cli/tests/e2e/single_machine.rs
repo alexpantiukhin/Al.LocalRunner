@@ -8,6 +8,8 @@ use lr_obs::Redactor;
 use std::sync::Arc;
 use std::time::Duration;
 
+const MASKED_LINE: &str = "e2e-out [***] done";
+
 fn echo_secret() -> String {
     let var = SECRET_NAME.to_uppercase();
     if cfg!(windows) {
@@ -38,14 +40,16 @@ async fn single_machine_submit_wait_passes_and_history_has_one_row() {
     let ended = until_exit(client, &job, Duration::from_secs(60)).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert_eq!(ended.exit_code, Some(0), "{ended:?}");
-    assert!(ended.output.contains("e2e-out ["), "{}", ended.output);
-    assert!(ended.output.contains("] done"), "{}", ended.output);
+    assert!(
+        ended.output.contains(MASKED_LINE),
+        "the secret is replaced by the mask: {}",
+        ended.output
+    );
     assert!(
         !ended.output.contains(SECRET_VALUE),
         "the runner masks the secret before it leaves: {}",
         ended.output
     );
-    assert!(ended.output.contains("***"), "{}", ended.output);
 
     let rows = history(&layout).await;
     assert_eq!(rows.len(), 1, "one submit is one run: {rows:?}");
@@ -73,7 +77,7 @@ async fn single_machine_submit_wait_passes_and_history_has_one_row() {
     .await
     .expect("stored log");
     client.close().await;
-    assert!(log.contains("e2e-out ["), "{log}");
+    assert!(log.contains(MASKED_LINE), "{log}");
     assert!(
         !log.contains(SECRET_VALUE),
         "the stored log is masked: {log}"
@@ -82,4 +86,5 @@ async fn single_machine_submit_wait_passes_and_history_has_one_row() {
     runners.stop();
     hub_role.stop();
     broker.stop();
+    remove(dir).await;
 }

@@ -62,10 +62,14 @@ async fn join_runner_by_code_then_job_runs_remote() {
         name: Some("box2".into()),
         ..join
     };
+    let refused = runner_join(&node, reused)
+        .await
+        .expect_err("a join code serves once");
     assert!(
-        runner_join(&node, reused).await.is_err(),
-        "a join code serves once"
+        refused.contains("join_code_unknown"),
+        "the used code is unknown to the broker: {refused}"
     );
+    assert!(!node.runner_dir("box2").join("broker.toml").exists());
 
     let remote = start_runners(&node, Some("box"), 1, None, false)
         .await
@@ -104,4 +108,5 @@ async fn join_runner_by_code_then_job_runs_remote() {
     remote.stop();
     hub_role.stop();
     broker.stop();
+    remove(dir).await;
 }
