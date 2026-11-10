@@ -1,8 +1,8 @@
 use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
-    Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord, JoinCodeRow,
-    LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow, StepUpdate, StoreError,
-    Transition, LOG_TRUNCATED_MARK,
+    outlives_cancel, Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord,
+    JoinCodeRow, LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow, StepUpdate,
+    StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::BTreeMap;
@@ -140,15 +140,39 @@ impl BrokerState {
             job.finished_at = Some(change.at);
             job.exit_code = change.exit_code;
         }
-        if job.cancelled_by.is_none() {
+        if outlives_cancel(job.state, change.state) {
             job.cancelled_by = change.cancelled_by;
-        }
-        if job.cancel_reason.is_none() {
             job.cancel_reason = change.cancel_reason;
+        } else {
+            if job.cancelled_by.is_none() {
+                job.cancelled_by = change.cancelled_by;
+            }
+            if job.cancel_reason.is_none() {
+                job.cancel_reason = change.cancel_reason;
+            }
         }
         job.state = change.state;
         if change.state.is_final() {
             self.orders.remove(key);
+        }
+        Ok(Applied::Changed)
+    }
+
+    pub(crate) fn record_cancel(
+        &mut self,
+        key: &JobKey,
+        by: &str,
+        reason: &str,
+    ) -> Result<Applied, StoreError> {
+        let job = &mut self.run(key)?.record.job;
+        if job.state.is_final() {
+            return Ok(Applied::Ignored);
+        }
+        if job.cancelled_by.is_none() {
+            job.cancelled_by = Some(by.to_string());
+        }
+        if job.cancel_reason.is_none() {
+            job.cancel_reason = Some(reason.to_string());
         }
         Ok(Applied::Changed)
     }

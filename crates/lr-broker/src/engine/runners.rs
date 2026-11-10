@@ -1,7 +1,7 @@
 use super::conn::ConnId;
 use super::recovery::unknown_address;
 use super::{Engine, Role};
-use lr_abstractions::{RunnerRow, RunnerState, StoreError};
+use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
     ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities,
@@ -180,7 +180,13 @@ impl Engine {
             RunnerState::Online
         };
         if slot.persisted {
-            let _ = self.store.set_runner_state(name, state, now).await;
+            if let Err(e) = self.store.set_runner_state(name, state, now).await {
+                self.diag(
+                    Level::Error,
+                    "storage failed: could not record the runner heartbeat",
+                    &[("runner", name), ("error", &e.to_string())],
+                );
+            }
         }
     }
 
@@ -193,10 +199,17 @@ impl Engine {
             return;
         }
         if slot.persisted {
-            let _ = self
+            if let Err(e) = self
                 .store
                 .set_runner_state(name, RunnerState::Offline, now)
-                .await;
+                .await
+            {
+                self.diag(
+                    Level::Error,
+                    "storage failed: could not record the runner going offline",
+                    &[("runner", name), ("error", &e.to_string())],
+                );
+            }
         }
         self.publish(
             None,
@@ -215,15 +228,8 @@ impl Engine {
                 }
             }
         }
-        for mut job in back {
-            if self.store.requeue(&job.key).await.is_err() {
-                continue;
-            }
-            job.runner = None;
-            match job.cancel.take() {
-                Some(cancel) => self.cancel_waiting(job, cancel).await,
-                None => self.queue.push(job),
-            }
+        for job in back {
+            self.requeue_or_retry(job).await;
         }
         self.return_stranded().await;
         self.plan().await;

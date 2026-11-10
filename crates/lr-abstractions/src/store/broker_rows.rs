@@ -235,6 +235,14 @@ pub enum Applied {
     Ignored,
 }
 
+/// Whether a change from `from` to `to` ends a run that outlived a recorded cancel: it ends
+/// passed, failed or by timeout without ever going `Cancelling`, so the canceller and reason
+/// recorded by [`crate::BrokerStore::record_cancel`] are replaced by those of the change.
+pub fn outlives_cancel(from: JobState, to: JobState) -> bool {
+    from != JobState::Cancelling
+        && matches!(to, JobState::Passed | JobState::Failed | JobState::Timeout)
+}
+
 /// A job state change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transition {

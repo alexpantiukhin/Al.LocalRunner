@@ -101,6 +101,27 @@ async fn services_report_is_shown_on_the_runners_list() {
     );
 }
 
+#[tokio::test]
+async fn a_report_that_only_counts_down_the_lifetime_is_no_service_change() {
+    let mut h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", with_service()).await;
+    r.send(&report(ServiceState::Idle)).await;
+    let RunnerToBroker::ServicesReport(mut later) = report(ServiceState::Idle) else {
+        unreachable!()
+    };
+    later.services[0].remaining_s = Some(590);
+    r.send(&RunnerToBroker::ServicesReport(later)).await;
+    r.send(&report(ServiceState::Busy)).await;
+    h.local_hub("alex").await.sync().await;
+    let mut changes = Vec::new();
+    while let Ok(lr_broker::BusEvent { event, .. }) = h.events.try_recv() {
+        if let QueueEvent::ServiceChanged { service, .. } = event {
+            changes.push(service.state);
+        }
+    }
+    assert_eq!(changes, [ServiceState::Idle, ServiceState::Busy]);
+}
+
 async fn head_lacks_memory(h: &Harness) -> Conn {
     let mut busy = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut hub = h.local_hub("alex").await;

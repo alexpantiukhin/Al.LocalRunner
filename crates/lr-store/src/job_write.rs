@@ -4,7 +4,8 @@ use crate::codec::{col_enum, col_opt_time, int, json, opt_int, opt_time, time, T
 use crate::db::{not_found, write, Fail, R};
 use crate::seq::decide;
 use lr_abstractions::{
-    Admission, Applied, Inbound, Intake, JobKey, OrderRow, StepUpdate, StoreError, Transition,
+    outlives_cancel, Admission, Applied, Inbound, Intake, JobKey, OrderRow, StepUpdate, StoreError,
+    Transition,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -259,12 +260,17 @@ pub(crate) fn transition(conn: &mut Connection, key: &JobKey, change: Transition
             s if s.is_final() => (None, Some(time(change.at)), change.exit_code),
             _ => (None, None, None),
         };
+        let cancel = if outlives_cancel(state, change.state) {
+            "cancelled_by = ?7, cancel_reason = ?8"
+        } else {
+            "cancelled_by = COALESCE(cancelled_by, ?7), cancel_reason = COALESCE(cancel_reason, ?8)"
+        };
         tx.execute(
-            "UPDATE job SET state = ?3, started_at = COALESCE(?4, started_at), \
-             finished_at = COALESCE(?5, finished_at), exit_code = COALESCE(?6, exit_code), \
-             cancelled_by = COALESCE(cancelled_by, ?7), \
-             cancel_reason = COALESCE(cancel_reason, ?8) \
-             WHERE client_key = ?1 AND id = ?2",
+            &format!(
+                "UPDATE job SET state = ?3, started_at = COALESCE(?4, started_at), \
+                 finished_at = COALESCE(?5, finished_at), exit_code = COALESCE(?6, exit_code), \
+                 {cancel} WHERE client_key = ?1 AND id = ?2"
+            ),
             params![
                 key.client,
                 key.job.0,
@@ -282,6 +288,26 @@ pub(crate) fn transition(conn: &mut Connection, key: &JobKey, change: Transition
                 [&key.client, &key.job.0],
             )?;
         }
+        Ok(Applied::Changed)
+    })
+}
+
+pub(crate) fn record_cancel(
+    conn: &mut Connection,
+    key: &JobKey,
+    by: &str,
+    reason: &str,
+) -> R<Applied> {
+    write(conn, |tx| {
+        let (state, _, _) = current(tx, key)?;
+        if state.is_final() {
+            return Ok(Applied::Ignored);
+        }
+        tx.execute(
+            "UPDATE job SET cancelled_by = COALESCE(cancelled_by, ?3), \
+             cancel_reason = COALESCE(cancel_reason, ?4) WHERE client_key = ?1 AND id = ?2",
+            params![key.client, key.job.0, by, reason],
+        )?;
         Ok(Applied::Changed)
     })
 }

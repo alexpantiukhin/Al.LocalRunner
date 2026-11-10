@@ -14,6 +14,8 @@ pub struct FaultyStore {
     pub inner: Arc<MemoryBrokerStore>,
     pub fail_accept: AtomicBool,
     pub fail_accept_seq: AtomicBool,
+    pub fail_transition: AtomicBool,
+    pub fail_requeue: AtomicBool,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
 }
@@ -24,6 +26,8 @@ impl FaultyStore {
             inner,
             fail_accept: AtomicBool::new(false),
             fail_accept_seq: AtomicBool::new(false),
+            fail_transition: AtomicBool::new(false),
+            fail_requeue: AtomicBool::new(false),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
         }
@@ -31,6 +35,10 @@ impl FaultyStore {
 
     pub fn set(flag: &AtomicBool) {
         flag.store(true, Ordering::SeqCst);
+    }
+
+    pub fn clear(flag: &AtomicBool) {
+        flag.store(false, Ordering::SeqCst);
     }
 
     pub fn reads(&self) -> usize {
@@ -61,10 +69,24 @@ impl BrokerStore for FaultyStore {
         self.inner.grant(key, runner).await
     }
     async fn requeue(&self, key: &JobKey) -> Result<(), StoreError> {
+        if self.fail_requeue.load(Ordering::SeqCst) {
+            return Err(io());
+        }
         self.inner.requeue(key).await
     }
     async fn transition(&self, key: &JobKey, change: Transition) -> Result<Applied, StoreError> {
+        if self.fail_transition.load(Ordering::SeqCst) {
+            return Err(io());
+        }
         self.inner.transition(key, change).await
+    }
+    async fn record_cancel(
+        &self,
+        key: &JobKey,
+        by: &str,
+        reason: &str,
+    ) -> Result<Applied, StoreError> {
+        self.inner.record_cancel(key, by, reason).await
     }
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError> {
         self.inner.update_step(key, update).await

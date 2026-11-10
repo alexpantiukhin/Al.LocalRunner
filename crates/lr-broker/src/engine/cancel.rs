@@ -1,7 +1,8 @@
 use super::conn::ConnId;
+use super::retry::Retry;
 use super::{Cancel, Client, Engine, Job};
 use crate::policy::CancelOthers;
-use lr_abstractions::{Inbound, JobKey, OutboxKind, StoreError, Transition};
+use lr_abstractions::{Applied, Inbound, JobKey, Level, OutboxKind, StoreError, Transition};
 use lr_core::JobState;
 use lr_proto::{
     Ack, BrokerToHub, BrokerToRunner, CancelAck, CancelOutcome, HubCancel, ProtocolErrorCode,
@@ -139,11 +140,26 @@ impl Engine {
     pub(crate) async fn mark_cancel(&mut self, i: usize, cancel: Cancel) {
         let key = self.active[i].key.clone();
         self.active[i].cancel = Some(cancel.clone());
-        if self.active[i].started_at.is_some() {
+        let written = if self.active[i].started_at.is_some() {
             let mut t = Transition::to(JobState::Cancelling, self.now());
             t.cancelled_by = Some(cancel.by);
             t.cancel_reason = Some(cancel.reason);
-            let _ = self.store.transition(&key, t).await;
+            self.store.transition(&key, t).await
+        } else {
+            self.store
+                .record_cancel(&key, &cancel.by, &cancel.reason)
+                .await
+        };
+        if let Err(e) = written {
+            self.diag(
+                Level::Error,
+                "storage failed: could not record a cancel; it holds until a restart",
+                &[
+                    ("client", &key.client),
+                    ("job", &key.job.0),
+                    ("error", &e.to_string()),
+                ],
+            );
         }
         self.send_cancel(i).await;
     }
@@ -176,18 +192,23 @@ impl Engine {
 
     pub(crate) async fn cancel_waiting(&mut self, job: Job, cancel: Cancel) {
         let mut t = Transition::to(JobState::Cancelled, self.now());
-        t.cancelled_by = Some(cancel.by);
-        t.cancel_reason = Some(cancel.reason);
-        if self.store.transition(&job.key, t).await.is_ok() {
-            self.waits.remove(&job.key);
-            self.finish(
-                &job.key,
-                JobState::Cancelled,
-                None,
-                Some(cancel.code),
-                cancel.detail,
-            )
-            .await;
+        t.cancelled_by = Some(cancel.by.clone());
+        t.cancel_reason = Some(cancel.reason.clone());
+        match self.store.transition(&job.key, t).await {
+            Ok(applied) => {
+                self.waits.remove(&job.key);
+                if applied == Applied::Changed {
+                    self.finish(
+                        &job.key,
+                        JobState::Cancelled,
+                        None,
+                        Some(cancel.code),
+                        cancel.detail,
+                    )
+                    .await;
+                }
+            }
+            Err(e) => self.retry_later("cancel a waiting run", &e, Retry::Cancel(job, cancel)),
         }
     }
 }

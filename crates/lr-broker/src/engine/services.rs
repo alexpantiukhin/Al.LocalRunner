@@ -40,7 +40,12 @@ impl Engine {
         let changed: Vec<_> = report
             .services
             .iter()
-            .filter(|s| !slot.services.contains(s))
+            .filter(|s| {
+                !slot
+                    .services
+                    .iter()
+                    .any(|o| o.name == s.name && o.state == s.state && o.mem_mb == s.mem_mb)
+            })
             .cloned()
             .collect();
         slot.stopping.retain(|n| {

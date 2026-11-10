@@ -38,12 +38,12 @@ pub use process::{
 };
 pub use secrets::{SecretError, SecretSource, SecretValue};
 pub use store::{
-    ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry, CacheKey, ClientUsage,
-    CodeSource, GithubRunRow, HubStore, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord,
-    JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow,
-    OutboxEntry, OutboxKind, ProfileStats, PruneLimits, PruneReport, Revoked, RunnerRow,
-    RunnerState, RunnerStore, ServiceRow, ServiceState, SourceKind, Spread, Stats, StatsQuery,
-    StepRow, StepStats, StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
+    outlives_cancel, ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry,
+    CacheKey, ClientUsage, CodeSource, GithubRunRow, HubStore, Inbound, Intake, JobFilter, JobKey,
+    JobLogRow, JobRecord, JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind,
+    MachineRow, OrderRow, OutboxEntry, OutboxKind, ProfileStats, PruneLimits, PruneReport, Revoked,
+    RunnerRow, RunnerState, RunnerStore, ServiceRow, ServiceState, SourceKind, Spread, Stats,
+    StatsQuery, StepRow, StepStats, StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 pub use transport::{
     Dialer, Frame, Listener, Peer, PeerAccess, Transport, TransportError, MAX_FRAME_BYTES,

@@ -191,6 +191,61 @@ pub async fn accepted_cancel_keeps_canceller_until_runner_reports(store: &dyn Br
     assert_eq!(record.job.cancel_reason.as_deref(), Some("stuck"));
 }
 
+/// A cancel recorded on a granted but not started run keeps its state, keeps the first
+/// canceller and reason, and stays for the final state; a final run ignores it.
+pub async fn recorded_cancel_keeps_state_and_first_canceller(store: &dyn BrokerStore) {
+    let key = queued(store, "c1", "j1").await;
+    store.grant(&key, "r1").await.unwrap();
+    let first = store.record_cancel(&key, "alex", "cancelled_by_user: stop");
+    assert_eq!(first.await.unwrap(), Applied::Changed);
+    store
+        .record_cancel(&key, "broker", "hub_absent")
+        .await
+        .unwrap();
+    let record = store.job(&key).await.unwrap().unwrap();
+    assert_eq!(record.job.state, JobState::Queued);
+    assert_eq!(record.job.runner.as_deref(), Some("r1"));
+    assert_eq!(record.job.cancelled_by.as_deref(), Some("alex"));
+    assert_eq!(
+        record.job.cancel_reason.as_deref(),
+        Some("cancelled_by_user: stop")
+    );
+    store
+        .transition(&key, Transition::to(JobState::Cancelled, at(5)))
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .job(&key)
+            .await
+            .unwrap()
+            .unwrap()
+            .job
+            .cancelled_by
+            .as_deref(),
+        Some("alex")
+    );
+    let late = store.record_cancel(&key, "bob", "late").await.unwrap();
+    assert_eq!(late, Applied::Ignored);
+}
+
+/// A run that ends passed without going `cancelling` drops a cancel recorded before it.
+pub async fn recorded_cancel_is_dropped_when_the_run_outlives_it(store: &dyn BrokerStore) {
+    let key = queued(store, "c1", "j1").await;
+    store.grant(&key, "r1").await.unwrap();
+    store.record_cancel(&key, "alex", "stop").await.unwrap();
+    store
+        .transition(&key, Transition::to(JobState::Running, at(10)))
+        .await
+        .unwrap();
+    store
+        .transition(&key, Transition::to(JobState::Passed, at(20)))
+        .await
+        .unwrap();
+    let job = store.job(&key).await.unwrap().unwrap().job;
+    assert_eq!((job.cancelled_by, job.cancel_reason), (None, None));
+}
+
 /// A run in `cancelling` whose runner vanished ends `lost` (spec 15.5 reasons).
 pub async fn cancelling_run_of_vanished_runner_ends_lost(store: &dyn BrokerStore) {
     let key = running(store, "c1", "j1").await;

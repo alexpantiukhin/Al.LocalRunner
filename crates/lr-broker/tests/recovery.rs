@@ -123,10 +123,23 @@ async fn restart_requeues_unstarted_and_marks_started_unknown_as_lost_by_deadlin
     assert_eq!(r2.assign().await.job, JobId("j2".into()));
     hub.send(&order_at("j3", req(512, 1, 60), START + 2)).await;
     hub.accepted().await;
+    let j3_order = lr_abstractions::BrokerStore::orders(h.store.as_ref())
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(j3_order.key.job, JobId("j3".into()));
 
     let h = h.restart().await;
     let j2 = h.job_row(ALEX, "j2").await.unwrap();
     assert_eq!((j2.job.state, j2.job.runner), (JobState::Queued, None));
+    let j3 = h.job_row(ALEX, "j3").await.unwrap();
+    assert_eq!((j3.job.state, j3.job.runner), (JobState::Queued, None));
+    let queue = lr_abstractions::BrokerStore::orders(h.store.as_ref())
+        .await
+        .unwrap();
+    let names: Vec<&str> = queue.iter().map(|o| o.key.job.0.as_str()).collect();
+    assert_eq!(names, ["j2", "j3"]);
+    assert_eq!(queue[1], j3_order);
     let mut hub = h.local_hub("alex").await;
     hub.send(&order_at("j4", req(512, 1, 60), START + 3)).await;
     hub.accepted().await;

@@ -16,6 +16,7 @@ mod lost;
 mod orders;
 mod read;
 mod recovery;
+mod retry;
 mod runners;
 mod same_machine;
 mod services;
@@ -126,6 +127,8 @@ impl Broker {
                 restored: false,
                 client_seen: HashMap::new(),
                 follows: Vec::new(),
+                retries: Vec::new(),
+                retry_at: Timestamp(0),
             },
             listener: deps.listener,
             tx,
@@ -288,6 +291,8 @@ pub(crate) struct Engine {
     pub(crate) restored: bool,
     pub(crate) client_seen: HashMap<String, Timestamp>,
     pub(crate) follows: Vec<follow::Follow>,
+    pub(crate) retries: Vec<retry::Retry>,
+    pub(crate) retry_at: Timestamp,
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -296,7 +301,7 @@ impl Engine {
     async fn handle(&mut self, cmd: Command) {
         self.expire().await;
         match cmd {
-            Command::Tick => {}
+            Command::Tick => self.forget_clients(),
             Command::Opened { conn, peer, outlet } => {
                 self.conns.insert(
                     conn,

@@ -25,6 +25,7 @@ impl Engine {
                 );
             }
         }
+        self.return_stranded().await;
         self.plan().await;
     }
 }

@@ -77,7 +77,18 @@ impl Engine {
                 .position(|s| s.name == name)
                 .map(|i| i as u32)
         });
-        self.send_ordered(conn, frames(req, &text, false));
+        let mut first = frames(req, &text, false);
+        if first.is_empty() {
+            first.extend(
+                Frame::json(&BrokerToHub::LogChunk(LogChunk {
+                    req,
+                    text: String::new(),
+                    end: false,
+                }))
+                .ok(),
+            );
+        }
+        self.send_ordered(conn, first);
         self.follows.push(Follow {
             conn,
             req,

@@ -82,10 +82,15 @@ impl Harness {
             extra,
             owners,
             wrap,
+            |_| {},
         )
     }
 
     pub async fn restart(&self) -> Harness {
+        self.restart_with(|_| {}).await
+    }
+
+    pub async fn restart_with(&self, prepare: impl FnOnce(&FaultyStore)) -> Harness {
         self.task.abort();
         let owners: Vec<&str> = self.owners.iter().map(String::as_str).collect();
         let h = Harness::over(
@@ -94,6 +99,7 @@ impl Harness {
             &self.extra,
             &owners,
             |l| Arc::new(l),
+            prepare,
         );
         h.poke().await;
         h
@@ -105,6 +111,7 @@ impl Harness {
         extra: &str,
         owners: &[&str],
         wrap: impl FnOnce(FakeListener) -> Arc<dyn Listener>,
+        prepare: impl FnOnce(&FaultyStore),
     ) -> Harness {
         let net = FakeNetwork::new(Arc::new(clock.clone()));
         let listener = net.listen(
@@ -116,6 +123,7 @@ impl Harness {
             },
         );
         let faults = Arc::new(FaultyStore::new(store.clone()));
+        prepare(&faults);
         let log = Arc::new(MemoryLogSink::new());
         let (active, _) =
             ActivePolicy::start(&policy(extra), HOST_RES, false).expect("policy loads");

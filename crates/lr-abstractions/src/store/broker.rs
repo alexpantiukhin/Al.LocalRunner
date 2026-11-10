@@ -42,13 +42,24 @@ pub trait BrokerStore: Send + Sync {
 
     /// Changes the state of a run as `lr_core::JobState::can_become` allows. `Running` needs
     /// a grant and sets `started_at`; a final state sets `finished_at` and the exit code and
-    /// removes a waiting order row. Canceller and reason are kept once set. A change of a
-    /// final run is [`Applied::Ignored`].
+    /// removes a waiting order row. Canceller and reason are kept once set, except that a run
+    /// which outlives a recorded cancel ([`super::outlives_cancel`]) takes those of the change.
+    /// A change of a final run is [`Applied::Ignored`].
     ///
     /// The store does not know which runner a report comes from: refusing a late result of a
     /// runner that was removed, or of a run that was requeued and granted to another runner
     /// (spec 3.9 "result of a removed runner is not accepted"), is the engine's job.
     async fn transition(&self, key: &JobKey, change: Transition) -> Result<Applied, StoreError>;
+
+    /// Records who cancelled a run that is not final and why, without changing its state, so
+    /// a cancel of a granted but not started run survives a restart. Canceller and reason are
+    /// kept once set; a final run is [`Applied::Ignored`].
+    async fn record_cancel(
+        &self,
+        key: &JobKey,
+        by: &str,
+        reason: &str,
+    ) -> Result<Applied, StoreError>;
 
     /// Updates one step; ignored when the run is final or the step already ended.
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError>;

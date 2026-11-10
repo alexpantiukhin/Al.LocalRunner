@@ -1,3 +1,4 @@
+use super::retry::Retry;
 use super::{Cancel, Engine, Job};
 use crate::policy::{OrphanQueued, OrphanRunning};
 use lr_abstractions::{Applied, Transition};
@@ -40,26 +41,30 @@ impl Engine {
             self.return_stranded().await;
             changed = true;
         }
+        changed |= self.run_retries().await;
         changed |= self.orphans(now).await;
         if changed {
             self.plan().await;
         }
     }
 
-    async fn lose(&mut self, job: Job, now: Timestamp) {
+    pub(crate) async fn lose(&mut self, job: Job, now: Timestamp) {
         let mut t = Transition::to(JobState::Lost, now);
         t.cancel_reason = Some(ReasonCode::RunnerLost.to_string());
-        if let Ok(Applied::Changed) = self.store.transition(&job.key, t).await {
-            self.finish(
-                &job.key,
-                JobState::Lost,
-                None,
-                Some(ReasonCode::RunnerLost),
-                job.runner
-                    .map(|r| format!("раннер {r} не отчитался в срок")),
-            )
-            .await;
+        match self.store.transition(&job.key, t).await {
+            Ok(Applied::Changed) => {}
+            Ok(Applied::Ignored) => return,
+            Err(e) => return self.retry_later("mark a run lost", &e, Retry::Lose(job)),
         }
+        self.finish(
+            &job.key,
+            JobState::Lost,
+            None,
+            Some(ReasonCode::RunnerLost),
+            job.runner
+                .map(|r| format!("раннер {r} не отчитался в срок")),
+        )
+        .await;
     }
 
     async fn orphans(&mut self, now: Timestamp) -> bool {

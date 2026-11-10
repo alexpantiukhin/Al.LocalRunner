@@ -21,6 +21,24 @@ pub(crate) fn client_endpoint(key: &str) -> Endpoint {
     }
 }
 
+fn stored_cancel(rec: &JobRecord) -> Cancel {
+    let reason = rec.job.cancel_reason.clone().unwrap_or_default();
+    let (code, detail) = match reason.split_once(':') {
+        Some((code, detail)) => (code, Some(detail.trim().to_string())),
+        None => (reason.as_str(), None),
+    };
+    Cancel {
+        by: rec.job.cancelled_by.clone().unwrap_or_default(),
+        code: code
+            .trim()
+            .parse::<ReasonCode>()
+            .unwrap_or(ReasonCode::CancelledByUser),
+        detail,
+        reason,
+        sent: false,
+    }
+}
+
 impl Engine {
     fn wire_of(&self, row: &RunnerRow) -> WireCapabilities {
         let pool = self.policy.policy().pool();
@@ -142,30 +160,18 @@ impl Engine {
             started_at: rec.job.started_at,
             cancel: None,
         };
-        if job.started_at.is_none() {
-            if job.runner.is_some() && self.store.requeue(&key).await.is_err() {
-                return;
-            }
-            job.runner = None;
-            self.queue.push(job);
-            return;
+        let cancelled = rec.job.state == JobState::Cancelling || rec.job.cancel_reason.is_some();
+        if cancelled {
+            job.cancel = Some(stored_cancel(&rec));
         }
-        if rec.job.state == JobState::Cancelling {
-            let reason = rec.job.cancel_reason.clone().unwrap_or_default();
-            let code = reason
-                .split(':')
-                .next()
-                .and_then(|c| c.trim().parse::<ReasonCode>().ok())
-                .unwrap_or(ReasonCode::CancelledByUser);
-            job.cancel = Some(Cancel {
-                by: rec.job.cancelled_by.clone().unwrap_or_default(),
-                reason,
-                code,
-                detail: None,
-                sent: false,
-            });
+        if job.started_at.is_some() {
+            return self.active.push(job);
         }
-        self.active.push(job);
+        match (job.runner.is_some(), job.cancel.take()) {
+            (_, Some(cancel)) => self.cancel_waiting(job, cancel).await,
+            (true, None) => self.requeue_or_retry(job).await,
+            (false, None) => self.queue.push(job),
+        }
     }
 
     pub(crate) fn refresh_client(&mut self, client: &Client) {

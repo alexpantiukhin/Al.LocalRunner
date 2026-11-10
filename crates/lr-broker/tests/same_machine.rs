@@ -103,6 +103,25 @@ async fn draining_runner_does_not_count_for_a_same_machine_order() {
 }
 
 #[tokio::test]
+async fn queued_same_machine_order_is_returned_when_its_last_runner_drains() {
+    let h = Harness::start("");
+    let mut r = h.local_runner("alex", "lr", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("s1", same_machine_req())).await;
+    hub.accepted().await;
+    r.assign().await;
+    hub.send(&order("s2", same_machine_req())).await;
+    hub.accepted().await;
+    r.send(&RunnerToBroker::Drain).await;
+    let back = returned(&mut hub).await;
+    assert_eq!(
+        (back.job, back.code.as_str()),
+        (JobId("s2".into()), NO_RUNNER)
+    );
+    h.until_state(ALEX, "s2", JobState::Cancelled).await;
+}
+
+#[tokio::test]
 async fn restored_same_machine_order_waits_one_grace_period_for_its_runner() {
     let h = Harness::start("[grace]\nlost_min = 2\n");
     let mut r = h.local_runner("alex", "lr", linux()).await;

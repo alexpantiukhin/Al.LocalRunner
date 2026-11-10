@@ -30,17 +30,18 @@ impl Engine {
             ));
         }
         if file.command_mode(&entry.client.key, label) == CommandMode::Named {
-            if let Some(step) = spec.steps.first() {
-                return Err((
-                    RejectReason::CommandNotAllowed,
-                    format!(
-                        "команда {} не входит в названия раннеров: ярлыку {label} разрешены \
-                         только названия из списка раннера, а раннеры этого брокера списка \
-                         названий не сообщают",
-                        step.command
-                    ),
-                ));
-            }
+            let command = spec
+                .steps
+                .first()
+                .map_or("(заказ без шагов)", |s| s.command.as_str());
+            return Err((
+                RejectReason::CommandNotAllowed,
+                format!(
+                    "команда {command} не входит в названия раннеров: ярлыку {label} разрешены \
+                     только названия из списка раннера, а раннеры этого брокера списка \
+                     названий не сообщают"
+                ),
+            ));
         }
         Ok(())
     }

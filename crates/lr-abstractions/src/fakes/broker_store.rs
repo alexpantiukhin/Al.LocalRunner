@@ -131,6 +131,15 @@ impl BrokerStore for MemoryBrokerStore {
         self.lock().transition(key, change)
     }
 
+    async fn record_cancel(
+        &self,
+        key: &JobKey,
+        by: &str,
+        reason: &str,
+    ) -> Result<Applied, StoreError> {
+        self.lock().record_cancel(key, by, reason)
+    }
+
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError> {
         self.lock().update_step(key, update)
     }

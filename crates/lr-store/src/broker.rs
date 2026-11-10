@@ -85,6 +85,18 @@ impl BrokerStore for SqliteBrokerStore {
             .await
     }
 
+    async fn record_cancel(
+        &self,
+        key: &JobKey,
+        by: &str,
+        reason: &str,
+    ) -> Result<Applied, StoreError> {
+        let (key, by, reason) = (key.clone(), by.to_string(), reason.to_string());
+        self.db
+            .run(move |c| job_write::record_cancel(c, &key, &by, &reason))
+            .await
+    }
+
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError> {
         let key = key.clone();
         self.db

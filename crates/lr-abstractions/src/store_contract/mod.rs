@@ -70,6 +70,8 @@ macro_rules! broker_store_contract {
             broker::disallowed_transition_is_refused,
             broker::cancel_of_waiting_order_removes_it_at_once,
             broker::accepted_cancel_keeps_canceller_until_runner_reports,
+            broker::recorded_cancel_keeps_state_and_first_canceller,
+            broker::recorded_cancel_is_dropped_when_the_run_outlives_it,
             broker::cancelling_run_of_vanished_runner_ends_lost,
             broker::unstarted_granted_run_can_be_requeued,
             broker::started_run_cannot_be_requeued,
