@@ -61,6 +61,10 @@ pub(crate) fn account_principal(name: &str) -> Result<String, NetError> {
     account_sid(name)
 }
 
+pub(crate) fn is_machine_admin(os_user: &str) -> bool {
+    crate::service_acl_windows::is_machine_admin(os_user)
+}
+
 pub(crate) fn machine_name() -> String {
     computer_name().unwrap_or_default()
 }

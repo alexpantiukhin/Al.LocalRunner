@@ -30,6 +30,10 @@ pub(crate) fn account_of_sid(_sid: &str) -> Option<String> {
     None
 }
 
+pub(crate) fn is_machine_admin(os_user: &str) -> bool {
+    crate::os_unix::uid_of(os_user) == Some(0)
+}
+
 pub(crate) fn account_principal(name: &str) -> Result<String, NetError> {
     crate::os_unix::uid_of(name)
         .map(|uid| uid.to_string())

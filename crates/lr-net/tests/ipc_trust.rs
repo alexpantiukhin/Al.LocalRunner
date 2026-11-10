@@ -236,3 +236,10 @@ fn account_principal_resolves_names_the_way_server_identity_compares_them() {
     assert_eq!(lr_net::account_principal(admin).unwrap(), expected);
     assert!(lr_net::account_principal("al-localrunner-no-such-account-42").is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn root_administers_the_machine_and_an_unknown_login_does_not() {
+    assert!(lr_net::is_machine_admin("root"));
+    assert!(!lr_net::is_machine_admin("no-such-user-lr-test"));
+}

@@ -118,6 +118,13 @@ pub fn account_principal(name: &str) -> Result<String, NetError> {
     platform::account_principal(name)
 }
 
+/// Whether OS user `os_user` (as the kernel reports an IPC peer) administers this machine
+/// (spec 3.5, 3.9): on Windows SYSTEM or a member of the local Administrators group, on Unix
+/// root. Looks the account up, so call it off the async runtime.
+pub fn is_machine_admin(os_user: &str) -> bool {
+    platform::is_machine_admin(os_user)
+}
+
 /// The computer name that qualifies a bare `[[local_user]]` name on Windows; empty elsewhere.
 pub fn local_machine_name() -> String {
     platform::machine_name()

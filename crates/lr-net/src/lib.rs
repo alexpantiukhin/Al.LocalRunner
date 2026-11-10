@@ -36,6 +36,8 @@ mod ipc_windows;
 mod os_unix;
 #[cfg(windows)]
 mod os_windows;
+#[cfg(windows)]
+mod service_acl_windows;
 
 pub use auth::{refusal_code, refused, Admit, KeyGate, AUTH_FRAME_LIMIT};
 pub use codes::{CodeError, JoinCode, DEFAULT_CODE_TTL_MIN};
@@ -44,8 +46,8 @@ pub use error::NetError;
 pub use files::{read_private, write_private, write_public};
 pub use fingerprint::Fingerprint;
 pub use ipc::{
-    account_principal, current_os_principal, current_os_user, local_machine_name, IpcAccess,
-    IpcDialer, IpcListener, ServerIdentity, PREAMBLE, PREAMBLE_TIMEOUT,
+    account_principal, current_os_principal, current_os_user, is_machine_admin, local_machine_name,
+    IpcAccess, IpcDialer, IpcListener, ServerIdentity, PREAMBLE, PREAMBLE_TIMEOUT,
 };
 pub use keys::{
     canonical_public_key, challenge_message, fresh_nonce, parse_public_key, verify_challenge,
@@ -57,6 +59,8 @@ pub use local_users::{peer_kind, LocalClient, LocalUser, LocalUsers, LOCAL_CLIEN
 pub use registry::{
     check_name, CodeRequest, JoinRequest, Registry, RegistryError, MAX_NAME_LEN, OPEN_CODE_CACHE_MS,
 };
+#[cfg(windows)]
+pub use service_acl_windows::{file_security, lock_service_dir, service_dir_sddl, FileSecurity};
 pub use slots::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
 pub use stream::StreamTransport;
 pub use tls::{
