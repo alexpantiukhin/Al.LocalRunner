@@ -163,7 +163,8 @@ impl Logger {
         self.io.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Applies a new configuration (`logging reload`). On error the old one stays.
+    /// Applies a new configuration (`logging reload`). On error the old one stays; after
+    /// [`Logger::shutdown`] a reload is refused, so no worker is started that nobody joins.
     ///
     /// The swap, the retirement of the old sinks (their files closed) and the start of the
     /// new workers happen under one lock that [`Logger::flush`] and [`Logger::shutdown`] also
@@ -171,8 +172,15 @@ impl Logger {
     /// written during a reload go to whichever pipeline is current when they are enqueued
     /// (see [`LogSink::write`] below), so none is left in a retired queue uncounted.
     pub fn reload(&self, config: &LoggingConfig) -> Result<(), ConfigError> {
+        let refused = || ConfigError("logging is shut down; reload refused".into());
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(refused());
+        }
         let fresh = Arc::new(build(config, &self.env)?);
         let _io = self.io();
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(refused());
+        }
         self.redactor.set_fields(&config.redact_fields);
         self.env.metrics.set_client_label(config.client_label);
         let old = std::mem::replace(

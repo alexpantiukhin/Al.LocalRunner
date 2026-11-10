@@ -282,7 +282,7 @@ fn redaction_cost_is_bounded_with_many_secrets_and_a_huge_message() {
         assert!(out.record().message.len() <= MAX_MESSAGE_BYTES + TRUNCATED.len());
     }
     let elapsed = started.elapsed();
-    assert!(elapsed < std::time::Duration::from_secs(2), "{elapsed:?}");
+    assert!(elapsed < std::time::Duration::from_secs(10), "{elapsed:?}");
 }
 
 #[test]

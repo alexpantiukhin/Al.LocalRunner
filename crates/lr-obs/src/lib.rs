@@ -18,6 +18,7 @@ pub mod format;
 pub mod fs;
 pub mod https;
 pub mod logger;
+mod matcher;
 pub mod metrics;
 pub mod oslog;
 pub mod otlp;

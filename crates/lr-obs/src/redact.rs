@@ -10,9 +10,9 @@
 //! 6. the value after a sensitive name followed by `=` or `:` inside text (`token=..`,
 //!    `"password": ".."`, `{\"token\":\"..\"}`, `?api_key=..&`): a quoted value up to
 //!    its closing quote, a nested `{..}`/`[..]` value as a whole, an unquoted value after
-//!    `=` up to the next space, after `:` up to the end of the line or `,` `;` `&`, and the
-//!    value of an `Authorization`/`auth` name up to the end of the line (`token ..`,
-//!    `Digest ..`, `Basic ..`);
+//!    `=` up to the next space or `,` `;` `&` `)` `}` `]` `"` `'`, after `:` up to the end of
+//!    the line, and the value of an `Authorization`/`auth` name up to the end of the line
+//!    (`token ..`, `Digest ..`, `Basic ..`);
 //! 7. the whole value of a field whose name is sensitive.
 //!
 //! A name is sensitive when the segments of one of [`BUILTIN_FIELDS`] or of the configured
@@ -33,8 +33,8 @@
 //!
 //! A message or value is cut before redaction at its limit plus the longest registered
 //! value, and the cut is moved back, until stable, to the start of a registered value it
-//! falls inside and to the start of the token it falls inside (tokens end at whitespace,
-//! `,` and `;`). Every pattern is therefore judged on complete tokens: a URL credential,
+//! falls inside and to the start of the token it falls inside (tokens end at whitespace
+//! only: a URL's userinfo may hold `,` and `;`). Every pattern is therefore judged on complete tokens: a URL credential,
 //! `Basic` value or key-value pair split by the limit is dropped whole, never emitted as an
 //! unmasked prefix. A text whose first token is longer than the limit becomes
 //! [`TRUNCATED`] alone. The result is then cut to the limit and marked with [`TRUNCATED`].
@@ -45,11 +45,12 @@
 //! (base64, URL-escaped, cut by truncation of the caller) are not matched; at most
 //! [`MAX_SECRETS`] values are kept, the oldest forgotten first.
 
+use crate::matcher::Matcher;
 use crate::scan;
-use aho_corasick::AhoCorasick;
 use async_trait::async_trait;
 use lr_abstractions::{Record, SecretError, SecretSource, SecretValue, MASK};
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Field names always treated as sensitive (spec 12: commands and environment of jobs, keys,
@@ -147,135 +148,6 @@ struct Secrets {
     matcher: Option<Arc<Matcher>>,
 }
 
-struct Matcher {
-    generation: u64,
-    automaton: Option<AhoCorasick>,
-    values: Vec<String>,
-    longest: usize,
-}
-
-const MATCH_BUDGET: usize = 65_536;
-const TOKEN_ENDS: [char; 2] = [',', ';'];
-
-fn merge(merged: &mut Vec<(usize, usize)>, mut start: usize, mut end: usize) {
-    while let Some(&(s, e)) = merged.last() {
-        if start > e {
-            break;
-        }
-        start = start.min(s);
-        end = end.max(e);
-        merged.pop();
-    }
-    merged.push((start, end));
-}
-
-fn is_token_end(c: char) -> bool {
-    c.is_whitespace() || TOKEN_ENDS.contains(&c)
-}
-
-fn token_start(text: &str, at: usize) -> usize {
-    let before = text[..at].chars().next_back();
-    let after = text[at..].chars().next();
-    if before.is_none_or(is_token_end) || after.is_none_or(is_token_end) {
-        return at;
-    }
-    text[..at].rfind(is_token_end).unwrap_or(0)
-}
-
-impl Matcher {
-    fn build(order: &VecDeque<String>, generation: u64) -> Matcher {
-        let values: Vec<String> = order.iter().cloned().collect();
-        let longest = values.iter().map(String::len).max().unwrap_or(0);
-        let automaton = if values.is_empty() {
-            None
-        } else {
-            AhoCorasick::new(&values).ok()
-        };
-        Matcher {
-            generation,
-            automaton,
-            values,
-            longest,
-        }
-    }
-
-    fn spans(&self, text: &str) -> Vec<(usize, usize)> {
-        let mut merged = Vec::new();
-        let Some(ac) = &self.automaton else {
-            let mut all: Vec<(usize, usize)> = self
-                .values
-                .iter()
-                .flat_map(|v| {
-                    text.match_indices(v.as_str())
-                        .map(|(i, _)| (i, i + v.len()))
-                })
-                .collect();
-            all.sort_unstable_by_key(|&(start, end)| (end, start));
-            for (start, end) in all {
-                merge(&mut merged, start, end);
-            }
-            return merged;
-        };
-        for (n, m) in ac.find_overlapping_iter(text).enumerate() {
-            if n >= MATCH_BUDGET {
-                let mut from = m.end().saturating_sub(self.longest);
-                while !text.is_char_boundary(from) {
-                    from -= 1;
-                }
-                merge(&mut merged, from, text.len());
-                break;
-            }
-            merge(&mut merged, m.start(), m.end());
-        }
-        merged
-    }
-
-    fn cut(&self, text: &str, max: usize) -> Option<usize> {
-        let mut at = max.checked_add(self.longest)?;
-        if text.len() <= at {
-            return None;
-        }
-        while !text.is_char_boundary(at) {
-            at -= 1;
-        }
-        let mut window_end = (at + self.longest).min(text.len());
-        while !text.is_char_boundary(window_end) {
-            window_end += 1;
-        }
-        let spans = if self.longest > 0 {
-            self.spans(&text[..window_end])
-        } else {
-            Vec::new()
-        };
-        loop {
-            let before = at;
-            if let Some(&(start, _)) = spans.iter().find(|(s, e)| *s < at && at < *e) {
-                at = start;
-            }
-            at = token_start(text, at);
-            if at == before {
-                return Some(at);
-            }
-        }
-    }
-
-    fn mask(&self, text: &str) -> String {
-        let spans = self.spans(text);
-        if spans.is_empty() {
-            return text.to_string();
-        }
-        let mut out = String::with_capacity(text.len());
-        let mut from = 0;
-        for (start, end) in spans {
-            out.push_str(&text[from..start]);
-            out.push_str(MASK);
-            from = end;
-        }
-        out.push_str(&text[from..]);
-        out
-    }
-}
-
 fn squashed(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric())
@@ -287,6 +159,7 @@ fn squashed(name: &str) -> String {
 pub struct Redactor {
     patterns: RwLock<Vec<Vec<String>>>,
     secrets: RwLock<Secrets>,
+    dropped_fields: AtomicU64,
 }
 
 fn patterns(extra: &[String]) -> Vec<Vec<String>> {
@@ -326,6 +199,7 @@ impl Redactor {
                 generation: 0,
                 matcher: None,
             }),
+            dropped_fields: AtomicU64::new(0),
         }
     }
 
@@ -366,6 +240,12 @@ impl Redactor {
             s.matcher = Some(built.clone());
         }
         built
+    }
+
+    /// Fields left out of records so far: those beyond [`MAX_FIELDS`] and earlier fields of a
+    /// name repeated later in the same record (the last value of a name is kept).
+    pub fn dropped_fields(&self) -> u64 {
+        self.dropped_fields.load(Ordering::Relaxed)
     }
 
     /// Number of registered secret values.
@@ -418,19 +298,35 @@ impl Redactor {
 
     /// The record with every secret masked and every value bounded.
     pub fn redact(&self, record: &Record) -> Redacted {
-        let fields: Vec<(String, String)> = record
+        let named: Vec<(String, String)> = record
             .fields
             .iter()
             .take(MAX_FIELDS)
-            .map(|(name, value)| {
+            .enumerate()
+            .map(|(i, (name, value))| {
                 let value = if self.is_sensitive_field(name) {
                     MASK.to_string()
                 } else {
                     self.bounded(value, MAX_FIELD_BYTES)
                 };
-                (self.bounded(name, MAX_NAME_BYTES), value)
+                let mut bounded = self.bounded(name, MAX_NAME_BYTES);
+                if name.len() > MAX_NAME_BYTES {
+                    bounded.push_str(&format!("#{i}"));
+                }
+                (bounded, value)
             })
             .collect();
+        let fields: Vec<(String, String)> = named
+            .iter()
+            .enumerate()
+            .filter(|(i, (name, _))| !named[i + 1..].iter().any(|(n, _)| n == name))
+            .map(|(_, f)| f.clone())
+            .collect();
+        let dropped = record.fields.len() - fields.len();
+        if dropped > 0 {
+            self.dropped_fields
+                .fetch_add(dropped as u64, Ordering::Relaxed);
+        }
         let record = Record {
             time: record.time,
             level: record.level,
