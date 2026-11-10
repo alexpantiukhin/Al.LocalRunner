@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 
 use lr_core::{
-    Accept, Capabilities, ClientView, Declared, Endpoint, JobId, MachineRef, Order, PoolLimits,
-    QueueEntry, Requirements, RulePolicy, RunnerView, RunningJob, Site, Timestamp, Zone,
+    Accept, Capabilities, ClientView, Condition, Declared, Endpoint, JobId, MachineRef, Order,
+    PoolLimits, QueueEntry, Requirements, Rule, RulePolicy, RunnerView, RunningJob, Site,
+    Timestamp, Zone,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,8 +39,20 @@ pub fn pool(mem_mb: u64, cpu: u32) -> PoolLimits {
     }
 }
 
+pub const CI_PRIORITY: i64 = 100;
+
 pub fn policy(mem_mb: u64, cpu: u32) -> RulePolicy {
-    RulePolicy::with_pool(pool(mem_mb, cpu))
+    let mut p = RulePolicy::with_pool(pool(mem_mb, cpu));
+    p.rules.push(Rule {
+        name: Some("ci-first".into()),
+        when: Condition {
+            client_label: Some("ci".into()),
+            ..Condition::default()
+        },
+        priority: Some(CI_PRIORITY),
+        ..Rule::default()
+    });
+    p
 }
 
 pub fn client(label: &str) -> ClientView {

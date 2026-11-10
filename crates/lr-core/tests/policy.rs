@@ -1,9 +1,9 @@
 mod common;
 
-use common::{client, entry, entry_with, policy, req, set, MIN};
+use common::{client, entry, entry_with, policy, req, set, CI_PRIORITY, MIN};
 use lr_core::{
     Condition, GroupBy, Policy, QueueEntry, Quota, Reject, Reserve, Rule, ServeLog, Strategy,
-    Timestamp, Wait, Zone, DEFAULT_AGE_AFTER_MIN, DEFAULT_CI_PRIORITY,
+    Timestamp, Wait, Zone, DEFAULT_AGE_AFTER_MIN,
 };
 
 fn ids(queue: &[QueueEntry], order: Vec<usize>) -> Vec<String> {
@@ -32,6 +32,13 @@ fn rule(name: Option<&str>, label: &str) -> Rule {
 }
 
 #[test]
+fn with_pool_carries_no_rules() {
+    let p = lr_core::RulePolicy::with_pool(common::pool(8192, 8));
+    assert!(p.rules.is_empty());
+    assert_eq!(p.priority_of(&entry("c", "ci", 0)), 0);
+}
+
+#[test]
 fn default_policy_matches_spec_defaults() {
     let p = policy(8192, 8);
     assert_eq!(p.strategy, Strategy::PriorityFifo);
@@ -43,8 +50,7 @@ fn default_policy_matches_spec_defaults() {
         p.runner_zone_order,
         vec![Zone::Local, Zone::Lan, Zone::Remote]
     );
-    assert_eq!(p.priority_of(&entry("c", "ci", 0)), DEFAULT_CI_PRIORITY);
-    assert_eq!(DEFAULT_CI_PRIORITY, 100);
+    assert_eq!(p.priority_of(&entry("c", "ci", 0)), CI_PRIORITY);
     assert_eq!(p.priority_of(&entry("a", "agent", 0)), 0);
 }
 
@@ -87,7 +93,7 @@ fn aging_promotes_after_threshold_and_survives_rebroker() {
     assert_eq!(ordered(&p, &queue, 30 * MIN + 1), ["old", "ci"]);
     assert_eq!(
         p.effective_priority(&queue[1], Timestamp(30 * MIN + 1)),
-        DEFAULT_CI_PRIORITY
+        CI_PRIORITY
     );
 }
 

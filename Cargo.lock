@@ -434,9 +434,13 @@ dependencies = [
 name = "lr-broker"
 version = "0.1.0"
 dependencies = [
+ "ipnet",
  "lr-abstractions",
  "lr-core",
  "lr-proto",
+ "serde",
+ "thiserror 1.0.69",
+ "toml",
 ]
 
 [[package]]

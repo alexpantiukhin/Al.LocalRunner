@@ -8,3 +8,7 @@ publish = false
 lr-core.workspace = true
 lr-abstractions.workspace = true
 lr-proto.workspace = true
+serde.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+ipnet.workspace = true

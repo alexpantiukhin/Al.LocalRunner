@@ -295,7 +295,7 @@ code_ttl_min = 60                      # срок жизни кода вступ
 
 [orphans]                              # что делать, когда hub давно не появлялся
 absent_after_min = 360                 # срок отсутствия hub; короткий обрыв ничего не отменяет
-queued  = "cancel"
+queued  = "cancel"                     # cancel | keep
 running = "finish"                     # finish | cancel
 
 [grace]
@@ -305,7 +305,7 @@ lost_min = 3                           # льготный срок: lost ран�
 keep_hours = 72                        # сколько брокер хранит результаты для отсутствующего hub
 
 [listen]                               # читается только при старте службы, reload не применяет
-address = "192.168.1.10:7443"          # явный адрес; подстановочный отвергается (в контейнере: "container")
+address = "192.168.1.10:7443"          # явный адрес или список адресов; подстановочный отвергается (в контейнере: "container")
 
 [networks]
 home = ["192.168.1.0/24", "127.0.0.1/32"]
@@ -335,13 +335,18 @@ cpu = 8
 exclusive_tags = ["android-emulator"] # теги, которые держит одна джоба за раз
 
 [limits]
-max_job_timeout_s = 3600               # потолок таймаута заказа при приёме
+max_job_timeout_s = 3600               # потолок таймаута заказа при приёме; по умолчанию потолка нет
+job_log_max_mb    = 256                # лог одной джобы; сверх — обрезка с пометкой
+outbox_max_mb     = 512                # outbox брокера на получателя; сверх сбрасываются чанки вывода
+max_active_per_client = 100            # активных заказов на ключ клиента
 
 [routing]
 runner_zone_order = ["local", "lan", "remote"]  # предпочтение между раннерами одного брокера
 
 [history]
-keep_days = 180                        # хранение истории и логов брокера
+keep_days      = 180                   # хранение логов брокера по возрасту (по умолчанию 30)
+logs_max_gb    = 2                     # суммарный размер логов
+rows_keep_days = 365                   # хранение строк истории
 
 [saturation]
 queue_wait_min = 15                    # порог «очередь стоит» для статистики и дашборда
@@ -349,6 +354,9 @@ mem_percent = 90                       # порог загрузки памят�
 
 [cache]
 share = "client"                       # client | project: кто видит общий кэш раннера
+
+[services]
+evict_idle = true                      # вытеснение простаивающих сервисов (3.11)
 
 [[services.allow]]                     # какой ярлык какие сервисы раннеров может запрашивать
 label = "ci"
@@ -360,7 +368,7 @@ others_orders = "summary"              # none | summary | full (поля уро�
 [commands]
 default = "any"                        # any | named
 [[commands.client]]
-label = "guest"
+label = "guest"                        # или key = "ключ клиента"
 mode  = "named"                        # только названия из списка раннера
 </pre>
 <p>Семантика ключей определена в подразделе «Семантика политики» ниже; перечень стратегий закрытый. Фиксированные правила остаются в коде.</p>
@@ -378,6 +386,9 @@ mode  = "named"                        # только названия из сп
 <li><b>Порядок правил.</b> Правила <code>[[rule]]</code> проверяются сверху вниз. По каждому полю решения (<code>priority</code>, <code>reserve</code>, <code>quota</code>, <code>weight</code>) действует первое подошедшее правило, которое это поле задаёт; правила с разными полями дополняют друг друга. Поэтому ответ на вопрос «почему такой приоритет» одна строка: «правило номер N». При загрузке правило, которое никогда не сработает (его целиком перекрыло более раннее), выдаёт предупреждение.</li>
 <li><b><code>priority</code></b> — число, больше — раньше; без правила 0. <b><code>reserve = { cpu, mem_mb }</code></b> — доля ресурсов пула, которую получают только заказы, подошедшие под правило: остальные заказы её не занимают, даже когда она свободна. <b><code>quota = { max_running, max_mem_mb }</code></b> — потолок одновременно выполняющихся джоб и памяти для группы (по <code>group_by</code>). <b><code>weight</code></b> — вес группы для стратегии <code>weighted</code>.</li>
 <li><b>Стратегии.</b> <code>priority-fifo</code>: по убыванию приоритета, внутри приоритета по времени постановки. <code>fair-share</code>: внутри приоритета группы по очереди, первой идёт та, что дольше всех не получала ресурсы. <code>weighted</code>: как <code>fair-share</code>, но доля группы пропорциональна <code>weight</code>. Старение (<code>age_after_min</code>) действует поверх любой стратегии.</li>
+<li><b>Условия <code>when</code>.</b> Правило подходит, когда совпали все заданные поля; пустое или отсутствующее <code>when</code> подходит всем. Доверенные поля: <code>client_key</code>, <code>client_label</code>, <code>machine_id</code> (из записи ключа). Заявленные: <code>source</code>, <code>project</code>, <code>submitter_label</code> (метка <code>--as</code>), <code>tag</code> (заказ просит этот тег) и <code>min_mem_mb</code> (заказ просит не меньше стольких МБ). Правило с заявленным полем и любым из <code>priority</code>, <code>reserve</code>, <code>quota</code>, <code>weight</code> без <code>client_label</code> отклоняет файл. Имена правил уникальны; <code>weight</code> не меньше 1.</li>
+<li><b>Значения по умолчанию.</b> Без <code>[[rule]]</code> действует одно правило <code>ci-first</code> (<code>client_label = "ci"</code>, <code>priority = 100</code>); <code>rule = []</code> задаёт политику без правил. <code>[queue]</code>: <code>priority-fifo</code>, 30 минут; <code>[clients] group_by = "label"</code>; <code>[join] code_ttl_min = 60</code>; <code>[orphans]</code>: 360 минут, <code>queued = "cancel"</code>, <code>running = "finish"</code>; <code>[grace] lost_min = 3</code>; <code>[results] keep_hours = 72</code>; <code>[listen]</code> и <code>[networks]</code> пусты (сеть не слушается, все адреса <code>remote</code>); <code>[[local_user]]</code> пишет установщик; <code>[cancel] others = "owner"</code>; <code>[[secrets.allow]]</code> пуст (секреты не разрешены никому); <code>[pool]</code>: без <code>mem_mb</code> и <code>cpu</code> — вся память и все ядра машины брокера, <code>exclusive_tags</code> пуст; <code>[limits]</code>: потолка таймаута нет, 256 МБ, 512 МБ, 100; <code>[routing]</code>: <code>local</code>, <code>lan</code>, <code>remote</code>; <code>[history]</code>: 30 дней и 2 ГБ логов, 365 дней строк; <code>[saturation]</code>: 15 минут, 90 %; <code>[cache] share = "client"</code>; <code>[services] evict_idle = true</code>, без <code>[[services.allow]]</code> сервисы может запрашивать любой ярлык, а со списком — только перечисленные (первое подошедшее); <code>[visibility] others_orders = "summary"</code>; <code>[commands] default = "any"</code>. Неизвестная таблица или ключ — отказ с именем таблицы, ключа и номером строки.</li>
+<li><b><code>policy check</code></b> печатает предупреждения: правило, целиком перекрытое более ранними; правило без действий; условие <code>min_mem_mb</code> больше пула; резервы, занимающие весь пул; квота <code>max_running = 0</code>; слишком широкая сеть в <code>[networks]</code> (короче <code>/16</code> для IPv4 и <code>/48</code> для IPv6); разрешённые секреты ярлыку без <code>[commands] mode = "named"</code>; <code>[cache] share = "project"</code>; <code>[visibility] others_orders = "full"</code>.</li>
 <li><b><code>hub-policy.toml</code>.</b> Правила hub для выбора брокера:</li>
 </ul>
 <pre class="code">[brokers]

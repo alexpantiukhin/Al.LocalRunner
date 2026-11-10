@@ -178,25 +178,14 @@ pub struct RulePolicy {
 /// Default `[queue] age_after_min`.
 pub const DEFAULT_AGE_AFTER_MIN: u64 = 30;
 
-/// Priority of the default rule for the `ci` label.
-pub const DEFAULT_CI_PRIORITY: i64 = 100;
-
 impl RulePolicy {
-    /// The default policy over `pool`: `priority-fifo`, aging after 30 minutes, label `ci`
-    /// with priority 100, groups by label, zone order local, lan, remote.
+    /// A policy over `pool` without rules: `priority-fifo`, aging after 30 minutes, groups by
+    /// label, zone order local, lan, remote. Default rules are data of the policy file loader.
     pub fn with_pool(pool: PoolLimits) -> RulePolicy {
         RulePolicy {
             strategy: Strategy::PriorityFifo,
             age_after_min: DEFAULT_AGE_AFTER_MIN,
-            rules: vec![Rule {
-                name: Some("ci-first".into()),
-                when: Condition {
-                    client_label: Some("ci".into()),
-                    ..Condition::default()
-                },
-                priority: Some(DEFAULT_CI_PRIORITY),
-                ..Rule::default()
-            }],
+            rules: Vec::new(),
             group_by: GroupBy::Label,
             pool,
             max_job_timeout_s: None,

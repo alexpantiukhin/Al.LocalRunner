@@ -1,0 +1,97 @@
+[queue]
+strategy      = "priority-fifo"        # встроенные: priority-fifo, fair-share, weighted
+age_after_min = 30                     # старение: после 30 минут ожидания порядок как у высшего приоритета
+
+[[rule]]
+name     = "ci-first"                   # необязательное имя; без него в сообщениях номер правила
+when     = { client_label = "ci" }
+priority = 100
+
+[[rule]]
+name    = "ci-reserve"
+when    = { client_label = "ci", source = "github" }
+reserve = { cpu = 2, mem_mb = 4096 }
+
+[clients]
+group_by = "label"                     # key | label (атрибуты из записи ключа)
+
+[join]
+code_ttl_min = 60                      # срок жизни кода вступления
+
+[orphans]                              # что делать, когда hub давно не появлялся
+absent_after_min = 360                 # срок отсутствия hub; короткий обрыв ничего не отменяет
+queued  = "cancel"                     # cancel | keep
+running = "finish"                     # finish | cancel
+
+[grace]
+lost_min = 3                           # льготный срок: lost раннера и kill джоб при недоступном брокере
+
+[results]
+keep_hours = 72                        # сколько брокер хранит результаты для отсутствующего hub
+
+[listen]                               # читается только при старте службы, reload не применяет
+address = "192.168.1.10:7443"          # явный адрес или список адресов; подстановочный отвергается (в контейнере: "container")
+
+[networks]
+home = ["192.168.1.0/24", "127.0.0.1/32"]
+
+[[local_user]]                         # кому разрешён локальный IPC
+name  = "alex"
+label = ""
+
+[[local_user]]
+name  = "ci-agent"
+label = "ci"
+
+[cancel]
+others = "none"                       # none | owner: чужие заказы отменяет только владелец брокера
+
+[[secrets.allow]]                      # какой ярлык какие секреты может просить (первое подошедшее)
+label = "ci"
+names = ["registry_auth", "signing_key"]
+
+[[secrets.allow]]
+label = "agent"
+names = ["registry_auth"]
+
+[pool]                                 # общий бюджет пула
+mem_mb = 16384
+cpu = 8
+exclusive_tags = ["android-emulator"] # теги, которые держит одна джоба за раз
+
+[limits]
+max_job_timeout_s = 3600               # потолок таймаута заказа при приёме; по умолчанию потолка нет
+job_log_max_mb    = 256                # лог одной джобы; сверх — обрезка с пометкой
+outbox_max_mb     = 512                # outbox брокера на получателя; сверх сбрасываются чанки вывода
+max_active_per_client = 100            # активных заказов на ключ клиента
+
+[routing]
+runner_zone_order = ["local", "lan", "remote"]  # предпочтение между раннерами одного брокера
+
+[history]
+keep_days      = 180                   # хранение логов брокера по возрасту (по умолчанию 30)
+logs_max_gb    = 2                     # суммарный размер логов
+rows_keep_days = 365                   # хранение строк истории
+
+[saturation]
+queue_wait_min = 15                    # порог «очередь стоит» для статистики и дашборда
+mem_percent = 90                       # порог загрузки памяти пула
+
+[cache]
+share = "client"                       # client | project: кто видит общий кэш раннера
+
+[services]
+evict_idle = true                      # вытеснение простаивающих сервисов (3.11)
+
+[[services.allow]]                     # какой ярлык какие сервисы раннеров может запрашивать
+label = "ci"
+names = ["gradle-daemon", "emulator"]
+
+[visibility]
+others_orders = "summary"              # none | summary | full (поля уровней — в разделе 3.2)
+
+[commands]
+default = "any"                        # any | named
+[[commands.client]]
+label = "guest"                        # или key = "ключ клиента"
+mode  = "named"                        # только названия из списка раннера
