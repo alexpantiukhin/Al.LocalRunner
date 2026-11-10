@@ -21,3 +21,4 @@ pub mod paths;
 pub mod roles;
 pub mod runner_config;
 pub mod secrets;
+pub mod state_dir;

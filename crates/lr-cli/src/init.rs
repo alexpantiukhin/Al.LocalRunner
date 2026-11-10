@@ -2,8 +2,10 @@
 //! configuration templates of the chosen roles; existing files are never overwritten. The roles
 //! are remembered in `roles` of the state directory (`autostart on` without a role, `up`).
 
+pub use crate::state_dir::{close_to_owner, ensure_state_dir};
+
 use crate::paths::Layout;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// File of the state directory listing the roles `init` created, one per line.
 pub const ROLES_FILE: &str = "roles";
@@ -138,71 +140,12 @@ fn write_new(path: PathBuf, contents: &str) -> Result<Created, String> {
     })
 }
 
-/// Makes the state directory reachable for its owner only (spec 10.3): mode 0700 on Unix; on
-/// Windows the user's profile directory already is private.
-pub fn close_to_owner(dir: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    #[cfg(not(unix))]
-    let _ = dir;
-    Ok(())
-}
-
-/// The state directory `dir`, created when missing and then closed to its owner (spec 10.3).
-/// An existing directory is used as it is, since it may belong to someone else (a bind mount,
-/// a shared directory): on Unix a warning names one open to group or others. The broker
-/// service's directory keeps the modes `broker install-service` gave it.
-pub fn ensure_state_dir(dir: &Path) -> Result<(), String> {
-    if let Some(parent) = dir.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    }
-    let created = match std::fs::create_dir(dir) {
-        Ok(()) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && dir.is_dir() => false,
-        Err(e) => return Err(format!("{}: {e}", dir.display())),
-    };
-    if dir == crate::paths::service_root() {
-        return Ok(());
-    }
-    if created {
-        return close_to_owner(dir);
-    }
-    if let Some(warning) = open_warning(dir) {
-        eprintln!("warning: {warning}");
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn open_warning(dir: &Path) -> Option<String> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(dir).ok()?.permissions().mode() & 0o777;
-    (mode & 0o077 != 0).then(|| {
-        format!(
-            "state directory {} is open to group or others (mode {mode:o}) and is left so; \
-             close it with `chmod 700` unless it is shared on purpose",
-            dir.display()
-        )
-    })
-}
-
-#[cfg(not(unix))]
-fn open_warning(_dir: &Path) -> Option<String> {
-    None
-}
-
 /// Creates the state directory (closed to its owner), `machine-id` and the templates of
 /// `roles` for OS user `user`.
 pub fn init(layout: &Layout, roles: &[NodeRole], user: &str) -> Result<Vec<Created>, String> {
     crate::init::ensure_state_dir(&layout.root)?;
-    if let Err(e) = close_to_owner(&layout.root) {
-        eprintln!("warning: state directory not closed to its owner: {e}");
-    }
     crate::host::machine_id(&layout.root)?;
+    crate::state_dir::print_warnings();
     let mut out = vec![write_new(
         layout.config_file("logging.toml"),
         LOGGING_TEMPLATE,

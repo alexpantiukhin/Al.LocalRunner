@@ -55,7 +55,8 @@ pub fn logger(
     let machine_id = host::machine_id(&layout.root)?;
     let text = read_optional(&layout.config_file("logging.toml"))?;
     let config = LoggingConfig::load(text.as_deref()).map_err(|e| e.to_string())?;
-    let metrics = Arc::new(Metrics::new(clock.now(), config.client_label));
+    let now = clock.now();
+    let metrics = Arc::new(Metrics::new(now, config.client_label));
     let env = ObsEnv::system(
         state_dir.to_path_buf(),
         clock,
@@ -65,6 +66,10 @@ pub fn logger(
     );
     let logger = Logger::new(&config, env).map_err(|e| e.to_string())?;
     logger.start_workers();
+    for warning in crate::state_dir::take_warnings() {
+        use lr_abstractions::{Level, LogSink, Record};
+        logger.write(&Record::new(now, Level::Warn, role, "state_dir", &warning));
+    }
     Ok(Arc::new(logger))
 }
 

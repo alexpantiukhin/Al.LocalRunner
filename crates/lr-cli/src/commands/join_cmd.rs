@@ -110,6 +110,7 @@ pub async fn hub_join(
         machine_id: crate::host::machine_id(&layout.root)?,
         capabilities: None,
     };
+    crate::state_dir::print_warnings();
     let (joined, fingerprint) = join(address, code, key, who).await?;
     let broker = name.unwrap_or_else(|| address.to_string());
     let store = SqliteHubStore::open(&layout.root.join("hub.db")).map_err(|e| e.to_string())?;
@@ -182,6 +183,7 @@ pub async fn runner_join(layout: &Layout, j: RunnerJoin) -> Result<i32, String> 
     let host = crate::host::resources();
     crate::init::ensure_state_dir(&layout.root)?;
     let machine_id = crate::host::machine_id(&layout.root)?;
+    crate::state_dir::print_warnings();
     for name in &names {
         check_runner_name(name)?;
         let dir = layout.runner_dir(name);

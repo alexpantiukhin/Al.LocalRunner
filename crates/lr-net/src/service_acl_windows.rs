@@ -39,6 +39,9 @@ pub struct FileSecurity {
     /// SIDs of the explicit access-allowed entries; `None` when the DACL is missing (everyone)
     /// or holds an explicit entry of a kind other than plain allow or deny.
     pub explicit_allowed: Option<Vec<String>>,
+    /// SIDs of all access-allowed entries, inherited ones included; `None` like
+    /// `explicit_allowed`.
+    pub allowed: Option<Vec<String>>,
 }
 
 /// The owner and the explicit allow entries of `path` (spec 10.3: the service state directory
@@ -77,9 +80,11 @@ pub fn file_security(path: &Path) -> Result<FileSecurity, NetError> {
         return Ok(FileSecurity {
             owner,
             explicit_allowed: None,
+            allowed: None,
         });
     }
     let mut allowed = Vec::new();
+    let mut all = Vec::new();
     let count = unsafe { (*dacl).AceCount } as u32;
     for i in 0..count {
         let mut ace: *mut c_void = null_mut();
@@ -88,19 +93,27 @@ pub fn file_security(path: &Path) -> Result<FileSecurity, NetError> {
         }
         let header = unsafe { &*(ace as *const ACE_HEADER) };
         if header.AceFlags & INHERITED_ACE != 0 {
+            if header.AceType == 0 {
+                let entry = ace as *const ACCESS_ALLOWED_ACE;
+                let sid = unsafe { &(*entry).SidStart } as *const u32 as PSID;
+                all.push(sid_to_string(sid)?);
+            }
             continue;
         }
         match header.AceType {
             0 => {
                 let entry = ace as *const ACCESS_ALLOWED_ACE;
                 let sid = unsafe { &(*entry).SidStart } as *const u32 as PSID;
-                allowed.push(sid_to_string(sid)?);
+                let sid = sid_to_string(sid)?;
+                all.push(sid.clone());
+                allowed.push(sid);
             }
             1 => {}
             _ => {
                 return Ok(FileSecurity {
                     owner,
                     explicit_allowed: None,
+                    allowed: None,
                 })
             }
         }
@@ -108,7 +121,43 @@ pub fn file_security(path: &Path) -> Result<FileSecurity, NetError> {
     Ok(FileSecurity {
         owner,
         explicit_allowed: Some(allowed),
+        allowed: Some(all),
     })
+}
+
+/// Closes directory `path` to user `user_sid`, Administrators and SYSTEM: a protected DACL
+/// that inherits nothing from the parent; the owner stays. Needs no privilege when this
+/// process's user owns `path`; fails otherwise.
+pub fn close_dir_to_owner(path: &Path, user_sid: &str) -> Result<(), NetError> {
+    let sd = Descriptor::from_sddl(&format!(
+        "D:P(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;{ADMINISTRATORS_SID})(A;OICI;FA;;;{SYSTEM_SID})"
+    ))?;
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut dacl: *mut ACL = null_mut();
+    if unsafe { GetSecurityDescriptorDacl(sd.0, &mut present, &mut dacl, &mut defaulted) } == 0 {
+        return Err(last_error("GetSecurityDescriptorDacl"));
+    }
+    let name = wide(&path.to_string_lossy());
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            null_mut(),
+            null_mut(),
+            dacl,
+            null_mut(),
+        )
+    };
+    if status != 0 {
+        return Err(NetError::Io(format!(
+            "SetNamedSecurityInfo {}: {}",
+            path.display(),
+            std::io::Error::from_raw_os_error(status as i32)
+        )));
+    }
+    Ok(())
 }
 
 /// SDDL of the broker service's state directory: owned by the service account, which has full

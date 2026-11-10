@@ -214,7 +214,7 @@ fn an_existing_state_directory_does_not_stop_a_role_from_starting() {
 
 #[cfg(unix)]
 #[test]
-fn only_a_state_directory_created_now_is_closed() {
+fn an_open_state_directory_of_this_user_is_closed() {
     use std::os::unix::fs::PermissionsExt;
     let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
     let dir = TempDir::new("mode-existing");
@@ -222,8 +222,80 @@ fn only_a_state_directory_created_now_is_closed() {
     std::fs::create_dir_all(&shared).unwrap();
     std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o770)).unwrap();
     init::ensure_state_dir(&shared).unwrap();
-    assert_eq!(mode(&shared), 0o770, "an existing directory is not changed");
+    assert_eq!(mode(&shared), 0o700);
     let created = dir.path().join("created");
     init::ensure_state_dir(&created).unwrap();
     assert_eq!(mode(&created), 0o700);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_state_directory_of_another_user_is_closed_by_root_and_named_once() {
+    use std::os::unix::fs::PermissionsExt;
+    if lr_net::current_os_principal().ok().as_deref() != Some("0") {
+        return;
+    }
+    let dir = TempDir::new("mode-foreign");
+    let mounted = dir.path().join("mounted");
+    std::fs::create_dir_all(&mounted).unwrap();
+    std::os::unix::fs::chown(&mounted, Some(12345), Some(12345)).unwrap();
+    std::fs::set_permissions(&mounted, std::fs::Permissions::from_mode(0o755)).unwrap();
+    init::ensure_state_dir(&mounted).expect("a bind mount of another uid starts with a warning");
+    init::ensure_state_dir(&mounted).unwrap();
+    let mode = std::fs::metadata(&mounted).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let warnings: Vec<String> = lr_cli::state_dir::take_warnings()
+        .into_iter()
+        .filter(|w| w.contains("mounted"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("uid 12345"), "{}", warnings[0]);
+}
+
+#[cfg(windows)]
+#[test]
+fn an_open_state_directory_of_this_user_is_closed() {
+    let dir = TempDir::new("acl-existing");
+    let root = dir.path().join("state");
+    std::fs::create_dir_all(&root).unwrap();
+    init::ensure_state_dir(&root).unwrap();
+    let access = lr_cli::state_dir::access(&root).unwrap();
+    assert!(access.own && !access.open, "{access:?}");
+    std::fs::write(root.join("f"), "x").unwrap();
+    assert_eq!(std::fs::read_to_string(root.join("f")).unwrap(), "x");
+}
+
+#[test]
+fn a_foreign_open_state_directory_refuses_and_others_warn() {
+    use lr_cli::state_dir::{verdict, DirAccess, Verdict};
+    let dir = Path::new("/srv/state");
+    let at = |own: bool, open: bool| DirAccess {
+        owner: Some("uid 1000".into()),
+        own,
+        open,
+        detail: "mode 755".into(),
+    };
+    assert_eq!(verdict(dir, &at(true, false), None), Verdict::Use);
+    match verdict(dir, &at(false, true), Some("Operation not permitted")) {
+        Verdict::Refuse(t) => {
+            for part in [
+                "uid 1000",
+                "mode 755",
+                "Operation not permitted",
+                "localrunner init",
+                "chown",
+            ] {
+                assert!(t.contains(part), "{part}: {t}");
+            }
+        }
+        other => panic!("{other:?}"),
+    }
+    match verdict(dir, &at(false, false), None) {
+        Verdict::Warn(t) => assert!(t.contains("uid 1000") && t.contains("mode 755"), "{t}"),
+        other => panic!("{other:?}"),
+    }
+    match verdict(dir, &at(true, true), Some("Read-only file system")) {
+        Verdict::Warn(t) => assert!(t.contains("Read-only file system"), "{t}"),
+        other => panic!("{other:?}"),
+    }
 }

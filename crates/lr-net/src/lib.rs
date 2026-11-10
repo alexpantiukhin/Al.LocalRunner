@@ -61,7 +61,8 @@ pub use registry::{
 };
 #[cfg(windows)]
 pub use service_acl_windows::{
-    create_service_dir, file_security, hard_links, lock_service_dir, service_dir_sddl, FileSecurity,
+    close_dir_to_owner, create_service_dir, file_security, hard_links, lock_service_dir,
+    service_dir_sddl, FileSecurity,
 };
 pub use slots::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
 pub use stream::StreamTransport;
