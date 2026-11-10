@@ -246,6 +246,8 @@
 
 - [ ] **Step 1:** Failing tests: `submit_without_as_refused`, `status_json_has_project_source_label`, `admin_command_over_network_not_accepted`, `all_roles_start_from_wiring_on_loopback`. **Step 2-4:** Implement, run, commit `feat(cli): сборка ролей и команды`.
 
+- [ ] **Step 5: Hardening carried from earlier tasks.** (a) Linux cgroup v2 tree kill through `systemd-run --user --scope` where available, process-group walk as fallback (spec 6, 10); implemented in `lr-exec`, tested in a Linux container. (b) The Windows service host allocates a hidden console so the soft stop (Ctrl+Break) reaches steps; a test starts the runner without a console and asserts no `SOFT_STOP_NOT_DELIVERED`. (c) Wire `lr_exec::SystemClock` and the real `ProcessInspector` in `build.rs`.
+
 ### Task 18: Skills, plugin, README
 
 **Files:**
