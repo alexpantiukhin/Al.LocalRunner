@@ -8,6 +8,8 @@ pub fn read_requests() -> Vec<ReadRequest> {
             project: Some("p".into()),
             source: Some(WireSource::Github),
             label: Some("l".into()),
+            limit: Some(10),
+            cursor: Some("c1".into()),
         }),
         ReadRequest::History(HistoryFilter {
             client: Some("k".into()),
@@ -21,6 +23,7 @@ pub fn read_requests() -> Vec<ReadRequest> {
             since: Some(Timestamp(5)),
             active_only: true,
             limit: Some(20),
+            cursor: Some("c2".into()),
         }),
         ReadRequest::HistoryShow { job: job(1) },
         ReadRequest::Explain { job: job(1) },
@@ -64,9 +67,11 @@ pub fn read_replies() -> Vec<ReadReply> {
                 used_cpu: 3,
                 total_cpu: 4,
             },
+            next: Some("q2".into()),
         }),
         ReadReply::History {
             jobs: vec![summary()],
+            next: None,
         },
         ReadReply::Job(Box::new(JobDetail {
             summary: summary(),

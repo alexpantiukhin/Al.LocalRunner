@@ -48,10 +48,34 @@ fn every_code_round_trips_as_its_string() {
 }
 
 #[test]
-fn unknown_code_is_not_parsed() {
-    assert!(ReasonCode::from_str("whatever").is_err());
+fn unknown_code_is_preserved() {
+    let plain: ReasonCode = serde_json::from_str("\"from_the_future\"").unwrap();
+    assert_eq!(plain, ReasonCode::Other("from_the_future".into()));
+    assert!(!plain.is_rejection());
+    assert_eq!(
+        serde_json::to_string(&plain).unwrap(),
+        "\"from_the_future\""
+    );
+    let rejected: ReasonCode = serde_json::from_str("\"rejected_nonsense\"").unwrap();
+    assert_eq!(
+        rejected,
+        ReasonCode::Rejected(RejectReason::Other("rejected_nonsense".into()))
+    );
+    assert!(rejected.is_rejection());
+    assert_eq!(rejected.as_str(), "rejected_nonsense");
+    assert!(ReasonCode::from_str("").is_err());
     assert!(ReasonCode::from_str("rejected_").is_err());
-    assert!(serde_json::from_str::<ReasonCode>("\"rejected_nonsense\"").is_err());
+    assert!(
+        !ReasonCode::all().contains(&plain),
+        "all() lists known codes only"
+    );
+}
+
+#[test]
+fn unknown_error_code_is_not_a_command() {
+    let code: ProtocolErrorCode = serde_json::from_str("\"brand_new\"").unwrap();
+    assert_eq!(code, ProtocolErrorCode::Other);
+    assert!(!code.kills_running_jobs());
 }
 
 #[test]
@@ -62,7 +86,8 @@ fn rejections_are_identified() {
 
 #[test]
 fn intake_refusals_have_their_own_rejected_codes() {
-    let names: BTreeSet<&str> = ReasonCode::all().iter().map(|c| c.as_str()).collect();
+    let all = ReasonCode::all();
+    let names: BTreeSet<&str> = all.iter().map(|c| c.as_str()).collect();
     for needed in [
         "rejected_pool_memory",
         "rejected_pool_cpu",
@@ -80,6 +105,8 @@ fn intake_refusals_have_their_own_rejected_codes() {
         "rejected_queue_limit",
         "rejected_rate_limited",
         "rejected_commit_not_pushed",
+        "rejected_service_not_allowed",
+        "rejected_command_not_allowed",
     ] {
         assert!(names.contains(needed), "{needed}");
     }

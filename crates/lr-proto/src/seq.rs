@@ -50,6 +50,62 @@ impl DedupKey {
     }
 }
 
+/// A per-broker outgoing counter of one job stream. The stream is bound to the broker that
+/// accepted the order: the order is seq 1, and when it goes to another broker the stream
+/// restarts at 1.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SeqStream {
+    last: u64,
+}
+
+impl SeqStream {
+    /// A stream with nothing sent.
+    pub fn new() -> SeqStream {
+        SeqStream::default()
+    }
+
+    /// The next seq, starting at 1.
+    pub fn next_seq(&mut self) -> u64 {
+        self.last += 1;
+        self.last
+    }
+
+    /// The last seq handed out, 0 when none.
+    pub fn last(&self) -> u64 {
+        self.last
+    }
+
+    /// Starts over for another broker.
+    pub fn restart(&mut self) {
+        self.last = 0;
+    }
+}
+
+/// How an incoming seq relates to the last accepted one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeqCheck {
+    /// The next one: accept it.
+    Next,
+    /// Already accepted: drop it, idempotently.
+    Repeat,
+    /// Skips ahead: a protocol error.
+    Gap {
+        /// The seq that should have come.
+        expected: u64,
+    },
+}
+
+/// Classifies `seq` against the `last` accepted seq of the same stream.
+pub fn classify_seq(last: u64, seq: u64) -> SeqCheck {
+    if seq <= last {
+        SeqCheck::Repeat
+    } else if seq == last + 1 {
+        SeqCheck::Next
+    } else {
+        SeqCheck::Gap { expected: last + 1 }
+    }
+}
+
 pub(crate) fn seq_from_one(seq: u64) -> Result<(), String> {
     if seq == 0 {
         return Err("seq counts from 1".into());

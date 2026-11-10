@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 /// Why an order was refused at intake; carried as `rejected_<name>` (spec 15 leaves the names
 /// of `rejected_*` open, they name the cause).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RejectReason {
     /// Needs more memory than the whole pool.
     PoolMemory,
@@ -39,11 +39,17 @@ pub enum RejectReason {
     RateLimited,
     /// A remote order whose commit is not pushed.
     CommitNotPushed,
+    /// The order asks for a service the client label may not use (`[[services.allow]]`).
+    ServiceNotAllowed,
+    /// The order's commands break the `[commands] mode = "named"` rule.
+    CommandNotAllowed,
+    /// A `rejected_*` code of a newer minor version, kept as received (full code).
+    Other(String),
 }
 
 impl RejectReason {
     /// Every rejection reason.
-    pub const ALL: [RejectReason; 16] = [
+    pub const ALL: [RejectReason; 18] = [
         RejectReason::PoolMemory,
         RejectReason::PoolCpu,
         RejectReason::Timeout,
@@ -60,10 +66,12 @@ impl RejectReason {
         RejectReason::QueueLimit,
         RejectReason::RateLimited,
         RejectReason::CommitNotPushed,
+        RejectReason::ServiceNotAllowed,
+        RejectReason::CommandNotAllowed,
     ];
 
     /// The full code, `rejected_<name>`.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             RejectReason::PoolMemory => "rejected_pool_memory",
             RejectReason::PoolCpu => "rejected_pool_cpu",
@@ -81,13 +89,16 @@ impl RejectReason {
             RejectReason::QueueLimit => "rejected_queue_limit",
             RejectReason::RateLimited => "rejected_rate_limited",
             RejectReason::CommitNotPushed => "rejected_commit_not_pushed",
+            RejectReason::ServiceNotAllowed => "rejected_service_not_allowed",
+            RejectReason::CommandNotAllowed => "rejected_command_not_allowed",
+            RejectReason::Other(name) => name.as_str(),
         }
     }
 }
 
 /// Reason code of a job ending or an order refusal, visible in history, `explain` and on the
 /// dashboard (spec 15).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ReasonCode {
     /// The runner was stopped by `down --cancel`.
     RunnerStopped,
@@ -113,7 +124,11 @@ pub enum ReasonCode {
     CancelledByUser,
     /// Refused at intake, with the cause.
     Rejected(RejectReason),
+    /// A code of a newer minor version that is not a rejection; kept as received.
+    Other(String),
 }
+
+const REJECTED_PREFIX: &str = "rejected_";
 
 const PLAIN: [ReasonCode; 11] = [
     ReasonCode::RunnerStopped,
@@ -130,17 +145,18 @@ const PLAIN: [ReasonCode; 11] = [
 ];
 
 impl ReasonCode {
-    /// Every code: the eleven of spec 15 and one `rejected_*` per [`RejectReason`].
+    /// Every known code: the eleven of spec 15 and one `rejected_*` per [`RejectReason`];
+    /// codes kept as `Other` are not listed.
     pub fn all() -> Vec<ReasonCode> {
         PLAIN
             .iter()
-            .copied()
-            .chain(RejectReason::ALL.iter().map(|r| ReasonCode::Rejected(*r)))
+            .cloned()
+            .chain(RejectReason::ALL.iter().cloned().map(ReasonCode::Rejected))
             .collect()
     }
 
     /// The code as written in history and on the wire.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             ReasonCode::RunnerStopped => "runner_stopped",
             ReasonCode::RunnerRemoved => "runner_removed",
@@ -154,12 +170,13 @@ impl ReasonCode {
             ReasonCode::RunnerRestarted => "runner_restarted",
             ReasonCode::CancelledByUser => "cancelled_by_user",
             ReasonCode::Rejected(r) => r.as_str(),
+            ReasonCode::Other(code) => code.as_str(),
         }
     }
 
-    /// Whether this is a `rejected_*` code.
-    pub fn is_rejection(self) -> bool {
-        matches!(self, ReasonCode::Rejected(_))
+    /// Whether this is a `rejected_*` code, known or from a newer minor version.
+    pub fn is_rejection(&self) -> bool {
+        self.as_str().starts_with(REJECTED_PREFIX)
     }
 }
 
@@ -173,10 +190,16 @@ impl FromStr for ReasonCode {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, String> {
-        ReasonCode::all()
-            .into_iter()
-            .find(|c| c.as_str() == s)
-            .ok_or_else(|| format!("unknown reason code `{s}`"))
+        if let Some(known) = ReasonCode::all().into_iter().find(|c| c.as_str() == s) {
+            return Ok(known);
+        }
+        if s.is_empty() || s == REJECTED_PREFIX {
+            return Err(format!("empty reason code `{s}`"));
+        }
+        if s.starts_with(REJECTED_PREFIX) {
+            return Ok(ReasonCode::Rejected(RejectReason::Other(s.to_string())));
+        }
+        Ok(ReasonCode::Other(s.to_string()))
     }
 }
 

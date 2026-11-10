@@ -1,3 +1,4 @@
+use crate::frame::FRAME_LIMIT;
 use crate::reason::ReasonCode;
 use lr_core::{Identity, JobId, JobState, Requirements, StepSpec, StepState, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,9 @@ pub struct OrderSpec {
     pub wanted_priority: Option<i64>,
 }
 
-/// Hub's order. Seq counts per job in the hub-to-broker direction.
+/// Hub's order. It is seq 1 of the job's hub-to-broker stream at the broker that accepts it;
+/// when an order is rejected or returned and goes to another broker, the stream for that broker
+/// restarts at 1 (see [`crate::SeqStream::restart`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Order {
     /// Job id issued by the hub.
@@ -56,10 +59,12 @@ pub struct HubCancel {
     /// Position in the hub-to-broker stream of the job.
     pub seq: u64,
     /// Who cancels, for the key and ownership rule.
-    pub by: Identity,
+    pub by: Box<Identity>,
     /// `--force`.
     pub force: bool,
-    /// Reason given by the user.
+    /// Why: `cancelled_by_user`, `sender_gone`, ...
+    pub code: ReasonCode,
+    /// Free text given by the user.
     pub reason: Option<String>,
 }
 
@@ -115,7 +120,47 @@ pub struct Started {
     pub seq: u64,
 }
 
-/// A piece of job output.
+/// Reserve for the JSON envelope of a chunk (job id, seq, step, keys).
+pub const CHUNK_ENVELOPE_RESERVE: usize = 64 * 1024;
+
+/// Largest `Chunk.text` in bytes. JSON may escape one byte into six (`\u00XX`), so the worst
+/// case still fits a frame together with [`CHUNK_ENVELOPE_RESERVE`].
+pub const CHUNK_TEXT_LIMIT: usize = (FRAME_LIMIT - CHUNK_ENVELOPE_RESERVE) / 6;
+
+/// Splits output into pieces of at most `limit` bytes, never inside a character. A `limit`
+/// smaller than one character yields that character alone.
+pub fn split_text(text: &str, limit: usize) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let mut end = limit.min(rest.len());
+        while end > 0 && !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == 0 {
+            end = rest.chars().next().map_or(rest.len(), char::len_utf8);
+        }
+        let (head, tail) = rest.split_at(end);
+        out.push(head);
+        rest = tail;
+    }
+    out
+}
+
+pub(crate) fn check_chunk(c: &Chunk) -> Result<(), String> {
+    crate::seq::seq_from_one(c.seq)?;
+    if c.text.len() > CHUNK_TEXT_LIMIT {
+        return Err(format!(
+            "chunk text of {} bytes exceeds {CHUNK_TEXT_LIMIT}",
+            c.text.len()
+        ));
+    }
+    Ok(())
+}
+
+/// A piece of job output. `text` is lossy UTF-8: the runner decodes the stream incrementally,
+/// masks secrets in the bytes before the lossy conversion, and cuts pieces of at most
+/// [`CHUNK_TEXT_LIMIT`] bytes at character boundaries ([`split_text`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Chunk {
     /// The job.
@@ -171,6 +216,8 @@ pub struct Accepted {
     pub job: JobId,
     /// Seq of the order this answers.
     pub order_seq: u64,
+    /// Why the order waits right away (runner busy, memory, rule), if it does.
+    pub waiting: Option<String>,
 }
 
 /// The order was refused at intake.
@@ -186,15 +233,47 @@ pub struct Rejected {
     pub detail: String,
 }
 
-/// The broker confirms a cancel.
+/// What the broker did with a cancel (spec 7.1, scenario 16.17).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelOutcome {
+    /// The cancel was accepted: a waiting order is removed, a running job is being stopped.
+    Applied,
+    /// The key or ownership rule refused it.
+    Denied,
+    /// The job already had its final state; nothing changed.
+    AlreadyFinal,
+    /// An outcome of a newer minor version.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The broker answers a cancel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelAck {
     /// The job.
     pub job: JobId,
     /// Position in the broker-to-hub stream of the job.
     pub seq: u64,
-    /// Seq of the cancel this confirms.
+    /// Seq of the cancel this answers.
     pub cancel_seq: u64,
+    /// What happened.
+    pub outcome: CancelOutcome,
+    /// Why it was denied.
+    pub denial: Option<String>,
+}
+
+/// The job started, as the broker tells the hub: the start time is the broker's own clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartedNotice {
+    /// The job.
+    pub job: JobId,
+    /// Position in the broker-to-hub stream of the job.
+    pub seq: u64,
+    /// Runner that executes it.
+    pub runner: String,
+    /// Start on the broker clock.
+    pub started_at: Timestamp,
 }
 
 /// The broker gives back an accepted order that has not started, with the cause.

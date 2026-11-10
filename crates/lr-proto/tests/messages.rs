@@ -228,6 +228,8 @@ fn admin_commands_never_exist_on_network_channels() {
         "broker_add",
         "runner_remove",
         "client_remove",
+        "runner_list",
+        "client_list",
     ] {
         let doc = format!(r#"{{"type":"{t}"}}"#);
         for tag_list in [
@@ -448,6 +450,7 @@ fn accepted_and_rejected_answer_a_specific_order_seq() {
     let v = serde_json::to_value(BrokerToHub::Accepted(Accepted {
         job: job(1),
         order_seq: 4,
+        waiting: None,
     }))
     .unwrap();
     assert_eq!(v["order_seq"], 4);

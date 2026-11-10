@@ -3,8 +3,8 @@ use crate::caps::WireCapabilities;
 use crate::common::{Ack, Bye, Hello, Join, Joined, ProtocolError, Resume, Welcome};
 use crate::frame::message;
 use crate::job::{
-    Accepted, CancelAck, Chunk, HubCancel, JobResult, Order, Rejected, Returned, Started,
-    StepResult,
+    check_chunk, Accepted, CancelAck, Chunk, HubCancel, JobResult, Order, Rejected, Returned,
+    StartedNotice, StepResult,
 };
 use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::{JobId, Zone};
@@ -24,6 +24,8 @@ pub struct RunnerCaps {
     pub name: String,
     /// Whether it is online.
     pub online: bool,
+    /// Zone of this runner relative to the asking hub (spec 3.7).
+    pub zone: Zone,
     /// What it offers.
     pub caps: WireCapabilities,
 }
@@ -37,6 +39,13 @@ pub struct CapabilitiesReply {
     pub zone: Zone,
     /// The runners.
     pub runners: Vec<RunnerCaps>,
+}
+
+impl RunnerCaps {
+    /// The scheduling view, with the runner's own zone.
+    pub fn into_capabilities(self) -> lr_core::Capabilities {
+        self.caps.into_capabilities(self.zone)
+    }
 }
 
 /// A read request with its correlation id.
@@ -120,7 +129,7 @@ pub enum BrokerToHub {
     /// The order is refused.
     Rejected(Rejected),
     /// The job started.
-    Started(Started),
+    Started(StartedNotice),
     /// A piece of output.
     Chunk(Chunk),
     /// Result of a step.
@@ -198,7 +207,7 @@ message!(
     ],
     check: |m: &BrokerToHub| match m {
         BrokerToHub::Started(s) => seq_from_one(s.seq),
-        BrokerToHub::Chunk(c) => seq_from_one(c.seq),
+        BrokerToHub::Chunk(c) => check_chunk(c),
         BrokerToHub::StepResult(s) => seq_from_one(s.seq),
         BrokerToHub::JobResult(r) => final_result(r),
         BrokerToHub::CancelAck(c) => seq_from_one(c.seq),

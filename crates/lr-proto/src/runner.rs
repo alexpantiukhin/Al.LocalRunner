@@ -1,8 +1,9 @@
 use crate::common::{
-    Ack, Bye, Hello, Join, Joined, ProtocolError, Resume, ServicesReport, StopService, Welcome,
+    Ack, Bye, CapabilitiesUpdate, Hello, Join, Joined, ProtocolError, Resume, ServicesReport,
+    SettingsUpdate, StopService, Welcome,
 };
 use crate::frame::message;
-use crate::job::{Assign, Chunk, JobResult, RunnerCancel, Started, StepResult};
+use crate::job::{check_chunk, Assign, Chunk, JobResult, RunnerCancel, Started, StepResult};
 use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::JobId;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,8 @@ pub enum RunnerToBroker {
     JobResult(JobResult),
     /// State of the runner's services.
     ServicesReport(ServicesReport),
+    /// Changed capabilities or cache fill.
+    CapabilitiesUpdate(CapabilitiesUpdate),
     /// A refusal.
     Error(ProtocolError),
 }
@@ -61,6 +64,8 @@ pub enum BrokerToRunner {
     Cancel(RunnerCancel),
     /// Stop a warm service.
     StopService(StopService),
+    /// A changed `[grace]` for a connected runner.
+    SettingsUpdate(SettingsUpdate),
     /// A refusal; an authorization failure is a command to kill the job tree.
     Error(ProtocolError),
 }
@@ -81,11 +86,12 @@ message!(
         "step_result",
         "job_result",
         "services_report",
+        "capabilities_update",
         "error"
     ],
     check: |m: &RunnerToBroker| match m {
         RunnerToBroker::Started(s) => seq_from_one(s.seq),
-        RunnerToBroker::Chunk(c) => seq_from_one(c.seq),
+        RunnerToBroker::Chunk(c) => check_chunk(c),
         RunnerToBroker::StepResult(s) => seq_from_one(s.seq),
         RunnerToBroker::JobResult(r) => final_result(r),
         _ => Ok(()),
@@ -105,6 +111,7 @@ message!(
         "assign",
         "cancel",
         "stop_service",
+        "settings_update",
         "error"
     ],
     check: |m: &BrokerToRunner| match m {

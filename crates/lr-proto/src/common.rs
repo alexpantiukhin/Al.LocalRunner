@@ -45,6 +45,11 @@ pub enum ProtocolErrorCode {
     SeqGap,
     /// Too many requests.
     RateLimited,
+    /// A runner of this name is already registered by another machine.
+    NameTaken,
+    /// A code of a newer minor version; never a command.
+    #[serde(other)]
+    Other,
 }
 
 impl ProtocolErrorCode {
@@ -114,11 +119,18 @@ pub struct Welcome {
     pub broker_lost_kill_s: Option<u64>,
 }
 
-/// Broker's answer to [`Join`]: the code is redeemed and the key registered.
+/// Broker's answer to [`Join`]: the code is redeemed and the key registered. It is the only
+/// reply on a join connection: no [`Welcome`] follows, so it carries the same session facts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Joined {
     /// The version agreed on.
     pub version: Version,
+    /// The zone the broker computed for the joiner's address.
+    pub zone: Option<Zone>,
+    /// Heartbeat interval in seconds.
+    pub heartbeat_s: u64,
+    /// Seconds after which a runner kills its jobs when the broker is unreachable.
+    pub broker_lost_kill_s: Option<u64>,
     /// Identifier of the registered key.
     pub key_id: String,
     /// MachineId of the broker.
@@ -134,11 +146,22 @@ pub struct ResumePoint {
     pub last_seq: u64,
 }
 
-/// After a reconnect the receiver tells per job what it has; the sender resends the rest.
+/// After a reconnect the receiver tells per job what it has; the sender resends the rest. A job
+/// that is not listed counts as `last_seq = 0`: the sender resends its whole outbox for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resume {
     /// Per job.
     pub points: Vec<ResumePoint>,
+}
+
+impl Resume {
+    /// The last accepted seq of `job`, 0 when the job is not listed.
+    pub fn last_seq(&self, job: &JobId) -> u64 {
+        self.points
+            .iter()
+            .find(|p| &p.job == job)
+            .map_or(0, |p| p.last_seq)
+    }
 }
 
 /// The receiver confirms messages of a job up to and including `seq`.
@@ -175,6 +198,9 @@ pub enum ServiceState {
     Failed,
     /// Restart limit exhausted.
     Unavailable,
+    /// A state of a newer minor version.
+    #[serde(other)]
+    Unknown,
 }
 
 /// One service in a runner's report: who is warm and how much memory it holds.
@@ -195,6 +221,20 @@ pub struct ServiceReport {
 pub struct ServicesReport {
     /// All services of the runner.
     pub services: Vec<ServiceReport>,
+}
+
+/// The broker pushes changed settings to a connected runner (`[grace]` of the policy, spec 3.5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsUpdate {
+    /// New seconds after which the runner kills its jobs when the broker is unreachable.
+    pub broker_lost_kill_s: Option<u64>,
+}
+
+/// A runner reports changed capabilities or cache fill during a session (spec 3.10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapabilitiesUpdate {
+    /// The full current capabilities.
+    pub capabilities: WireCapabilities,
 }
 
 /// Broker's command to stop a warm service (eviction, spec 3.11).

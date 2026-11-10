@@ -1,8 +1,23 @@
 use crate::caps::WireCapabilities;
 use crate::common::ServiceReport;
 use crate::reason::ReasonCode;
+use crate::stats_view::StatsView;
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use serde::{Deserialize, Serialize};
+
+/// Default and largest page of `history`.
+pub const HISTORY_LIMIT_DEFAULT: u64 = 100;
+/// Largest page of `history`; a larger request is cut to it.
+pub const HISTORY_LIMIT_MAX: u64 = 500;
+/// Default size of each list of `status`.
+pub const STATUS_LIMIT_DEFAULT: u64 = 50;
+/// Largest size of each list of `status`.
+pub const STATUS_LIMIT_MAX: u64 = 200;
+
+/// The page size to use: `requested` or `default`, at least 1 and at most `max`.
+pub fn effective_limit(requested: Option<u64>, default: u64, max: u64) -> u64 {
+    requested.unwrap_or(default).clamp(1, max)
+}
 
 /// Where a job came from, as a filter value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +38,17 @@ pub struct StatusFilter {
     pub source: Option<WireSource>,
     /// Label `--as`.
     pub label: Option<String>,
+    /// Size of each list; bounded by [`STATUS_LIMIT_MAX`].
+    pub limit: Option<u64>,
+    /// Continue the queue list after the `next` token of the previous answer.
+    pub cursor: Option<String>,
+}
+
+impl StatusFilter {
+    /// The bounded list size.
+    pub fn effective_limit(&self) -> u64 {
+        effective_limit(self.limit, STATUS_LIMIT_DEFAULT, STATUS_LIMIT_MAX)
+    }
 }
 
 /// Filter of `history` (spec 8); every set field must match.
@@ -48,8 +74,17 @@ pub struct HistoryFilter {
     pub since: Option<Timestamp>,
     /// Only runs that are not final.
     pub active_only: bool,
-    /// Maximum number of runs.
+    /// Maximum number of runs; bounded by [`HISTORY_LIMIT_MAX`].
     pub limit: Option<u64>,
+    /// Continue after the `next` token of the previous answer.
+    pub cursor: Option<String>,
+}
+
+impl HistoryFilter {
+    /// The bounded page size.
+    pub fn effective_limit(&self) -> u64 {
+        effective_limit(self.limit, HISTORY_LIMIT_DEFAULT, HISTORY_LIMIT_MAX)
+    }
 }
 
 /// Filter of `stats` (spec 8).
@@ -73,9 +108,16 @@ pub enum Topic {
     Queue,
     /// Runner and service changes.
     Runners,
+    /// A topic of a newer minor version.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Read requests of the CLI and the dashboard (spec 3.9, 9.3).
+///
+/// Compatibility rule for every message of the protocol: a new field is an `Option` or has a
+/// serde default, and unknown fields are ignored; an unknown tag of a nested enum becomes
+/// its `Unknown` variant instead of failing the whole message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReadRequest {
@@ -118,6 +160,9 @@ pub enum ReadRequest {
         /// Subscription id.
         sub: u64,
     },
+    /// A request of a newer minor version; answered with [`ReadReply::Unknown`].
+    #[serde(other)]
+    Unknown,
 }
 
 /// A run in a list. Fields that the broker's visibility policy hides from other clients are
@@ -246,6 +291,8 @@ pub struct StatusView {
     pub recent: Vec<JobSummary>,
     /// Pool load.
     pub pool: PoolLoad,
+    /// Token for the next part of the queue, `None` at the end.
+    pub next: Option<String>,
 }
 
 /// A tag held by a running job.
@@ -282,75 +329,6 @@ pub struct RunnerInfo {
     pub unmet: Vec<String>,
 }
 
-/// Median and 95th percentile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpreadView {
-    /// 50th percentile.
-    pub median: Option<u64>,
-    /// 95th percentile.
-    pub p95: Option<u64>,
-}
-
-/// Statistics of one step name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StepStatsView {
-    /// Step name.
-    pub name: String,
-    /// Steps that started.
-    pub runs: u64,
-    /// Steps that passed.
-    pub passed: u64,
-    /// Duration in ms.
-    pub duration_ms: SpreadView,
-}
-
-/// Statistics of one profile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProfileStatsView {
-    /// Profile name.
-    pub profile: String,
-    /// Final runs.
-    pub runs: u64,
-    /// Passed.
-    pub passed: u64,
-    /// Failed.
-    pub failed: u64,
-    /// Timed out.
-    pub timeouts: u64,
-    /// Cancelled.
-    pub cancelled: u64,
-    /// Lost.
-    pub lost: u64,
-    /// Wait in ms.
-    pub wait_ms: SpreadView,
-    /// Duration in ms.
-    pub duration_ms: SpreadView,
-    /// Per step.
-    pub steps: Vec<StepStatsView>,
-}
-
-/// How much of the pool a client used.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClientUsageView {
-    /// Client key.
-    pub client: String,
-    /// Client label.
-    pub label: String,
-    /// Final runs.
-    pub runs: u64,
-    /// Sum of run durations in ms.
-    pub busy_ms: u64,
-}
-
-/// The `stats` answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StatsView {
-    /// Per profile.
-    pub profiles: Vec<ProfileStatsView>,
-    /// Per client.
-    pub clients: Vec<ClientUsageView>,
-}
-
 /// Answers to read requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -361,6 +339,8 @@ pub enum ReadReply {
     History {
         /// Runs, newest first.
         jobs: Vec<JobSummary>,
+        /// Token for the next page, `None` at the end.
+        next: Option<String>,
     },
     /// Answer to `history_show`.
     Job(Box<JobDetail>),
@@ -403,6 +383,9 @@ pub enum ReadReply {
         /// Why.
         message: String,
     },
+    /// An answer of a newer minor version.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A change delivered to subscribers.
@@ -454,4 +437,7 @@ pub enum QueueEvent {
         /// The service.
         service: ServiceReport,
     },
+    /// An event of a newer minor version.
+    #[serde(other)]
+    Unknown,
 }

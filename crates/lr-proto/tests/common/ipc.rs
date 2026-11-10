@@ -55,6 +55,7 @@ pub fn cli_replies() -> Vec<CliReply> {
             jobs: vec![job(1), job(2)],
         },
         CliReply::Read {
+            broker: "local".into(),
             reply: ReadReply::Runners { runners: vec![] },
         },
         CliReply::Brokers {

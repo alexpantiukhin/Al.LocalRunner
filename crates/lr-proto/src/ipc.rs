@@ -2,8 +2,48 @@ use crate::api::{ReadReply, ReadRequest};
 use crate::common::ProtocolError;
 use crate::frame::message;
 use crate::reason::ReasonCode;
+use crate::version::Version;
 use lr_core::{Identity, JobId, JobState, Timestamp, Zone};
 use serde::{Deserialize, Serialize};
+
+/// Which local channel a connection is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IpcChannel {
+    /// CLI to hub.
+    Cli,
+    /// Administrative commands to a broker.
+    Admin,
+    /// Control channel of a runner.
+    RunnerControl,
+}
+
+/// First message on a local IPC connection: the protocol version and the channel it is for, so
+/// a client cannot talk to the wrong endpoint by accident.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IpcOpen {
+    /// Open a channel.
+    Hello {
+        /// Protocol version of the client.
+        version: Version,
+        /// The channel wanted.
+        channel: IpcChannel,
+    },
+}
+
+/// Answer to [`IpcOpen`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum IpcOpenReply {
+    /// The channel is open at this version.
+    Ready {
+        /// The version agreed on.
+        version: Version,
+    },
+    /// Wrong version or channel.
+    Refused(ProtocolError),
+}
 
 /// The CLI places an order through its hub.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +173,8 @@ pub enum CliReply {
     },
     /// Answer to a read request.
     Read {
+        /// Broker that answered.
+        broker: String,
         /// The answer.
         reply: ReadReply,
     },
@@ -288,4 +330,6 @@ message!(
     ["ok", "join_code", "names", "failed"]
 );
 message!(RunnerControl, local: true, ["down"]);
+message!(IpcOpen, local: true, ["hello"]);
+message!(IpcOpenReply, local: true, ["ready", "refused"]);
 message!(ControlReply, local: true, ["ok", "failed"]);

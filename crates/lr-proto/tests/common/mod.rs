@@ -278,6 +278,9 @@ pub fn welcome() -> Welcome {
 pub fn joined() -> Joined {
     Joined {
         version: PROTOCOL_VERSION,
+        zone: Some(Zone::Lan),
+        heartbeat_s: HEARTBEAT_INTERVAL_S,
+        broker_lost_kill_s: Some(180),
         key_id: "k-1".into(),
         broker_machine_id: "bm-1".into(),
     }
@@ -328,6 +331,9 @@ pub fn runner_to_broker() -> Vec<RunnerToBroker> {
         RunnerToBroker::ServicesReport(ServicesReport {
             services: vec![service_report()],
         }),
+        RunnerToBroker::CapabilitiesUpdate(CapabilitiesUpdate {
+            capabilities: caps(),
+        }),
         RunnerToBroker::Error(protocol_error()),
     ]
 }
@@ -354,6 +360,9 @@ pub fn broker_to_runner() -> Vec<BrokerToRunner> {
         BrokerToRunner::StopService(StopService {
             name: "build-daemon".into(),
         }),
+        BrokerToRunner::SettingsUpdate(SettingsUpdate {
+            broker_lost_kill_s: Some(60),
+        }),
         BrokerToRunner::Error(protocol_error()),
     ]
 }
@@ -371,8 +380,9 @@ pub fn hub_to_broker() -> Vec<HubToBroker> {
         HubToBroker::Cancel(HubCancel {
             job: job(1),
             seq: 2,
-            by: identity(),
+            by: Box::new(identity()),
             force: true,
+            code: ReasonCode::SenderGone,
             reason: Some("stuck".into()),
         }),
         HubToBroker::Resume(resume()),
@@ -397,12 +407,14 @@ pub fn broker_to_hub() -> Vec<BrokerToHub> {
             runners: vec![RunnerCaps {
                 name: "r-1".into(),
                 online: false,
+                zone: Zone::Local,
                 caps: caps(),
             }],
         }),
         BrokerToHub::Accepted(Accepted {
             job: job(1),
             order_seq: 1,
+            waiting: Some("runner busy".into()),
         }),
         BrokerToHub::Rejected(Rejected {
             job: job(1),
@@ -410,7 +422,12 @@ pub fn broker_to_hub() -> Vec<BrokerToHub> {
             code: ReasonCode::Rejected(RejectReason::PoolMemory),
             detail: "need 9 MB, pool 8".into(),
         }),
-        BrokerToHub::Started(started(1, 1)),
+        BrokerToHub::Started(StartedNotice {
+            job: job(1),
+            seq: 1,
+            runner: "r-1".into(),
+            started_at: Timestamp(77),
+        }),
         BrokerToHub::Chunk(chunk(2)),
         BrokerToHub::StepResult(step_result(3)),
         BrokerToHub::JobResult(job_result(4)),
@@ -418,6 +435,8 @@ pub fn broker_to_hub() -> Vec<BrokerToHub> {
             job: job(1),
             seq: 5,
             cancel_seq: 2,
+            outcome: CancelOutcome::Denied,
+            denial: Some("not the owner".into()),
         }),
         BrokerToHub::Returned(Returned {
             job: job(1),

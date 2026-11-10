@@ -10,6 +10,9 @@ pub enum WireServiceStatus {
     Available,
     /// Restart limit exhausted.
     Unavailable,
+    /// A status of a newer minor version, treated as unavailable.
+    #[serde(other)]
+    Unknown,
 }
 
 /// What a runner offers, as it travels. The zone is not part of it: the broker computes it per
@@ -88,7 +91,9 @@ impl WireCapabilities {
                 .map(|(n, s)| {
                     let s = match s {
                         WireServiceStatus::Available => ServiceStatus::Available,
-                        WireServiceStatus::Unavailable => ServiceStatus::Unavailable,
+                        WireServiceStatus::Unavailable | WireServiceStatus::Unknown => {
+                            ServiceStatus::Unavailable
+                        }
                     };
                     (n, s)
                 })

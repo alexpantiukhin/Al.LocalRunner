@@ -39,7 +39,8 @@ fn control_and_reply_messages_carry_no_seq() {
     assert!(RunnerToBroker::Ack(ack(3)).sequence().is_none());
     assert!(BrokerToHub::Accepted(Accepted {
         job: job(1),
-        order_seq: 1
+        order_seq: 1,
+        waiting: None
     })
     .sequence()
     .is_none());
@@ -82,8 +83,9 @@ fn seq_is_counted_per_direction_so_equal_numbers_do_not_collide() {
         &HubToBroker::Cancel(HubCancel {
             job: job(1),
             seq: 2,
-            by: identity(),
+            by: Box::new(identity()),
             force: false,
+            code: ReasonCode::CancelledByUser,
             reason: None,
         }),
     )
@@ -94,6 +96,8 @@ fn seq_is_counted_per_direction_so_equal_numbers_do_not_collide() {
             job: job(1),
             seq: 2,
             cancel_seq: 2,
+            outcome: CancelOutcome::Applied,
+            denial: None,
         }),
     )
     .unwrap();

@@ -129,14 +129,7 @@ pub trait Message: Serialize + DeserializeOwned {
 
 /// Names of the administrative commands; they exist on local IPC only and a network peer that
 /// sends one is refused (spec 3.9).
-pub const ADMIN_TYPES: [&str; 6] = [
-    "policy_reload",
-    "policy_check",
-    "logging_reload",
-    "broker_add",
-    "runner_remove",
-    "client_remove",
-];
+pub const ADMIN_TYPES: &[&str] = <crate::ipc::AdminRequest as Message>::TYPES;
 
 /// Why a document is not a message of its channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -235,8 +228,32 @@ pub fn decode<T: Message>(bytes: &[u8]) -> Result<T, DecodeError> {
     Ok(msg)
 }
 
+/// What a receiver does with a document: handle the message, or skip a type it does not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Received<T> {
+    /// A message of the channel.
+    Message(T),
+    /// An unknown type, skipped; the caller logs and counts it. Skipping is safe only because
+    /// senders never exceed the negotiated minor version.
+    Ignored(String),
+}
+
+/// Like [`decode_for_peer`], but an unknown type is a value, not an error.
+pub fn receive<T: Message>(bytes: &[u8], peer: PeerKind) -> Result<Received<T>, DecodeError> {
+    match decode_for_peer(bytes, peer) {
+        Ok(m) => Ok(Received::Message(m)),
+        Err(DecodeError::UnknownType(t)) => Ok(Received::Ignored(t)),
+        Err(e) => Err(e),
+    }
+}
+
 /// Like [`decode`], and refuses a local-only channel when the peer is on the network.
 pub fn decode_for_peer<T: Message>(bytes: &[u8], peer: PeerKind) -> Result<T, DecodeError> {
+    if bytes.len() > FRAME_LIMIT {
+        return Err(DecodeError::TooLarge {
+            len: bytes.len() as u64,
+        });
+    }
     if T::LOCAL_ONLY && peer == PeerKind::Network {
         let tag = serde_json::from_slice::<serde_json::Value>(bytes)
             .ok()
