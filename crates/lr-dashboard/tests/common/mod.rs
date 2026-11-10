@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod http;
+
 use lr_abstractions::fakes::FakeDataSource;
 use lr_core::{JobId, JobState, StepState, Timestamp, Zone};
 use lr_proto::{
@@ -59,7 +61,11 @@ fn job(
             cancelled_by: None,
             wait_reason: (state == JobState::Queued).then(|| "runner busy".into()),
         },
-        last_lines: vec![],
+        last_lines: if state == JobState::Running {
+            vec!["tail secret line".to_string()]
+        } else {
+            Vec::new()
+        },
         stale: false,
     }
 }

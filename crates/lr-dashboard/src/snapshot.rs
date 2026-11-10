@@ -9,9 +9,32 @@ pub(crate) const STYLE: &str = include_str!("page.css");
 /// The page code, served at `/app.js` and inlined into snapshots.
 pub(crate) const SCRIPT: &str = include_str!("page.js");
 
-const SNAPSHOT_CSP: &str = "default-src 'none'; style-src 'unsafe-inline'; \
-    script-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; \
-    form-action 'none'";
+fn csp_hash(text: &str) -> String {
+    use base64::Engine;
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(text.as_bytes());
+    format!(
+        "'sha256-{}'",
+        base64::engine::general_purpose::STANDARD.encode(digest)
+    )
+}
+
+/// Line ends as the HTML parser leaves them, so the hash matches the text the browser hashes
+/// whatever line ends the checkout has.
+fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// The snapshot's policy: only the inlined page code and stylesheet run, by hash; nothing
+/// is fetched.
+fn snapshot_csp(style: &str, script: &str) -> String {
+    format!(
+        "default-src 'none'; style-src {}; script-src {}; img-src data:; connect-src 'none'; \
+         base-uri 'none'; form-action 'none'",
+        csp_hash(style),
+        csp_hash(script)
+    )
+}
 
 /// Escapes text for HTML element content and quoted attribute values.
 pub fn escape_html(text: &str) -> String {
@@ -102,6 +125,7 @@ fn queue_rows(snapshot: &DashboardSnapshot) -> String {
     out
 }
 
+#[derive(Clone, Copy)]
 pub(crate) enum Mode<'a> {
     Live { csrf: &'a str },
     Snapshot { logs: &'a [(JobId, String)] },
@@ -121,16 +145,30 @@ pub(crate) fn render(snapshot: &DashboardSnapshot, mode: Mode<'_>) -> String {
                 .iter()
                 .map(|(job, text)| (job.0.clone(), Value::String(text.clone())))
                 .collect();
+            let (style, script) = (lf(STYLE), lf(SCRIPT));
             (
-                format!("<style>{STYLE}</style>"),
-                format!("<script>{SCRIPT}</script>"),
-                format!("<meta http-equiv=\"Content-Security-Policy\" content=\"{SNAPSHOT_CSP}\">"),
+                format!("<style>{style}</style>"),
+                format!("<script>{script}</script>"),
+                format!(
+                    "<meta http-equiv=\"Content-Security-Policy\" content=\"{}\">",
+                    snapshot_csp(&style, &script)
+                ),
                 String::new(),
                 json!({"live": false, "with_logs": !logs.is_empty(), "logs": logs}),
             )
         }
     };
-    let data = serde_json::to_value(snapshot).unwrap_or(Value::Null);
+    let without_logs = matches!(mode, Mode::Snapshot { logs } if logs.is_empty());
+    let data = if without_logs {
+        let mut bare = snapshot.clone();
+        for job in &mut bare.jobs {
+            job.last_lines.clear();
+        }
+        serde_json::to_value(&bare)
+    } else {
+        serde_json::to_value(snapshot)
+    }
+    .unwrap_or(Value::Null);
     fill(
         PAGE,
         &[

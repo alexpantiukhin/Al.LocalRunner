@@ -1,9 +1,9 @@
-use crate::guard::AppState;
+use crate::guard::{data_error, AppState};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use lr_abstractions::{CancelRequest, DataError, DataSource};
+use lr_abstractions::{CancelRequest, DataSource};
 use lr_core::JobId;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -32,19 +32,19 @@ struct Outcome {
 
 fn request<D>(state: &AppState<D>, reason: Option<String>) -> CancelRequest {
     let reason = reason
-        .map(|r| r.trim().chars().take(REASON_MAX).collect::<String>())
+        .map(|r| {
+            r.chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect::<String>()
+                .trim()
+                .chars()
+                .take(REASON_MAX)
+                .collect::<String>()
+        })
         .filter(|r| !r.is_empty());
     CancelRequest {
         actor: format!("dashboard:{}", state.user),
         reason,
-    }
-}
-
-fn status_of(err: &DataError) -> StatusCode {
-    match err {
-        DataError::NotFound => StatusCode::NOT_FOUND,
-        DataError::Refused(_) => StatusCode::FORBIDDEN,
-        DataError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
 }
 
@@ -68,7 +68,7 @@ where
     let req = request(&state, body.reason);
     match state.source.cancel(&JobId(body.job), req).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (status_of(&e), e.to_string()).into_response(),
+        Err(e) => data_error(&e),
     }
 }
 

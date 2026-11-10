@@ -1,6 +1,5 @@
-use crate::guard::AppState;
+use crate::guard::{data_error, AppState};
 use axum::extract::State;
-use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream;
@@ -13,18 +12,27 @@ use tokio::sync::watch;
 struct Feed<E> {
     events: Box<dyn EventStream<E>>,
     stop: watch::Receiver<bool>,
+    failed: bool,
 }
 
+/// The next SSE event; an event that cannot be serialized ends the stream with an explicit
+/// `error` event, so the page reconnects and reloads instead of silently missing updates.
 async fn next_event<E: Serialize + Send>(mut feed: Feed<E>) -> Option<(Event, Feed<E>)> {
-    if *feed.stop.borrow() {
+    if feed.failed || *feed.stop.borrow() {
         return None;
     }
     let event = tokio::select! {
         e = feed.events.next() => e?,
         _ = feed.stop.changed() => return None,
     };
-    let data = serde_json::to_string(&event).ok()?;
-    Some((Event::default().event("update").data(data), feed))
+    match serde_json::to_string(&event) {
+        Ok(data) => Some((Event::default().event("update").data(data), feed)),
+        Err(e) => {
+            feed.failed = true;
+            let message = format!("event not serializable: {e}");
+            Some((Event::default().event("error").data(message), feed))
+        }
+    }
 }
 
 /// The live stream of the page: one SSE connection carrying the data source's events as
@@ -36,11 +44,12 @@ where
 {
     let events = match state.source.subscribe().await {
         Ok(events) => events,
-        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, e.to_string()).into_response(),
+        Err(e) => return data_error(&e),
     };
     let feed = Feed {
         events,
         stop: state.stop.clone(),
+        failed: false,
     };
     let stream = stream::unfold(feed, |feed| async move {
         next_event(feed)

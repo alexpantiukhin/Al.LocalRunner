@@ -15,5 +15,7 @@ mod snapshot;
 mod sse;
 
 pub use guard::CSRF_HEADER;
-pub use server::{ensure_loopback, Dashboard, DashboardError, DashboardOptions, RunningDashboard};
+pub use server::{
+    ensure_loopback, Dashboard, DashboardError, DashboardOptions, RunningDashboard, LOG_TAIL_BYTES,
+};
 pub use snapshot::{escape_html, render_snapshot};

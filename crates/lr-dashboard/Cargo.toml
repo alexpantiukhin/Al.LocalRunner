@@ -14,6 +14,8 @@ tokio = { workspace = true, features = ["sync", "rt", "net", "macros"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
 lr-abstractions = { workspace = true, features = ["test-support"] }

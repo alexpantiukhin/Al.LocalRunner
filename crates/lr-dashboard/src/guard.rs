@@ -2,7 +2,8 @@ use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use std::sync::Arc;
+use lr_abstractions::DataError;
+use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 /// Header that every state-changing request must carry with the page's anti-forgery token.
@@ -11,7 +12,7 @@ pub const CSRF_HEADER: &str = "x-lr-csrf";
 pub(crate) struct AppState<D> {
     pub(crate) source: Arc<D>,
     pub(crate) user: String,
-    pub(crate) launch_token: String,
+    pub(crate) launch_token: Arc<Mutex<Option<String>>>,
     pub(crate) session: String,
     pub(crate) csrf: String,
     pub(crate) port: u16,
@@ -19,6 +20,19 @@ pub(crate) struct AppState<D> {
 }
 
 impl<D> AppState<D> {
+    /// Spends the launch token: true once for the right token, false for a wrong one and for
+    /// every exchange after the first.
+    pub(crate) fn redeem(&self, token: &str) -> bool {
+        let mut slot = self.launch_token.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.as_deref() {
+            Some(expected) if ct_eq(token.as_bytes(), expected.as_bytes()) => {
+                *slot = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn cookie_name(&self) -> String {
         format!("lr_session_{}", self.port)
     }
@@ -40,6 +54,15 @@ impl<D> AppState<D> {
             .filter_map(|pair| pair.trim().split_once('='))
             .any(|(k, v)| k == name && ct_eq(v.as_bytes(), self.session.as_bytes()))
     }
+}
+
+pub(crate) fn data_error(err: &DataError) -> Response {
+    let status = match err {
+        DataError::NotFound => StatusCode::NOT_FOUND,
+        DataError::Refused(_) => StatusCode::FORBIDDEN,
+        DataError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    (status, err.to_string()).into_response()
 }
 
 pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {

@@ -1,18 +1,18 @@
-use crate::guard::{ct_eq, guard, random_hex, AppState};
+use crate::guard::{data_error, guard, random_hex, AppState};
 use crate::snapshot::{render, render_snapshot, Mode, SCRIPT, STYLE};
 use crate::{actions, sse};
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{middleware, Json, Router};
-use lr_abstractions::{DataError, DataSource};
+use lr_abstractions::DataSource;
 use lr_core::JobId;
 use lr_proto::DashboardSnapshot;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -70,13 +70,15 @@ pub struct Dashboard<D> {
     source: Arc<D>,
     options: DashboardOptions,
     launch_token: String,
+    unspent: Arc<Mutex<Option<String>>>,
     session: String,
     csrf: String,
     stop: watch::Sender<bool>,
 }
 
-/// A dashboard serving on loopback; dropping it without [`RunningDashboard::shutdown`] leaves
-/// the server running until the runtime ends.
+/// A dashboard serving on loopback. [`RunningDashboard::shutdown`] stops it and waits for the
+/// server tasks; dropping it also stops serving (open connections and live streams end), but
+/// without waiting.
 pub struct RunningDashboard {
     addr: SocketAddr,
     url: String,
@@ -118,17 +120,20 @@ where
     pub fn new(source: Arc<D>, options: DashboardOptions) -> Result<Self, DashboardError> {
         let secret = || random_hex(32).map_err(|e| DashboardError::Random(e.to_string()));
         let (stop, _) = watch::channel(false);
+        let launch_token = secret()?;
         Ok(Dashboard {
             source,
             options,
-            launch_token: secret()?,
+            unspent: Arc::new(Mutex::new(Some(launch_token.clone()))),
+            launch_token,
             session: secret()?,
             csrf: secret()?,
             stop,
         })
     }
 
-    /// The launch token the URL carries; exchanged once per browser for the session cookie.
+    /// The launch token the URL carries; the first exchange for the session cookie spends it,
+    /// later exchanges are refused (other tabs of that browser share the cookie).
     pub fn launch_token(&self) -> &str {
         &self.launch_token
     }
@@ -139,7 +144,7 @@ where
         let state = Arc::new(AppState {
             source: self.source.clone(),
             user: self.options.user.clone(),
-            launch_token: self.launch_token.clone(),
+            launch_token: self.unspent.clone(),
             session: self.session.clone(),
             csrf: self.csrf.clone(),
             port,
@@ -207,13 +212,24 @@ where
     }
 }
 
-fn data_error(err: DataError) -> Response {
-    let status = match err {
-        DataError::NotFound => StatusCode::NOT_FOUND,
-        DataError::Refused(_) => StatusCode::FORBIDDEN,
-        DataError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
-    };
-    (status, err.to_string()).into_response()
+/// Largest log answer of `/api/log`: the tail of the saved log, cut at a line start, behind
+/// a marker naming how much was left out.
+pub const LOG_TAIL_BYTES: usize = 256 * 1024;
+
+fn log_tail(bytes: &[u8]) -> (String, usize) {
+    if bytes.len() <= LOG_TAIL_BYTES {
+        return (String::from_utf8_lossy(bytes).into_owned(), 0);
+    }
+    let mut start = bytes.len() - LOG_TAIL_BYTES;
+    if let Some(nl) = bytes[start..].iter().position(|b| *b == b'\n') {
+        start += nl + 1;
+    }
+    let text = format!(
+        "[… {start} bytes cut, last {} bytes shown …]\n{}",
+        bytes.len() - start,
+        String::from_utf8_lossy(&bytes[start..])
+    );
+    (text, start)
 }
 
 async fn index<D>(
@@ -224,8 +240,12 @@ where
     D: DataSource<Snapshot = DashboardSnapshot> + 'static,
 {
     if let Some(token) = query.token {
-        if !ct_eq(token.as_bytes(), state.launch_token.as_bytes()) {
-            return (StatusCode::UNAUTHORIZED, "wrong launch token").into_response();
+        if !state.redeem(&token) {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "wrong or already used launch token; run `localrunner dashboard` again",
+            )
+                .into_response();
         }
         let cookie = format!(
             "{}={}; HttpOnly; SameSite=Strict; Path=/",
@@ -243,7 +263,7 @@ where
     }
     match state.source.snapshot().await {
         Ok(snapshot) => html(render(&snapshot, Mode::Live { csrf: &state.csrf })),
-        Err(e) => data_error(e),
+        Err(e) => data_error(&e),
     }
 }
 
@@ -269,7 +289,7 @@ where
 {
     match state.source.snapshot().await {
         Ok(snapshot) => Json(snapshot).into_response(),
-        Err(e) => data_error(e),
+        Err(e) => data_error(&e),
     }
 }
 
@@ -286,7 +306,7 @@ where
             );
             resp
         }
-        Err(e) => data_error(e),
+        Err(e) => data_error(&e),
     }
 }
 
@@ -295,11 +315,20 @@ where
     D: DataSource + 'static,
 {
     match state.source.log(&JobId(job)).await {
-        Ok(bytes) => (
-            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-            String::from_utf8_lossy(&bytes).into_owned(),
-        )
-            .into_response(),
-        Err(e) => data_error(e),
+        Ok(bytes) => {
+            let (text, cut) = log_tail(&bytes);
+            (
+                [
+                    (
+                        header::CONTENT_TYPE,
+                        "text/plain; charset=utf-8".to_string(),
+                    ),
+                    (HeaderName::from_static("x-lr-log-cut"), cut.to_string()),
+                ],
+                text,
+            )
+                .into_response()
+        }
+        Err(e) => data_error(&e),
     }
 }

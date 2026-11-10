@@ -659,6 +659,7 @@ name = "lr-dashboard"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "futures-util",
  "getrandom 0.2.17",
  "lr-abstractions",
@@ -666,6 +667,7 @@ dependencies = [
  "lr-proto",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tower",
 ]

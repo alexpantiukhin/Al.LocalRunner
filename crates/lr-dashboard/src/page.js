@@ -294,12 +294,12 @@
       var cols = S.tab === "history" ? HCOLS : QCOLS;
       var flat = S.tab === "queue" || S.tab === "history" ? visible() : rows.map(function (r) { return { json: JSON.stringify(r) }; });
       if (!(S.tab === "queue" || S.tab === "history")) cols = ["json"];
-      var q = function (v) { v = v == null ? "" : String(v); return /[",\n]/.test(v) || /^[=+\-@]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-      text = [cols.join(",")].concat(flat.map(function (r) { return cols.map(function (c) { return q(r[c]); }).join(","); })).join("\n");
+      text = [cols.join(",")].concat(flat.map(function (r) { return cols.map(function (c) { return csvCell(r[c]); }).join(","); })).join("\n");
       type = "text/csv";
     }
     download(S.tab + "." + kind, text, type);
   }
+  function csvCell(v) { v = v == null ? "" : String(v); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
   function download(name, text, type) {
     var a = el("a", { download: name, href: URL.createObjectURL(new Blob([text], { type: type })) });
     document.body.appendChild(a); a.click(); a.remove();

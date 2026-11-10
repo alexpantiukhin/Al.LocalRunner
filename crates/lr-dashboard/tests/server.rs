@@ -1,62 +1,15 @@
 mod common;
 
-use axum::body::{to_bytes, Body};
+use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use axum::Router;
+use common::http::{csrf_of, dashboard, get, host, send, session, PORT};
 use futures_util::StreamExt;
 use lr_abstractions::CancelRequest;
 use lr_core::JobId;
-use lr_dashboard::{ensure_loopback, Dashboard, DashboardOptions, CSRF_HEADER};
+use lr_dashboard::{ensure_loopback, CSRF_HEADER};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
-
-const PORT: u16 = 47_001;
-
-fn dashboard(source: std::sync::Arc<common::Source>) -> Dashboard<common::Source> {
-    Dashboard::new(
-        source,
-        DashboardOptions {
-            user: "alex".into(),
-        },
-    )
-    .unwrap()
-}
-
-fn get(uri: &str, host: &str) -> Request<Body> {
-    Request::get(uri)
-        .header(header::HOST, host)
-        .body(Body::empty())
-        .unwrap()
-}
-
-async fn send(router: &Router, req: Request<Body>) -> (StatusCode, axum::http::HeaderMap, String) {
-    let resp = router.clone().oneshot(req).await.unwrap();
-    let status = resp.status();
-    let headers = resp.headers().clone();
-    let body = to_bytes(resp.into_body(), 1 << 24).await.unwrap();
-    (status, headers, String::from_utf8_lossy(&body).into_owned())
-}
-
-fn host() -> String {
-    format!("127.0.0.1:{PORT}")
-}
-
-async fn session(router: &Router, token: &str) -> String {
-    let (status, headers, _) = send(router, get(&format!("/?token={token}"), &host())).await;
-    assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers[header::LOCATION], "/");
-    let cookie = headers[header::SET_COOKIE].to_str().unwrap().to_string();
-    assert!(cookie.contains("HttpOnly"), "{cookie}");
-    assert!(cookie.contains("SameSite=Strict"), "{cookie}");
-    cookie.split(';').next().unwrap().to_string()
-}
-
-fn csrf_of(page: &str) -> String {
-    let start = page.find("name=\"lr-csrf\" content=\"").unwrap() + 24;
-    let end = start + page[start..].find('"').unwrap();
-    page[start..end].to_string()
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn binds_loopback_only() {
@@ -123,12 +76,24 @@ async fn non_loopback_host_header_refused() {
         .unwrap();
     assert_eq!(send(&router, foreign_origin).await.0, StatusCode::FORBIDDEN);
 
-    for good in [
-        format!("localhost:{PORT}"),
-        format!("127.0.0.1:{PORT}"),
-        format!("[::1]:{PORT}"),
-    ] {
-        let (status, _, _) = send(&router, get(&uri, &good)).await;
+    let cross_site = Request::get(uri.as_str())
+        .header(header::HOST, host())
+        .header("sec-fetch-site", "cross-site")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&router, cross_site).await.0, StatusCode::FORBIDDEN);
+
+    let (status, _, _) = send(&router, get(&uri, &format!("localhost:{PORT}"))).await;
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "refused requests do not spend the token"
+    );
+
+    for good in [format!("127.0.0.1:{PORT}"), format!("[::1]:{PORT}")] {
+        let fresh = dashboard(common::source());
+        let uri = format!("/?token={}", fresh.launch_token());
+        let (status, _, _) = send(&fresh.router(PORT), get(&uri, &good)).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "host {good}");
     }
 }
@@ -145,6 +110,26 @@ async fn queue_page_lists_jobs_with_project_source_label() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     let cookie = session(&router, &token).await;
+    let (status, _, _) = send(&router, get(&format!("/?token={token}"), &host())).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "launch token is single-use"
+    );
+
+    let forged = Request::get("/")
+        .header(header::HOST, host())
+        .header(header::COOKIE, format!("lr_session_{PORT}=00ff"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&router, forged).await.0, StatusCode::UNAUTHORIZED);
+    let other_port = Request::get("/")
+        .header(header::HOST, host())
+        .header(header::COOKIE, cookie.replace(&PORT.to_string(), "1"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(send(&router, other_port).await.0, StatusCode::UNAUTHORIZED);
+
     let req = Request::get("/")
         .header(header::HOST, host())
         .header(header::COOKIE, &cookie)
