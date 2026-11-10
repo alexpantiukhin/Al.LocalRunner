@@ -1,5 +1,6 @@
 use crate::datasource::{CancelRequest, DataError, DataSource, EventStream};
 use crate::logsink::{LogSink, Record};
+use crate::meter::Meter;
 use crate::secrets::{SecretError, SecretSource, SecretValue};
 use async_trait::async_trait;
 use lr_core::JobId;
@@ -93,6 +94,59 @@ impl LogSink for MemoryLogSink {
 
     fn dropped(&self) -> u64 {
         *self.dropped.lock().unwrap()
+    }
+}
+
+/// One update a [`MemoryMeter`] received.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MeterUpdate {
+    /// A counter increment.
+    Add(String, Vec<(String, String)>, u64),
+    /// A gauge value.
+    Set(String, Vec<(String, String)>, f64),
+    /// A histogram observation.
+    Observe(String, Vec<(String, String)>, f64),
+}
+
+/// A meter in memory: keeps every update in arrival order, accepts any name.
+#[derive(Default)]
+pub struct MemoryMeter {
+    updates: Mutex<Vec<MeterUpdate>>,
+}
+
+impl MemoryMeter {
+    /// An empty meter.
+    pub fn new() -> MemoryMeter {
+        MemoryMeter::default()
+    }
+
+    /// Updates received so far.
+    pub fn updates(&self) -> Vec<MeterUpdate> {
+        self.updates.lock().unwrap().clone()
+    }
+}
+
+fn owned(labels: &[(&str, &str)]) -> Vec<(String, String)> {
+    labels
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+impl Meter for MemoryMeter {
+    fn add(&self, name: &str, labels: &[(&str, &str)], delta: u64) {
+        let update = MeterUpdate::Add(name.to_string(), owned(labels), delta);
+        self.updates.lock().unwrap().push(update);
+    }
+
+    fn set(&self, name: &str, labels: &[(&str, &str)], value: f64) {
+        let update = MeterUpdate::Set(name.to_string(), owned(labels), value);
+        self.updates.lock().unwrap().push(update);
+    }
+
+    fn observe(&self, name: &str, labels: &[(&str, &str)], value: f64) {
+        let update = MeterUpdate::Observe(name.to_string(), owned(labels), value);
+        self.updates.lock().unwrap().push(update);
     }
 }
 

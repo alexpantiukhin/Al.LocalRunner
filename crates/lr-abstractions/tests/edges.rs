@@ -1,10 +1,12 @@
 mod common;
 
 use common::{clock, T0};
-use lr_abstractions::fakes::{FakeDataSource, FakeProcessRunner, MemoryLogSink, MemorySecrets};
+use lr_abstractions::fakes::{
+    FakeDataSource, FakeProcessRunner, MemoryLogSink, MemoryMeter, MemorySecrets, MeterUpdate,
+};
 use lr_abstractions::{
-    CancelRequest, DataError, DataSource, Level, LogSink, ProcessError, ProcessRef, ProcessRunner,
-    Record, Role, SecretError, SecretSource, SecretValue,
+    CancelRequest, DataError, DataSource, Level, LogSink, Meter, ProcessError, ProcessRef,
+    ProcessRunner, Record, Role, SecretError, SecretSource, SecretValue,
 };
 use lr_core::JobId;
 
@@ -71,6 +73,30 @@ fn full_bounded_sink_drops_and_counts_instead_of_blocking() {
     }
     assert_eq!(sink.records().len(), 2);
     assert_eq!(sink.dropped(), 3);
+}
+
+#[test]
+fn memory_meter_keeps_updates_in_order_with_labels() {
+    let meter = MemoryMeter::new();
+    meter.add("localrunner_orders_total", &[("result", "passed")], 2);
+    meter.set("localrunner_queue_length", &[("platform", "p1")], 3.0);
+    meter.observe("localrunner_queue_wait_seconds", &[], 1.5);
+    assert_eq!(
+        meter.updates(),
+        vec![
+            MeterUpdate::Add(
+                "localrunner_orders_total".into(),
+                vec![("result".into(), "passed".into())],
+                2
+            ),
+            MeterUpdate::Set(
+                "localrunner_queue_length".into(),
+                vec![("platform".into(), "p1".into())],
+                3.0
+            ),
+            MeterUpdate::Observe("localrunner_queue_wait_seconds".into(), vec![], 1.5),
+        ]
+    );
 }
 
 #[tokio::test]

@@ -538,8 +538,17 @@ dependencies = [
 name = "lr-obs"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "libc",
  "lr-abstractions",
  "lr-core",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

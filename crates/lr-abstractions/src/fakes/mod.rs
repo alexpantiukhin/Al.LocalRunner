@@ -17,7 +17,7 @@ pub use broker_store::MemoryBrokerStore;
 pub use clock::ManualClock;
 pub use files::MemoryFiles;
 pub use hub_runner_store::{MemoryHubStore, MemoryRunnerStore};
-pub use misc::{FakeDataSource, MemoryLogSink, MemorySecrets};
+pub use misc::{FakeDataSource, MemoryLogSink, MemoryMeter, MemorySecrets, MeterUpdate};
 pub use process::{
     FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript,
 };

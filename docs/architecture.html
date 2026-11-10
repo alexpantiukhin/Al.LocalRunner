@@ -894,7 +894,7 @@ volumes:
 <h2 id="s-observability">12. Логирование и метрики</h2>
 <p class="lead">Диагностика самой системы идёт через фасад логирования, а куда она попадёт, решает владелец конфигурацией. По умолчанию это файл на диске; Grafana подключается необязательным получателем.</p>
 <ul>
-<li><b>Фасад в коде.</b> Ядро и роли пишут структурированные события через крейт <code>tracing</code> (MIT) и ничего не знают о получателях. Это аналог <code>ILogger</code>. Получатели, уровни и редактирование полей подключает один общий крейт (<code>lr-obs</code>), а не код ролей.</li>
+<li><b>Фасад в коде.</b> Роли пишут структурированные события в трейт <code>LogSink</code>, а метрики в трейт <code>Meter</code> (оба в <code>lr-abstractions</code>), и ничего не знают о получателях. Это аналог <code>ILogger</code>. Получатели, уровни и редактирование полей подключает один общий крейт (<code>lr-obs</code>), а не код ролей; роли от <code>lr-obs</code> не зависят, реализации им передаёт <code>lr-cli</code>. <em>(Уточнение реализации: вместо крейта <code>tracing</code> фасадом служат свои трейты: так роли зависят только от контрактов, а заглушки для тестов уже есть.)</em></li>
 <li><b>Что логируется.</b> Диагностика hub, брокера и раннера: подключения и обрывы, приём и выдача заказов, сработавшие правила политики, перезагрузка политики, отказы, работа outbox, очистка хранилища. <b>Вывод джоб сюда не входит</b>: он хранится как данные запуска (раздел 8) и в получатели не уходит. <em>(Решение пользователя: в Grafana идут диагностические логи и метрики.)</em></li>
 <li><b>Поля события:</b> время, уровень, роль (<code>hub</code>, <code>broker</code>, <code>runner</code>), компонент, MachineId, сообщение и по месту <code>job_id</code>, раннер, ярлык клиента, имя сработавшего правила. <b>Не пишутся:</b> команды и переменные окружения джоб, вывод джоб, ключи, коды подключения и токены. Список редактируемых полей задаётся конфигурацией.</li>
 </ul>
@@ -912,15 +912,18 @@ path      = "logs/daemon.log"
 format    = "json"
 rotate_mb = 50
 keep_days = 14
+keep_files = 10             # сколько повёрнутых файлов хранить
 
 [[sink]]
 kind = "console"            # только на переднем плане
 
 [[sink]]
 kind     = "otlp"           # Grafana Alloy, Loki, Mimir по OTLP
-endpoint = "https://alloy.lan:4317"
+endpoint = "https://alloy.lan:4318"   # OTLP/HTTP
 signals  = ["logs", "metrics"]
 enabled  = false            # выключен, пока владелец не включит
+ca_file  = "certs/alloy-ca.pem"       # CA приёмника, обязателен при enabled
+timeout_s = 10
 
 [redact]
 fields = ["command", "env", "token"]
@@ -935,7 +938,17 @@ fields = ["command", "env", "token"]
 <ul>
 <li>Альтернатива без сетевого получателя: Grafana Alloy или Promtail читает JSON-файл на той же машине. Процессы системы при этом не делают исходящих соединений.</li>
 <li>Получатель никогда не блокирует работу: запись асинхронная, буфер ограничен, при переполнении события отбрасываются, а потеря считается счётчиком. Недоступный приёмник не останавливает и не замедляет брокер, hub или раннер.</li>
-<li>Библиотеки только под разрешёнными лицензиями (<code>tracing</code> — MIT, OpenTelemetry для Rust — Apache-2.0).</li>
+<li>Библиотеки только под разрешёнными лицензиями. OTLP кодируется самим <code>lr-obs</code> (OTLP/HTTP JSON поверх <code>rustls</code>, Apache-2.0/MIT/ISC), без тяжёлого стека OpenTelemetry для Rust.</li>
+</ul>
+<p><b>Уточнения реализации (lr-obs):</b></p>
+<ul>
+<li><b>Ключи.</b> Неизвестные ключи, виды получателей, уровни и сигналы отвергаются. Файл без <code>[[sink]]</code> означает файл по умолчанию. <code>[redact] fields</code> только дополняет встроенный список, ослабить его нельзя. Перезагрузка с ошибкой оставляет прежнюю конфигурацию. Журнал, которого нет в ОС, — ошибка конфигурации.</li>
+<li><b>Редактирование</b> выполняется до любого получателя (получатели принимают только отредактированную запись). Маскируются (<code>***</code>): значения секретов, полученные раннером через <code>SecretSource</code> (обёртка <code>RedactingSecrets</code>), где бы они ни встретились; блоки PEM с <code>PRIVATE KEY</code>; коды подключения <code>lrj1.…</code>; учётные данные в URL; <code>Bearer</code>/<code>Basic</code>; значение после чувствительного имени и <code>=</code> или <code>:</code> в тексте (вложенные <code>{…}</code>/<code>[…]</code> целиком); всё значение поля с чувствительным именем. Встроенные имена: <code>token, key, password, passwd, secret, authorization, auth, cookie, credential, credentials, command, env, environment, join_code</code>; совпадение по частям имени (<code>api_token</code>, <code>X-Api-Key</code>, <code>privateKey</code> — да; <code>tokens_used</code>, <code>exit_code</code> — нет). Пределы: сообщение 16 КиБ, значение поля 4 КиБ, 64 поля; обрезка после редактирования. Ограничения: незарегистрированный секрет без чувствительного имени рядом не распознаётся; значения короче 4 символов не регистрируются; закодированные формы (base64, URL) не ищутся; хранится до 4096 значений, старые забываются.</li>
+<li><b>Строки.</b> JSON-строка: <code>time</code> (RFC 3339 UTC, мс), <code>level</code>, <code>role</code>, <code>component</code>, <code>machine_id</code>, <code>message</code>, <code>fields</code>. Управляющие, bidi-символы и переводы строк экранируются в обоих форматах, поэтому поле не может подделать вторую запись или раскрасить терминал. <code>format = "text"</code> пишет ту же строку, что консоль.</li>
+<li><b>Ротация файла:</b> перед строкой, с которой файл превысил бы <code>rotate_mb</code> МиБ, и через сутки после открытия активный файл переименовывается в <code>daemon-YYYYMMDD-HHMMSS-mmm[-n].log</code> (UTC). Удаляются повёрнутые файлы старше <code>keep_days</code> по времени в имени, затем лишние сверх <code>keep_files</code> (по умолчанию 10); другие файлы каталога не трогаются. Путь только относительный внутри каталога состояния, без <code>..</code>, диска и имён устройств Windows. В Unix каталоги создаются с правами 0700, файлы 0600; в Windows наследуется ACL каталога состояния. Ошибка ввода-вывода не роняет процесс: она считается, событие теряется и считается в <code>log_dropped_total</code>, файл открывается заново; отказ переименования повторяется через минуту.</li>
+<li><b>Буфер:</b> у каждого получателя своя очередь до 10 000 событий и 8 МиБ; при переполнении отбрасываются самые старые. Запись идёт в рабочем потоке получателя, файл сбрасывается на диск раз в секунду и при остановке.</li>
+<li><b>OTLP:</b> OTLP/HTTP JSON на <code>&lt;endpoint&gt;/v1/logs</code> и <code>/v1/metrics</code>, только <code>https</code>, TLS 1.3, сертификат приёмника проверяется по <code>ca_file</code>; учётные данные, запрос и фрагмент в <code>endpoint</code> запрещены, текст ошибки адрес не повторяет. Отдельной аутентификации нет: приёмник с аутентификацией ставится за локальным Alloy. Пачки до 512 событий; неудачная отправка теряет пачку (считается) и включает паузу 5 с с удвоением до 300 с. Метрики отправляются раз в 60 с, накопительно. <code>timeout_s</code> ограничивает подключение и каждую операцию чтения и записи.</li>
+<li><b>Журнал ОС:</b> syslog (его собирает journald) в Unix, Windows Event Log (журнал Application, источник <code>Al.LocalRunner</code>) в Windows; строка без времени.</li>
 </ul>
 <h3>12.2 Метрики</h3>
 <p>Метрики отдаются тем же получателем <code>otlp</code>, отдельного слушателя нет (Prometheus-эндпоинт добавил бы сетевой слушатель, а это нарушает принцип «ничего не уходит наружу и нет лишних слушателей»). Имена начинаются с <code>localrunner_</code>.</p>
@@ -956,6 +969,14 @@ fields = ["command", "env", "token"]
 <li>По умолчанию в метках нет проекта, ветки, ярлыка клиента и имён джоб: так ограничивается число серий и не раскрываются чужие названия. Метка клиента включается явной настройкой.</li>
 <li>Метрики, как и логи, получает только тот приёмник, который включил владелец; без него они остаются в памяти процесса и нигде не публикуются.</li>
 </ul>
+<p><b>Уточнения реализации (lr-obs):</b></p>
+<ul>
+<li>Метки по-английски: <code>platform</code>, <code>pool</code>, <code>runner</code>, <code>reason</code>, <code>result</code>, <code>service</code>, <code>role</code>, <code>sink</code>. У <code>cache_used_mb</code> только <code>runner</code>, у <code>cache_evicted_total</code> — <code>runner</code> и <code>reason</code>. <code>saturation_wait_seconds</code> — датчик (gauge); метрики без <code>_total</code> и без пометки «гистограмма» — датчики.</li>
+<li>Допустимые значения: <code>reason</code> насыщения — <code>runner_busy, memory, cpu, tag, rule</code>; <code>reason</code> вытеснения — <code>size, age</code>; <code>result</code> заказов и длительности — <code>passed, failed, timeout, cancelled, lost, rejected</code>; <code>result</code> перезагрузки — <code>ok, error</code>; <code>role</code> — <code>hub, broker, runner</code>; <code>sink</code> — <code>file, console, journal, otlp</code>.</li>
+<li>Принимаются только имена каталога и ровно их наборы меток; значение метки до 128 байт без управляющих символов; не больше 256 серий на метрику; отвергнутые обновления считаются. Счётчики насыщаются, а не переполняются; датчик не принимает NaN и бесконечность, гистограмма — отрицательные значения.</li>
+<li>Границы гистограмм, с: 1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 14400. Единицы UCUM: <code>s</code>, <code>MBy</code>, <code>{order}</code> и т. п.</li>
+<li>Метка <code>client</code> разрешена только при <code>[metrics] client_label = true</code> в <code>logging.toml</code> и только у <code>queue_wait_seconds</code>, <code>orders_total</code>, <code>job_duration_seconds</code>; при выключенной настройке она отбрасывается.</li>
+</ul>
 
 <h2 id="s-components">13. Компоненты</h2>
 <p class="lead">Деление на крейты и их названия предложены вместе с брокером; план реализации переписан по этому документу. Роли зависят от абстракций, а не от реализаций.</p>
@@ -964,7 +985,7 @@ fields = ["command", "env", "token"]
 <div class="scroll"><table>
 <tr><th>Крейт</th><th>Зависит от</th><th>Отвечает за</th></tr>
 <tr><td><code>lr-core</code></td><td>—</td><td>типы, разбор профилей и требований, <code>Policy</code> (трейт без ввода-вывода) и встроенные стратегии, <code>Scheduler</code>, <code>pick_next</code>, <code>zone_of</code>, <code>Identity</code>, проверка push</td></tr>
-<tr><td><code>lr-abstractions</code></td><td>core</td><td>трейты ввода-вывода: <code>Clock</code> (время), <code>Store</code> (хранилища брокера, hub и раннера), <code>Transport</code> и <code>Listener</code> (сеть, локальный IPC), <code>ProcessRunner</code> (запуск и убийство дерева), <code>SecretSource</code>, <code>LogSink</code>, <code>DataSource</code>; заглушки в памяти для тестов (feature <code>test-support</code>)</td></tr>
+<tr><td><code>lr-abstractions</code></td><td>core</td><td>трейты ввода-вывода: <code>Clock</code> (время), <code>Store</code> (хранилища брокера, hub и раннера), <code>Transport</code> и <code>Listener</code> (сеть, локальный IPC), <code>ProcessRunner</code> (запуск и убийство дерева), <code>SecretSource</code>, <code>LogSink</code>, <code>Meter</code>, <code>DataSource</code>; заглушки в памяти для тестов (feature <code>test-support</code>)</td></tr>
 <tr><td><code>lr-proto</code></td><td>core</td><td>сообщения протокола раннера и API брокера, кадры JSON до 4 МиБ, проверка версий</td></tr>
 <tr><td><code>lr-broker</code></td><td>core, abstractions, proto</td><td><code>Engine</code> брокера, загрузчик политики, обработка подключений через <code>Listener</code>, API. Не знает ни SQLite, ни TLS, ни процессов: брокер ничего не исполняет</td></tr>
 <tr><td><code>lr-hub</code></td><td>core, abstractions, proto</td><td>IPC для CLI, профили → заказы, клиент брокеров, <code>hub-policy.toml</code>, reaper, outbox, копия логов, файлы-ручки джобов; профиль из коммита читает через <code>Repository</code></td></tr>
@@ -973,7 +994,7 @@ fields = ["command", "env", "token"]
 <tr><td><code>lr-net</code></td><td>core, abstractions, proto</td><td>реализация <code>Transport</code> и <code>Listener</code>: самоподписанный сертификат, TLS, одноразовые коды, ключи, реестр машин</td></tr>
 <tr><td><code>lr-store</code></td><td>core, abstractions</td><td>реализация <code>Store</code> на SQLite: история запусков и логи брокера, <code>prune</code>, <code>stats</code>; outbox hub, outbox раннера</td></tr>
 <tr><td><code>lr-exec</code></td><td>core, abstractions</td><td>реализация <code>ProcessRunner</code>: <code>spawn</code>, убийство дерева, <code>run_job</code>, <code>LogWriter</code></td></tr>
-<tr><td><code>lr-obs</code></td><td>core, abstractions</td><td>реализации <code>LogSink</code> (файл, консоль, журнал ОС, OTLP), редактирование полей, метрики; фасад <code>tracing</code> используют все роли, получатели подключает только этот крейт</td></tr>
+<tr><td><code>lr-obs</code></td><td>core, abstractions</td><td>реализации <code>LogSink</code> (файл, консоль, журнал ОС, OTLP) и <code>Meter</code>, редактирование полей, метрики; фасад (<code>LogSink</code>, <code>Meter</code>) используют все роли, получатели подключает только этот крейт</td></tr>
 <tr><td><code>lr-cli</code></td><td>все</td><td>точка сборки: создаёт реализации и передаёт их ролям, команды, клиент IPC и сети, реализация <code>Repository</code> (git)</td></tr>
 </table></div>
 <p><b>Зависимость от абстракций.</b> Роли получают реализации через конструктор (хранилище, сеть, процессы, время, секреты, получатели логов) и не знают, что за ними стоит. Благодаря этому движок брокера, reaper hub и агент раннера проверяются в тестах на заглушках из <code>lr-abstractions</code>, без SQLite, TLS и настоящих процессов, а срок <code>lost</code>, <code>ttl_hours</code> и период reaper проверяются подменой <code>Clock</code>, без ожидания. Собирает всё только <code>lr-cli</code>. Трейт <code>Policy</code> остаётся в <code>lr-core</code>: он чистый, ввода-вывода у него нет.</p>
