@@ -150,7 +150,7 @@ pub struct LogArgs {
     /// Only this broker.
     #[arg(long)]
     pub broker: Option<String>,
-    /// Print JSON lines `{broker, text, end}`.
+    /// Print JSON lines `{job, text, end: false}`, then `{job, broker, end: true}`.
     #[arg(long)]
     pub json: bool,
 }

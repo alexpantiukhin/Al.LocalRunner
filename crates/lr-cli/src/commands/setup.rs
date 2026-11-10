@@ -179,7 +179,7 @@ pub async fn uninstall(
     };
     let mut code = 0;
     if !dry_run {
-        if let Err(e) = super::down_cmd::down(layout, Vec::new(), false).await {
+        if let Err(e) = super::down_cmd::down(layout, Vec::new(), true).await {
             eprintln!("stopping the roles: {e}");
         }
     }

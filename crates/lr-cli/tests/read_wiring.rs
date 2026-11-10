@@ -4,7 +4,7 @@ use common::TempDir;
 use lr_cli::commands::down_cmd::down;
 use lr_cli::commands::history_cmd::fetch_history;
 use lr_cli::commands::jobs::hub;
-use lr_cli::commands::log_cmd::{find_log, LogQuery};
+use lr_cli::commands::log_cmd::{cli_redactor, find_log, LogQuery};
 use lr_cli::commands::read_cmd::{explain, fetch_runners};
 use lr_cli::commands::up_cmd::{running_roles, up_plan};
 use lr_cli::commands::view::known_brokers;
@@ -23,6 +23,11 @@ fn layout(dir: &TempDir) -> Layout {
     std::fs::write(
         config.join("policy.toml"),
         format!("[[local_user]]\nname = {user:?}\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        config.join("logging.toml"),
+        "[redact]\nfields = [\"build_pin\"]\n",
     )
     .unwrap();
     let runner = root.join("runner").join("r1");
@@ -54,7 +59,7 @@ async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
     std::fs::create_dir_all(repo.join(".localrunner")).unwrap();
     std::fs::write(
         repo.join(".localrunner").join("profiles.toml"),
-        "[profile.unit]\ncommand = \"echo read-me api_token=hunter2hunter2\"\ntimeout_s = 60\nmem_mb = 256\n",
+        "[profile.unit]\ncommand = \"echo read-me api_token=hunter2hunter2 build_pin=pin4242pin\"\ntimeout_s = 60\nmem_mb = 256\n",
     )
     .unwrap();
     common::init_repo(&repo);
@@ -130,6 +135,7 @@ async fn read_commands_and_full_down_on_loopback() {
     let (broker_name, text) = explain(&client, &job, None).await.expect("explain");
     assert_eq!(broker_name, "local");
     assert!(text.contains("passed"), "{text}");
+    let redactor = cli_redactor(&layout);
     let mut log = String::new();
     let query = LogQuery {
         job: job.clone(),
@@ -137,7 +143,7 @@ async fn read_commands_and_full_down_on_loopback() {
         tail: None,
         follow: true,
     };
-    find_log(&client, None, &query, &mut |t| log.push_str(t))
+    find_log(&client, None, &query, &redactor, &mut |t| log.push_str(t))
         .await
         .expect("log of a finished job ends");
     assert!(log.contains("read-me"), "{log}");
@@ -145,11 +151,15 @@ async fn read_commands_and_full_down_on_loopback() {
         !log.contains("hunter2hunter2"),
         "the CLI masks secrets: {log}"
     );
+    assert!(
+        !log.contains("pin4242pin"),
+        "the CLI masks the [redact] fields of logging.toml: {log}"
+    );
     let missing = LogQuery {
         job: JobId("no-such-job".into()),
         ..query
     };
-    let err = find_log(&client, None, &missing, &mut |_| {})
+    let err = find_log(&client, None, &missing, &redactor, &mut |_| {})
         .await
         .expect_err("unknown job");
     assert!(err.contains("no-such-job"), "{err}");

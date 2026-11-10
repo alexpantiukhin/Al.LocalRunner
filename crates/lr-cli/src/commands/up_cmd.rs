@@ -160,10 +160,30 @@ fn missing(plan: &[Vec<String>], now: &RunningRoles) -> Vec<String> {
     out
 }
 
+/// The roles `up` may start: a broker installed as an OS service is left to the service
+/// manager, so a stopped service never turns into a broker of the user's directory.
+pub fn startable(roles: Vec<NodeRole>, broker_is_service: bool) -> Vec<NodeRole> {
+    roles
+        .into_iter()
+        .filter(|r| !(broker_is_service && *r == NodeRole::Broker))
+        .collect()
+}
+
 /// `up [role]`.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
-    let roles = chosen_roles(layout, role)?;
+    let chosen = chosen_roles(layout, role)?;
+    let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
+    let roles = startable(chosen, service);
     let before = running_roles(layout).await;
+    if service {
+        match before.broker {
+            true => println!("broker: running as an OS service"),
+            false => println!(
+                "broker: installed as an OS service and not running; start it with the OS \
+                 service manager"
+            ),
+        }
+    }
     if roles.contains(&NodeRole::Broker) && before.broker {
         println!("broker: already running");
     }

@@ -1,13 +1,16 @@
 //! `down [names] [--drain | --cancel]` (spec 3.9, 11.1): runners through their local control
 //! channel, then the hub through its CLI channel, then the broker through its admin channel.
 //! Without names every role of this installation that runs stops; runners told to drain finish
-//! their job before the broker goes, so the result still reaches it. A broker run by the OS
-//! service manager stays.
+//! their job before the broker goes, so the result still reaches it. Ctrl+C ends only that
+//! wait: the draining runners and the broker keep running. A broker run by the OS service
+//! manager stays, and nothing waits for it.
 
+use crate::broker_admin::SERVICE_STAYS;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_proto::{AdminReply, AdminRequest, CliReply, CliRequest, ControlReply, DownMode};
 use lr_proto::{IpcChannel, RunnerControl};
+use std::future::Future;
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(200);
@@ -54,17 +57,41 @@ pub fn down_targets(layout: &Layout, names: &[String]) -> Vec<Target> {
     out
 }
 
-async fn until_gone(address: &str, channel: IpcChannel, within: Option<Duration>) -> bool {
-    let start = tokio::time::Instant::now();
-    loop {
-        match IpcClient::connect(address, channel).await {
-            Err(_) => return true,
-            Ok(c) => c.close().await,
+async fn answers(address: &str, channel: IpcChannel) -> bool {
+    match IpcClient::connect(address, channel).await {
+        Err(_) => false,
+        Ok(c) => {
+            c.close().await;
+            true
         }
-        if within.is_some_and(|w| start.elapsed() >= w) {
+    }
+}
+
+async fn until_gone(address: &str, channel: IpcChannel, within: Duration) -> bool {
+    let start = tokio::time::Instant::now();
+    while answers(address, channel).await {
+        if start.elapsed() >= within {
             return false;
         }
         tokio::time::sleep(POLL).await;
+    }
+    true
+}
+
+/// Polls `still_running` until it says no; `false` when `interrupt` came first.
+pub async fn drained<F, Fut>(mut still_running: F, interrupt: impl Future<Output = ()>) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let all = async {
+        while still_running().await {
+            tokio::time::sleep(POLL).await;
+        }
+    };
+    tokio::select! {
+        _ = all => true,
+        _ = interrupt => false,
     }
 }
 
@@ -98,43 +125,48 @@ async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
         Ok(other) => return Err(format!("unexpected answer: {other:?}")),
     }
     c.close().await;
-    match until_gone(&address, IpcChannel::Cli, Some(ROLE_GONE_WITHIN)).await {
+    match until_gone(&address, IpcChannel::Cli, ROLE_GONE_WITHIN).await {
         true => Ok(true),
         false => Err("still answers after it was told to stop".into()),
     }
 }
 
-async fn broker(layout: &Layout) -> Result<Option<Vec<String>>, String> {
+/// Tells the broker of `layout` to stop and waits until its admin channel is gone. `None`
+/// when no broker answers; otherwise the broker's warnings (a broker run as an OS service
+/// keeps running and says so). A broker that stops before its answer leaves counts as
+/// stopping.
+pub async fn stop_broker(layout: &Layout) -> Result<Option<Vec<String>>, String> {
     let address = layout.admin_ipc();
     let Ok(c) = IpcClient::connect_broker_admin(&address).await else {
         return Ok(None);
     };
-    let warnings = match c.call::<_, AdminReply>(&AdminRequest::Shutdown).await? {
-        AdminReply::Ok { warnings } => warnings,
-        AdminReply::Failed { message } => return Err(message),
-        other => return Err(format!("unexpected answer: {other:?}")),
+    let warnings = match c.call::<_, AdminReply>(&AdminRequest::Shutdown).await {
+        Ok(AdminReply::Ok { warnings }) => warnings,
+        Ok(AdminReply::Failed { message }) => return Err(message),
+        Ok(other) => return Err(format!("unexpected answer: {other:?}")),
+        Err(_) => Vec::new(),
     };
     c.close().await;
     if warnings.is_empty() {
-        let gone = async {
-            let start = tokio::time::Instant::now();
-            while IpcClient::connect_broker_admin(&address).await.is_ok() {
-                if start.elapsed() >= ROLE_GONE_WITHIN {
-                    return false;
-                }
-                tokio::time::sleep(POLL).await;
+        let start = tokio::time::Instant::now();
+        while IpcClient::connect_broker_admin(&address).await.is_ok() {
+            if start.elapsed() >= ROLE_GONE_WITHIN {
+                return Err("still answers after it was told to stop".into());
             }
-            true
-        };
-        if !gone.await {
-            return Err("still answers after it was told to stop".into());
+            tokio::time::sleep(POLL).await;
         }
     }
     Ok(Some(warnings))
 }
 
-/// `down [names] [--drain | --cancel]`; the exit code is 1 when a named role does not run or a
-/// role refused to stop.
+async fn ctrl_c() {
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// `down [names] [--drain | --cancel]`; the exit code is 1 when a named role does not run, a
+/// role refused to stop or the wait for draining runners was interrupted.
 pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i32, String> {
     let explicit = !names.is_empty();
     let targets = down_targets(layout, &names);
@@ -147,6 +179,7 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
     } else {
         DownMode::Drain
     };
+    let service = targets.contains(&Target::Broker) && layout.broker_is_service();
     let mut code = 0;
     let not_running = |what: &str, code: &mut i32| {
         if explicit {
@@ -178,18 +211,36 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                     code = 1;
                 }
             },
+            Target::Broker if service => println!("broker: {SERVICE_STAYS}"),
             Target::Broker => {
                 if !stopping.is_empty() {
                     eprintln!(
                         "waiting for {} to finish before the broker stops (Ctrl+C stops waiting)",
                         stopping.join(", ")
                     );
-                    for name in &stopping {
-                        let address = layout.runner_ipc(&principal, name);
-                        until_gone(&address, IpcChannel::RunnerControl, None).await;
+                    let addresses: Vec<String> = stopping
+                        .iter()
+                        .map(|n| layout.runner_ipc(&principal, n))
+                        .collect();
+                    let addresses = &addresses;
+                    let any_answers = move || async move {
+                        for a in addresses {
+                            if answers(a, IpcChannel::RunnerControl).await {
+                                return true;
+                            }
+                        }
+                        false
+                    };
+                    if !drained(any_answers, ctrl_c()).await {
+                        eprintln!(
+                            "stopped waiting: {} keep draining and the broker keeps running; \
+                             run `localrunner down broker` later",
+                            stopping.join(", ")
+                        );
+                        return Ok(1);
                     }
                 }
-                match broker(layout).await {
+                match stop_broker(layout).await {
                     Ok(Some(warnings)) if warnings.is_empty() => println!("broker: stopped"),
                     Ok(Some(warnings)) => {
                         for w in warnings {

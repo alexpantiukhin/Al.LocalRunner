@@ -9,30 +9,47 @@ use super::LogArgs;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::JobId;
-use lr_obs::Redactor;
+use lr_obs::{LoggingConfig, Redactor};
 use lr_proto::{CliRead, CliReply, CliRequest, ReadReply, ReadRequest};
 use serde_json::json;
 use std::io::Write;
+use std::sync::Arc;
 
 const MAX_PENDING: usize = 64 * 1024;
 
 /// Turns log text into redacted output: only whole lines pass, so a secret split across two
 /// chunks is still masked; a line longer than 64 KiB passes in parts.
 pub struct LogPrinter {
-    redactor: Redactor,
+    redactor: Arc<Redactor>,
     pending: String,
+}
+
+/// The redactor of CLI output: the built-in sensitive names plus `[redact] fields` of
+/// `logging.toml` of the installation (an unreadable file leaves the built-in names).
+pub fn cli_redactor(layout: &Layout) -> Arc<Redactor> {
+    let fields = std::fs::read_to_string(layout.config_file("logging.toml"))
+        .ok()
+        .and_then(|t| LoggingConfig::parse(&t).ok())
+        .map(|c| c.redact_fields)
+        .unwrap_or_default();
+    Arc::new(Redactor::new(&fields))
 }
 
 impl Default for LogPrinter {
     fn default() -> LogPrinter {
-        LogPrinter {
-            redactor: Redactor::new(&[]),
-            pending: String::new(),
-        }
+        LogPrinter::new(Arc::new(Redactor::new(&[])))
     }
 }
 
 impl LogPrinter {
+    /// A printer that masks with `redactor`.
+    pub fn new(redactor: Arc<Redactor>) -> LogPrinter {
+        LogPrinter {
+            redactor,
+            pending: String::new(),
+        }
+    }
+
     /// The redacted whole lines that `text` completes.
     pub fn push(&mut self, text: &str) -> String {
         self.pending.push_str(text);
@@ -71,6 +88,7 @@ pub async fn find_log(
     client: &IpcClient,
     broker: Option<&str>,
     q: &LogQuery,
+    redactor: &Arc<Redactor>,
     out: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let (names, mut problems) = reachable(client, broker).await?;
@@ -86,7 +104,7 @@ pub async fn find_log(
             },
         });
         client.send(&req).await?;
-        let mut printer = LogPrinter::default();
+        let mut printer = LogPrinter::new(redactor.clone());
         loop {
             match client.recv::<CliReply>().await? {
                 CliReply::LogChunk { text, end, .. } => {
@@ -140,7 +158,8 @@ pub async fn log(layout: &Layout, a: LogArgs) -> Result<i32, String> {
         let _ = stdout.write_all(line.as_bytes());
         let _ = stdout.flush();
     };
-    let found = find_log(&client, a.broker.as_deref(), &q, &mut print).await;
+    let redactor = cli_redactor(layout);
+    let found = find_log(&client, a.broker.as_deref(), &q, &redactor, &mut print).await;
     client.close().await;
     let broker = found?;
     if json {

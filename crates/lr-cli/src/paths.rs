@@ -95,6 +95,15 @@ impl Layout {
         self.root == service_root()
     }
 
+    /// Whether the broker this layout reaches is the OS service: the service's own layout, or
+    /// the default layout of a user (which uses the service's IPC names) on a machine where
+    /// the broker service is installed.
+    pub fn broker_is_service(&self) -> bool {
+        self.is_service()
+            || (self.suffix.is_empty()
+                && crate::os_service::service_installed(crate::os_service::Os::current()))
+    }
+
     /// The layout from flags, then [`STATE_DIR_ENV`] and [`CONFIG_DIR_ENV`], then the default.
     pub fn resolve(state: Option<PathBuf>, config: Option<PathBuf>) -> Result<Layout, String> {
         let env = |name: &str| {

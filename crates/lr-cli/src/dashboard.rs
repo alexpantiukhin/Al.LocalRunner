@@ -3,6 +3,7 @@
 //! carries the launch token, so it is printed to the terminal only and never logged.
 
 use crate::commands::jobs::hub;
+use crate::commands::log_cmd::cli_redactor;
 use crate::commands::view::{known_brokers, read};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
@@ -10,6 +11,7 @@ use async_trait::async_trait;
 use lr_abstractions::{CancelRequest, DataError, DataSource, EventStream};
 use lr_core::{JobId, Timestamp};
 use lr_dashboard::{Dashboard, DashboardOptions, LOG_TAIL_BYTES};
+use lr_obs::Redactor;
 use lr_proto::{
     BrokerRunners, CancelTarget, CliReply, CliRequest, DashboardEvent, DashboardJob, DashboardList,
     DashboardSnapshot, HistoryFilter, JobDetail, JobSummary, QueueEvent, ReadReply, ReadRequest,
@@ -93,10 +95,12 @@ impl EventStream<DashboardEvent> for Ticks {
 
 /// The model of the dashboard and of `status --html` from every reachable broker: running jobs
 /// and the queue (filtered by `filter`), finished runs when `history`, runners and statistics.
+/// The last lines of running jobs pass `redactor`.
 pub async fn build_snapshot(
     client: &IpcClient,
     filter: &StatusFilter,
     history: bool,
+    redactor: &Redactor,
 ) -> Result<DashboardSnapshot, String> {
     let brokers = known_brokers(client).await?;
     let mut snap = DashboardSnapshot {
@@ -121,7 +125,11 @@ pub async fn build_snapshot(
                 DashboardList::Running,
                 detail_of(r.summary, r.steps, None),
             );
-            j.last_lines = r.last_lines;
+            j.last_lines = r
+                .last_lines
+                .iter()
+                .map(|l| redactor.redact_text(l))
+                .collect();
             snap.jobs.push(j);
         }
         for q in status.queue {
@@ -177,7 +185,8 @@ impl DataSource for HubSource {
 
     async fn snapshot(&self) -> Result<DashboardSnapshot, DataError> {
         let client = hub(&self.layout).await.map_err(unavailable)?;
-        let snap = build_snapshot(&client, &StatusFilter::default(), true).await;
+        let redactor = cli_redactor(&self.layout);
+        let snap = build_snapshot(&client, &StatusFilter::default(), true, &redactor).await;
         client.close().await;
         snap.map_err(unavailable)
     }
