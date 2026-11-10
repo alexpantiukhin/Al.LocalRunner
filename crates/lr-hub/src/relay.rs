@@ -67,10 +67,13 @@ pub(crate) fn relay_log(s: Arc<Shared>, r: LogRead, reply: mpsc::Sender<CliReply
                     },
                     _ => continue,
                 },
-                Next::Msg(None) => unavailable(format!(
-                    "broker {} disconnected or the log fell behind",
-                    r.broker
-                )),
+                Next::Msg(None) => {
+                    unfollow(&s, &r, req);
+                    unavailable(format!(
+                        "broker {} disconnected or the log fell behind",
+                        r.broker
+                    ))
+                }
                 Next::Silent => unavailable(format!("broker {} did not answer", r.broker)),
                 Next::Gone => {
                     unfollow(&s, &r, req);

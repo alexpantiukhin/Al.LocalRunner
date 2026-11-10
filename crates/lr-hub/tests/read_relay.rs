@@ -165,6 +165,56 @@ async fn a_viewer_that_leaves_unfollows_the_log() {
 }
 
 #[tokio::test]
+async fn a_followed_log_that_falls_behind_ends_and_unfollows() {
+    let mut rig = Rig::new();
+    let local = connected(&mut rig).await;
+    let cli = rig.cli().await;
+    cli.send(log(true)).await;
+    let req = asked(&local).await;
+    for i in 0..5000 {
+        local.send(chunk(req, &format!("{i}\n"), false)).await;
+    }
+    let error = loop {
+        match cli.reply().await {
+            CliReply::LogChunk { end: false, .. } => continue,
+            CliReply::Error(e) => break e,
+            other => panic!("expected chunks then an error, got {other:?}"),
+        }
+    };
+    assert_eq!(error.code, ProtocolErrorCode::Unavailable, "{error:?}");
+    eventually("the hub unfollows the lagging log", || {
+        reads(&local)
+            .iter()
+            .any(|(_, r)| *r == ReadRequest::Unfollow { req })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn the_cli_cannot_manage_the_hubs_subscriptions() {
+    let mut rig = Rig::new();
+    let local = connected(&mut rig).await;
+    let cli = rig.cli().await;
+    for request in [
+        ReadRequest::Unfollow { req: 1 },
+        ReadRequest::Unsubscribe { sub: 1 },
+        ReadRequest::Subscribe { topics: Vec::new() },
+    ] {
+        cli.send(CliRequest::Read(CliRead {
+            broker: None,
+            request,
+        }))
+        .await;
+        match cli.reply().await {
+            CliReply::Error(e) => assert_eq!(e.code, ProtocolErrorCode::Malformed, "{e:?}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+    settle().await;
+    assert!(reads(&local).is_empty(), "{:?}", reads(&local));
+}
+
+#[tokio::test]
 async fn shutdown_stops_the_hub() {
     let mut rig = Rig::new();
     let (_local, hub) = started(&mut rig).await;

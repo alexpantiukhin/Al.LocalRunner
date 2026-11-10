@@ -254,6 +254,17 @@ impl Engine {
     }
 
     fn read(&mut self, r: CliRead, reply: &mpsc::Sender<CliReply>) -> Option<CliReply> {
+        if matches!(
+            r.request,
+            ReadRequest::Subscribe { .. }
+                | ReadRequest::Unsubscribe { .. }
+                | ReadRequest::Unfollow { .. }
+        ) {
+            return Some(error(
+                ProtocolErrorCode::Malformed,
+                "subscriptions on the hub's broker connections are managed by the hub",
+            ));
+        }
         let targets: Vec<(String, mpsc::Sender<lr_abstractions::Frame>)> = self
             .links
             .iter()
