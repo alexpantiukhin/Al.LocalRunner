@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+pub mod harness;
+pub mod msgs;
+
 use lr_broker::policy::{load, HostResources, PolicyError, PolicyFile};
 use lr_core::{ClientView, Declared, Endpoint, JobId, Order, QueueEntry, Requirements, Timestamp};
 use std::collections::BTreeSet;
