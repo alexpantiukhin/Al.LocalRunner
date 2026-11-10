@@ -4,7 +4,10 @@ use lr_core::{
     parse_profiles, resolve_for_platform, validate_label, JobId, MachineRef, Profile, Requirements,
     Timestamp,
 };
-use lr_proto::{HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, SubmitRequest, WireCode};
+use lr_proto::{
+    HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, ResourceOverride, SubmitRequest,
+    WireCode,
+};
 use std::path::{Path, PathBuf};
 
 pub(crate) const PROFILES_PATH: &str = ".localrunner/profiles.toml";
@@ -124,6 +127,26 @@ fn lower_timeout(
     Ok(())
 }
 
+fn override_resources(spec: &mut OrderSpec, req: &SubmitRequest) -> Result<(), Refusal> {
+    if req.mem_mb == Some(0) {
+        return Err(invalid("--mem must be at least 1 MB"));
+    }
+    if req.cpu == Some(0) {
+        return Err(invalid("--cpu must be at least 1 core"));
+    }
+    if let Some(mem) = req.mem_mb {
+        spec.requirements.mem_mb = mem;
+    }
+    if let Some(cpu) = req.cpu {
+        spec.requirements.cpu = cpu;
+    }
+    spec.overrides = ResourceOverride {
+        mem_mb: req.mem_mb,
+        cpu: req.cpu,
+    };
+    Ok(())
+}
+
 pub(crate) async fn build(
     req: &SubmitRequest,
     files: &dyn Files,
@@ -186,8 +209,10 @@ pub(crate) async fn build(
         identity: id.clone(),
         code,
         wanted_priority: None,
+        overrides: ResourceOverride::default(),
     };
     lower_timeout(&mut spec, resolved.timeout_s, req.timeout_s)?;
+    override_resources(&mut spec, req)?;
     let probe = order_payload(&JobId("probe".into()), &spec);
     if Frame::json(&probe).map_or(true, |f| f.len() > MAX_FRAME_BYTES / 2) {
         return Err(invalid("the order is too large for one protocol frame"));

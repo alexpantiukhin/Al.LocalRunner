@@ -4,6 +4,7 @@ use common::harness::*;
 use common::listeners::FailingListener;
 use lr_abstractions::Level;
 use lr_broker::{MAX_SUBSCRIPTIONS, OUT_QUEUE_FRAMES};
+use lr_core::Requirements;
 use lr_proto::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -112,4 +113,81 @@ async fn failing_listener_is_retried_with_backoff_not_a_busy_loop() {
         }
     }
     assert!(calls.load(Ordering::SeqCst) > before);
+}
+
+fn overridden(job: &str, requirements: Requirements, over: ResourceOverride) -> HubToBroker {
+    let HubToBroker::Order(mut o) = order(job, requirements) else {
+        unreachable!()
+    };
+    o.spec.overrides = over;
+    HubToBroker::Order(o)
+}
+
+#[tokio::test]
+async fn resource_override_above_pool_is_rejected_with_its_own_code() {
+    let h = Harness::start("");
+    let _r = h
+        .member_runner("r1", "10.0.0.7", caps(&["linux"], 65536, 32))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    let mem = ResourceOverride {
+        mem_mb: Some(20000),
+        cpu: None,
+    };
+    hub.send(&overridden("j1", req(20000, 1, 60), mem)).await;
+    let r = hub.rejected().await;
+    assert_eq!(
+        r.code,
+        ReasonCode::Rejected(RejectReason::OverrideAbovePool)
+    );
+    assert!(
+        r.detail.contains("--mem") && r.detail.contains("20000") && r.detail.contains("16384"),
+        "{}",
+        r.detail
+    );
+    let cpu = ResourceOverride {
+        mem_mb: None,
+        cpu: Some(12),
+    };
+    hub.send(&overridden("j2", req(512, 12, 60), cpu)).await;
+    let r = hub.rejected().await;
+    assert_eq!(
+        r.code,
+        ReasonCode::Rejected(RejectReason::OverrideAbovePool)
+    );
+    assert!(
+        r.detail.contains("--cpu") && r.detail.contains("12") && r.detail.contains('8'),
+        "{}",
+        r.detail
+    );
+}
+
+#[tokio::test]
+async fn profile_value_above_pool_keeps_the_pool_code_despite_another_override() {
+    let h = Harness::start("");
+    let _r = h
+        .member_runner("r1", "10.0.0.7", caps(&["linux"], 65536, 32))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    let cpu_only = ResourceOverride {
+        mem_mb: None,
+        cpu: Some(2),
+    };
+    hub.send(&overridden("j1", req(20000, 2, 60), cpu_only))
+        .await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code, ReasonCode::Rejected(RejectReason::PoolMemory));
+}
+
+#[tokio::test]
+async fn resource_override_within_pool_is_accepted() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let over = ResourceOverride {
+        mem_mb: Some(6144),
+        cpu: Some(4),
+    };
+    hub.send(&overridden("j1", req(6144, 4, 60), over)).await;
+    assert_eq!(hub.accepted().await.job.0, "j1");
 }

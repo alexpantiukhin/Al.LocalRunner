@@ -124,6 +124,7 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
                 branch: None,
             },
             wanted_priority: None,
+            overrides: ResourceOverride::default(),
         }),
     })
 }

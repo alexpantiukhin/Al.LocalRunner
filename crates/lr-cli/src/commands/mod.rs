@@ -47,6 +47,12 @@ pub struct OrderArgs {
     /// Lowers the profile timeout, in seconds.
     #[arg(long)]
     pub timeout: Option<u64>,
+    /// Memory for this run instead of the profile value: MB (`6144`) or with a unit (`6g`, `512m`).
+    #[arg(long, value_name = "SIZE", value_parser = parse_mem_mb)]
+    pub mem: Option<u64>,
+    /// CPU cores for this run instead of the profile value.
+    #[arg(long, value_name = "CORES", value_parser = clap::value_parser!(u32).range(1..))]
+    pub cpu: Option<u32>,
     /// The order outlives the submitting process.
     #[arg(long)]
     pub detach: bool,

@@ -43,13 +43,15 @@ pub enum RejectReason {
     ServiceNotAllowed,
     /// The order's commands break the `[commands] mode = "named"` rule.
     CommandNotAllowed,
+    /// A resource the submitter set for this run (`--mem`, `--cpu`) exceeds the pool.
+    OverrideAbovePool,
     /// A `rejected_*` code of a newer minor version, kept as received (full code).
     Other(String),
 }
 
 impl RejectReason {
     /// Every rejection reason.
-    pub const ALL: [RejectReason; 18] = [
+    pub const ALL: [RejectReason; 19] = [
         RejectReason::PoolMemory,
         RejectReason::PoolCpu,
         RejectReason::Timeout,
@@ -68,6 +70,7 @@ impl RejectReason {
         RejectReason::CommitNotPushed,
         RejectReason::ServiceNotAllowed,
         RejectReason::CommandNotAllowed,
+        RejectReason::OverrideAbovePool,
     ];
 
     /// The full code, `rejected_<name>`.
@@ -91,6 +94,7 @@ impl RejectReason {
             RejectReason::CommitNotPushed => "rejected_commit_not_pushed",
             RejectReason::ServiceNotAllowed => "rejected_service_not_allowed",
             RejectReason::CommandNotAllowed => "rejected_command_not_allowed",
+            RejectReason::OverrideAbovePool => "rejected_override_above_pool",
             RejectReason::Other(name) => name.as_str(),
         }
     }

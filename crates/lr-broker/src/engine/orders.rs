@@ -12,7 +12,7 @@ use lr_core::{
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
-    ReasonCode, Received, RejectReason, Rejected, Resume, WireCode,
+    ReasonCode, Received, RejectReason, Rejected, ResourceOverride, Resume, WireCode,
 };
 
 fn reject_reason(r: &Reject) -> RejectReason {
@@ -25,6 +25,19 @@ fn reject_reason(r: &Reject) -> RejectReason {
         Reject::NoMatchingRunner { .. } => RejectReason::NoMatchingRunner,
         Reject::NoRunnerOnMachine => RejectReason::NoRunnerOnMachine,
     }
+}
+
+fn overridden(r: &Reject, over: &ResourceOverride) -> Option<(RejectReason, String)> {
+    let text = match r {
+        Reject::PoolMemory { needed, limit } if over.mem_mb.is_some() => {
+            format!("--mem {needed} МБ больше пула: максимум в пуле {limit} МБ")
+        }
+        Reject::PoolCpu { needed, limit } if over.cpu.is_some() => {
+            format!("--cpu {needed} больше пула: максимум в пуле {limit} CPU")
+        }
+        _ => return None,
+    };
+    Some((RejectReason::OverrideAbovePool, text))
 }
 
 fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -> Intake {
@@ -192,7 +205,7 @@ impl Engine {
         self.policy
             .policy()
             .admit(&entry.order, &entry.client)
-            .map_err(fail)?;
+            .map_err(|r| overridden(&r, &spec.overrides).unwrap_or_else(|| fail(r)))?;
         check_runners(entry, &self.runner_views(), &self.site).map_err(fail)
     }
 

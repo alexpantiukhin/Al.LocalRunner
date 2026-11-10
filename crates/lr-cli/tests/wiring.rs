@@ -106,6 +106,8 @@ mem_mb = 256
         profile: Some("unit".into()),
         platform: None,
         timeout_s: None,
+        mem_mb: None,
+        cpu: None,
         detach: false,
         wait: true,
     });

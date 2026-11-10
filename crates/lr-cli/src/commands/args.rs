@@ -3,6 +3,28 @@
 use clap::{Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+/// Parses `--mem`: megabytes (`6144`) or a number with `m` or `g` (`512m`, `6g`, `g` = 1024 MB).
+pub fn parse_mem_mb(text: &str) -> Result<u64, String> {
+    let bad = || format!("`{text}` is not a memory size: give MB (6144) or a unit (6g, 512m)");
+    let (digits, factor) = match text.as_bytes().last() {
+        Some(b'g' | b'G') => (&text[..text.len() - 1], 1024),
+        Some(b'm' | b'M') => (&text[..text.len() - 1], 1),
+        _ => (text, 1),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let mb = digits
+        .parse::<u64>()
+        .ok()
+        .and_then(|n| n.checked_mul(factor))
+        .ok_or_else(bad)?;
+    if mb == 0 {
+        return Err(bad());
+    }
+    Ok(mb)
+}
+
 /// `policy ...`.
 #[derive(Subcommand, Debug)]
 pub enum PolicyAction {

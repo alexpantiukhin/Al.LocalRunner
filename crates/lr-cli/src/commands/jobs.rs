@@ -88,6 +88,8 @@ pub async fn submit(
         profile: args.profile,
         platform: args.platform,
         timeout_s: args.timeout,
+        mem_mb: args.mem,
+        cpu: args.cpu,
         detach: args.detach,
         wait,
     });

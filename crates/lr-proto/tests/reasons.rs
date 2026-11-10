@@ -107,6 +107,7 @@ fn intake_refusals_have_their_own_rejected_codes() {
         "rejected_commit_not_pushed",
         "rejected_service_not_allowed",
         "rejected_command_not_allowed",
+        "rejected_override_above_pool",
     ] {
         assert!(names.contains(needed), "{needed}");
     }

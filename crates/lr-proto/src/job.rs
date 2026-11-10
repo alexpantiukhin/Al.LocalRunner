@@ -43,6 +43,28 @@ pub struct OrderSpec {
     pub code: WireCode,
     /// Wished priority; the policy decides.
     pub wanted_priority: Option<i64>,
+    /// Resources the submitter set for this run (`--mem`, `--cpu`); the requirements already
+    /// carry them. Absent from older senders and when nothing was overridden.
+    #[serde(default, skip_serializing_if = "ResourceOverride::is_empty")]
+    pub overrides: ResourceOverride,
+}
+
+/// Per-run replacement of profile resources given by the submitter (spec 5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceOverride {
+    /// `--mem` in MB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_mb: Option<u64>,
+    /// `--cpu`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<u32>,
+}
+
+impl ResourceOverride {
+    /// Whether nothing is overridden.
+    pub fn is_empty(&self) -> bool {
+        self.mem_mb.is_none() && self.cpu.is_none()
+    }
 }
 
 /// Hub's order. It is seq 1 of the job's hub-to-broker stream at the broker that accepts it;

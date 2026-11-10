@@ -449,3 +449,35 @@ fn cli_read_answer_names_the_broker() {
     };
     assert_eq!(broker, "local");
 }
+
+#[test]
+fn resource_override_fields_are_optional_for_older_senders() {
+    let CliRequest::Submit(mut submit) = cli_requests().remove(0) else {
+        panic!()
+    };
+    let old = serde_json::to_value(&submit).unwrap();
+    assert!(old.get("mem_mb").is_none() && old.get("cpu").is_none());
+    let back: SubmitRequest = serde_json::from_value(old).unwrap();
+    assert_eq!((back.mem_mb, back.cpu), (None, None));
+    submit.mem_mb = Some(6144);
+    submit.cpu = Some(4);
+    let v = serde_json::to_value(&submit).unwrap();
+    assert_eq!(
+        (v["mem_mb"].as_u64(), v["cpu"].as_u64()),
+        (Some(6144), Some(4))
+    );
+    assert_eq!(serde_json::from_value::<SubmitRequest>(v).unwrap(), submit);
+
+    let mut spec = order_spec();
+    let old = serde_json::to_value(&spec).unwrap();
+    assert!(old.get("overrides").is_none());
+    let back: OrderSpec = serde_json::from_value(old).unwrap();
+    assert!(back.overrides.is_empty());
+    spec.overrides = ResourceOverride {
+        mem_mb: Some(6144),
+        cpu: None,
+    };
+    let v = serde_json::to_value(&spec).unwrap();
+    assert_eq!(v["overrides"], json!({ "mem_mb": 6144 }));
+    assert_eq!(serde_json::from_value::<OrderSpec>(v).unwrap(), spec);
+}

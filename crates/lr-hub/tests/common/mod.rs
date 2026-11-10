@@ -94,6 +94,8 @@ pub fn submit(profile: &str, platform: Option<&str>) -> SubmitRequest {
         profile: Some(profile.into()),
         platform: platform.map(str::to_string),
         timeout_s: None,
+        mem_mb: None,
+        cpu: None,
         detach: false,
         wait: false,
     }

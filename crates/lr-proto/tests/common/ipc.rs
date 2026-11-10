@@ -9,6 +9,8 @@ pub fn cli_requests() -> Vec<CliRequest> {
             profile: Some("build".into()),
             platform: Some("linux".into()),
             timeout_s: Some(60),
+            mem_mb: None,
+            cpu: None,
             detach: true,
             wait: false,
         }),

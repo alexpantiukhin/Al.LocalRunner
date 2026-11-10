@@ -182,3 +182,70 @@ async fn admin_command_over_network_not_accepted() {
     );
     assert_eq!(*api.0.lock().unwrap(), vec![AdminRequest::PolicyReload]);
 }
+
+#[test]
+fn mem_flag_takes_megabytes_or_a_unit_suffix() {
+    use lr_cli::commands::parse_mem_mb;
+    for (text, mb) in [
+        ("6144", 6144),
+        ("6g", 6144),
+        ("6G", 6144),
+        ("512m", 512),
+        ("512M", 512),
+        ("1g", 1024),
+    ] {
+        assert_eq!(parse_mem_mb(text), Ok(mb), "{text}");
+    }
+    for bad in [
+        "",
+        "0",
+        "0g",
+        "g",
+        "6x",
+        "-1",
+        "1.5g",
+        "6 g",
+        "99999999999999999999g",
+    ] {
+        let err = parse_mem_mb(bad).expect_err(bad);
+        assert!(err.contains("6g") && err.contains("512m"), "{bad}: {err}");
+    }
+}
+
+#[test]
+fn submit_and_run_accept_mem_and_cpu() {
+    use clap::Parser;
+    use lr_cli::commands::{Cli, Command};
+    for cmd in ["submit", "run"] {
+        let cli = Cli::try_parse_from([
+            "localrunner",
+            cmd,
+            "unit",
+            "--as",
+            "a",
+            "--mem",
+            "6g",
+            "--cpu",
+            "4",
+        ])
+        .unwrap();
+        let order = match cli.command {
+            Command::Submit { order, .. } | Command::Run { order } => order,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((order.mem, order.cpu), (Some(6144), Some(4)));
+        let plain = Cli::try_parse_from(["localrunner", cmd, "unit", "--as", "a"]).unwrap();
+        let order = match plain.command {
+            Command::Submit { order, .. } | Command::Run { order } => order,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!((order.mem, order.cpu), (None, None));
+    }
+    for args in [["--mem", "6x"], ["--cpu", "0"], ["--cpu", "two"]] {
+        let err =
+            Cli::try_parse_from(["localrunner", "run", "unit", "--as", "a", args[0], args[1]])
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains(args[0]), "{err}");
+    }
+}

@@ -56,6 +56,12 @@ pub struct SubmitRequest {
     pub platform: Option<String>,
     /// `--timeout`.
     pub timeout_s: Option<u64>,
+    /// `--mem` in MB: replaces the profile memory for this run; absent from older senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_mb: Option<u64>,
+    /// `--cpu`: replaces the profile CPU for this run; absent from older senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<u32>,
     /// `--detach`: the order outlives the sender.
     pub detach: bool,
     /// `--wait`: stream output and end with the exit code.

@@ -341,3 +341,50 @@ async fn failed_enqueue_leaves_no_handle_behind() {
     let job = cli.submit(submit("unit", None)).await;
     assert!(rig.files.file(&handle_path(&job)).is_some());
 }
+
+#[tokio::test]
+async fn mem_and_cpu_flags_replace_profile_resources_for_one_run() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    let cli = rig.cli().await;
+    cli.submit(submit("unit", None)).await;
+    let mut over = submit("unit", None);
+    over.mem_mb = Some(6144);
+    over.cpu = Some(4);
+    cli.submit(over).await;
+    eventually("orders sent", || local.orders().len() == 2).await;
+    let plain = &local.orders()[0].spec;
+    assert_eq!(
+        (plain.requirements.mem_mb, plain.requirements.cpu),
+        (1024, 0)
+    );
+    assert!(plain.overrides.is_empty());
+    let spec = &local.orders()[1].spec;
+    assert_eq!((spec.requirements.mem_mb, spec.requirements.cpu), (6144, 4));
+    assert_eq!(
+        (spec.overrides.mem_mb, spec.overrides.cpu),
+        (Some(6144), Some(4))
+    );
+}
+
+#[tokio::test]
+async fn zero_mem_or_cpu_flag_is_malformed() {
+    let mut rig = Rig::new();
+    rig.local_broker(Script::local_runner());
+    rig.start();
+    let cli = rig.cli().await;
+    for (mem, cpu, flag) in [(Some(0), None, "--mem"), (None, Some(0), "--cpu")] {
+        let mut req = submit("unit", None);
+        req.mem_mb = mem;
+        req.cpu = cpu;
+        cli.send(CliRequest::Submit(req)).await;
+        match cli.reply().await {
+            CliReply::Error(e) => {
+                assert_eq!(e.code, ProtocolErrorCode::Malformed);
+                assert!(e.message.contains(flag), "{}", e.message);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}

@@ -103,6 +103,7 @@ pub fn order_spec() -> OrderSpec {
             branch: None,
         },
         wanted_priority: Some(5),
+        overrides: ResourceOverride::default(),
     }
 }
 
