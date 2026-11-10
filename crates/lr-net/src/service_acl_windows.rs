@@ -6,7 +6,7 @@ use crate::os_windows::{
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::HANDLE;
+use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::NetworkManagement::NetManagement::{
     NetApiBufferFree, NetUserGetLocalGroups, LG_INCLUDE_INDIRECT, LOCALGROUP_USERS_INFO_0,
     MAX_PREFERRED_LENGTH,
@@ -19,8 +19,13 @@ use windows_sys::Win32::Security::{
     AdjustTokenPrivileges, GetAce, GetSecurityDescriptorDacl, GetSecurityDescriptorOwner,
     LookupPrivilegeValueW, ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION,
     LUID_AND_ATTRIBUTES, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES, TOKEN_PRIVILEGES,
-    TOKEN_QUERY,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+    TOKEN_PRIVILEGES, TOKEN_QUERY,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateDirectoryW, CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -216,6 +221,57 @@ pub fn lock_service_dir(path: &Path, service_sid: &str, whole_tree: bool) -> Res
     Ok(())
 }
 
+/// Creates directory `path` (its parent must exist) already carrying the security of
+/// [`service_dir_sddl`], so it is never open to anyone else, not even for a moment. Fails when
+/// it exists.
+pub fn create_service_dir(path: &Path, service_sid: &str) -> Result<(), NetError> {
+    enable_privilege("SeRestorePrivilege")?;
+    let sd = Descriptor::from_sddl(&service_dir_sddl(service_sid))?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd.0,
+        bInheritHandle: 0,
+    };
+    let name = wide(&path.to_string_lossy());
+    if unsafe { CreateDirectoryW(name.as_ptr(), &attributes) } == 0 {
+        return Err(NetError::Io(format!(
+            "CreateDirectory {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Number of hard links of the file at `path` (a link itself is not followed).
+pub fn hard_links(path: &Path) -> Result<u32, NetError> {
+    let name = wide(&path.to_string_lossy());
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(NetError::Io(format!(
+            "{}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        )));
+    }
+    let handle = Token(handle);
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(handle.0, &mut info) } == 0 {
+        return Err(last_error("GetFileInformationByHandle"));
+    }
+    Ok(info.nNumberOfLinks)
+}
+
 fn local_groups(user: &str) -> Vec<String> {
     let name = wide(user);
     let mut buf: *mut u8 = null_mut();
@@ -292,6 +348,18 @@ mod tests {
             file_security(&dir).unwrap().explicit_allowed,
             Some(vec![own])
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_second_hard_link_is_counted() {
+        let dir = temp_dir("links");
+        let file = dir.join("a");
+        std::fs::write(&file, "").unwrap();
+        assert_eq!(hard_links(&file).unwrap(), 1);
+        std::fs::hard_link(&file, dir.join("b")).unwrap();
+        assert_eq!(hard_links(&file).unwrap(), 2);
+        assert_eq!(hard_links(&dir).unwrap(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

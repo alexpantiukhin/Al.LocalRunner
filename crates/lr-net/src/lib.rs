@@ -60,7 +60,9 @@ pub use registry::{
     check_name, CodeRequest, JoinRequest, Registry, RegistryError, MAX_NAME_LEN, OPEN_CODE_CACHE_MS,
 };
 #[cfg(windows)]
-pub use service_acl_windows::{file_security, lock_service_dir, service_dir_sddl, FileSecurity};
+pub use service_acl_windows::{
+    create_service_dir, file_security, hard_links, lock_service_dir, service_dir_sddl, FileSecurity,
+};
 pub use slots::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
 pub use stream::StreamTransport;
 pub use tls::{
