@@ -105,3 +105,78 @@ fn a_snapshot_file_is_readable_by_its_owner_only() {
     let bytes = lr_net::read_private(&path).expect("only the owner can read it");
     assert_eq!(bytes, b"<html>log</html>");
 }
+
+#[test]
+fn status_masks_the_last_lines_of_running_jobs() {
+    use lr_cli::commands::view::{mask_status, status_json};
+    use lr_core::{JobId, JobState, Timestamp};
+    use lr_obs::Redactor;
+    use lr_proto::{JobSummary, PoolLoad, RunningView, StatusView};
+    let summary = JobSummary {
+        job: JobId("j1".into()),
+        client_label: "dev".into(),
+        state: JobState::Running,
+        platform: None,
+        runner: None,
+        queued_at: Timestamp(1),
+        started_at: None,
+        finished_at: None,
+        exit_code: None,
+        reason: None,
+        project: None,
+        label: None,
+        profile: None,
+        source: None,
+    };
+    let view = StatusView {
+        running: vec![RunningView {
+            summary,
+            steps: Vec::new(),
+            last_lines: vec!["login api_token=hunter2hunter2".into(), "ok".into()],
+        }],
+        queue: Vec::new(),
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+    };
+    let mut views = vec![("local".to_string(), view)];
+    mask_status(&mut views, &Redactor::new(&[]));
+    let json = status_json(&views).to_string();
+    assert!(!json.contains("hunter2hunter2"), "{json}");
+    assert!(json.contains("login"), "{json}");
+}
+
+#[test]
+fn the_dashboard_log_tail_is_masked_whole_lines_only() {
+    use lr_cli::dashboard::masked_tail;
+    use lr_dashboard::LOG_TAIL_BYTES;
+    use lr_obs::Redactor;
+    let r = Redactor::new(&[]);
+    let short = masked_tail(b"start\napi_token=hunter2hunter2\n", &r);
+    let short = String::from_utf8(short).unwrap();
+    assert!(short.starts_with("start\n"), "{short}");
+    assert!(!short.contains("hunter2hunter2"), "{short}");
+    let mut long = "api_token=".to_string();
+    long.push_str(&"s".repeat(LOG_TAIL_BYTES));
+    long.push_str("\nlast line\n");
+    let tail = String::from_utf8(masked_tail(long.as_bytes(), &r)).unwrap();
+    assert_eq!(
+        tail, "last line\n",
+        "a line cut by the tail start is left out"
+    );
+}
+
+#[test]
+fn uninstall_stops_short_when_a_role_did_not_stop() {
+    use lr_cli::commands::setup::uninstall_may_go_on;
+    assert_eq!(uninstall_may_go_on(Ok(0)), Ok(()));
+    let refused = uninstall_may_go_on(Ok(1)).unwrap_err();
+    assert!(refused.contains("nothing was removed"), "{refused}");
+    let failed = uninstall_may_go_on(Err("no principal".into())).unwrap_err();
+    assert!(failed.contains("no principal"), "{failed}");
+}

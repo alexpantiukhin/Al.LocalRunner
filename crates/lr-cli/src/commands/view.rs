@@ -2,9 +2,11 @@
 //! the JSON carries its project, source and label (absent values are `null`).
 
 use super::jobs::hub;
+use super::log_cmd::cli_redactor;
 use super::SourceArg;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use lr_obs::Redactor;
 use lr_proto::{
     BrokerStatus, CliRead, CliReply, CliRequest, JobSummary, ReadReply, ReadRequest, StatusFilter,
     StatusView, WireSource,
@@ -42,6 +44,17 @@ pub fn status_json(views: &[(String, StatusView)]) -> Value {
         })
         .collect();
     json!({ "brokers": brokers })
+}
+
+/// Masks the last lines of running jobs with `redactor` before anything prints them.
+pub fn mask_status(views: &mut [(String, StatusView)], redactor: &Redactor) {
+    for (_, v) in views.iter_mut() {
+        for r in v.running.iter_mut() {
+            for l in r.last_lines.iter_mut() {
+                *l = redactor.redact_text(l);
+            }
+        }
+    }
 }
 
 fn line(s: &JobSummary, tail: &str) -> String {
@@ -191,6 +204,7 @@ pub async fn status(
             Err(e) => problems.push(e),
         }
     }
+    mask_status(&mut views, &cli_redactor(layout));
     if json_out {
         let mut out = status_json(&views);
         out["problems"] = json!(problems);

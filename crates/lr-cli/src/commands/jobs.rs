@@ -1,14 +1,17 @@
 //! `submit`, `run`, `wait`, `jobs` and `cancel` (spec 7, 11.1): the CLI collects the identity
 //! and talks to its hub over the local CLI channel.
 
+use super::log_cmd::{cli_redactor, LogPrinter};
 use super::OrderArgs;
 use crate::facts::{collect_github, collect_session};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
+use lr_obs::Redactor;
 use lr_proto::{CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, SubmitRequest};
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::sync::Arc;
 
 /// Opens the CLI channel of the current OS user's hub.
 pub async fn hub(layout: &Layout) -> Result<IpcClient, String> {
@@ -46,13 +49,29 @@ fn unexpected(reply: &CliReply) -> String {
     }
 }
 
-async fn follow(client: &IpcClient, job: &JobId) -> Result<i32, String> {
-    let mut out = std::io::stdout();
+/// Hands the output of `job` to `out` as it comes, whole lines masked by `redactor`, until the
+/// job ends; the result is the exit code for the process.
+pub async fn follow(
+    client: &IpcClient,
+    job: &JobId,
+    redactor: &Arc<Redactor>,
+    out: &mut dyn FnMut(&str),
+) -> Result<i32, String> {
+    let mut printer = LogPrinter::new(redactor.clone());
     loop {
-        match client.recv::<CliReply>().await? {
+        let reply = client.recv::<CliReply>().await;
+        if !matches!(reply, Ok(CliReply::Output { .. })) {
+            let rest = printer.finish();
+            if !rest.is_empty() {
+                out(&rest);
+            }
+        }
+        match reply? {
             CliReply::Output { job: j, text } if &j == job => {
-                let _ = out.write_all(text.as_bytes());
-                let _ = out.flush();
+                let done = printer.push(&text);
+                if !done.is_empty() {
+                    out(&done);
+                }
             }
             CliReply::Exit {
                 job: j,
@@ -72,6 +91,16 @@ async fn follow(client: &IpcClient, job: &JobId) -> Result<i32, String> {
             _ => continue,
         }
     }
+}
+
+async fn follow_to_stdout(layout: &Layout, client: &IpcClient, job: &JobId) -> Result<i32, String> {
+    let mut stdout = std::io::stdout();
+    let redactor = cli_redactor(layout);
+    follow(client, job, &redactor, &mut |text| {
+        let _ = stdout.write_all(text.as_bytes());
+        let _ = stdout.flush();
+    })
+    .await
 }
 
 /// `submit` (and `run` = `submit --wait`).
@@ -112,7 +141,7 @@ pub async fn submit(
         return Ok(0);
     }
     eprintln!("job {job}");
-    follow(&client, &job).await
+    follow_to_stdout(layout, &client, &job).await
 }
 
 /// `wait <job>`.
@@ -120,7 +149,7 @@ pub async fn wait(layout: &Layout, job: &str) -> Result<i32, String> {
     let job = JobId(job.to_string());
     let client = hub(layout).await?;
     client.send(&CliRequest::Wait { job: job.clone() }).await?;
-    follow(&client, &job).await
+    follow_to_stdout(layout, &client, &job).await
 }
 
 /// `jobs --mine [--active]`.

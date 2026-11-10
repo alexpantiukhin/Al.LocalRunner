@@ -3,7 +3,7 @@ mod common;
 use common::TempDir;
 use lr_cli::commands::down_cmd::down;
 use lr_cli::commands::history_cmd::fetch_history;
-use lr_cli::commands::jobs::hub;
+use lr_cli::commands::jobs::{follow, hub};
 use lr_cli::commands::log_cmd::{cli_redactor, find_log, LogQuery};
 use lr_cli::commands::read_cmd::{explain, fetch_runners};
 use lr_cli::commands::up_cmd::{running_roles, up_plan};
@@ -11,7 +11,7 @@ use lr_cli::commands::view::known_brokers;
 use lr_cli::init::NodeRole;
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
-use lr_core::{JobId, JobState};
+use lr_core::JobId;
 use lr_proto::{CliReply, CliRequest, HistoryFilter, SubmitRequest};
 use std::time::Duration;
 
@@ -81,19 +81,22 @@ async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
         CliReply::Submitted { job } => job,
         other => panic!("submit answered {other:?}"),
     };
-    let state = tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            match client.recv::<CliReply>().await.expect("hub answer") {
-                CliReply::Exit { job: j, state, .. } if j == job => return state,
-                CliReply::Rejected { code, detail } => panic!("rejected {code}: {detail}"),
-                _ => {}
-            }
-        }
-    })
+    let mut output = String::new();
+    let code = tokio::time::timeout(
+        Duration::from_secs(60),
+        follow(&client, &job, &cli_redactor(layout), &mut |t| {
+            output.push_str(t)
+        }),
+    )
     .await
     .expect("the job finishes");
     client.close().await;
-    assert_eq!(state, JobState::Passed);
+    assert_eq!(code, Ok(0));
+    assert!(output.contains("read-me"), "{output}");
+    assert!(
+        !output.contains("hunter2hunter2") && !output.contains("pin4242pin"),
+        "run and wait mask the output: {output}"
+    );
     job
 }
 

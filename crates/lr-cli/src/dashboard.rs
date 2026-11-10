@@ -68,6 +68,23 @@ fn job(broker: &str, list: DashboardList, detail: JobDetail) -> DashboardJob {
     }
 }
 
+/// The last [`LOG_TAIL_BYTES`] of a log copy as whole lines masked by `redactor`: a line cut by
+/// the start of the tail is left out, so a secret it carried cannot pass half-masked.
+pub fn masked_tail(bytes: &[u8], redactor: &Redactor) -> Vec<u8> {
+    let start = bytes.len().saturating_sub(LOG_TAIL_BYTES);
+    let mut tail = &bytes[start..];
+    if start > 0 && bytes[start - 1] != b'\n' {
+        let skip = tail
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(tail.len(), |i| i + 1);
+        tail = &tail[skip..];
+    }
+    redactor
+        .redact_text(&String::from_utf8_lossy(tail))
+        .into_bytes()
+}
+
 fn merge_stats(into: &mut StatsView, more: StatsView) {
     into.profiles.extend(more.profiles);
     into.clients.extend(more.clients);
@@ -226,8 +243,7 @@ impl DataSource for HubSource {
                 }
                 let path = dir.join("temp").join("runner").join(format!("{job}.log"));
                 let bytes = std::fs::read(&path).map_err(|_| DataError::NotFound)?;
-                let start = bytes.len().saturating_sub(LOG_TAIL_BYTES);
-                return Ok(bytes[start..].to_vec());
+                return Ok(masked_tail(&bytes, &cli_redactor(&self.layout)));
             }
         }
         Err(DataError::NotFound)

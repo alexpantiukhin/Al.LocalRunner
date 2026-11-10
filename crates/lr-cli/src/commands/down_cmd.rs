@@ -2,19 +2,21 @@
 //! channel, then the hub through its CLI channel, then the broker through its admin channel.
 //! Without names every role of this installation that runs stops; runners told to drain finish
 //! their job before the broker goes, so the result still reaches it. Ctrl+C ends only that
-//! wait: the draining runners and the broker keep running. A broker run by the OS service
-//! manager stays, and nothing waits for it.
+//! wait: the draining runners and the broker keep running. With `--cancel` the wait is at
+//! most 30 s. A broker run by the OS service manager answers that it stays, and nothing waits
+//! for the runners before it.
 
-use crate::broker_admin::SERVICE_STAYS;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_proto::{AdminReply, AdminRequest, CliReply, CliRequest, ControlReply, DownMode};
 use lr_proto::{IpcChannel, RunnerControl};
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(200);
 const ROLE_GONE_WITHIN: Duration = Duration::from_secs(15);
+const CANCELLED_EXIT_WITHIN: Duration = Duration::from_secs(30);
 
 /// What `down` stops.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,12 +213,12 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                     code = 1;
                 }
             },
-            Target::Broker if service => println!("broker: {SERVICE_STAYS}"),
             Target::Broker => {
-                if !stopping.is_empty() {
+                if !service && !stopping.is_empty() {
                     eprintln!(
-                        "waiting for {} to finish before the broker stops (Ctrl+C stops waiting)",
-                        stopping.join(", ")
+                        "waiting for {} to {} before the broker stops (Ctrl+C stops waiting)",
+                        stopping.join(", "),
+                        if cancel { "exit" } else { "finish" }
                     );
                     let addresses: Vec<String> = stopping
                         .iter()
@@ -231,11 +233,31 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                         }
                         false
                     };
-                    if !drained(any_answers, ctrl_c()).await {
+                    let timed_out = AtomicBool::new(false);
+                    let interrupt = async {
+                        match cancel {
+                            true => tokio::select! {
+                                _ = ctrl_c() => {}
+                                _ = tokio::time::sleep(CANCELLED_EXIT_WITHIN) => {
+                                    timed_out.store(true, Ordering::Relaxed);
+                                }
+                            },
+                            false => ctrl_c().await,
+                        }
+                    };
+                    if !drained(any_answers, interrupt).await {
+                        let why = match timed_out.load(Ordering::Relaxed) {
+                            true => format!(
+                                "{} did not exit within {} s after the cancel",
+                                stopping.join(", "),
+                                CANCELLED_EXIT_WITHIN.as_secs()
+                            ),
+                            false => {
+                                format!("stopped waiting: {} keep running", stopping.join(", "))
+                            }
+                        };
                         eprintln!(
-                            "stopped waiting: {} keep draining and the broker keeps running; \
-                             run `localrunner down broker` later",
-                            stopping.join(", ")
+                            "{why}; the broker keeps running: run `localrunner down broker` later"
                         );
                         return Ok(1);
                     }

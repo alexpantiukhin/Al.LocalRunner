@@ -163,6 +163,18 @@ pub fn uninstall_plan(
     Ok(out)
 }
 
+/// Whether `uninstall` goes on after `down` answered `stopped`: only when every role stopped
+/// (or did not run), so the binary is never removed under a running hub, broker or runner.
+pub fn uninstall_may_go_on(stopped: Result<i32, String>) -> Result<(), String> {
+    let hint = "nothing was removed; stop the roles with `localrunner down` and run \
+                `localrunner uninstall` again";
+    match stopped {
+        Ok(0) => Ok(()),
+        Ok(_) => Err(format!("some roles did not stop: {hint}")),
+        Err(e) => Err(format!("stopping the roles: {e}; {hint}")),
+    }
+}
+
 /// `uninstall [--purge] [--yes] [--dir] [--dry-run]` (spec 10.5): stops the roles (`down`), removes
 /// autostart, the broker service (as administrator) and the binary; keys and history stay
 /// unless `--purge` is confirmed. Keys stay registered at brokers until `runner remove`.
@@ -179,8 +191,10 @@ pub async fn uninstall(
     };
     let mut code = 0;
     if !dry_run {
-        if let Err(e) = super::down_cmd::down(layout, Vec::new(), true).await {
-            eprintln!("stopping the roles: {e}");
+        let stopped = super::down_cmd::down(layout, Vec::new(), true).await;
+        if let Err(why) = uninstall_may_go_on(stopped) {
+            eprintln!("{why}");
+            return Ok(1);
         }
     }
     let service = service_installed(Os::current());

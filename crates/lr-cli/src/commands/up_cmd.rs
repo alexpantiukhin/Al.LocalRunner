@@ -175,13 +175,17 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
     let before = running_roles(layout).await;
+    let mut code = 0;
     if service {
         match before.broker {
             true => println!("broker: running as an OS service"),
-            false => println!(
-                "broker: installed as an OS service and not running; start it with the OS \
-                 service manager"
-            ),
+            false => {
+                eprintln!(
+                    "broker: installed as an OS service and not running; `up` does not start \
+                     it: start it with the OS service manager"
+                );
+                code = 1;
+            }
         }
     }
     if roles.contains(&NodeRole::Broker) && before.broker {
@@ -195,10 +199,9 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     }
     let plan = up_plan(layout, &roles, &before);
     if plan.is_empty() {
-        return Ok(0);
+        return Ok(code);
     }
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-    let mut code = 0;
     for argv in &plan {
         match spawn(&exe, argv) {
             Ok(pid) => println!("{}: started (pid {pid})", argv[..2].join(" ")),
