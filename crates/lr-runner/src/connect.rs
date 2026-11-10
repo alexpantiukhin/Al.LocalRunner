@@ -1,6 +1,7 @@
-use crate::agent::{apply_control, Control, JobSlot, Shared};
+use crate::agent::{after, apply_control, Control, JobSlot, Shared};
 use crate::job::{on_assign, on_cancel};
 use crate::outbox::Replay;
+use crate::settings::MAX_HEARTBEAT_S;
 use lr_abstractions::{Frame, Level, Stop, Transport};
 use lr_core::{Endpoint, JobId};
 use lr_proto::{
@@ -30,12 +31,24 @@ pub(crate) struct Session<'a> {
     pub(crate) slot: &'a mut JobSlot,
     replay: Replay,
     kind: PeerKind,
+    limit: Duration,
+}
+
+async fn send_within(s: &Shared, t: &dyn Transport, frame: Frame, limit: Duration) -> bool {
+    tokio::select! {
+        r = t.send(frame) => r.is_ok(),
+        _ = s.deps.clock.sleep(limit) => {
+            s.diag.event(Level::Warn, "broker stopped reading, reconnecting", &[]);
+            t.close().await;
+            false
+        }
+    }
 }
 
 impl Session<'_> {
     pub(crate) async fn send(&self, msg: &RunnerToBroker) -> bool {
         match Frame::json(msg) {
-            Ok(f) => self.t.send(f).await.is_ok(),
+            Ok(f) => send_within(self.shared, self.t, f, self.limit).await,
             Err(_) => false,
         }
     }
@@ -58,14 +71,10 @@ impl Session<'_> {
     }
 
     async fn flush(&mut self) -> bool {
-        let d = &self.shared.deps;
-        if self
-            .replay
-            .flush(d.store.as_ref(), self.t, &self.shared.diag)
-            .await
-            .is_err()
-        {
-            return false;
+        for frame in self.replay.frames(&self.shared.outbox).await {
+            if !send_within(self.shared, self.t, frame, self.limit).await {
+                return false;
+            }
         }
         let dirty = std::mem::take(&mut self.shared.state().caps_dirty);
         if dirty {
@@ -194,7 +203,7 @@ impl Session<'_> {
                 self.send(&RunnerToBroker::ServicesReport(report)).await;
             }
             BrokerToRunner::SettingsUpdate(u) => {
-                self.shared.state().broker_lost_kill_s = u.broker_lost_kill_s;
+                self.shared.set_broker_lost_kill(u.broker_lost_kill_s);
             }
             BrokerToRunner::Error(e) if e.code.kills_running_jobs() => {
                 return Step::End(self.refused(e).await)
@@ -234,18 +243,19 @@ async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
         capabilities: Some(capabilities),
     });
     let frame = Frame::json(&msg).map_err(|_| End::Lost { welcomed: false })?;
-    t.send(frame)
-        .await
-        .map_err(|_| End::Lost { welcomed: false })?;
     let wait = Duration::from_secs(HEARTBEAT_INTERVAL_S * u64::from(MISSED_HEARTBEATS_OFFLINE));
+    if !send_within(s, t, frame, wait).await {
+        return Err(lost);
+    }
     let frame = tokio::select! {
         f = t.recv() => f.map_err(|_| End::Lost { welcomed: false })?,
         _ = s.deps.clock.sleep(wait) => return Err(lost),
     };
     match receive::<BrokerToRunner>(frame.as_bytes(), peer_kind(t)) {
         Ok(Received::Message(BrokerToRunner::Welcome(w))) => {
-            s.state().broker_lost_kill_s = w.broker_lost_kill_s;
-            Ok(Duration::from_secs(w.heartbeat_s.max(1)))
+            s.set_broker_lost_kill(w.broker_lost_kill_s);
+            s.set_lost(None);
+            Ok(Duration::from_secs(w.heartbeat_s.clamp(1, MAX_HEARTBEAT_S)))
         }
         Ok(Received::Message(BrokerToRunner::Error(e))) if e.code.kills_running_jobs() => {
             Err(End::Refused(e))
@@ -277,17 +287,20 @@ pub(crate) async fn session(
                 slot,
                 replay: Replay::default(),
                 kind: peer_kind(t),
+                limit: Duration::from_secs(HEARTBEAT_INTERVAL_S),
             };
             return s.refused(e).await;
         }
         Err(end) => return end,
     };
+    let silence = heartbeat.saturating_mul(MISSED_HEARTBEATS_OFFLINE);
     let mut s = Session {
         shared,
         t,
         slot,
         replay: Replay::default(),
         kind: peer_kind(t),
+        limit: silence,
     };
     let lost = || End::Lost { welcomed: true };
     let points = s.resume_points().await;
@@ -302,9 +315,7 @@ pub(crate) async fn session(
         return lost();
     }
     let clock = shared.deps.clock.clone();
-    let silence = heartbeat * MISSED_HEARTBEATS_OFFLINE;
-    let mut next_beat = shared.now();
-    next_beat.0 += heartbeat.as_millis() as u64;
+    let mut next_beat = after(shared.now(), heartbeat);
     let mut last_rx = shared.now();
     loop {
         if s.idle_and_stopping().await {
@@ -315,8 +326,7 @@ pub(crate) async fn session(
             t.close().await;
             return End::Stopped;
         }
-        let mut deadline = last_rx;
-        deadline.0 += silence.as_millis() as u64;
+        let deadline = after(last_rx, silence);
         tokio::select! {
             f = t.recv() => match f {
                 Ok(frame) => {
@@ -333,7 +343,7 @@ pub(crate) async fn session(
                 }
             }
             _ = clock.sleep_until(next_beat) => {
-                next_beat.0 += heartbeat.as_millis() as u64;
+                next_beat = after(next_beat, heartbeat);
                 if !s.send(&RunnerToBroker::Heartbeat).await {
                     return lost();
                 }

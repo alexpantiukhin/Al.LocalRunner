@@ -15,5 +15,6 @@ toml.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 
 [dev-dependencies]
+async-trait.workspace = true
 lr-abstractions = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["sync", "rt", "macros"] }

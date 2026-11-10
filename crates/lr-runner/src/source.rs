@@ -135,8 +135,10 @@ pub(crate) fn dir_name(label: &str, key: &[&str]) -> String {
     format!("{clean}-{:016x}", fnv(key))
 }
 
-/// Where remote jobs are checked out: `<state>/workspace/<project>/mirror.git` (one bare mirror
-/// per project and repository address) and `<state>/workspace/<project>/jobs/<job>`.
+/// Where remote jobs are checked out: `<state>/workspace/<project>-<hash>/mirror.git` (one bare
+/// mirror per project and repository address; the hash covers both) and
+/// `<state>/workspace/<project>-<hash>/jobs/<job>-<hash>` (the hash covers the client and the
+/// job). Each name part is reduced to `[A-Za-z0-9._-]` and 48 characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayout {
     root: PathBuf,

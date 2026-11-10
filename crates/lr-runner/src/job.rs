@@ -41,19 +41,22 @@ async fn known(shared: &Shared, job: &JobId) -> Result<bool, StoreError> {
         .any(|e| &e.job == job))
 }
 
-async fn accept(s: &Session<'_>, job: &JobId, seq: u64) -> bool {
+enum Seq {
+    New,
+    Repeat,
+    Dropped,
+}
+
+async fn accept(s: &Session<'_>, job: &JobId, seq: u64) -> Seq {
     match s.shared.deps.store.accept_seq(job, seq).await {
-        Ok(true) => {
-            s.ack(job, seq).await;
-            true
-        }
+        Ok(true) => Seq::New,
         Ok(false) => {
             s.ack(job, seq).await;
-            false
+            Seq::Repeat
         }
         Err(StoreError::SeqGap { expected, got }) => {
             s.refuse_gap(job, expected, got).await;
-            false
+            Seq::Dropped
         }
         Err(e) => {
             s.shared.diag.event(
@@ -61,21 +64,44 @@ async fn accept(s: &Session<'_>, job: &JobId, seq: u64) -> bool {
                 "received seq not stored, message dropped",
                 &[("job", &job.0), ("error", &e.to_string())],
             );
-            false
+            Seq::Dropped
         }
     }
 }
 
-pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
-    let msg = RunnerToBroker::JobResult(JobResult {
+fn result_msg(job: &JobId, f: Final) -> RunnerToBroker {
+    RunnerToBroker::JobResult(JobResult {
         job: job.clone(),
         seq: 0,
         state: f.state,
         exit_code: f.exit_code,
         reason: f.reason,
         detail: f.detail,
-    });
-    shared.outbox.push_until_stored(job, &msg).await;
+    })
+}
+
+pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
+    shared
+        .outbox
+        .push_until_stored(job, &result_msg(job, f))
+        .await;
+}
+
+async fn refuse(s: &Session<'_>, a: &Assign, detail: String) {
+    s.shared.diag.event(
+        Level::Warn,
+        "assignment refused",
+        &[("job", &a.job.0), ("why", &detail)],
+    );
+    s.shared
+        .outbox
+        .push_once(
+            &a.job,
+            &result_msg(&a.job, Final::failed(detail)),
+            "job result not stored, dropped",
+        )
+        .await;
+    s.ack(&a.job, a.seq).await;
 }
 
 pub(crate) async fn skip_steps(
@@ -88,7 +114,7 @@ pub(crate) async fn skip_steps(
         let msg = RunnerToBroker::StepResult(StepResult {
             job: job.clone(),
             seq: 0,
-            ord: ord as u32,
+            ord: u32::try_from(ord).unwrap_or(u32::MAX),
             name: step.name.clone(),
             state: StepState::Skipped,
             exit_code: None,
@@ -111,10 +137,12 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
             return;
         }
     };
-    if !accept(s, &a.job, a.seq).await {
-        return;
+    match accept(s, &a.job, a.seq).await {
+        Seq::New => {}
+        Seq::Repeat | Seq::Dropped => return,
     }
     if was_known {
+        s.ack(&a.job, a.seq).await;
         shared.diag.event(
             Level::Info,
             "job already known, not run again",
@@ -138,13 +166,22 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
             .map(|ceiling| format!("job timeout {t} s is above the runner ceiling {ceiling} s"))
     };
     if let Some(detail) = refusal {
+        return refuse(s, &a, detail).await;
+    }
+    if let Err(e) = shared
+        .deps
+        .files
+        .write(&shared.marker(), a.job.0.as_bytes())
+        .await
+    {
+        let detail = format!("active job marker not written: {e}");
         shared.diag.event(
-            Level::Warn,
-            "assignment refused",
-            &[("job", &a.job.0), ("why", &detail)],
+            Level::Error,
+            "active job marker not written, job not run",
+            &[("job", &a.job.0), ("error", &e.to_string())],
         );
-        finish(shared, &a.job, Final::failed(detail)).await;
-        return;
+        skip_steps(shared, &a.job, &a.spec.steps, 0).await;
+        return refuse(s, &a, detail).await;
     }
     let (handle, signal) = stop_signal();
     shared.state().job = Some(Current {
@@ -153,6 +190,8 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
         reason: None,
         lost_killed: false,
     });
+    shared.status.notify_one();
+    s.ack(&a.job, a.seq).await;
     let task_shared: Arc<Shared> = s.shared.clone();
     s.slot.spawn(async move {
         execute(&task_shared, a, signal).await;
@@ -160,8 +199,11 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
 }
 
 pub(crate) async fn on_cancel(s: &mut Session<'_>, c: RunnerCancel) {
-    if !accept(s, &c.job, c.seq).await {
-        return;
+    match accept(s, &c.job, c.seq).await {
+        Seq::New => {
+            s.ack(&c.job, c.seq).await;
+        }
+        Seq::Repeat | Seq::Dropped => return,
     }
     let running = s
         .shared
@@ -187,13 +229,6 @@ pub(crate) async fn on_cancel(s: &mut Session<'_>, c: RunnerCancel) {
 async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal) {
     let job = a.job.clone();
     let marker = shared.marker();
-    if let Err(e) = shared.deps.files.write(&marker, job.0.as_bytes()).await {
-        shared.diag.event(
-            Level::Error,
-            "active job marker not written",
-            &[("job", &job.0), ("error", &e.to_string())],
-        );
-    }
     let started = RunnerToBroker::Started(Started {
         job: job.clone(),
         seq: 0,
@@ -235,6 +270,7 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
     {
         let mut st = shared.state();
         st.job = None;
+        st.in_use.clear();
         st.caps_dirty = true;
     }
     shared.forget_finished().await;

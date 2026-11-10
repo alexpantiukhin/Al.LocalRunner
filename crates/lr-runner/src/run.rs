@@ -3,7 +3,7 @@ use crate::cache::WORKSPACE_CLIENT;
 use crate::job::{skip_steps, Final};
 use crate::output::Forward;
 use crate::prepare::Prepared;
-use crate::source::{plan_source, SourceInput, SourcePlan};
+use crate::source::{plan_source, SourceInput, SourcePlan, WorkspaceLayout};
 use lr_abstractions::{
     CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, DEFAULT_CANCEL_GRACE,
 };
@@ -41,6 +41,22 @@ async fn run_phase(
     let outcome = shared.deps.process.run_job(spec, &forward, stop).await;
     forward.report_rest(&outcome).await;
     outcome
+}
+
+fn mirror_key(layout: &WorkspaceLayout, project: &str, url: &str) -> CacheKey {
+    let project = layout
+        .project_dir(project, url)
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    CacheKey {
+        client: WORKSPACE_CLIENT.to_string(),
+        project,
+        name: "mirror".to_string(),
+    }
+}
+
+fn ord(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(u32::MAX)
 }
 
 fn failed_step(outcome: &JobOutcome) -> Option<&StepOutcome> {
@@ -144,7 +160,18 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             name: name.clone(),
         })
         .collect();
-    caches.sweep(now, &keys).await;
+    let mirror_url = match &spec.code {
+        WireCode::Commit {
+            repo_url: Some(u), ..
+        } => Some(u.as_str()),
+        _ => None,
+    };
+    let layout = shared.workspace();
+    let mirror_key = mirror_url.map(|u| mirror_key(&layout, &spec.project, u));
+    shared
+        .claim(keys.iter().cloned().chain(mirror_key.clone()).collect())
+        .await;
+    shared.sweep().await;
     let mut env = p.env.clone();
     match caches
         .open(&spec.client, &spec.project, &spec.requirements.cache, now)
@@ -166,20 +193,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     let cleanup = Cleanup {
         shared,
         checkout: plan.remove_after.clone(),
-        mirror: mirror.map(|m| {
-            let project = plan
-                .source_cwd
-                .file_name()
-                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            (
-                CacheKey {
-                    client: WORKSPACE_CLIENT.to_string(),
-                    project,
-                    name: "mirror".to_string(),
-                },
-                m,
-            )
-        }),
+        mirror: mirror_key.zip(mirror),
         caches: keys,
     };
     let started = shared.now();
@@ -189,7 +203,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         let (steps, ords) = if plan.from_profile {
             (
                 p.steps(0, &plan.source_steps),
-                (0..n as u32).map(Some).collect(),
+                (0..n).map(|i| Some(ord(i))).collect(),
             )
         } else {
             (
@@ -227,12 +241,15 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         }
     }
     let spent_ms = shared.now().millis_since(started);
-    let left_s = total_s.saturating_mul(1000).saturating_sub(spent_ms) / 1000;
+    let left_s = total_s
+        .saturating_mul(1000)
+        .saturating_sub(spent_ms)
+        .div_ceil(1000);
     let rest = &spec.steps[plan.first_ord.min(spec.steps.len())..];
     let phase = Phase {
         steps: p.steps(plan.first_ord, rest),
         ords: (plan.first_ord..plan.first_ord + rest.len())
-            .map(|o| Some(o as u32))
+            .map(|o| Some(ord(o)))
             .collect(),
         timeout_s: left_s,
         cwd: &plan.job_cwd,

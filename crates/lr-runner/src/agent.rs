@@ -1,16 +1,17 @@
+use crate::background::{background, recover};
 use crate::cache::{CacheLayout, Caches};
 use crate::connect::{session, End};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
 use crate::services::Services;
-use crate::settings::RunnerSettings;
+use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
 use lr_abstractions::{
-    Clock, Dialer, Files, Level, LogSink, OutboxKind, ProcessInspector, ProcessRunner, RunnerStore,
+    CacheKey, Clock, Dialer, Files, Level, LogSink, ProcessInspector, ProcessRunner, RunnerStore,
     SecretSource, Stop, StopHandle,
 };
-use lr_core::{JobId, JobState, Timestamp};
-use lr_proto::{JobResult, ProtocolError, ReasonCode, RunnerToBroker, WireCapabilities};
+use lr_core::{JobId, Timestamp};
+use lr_proto::{ProtocolError, ReasonCode, WireCapabilities};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -20,8 +21,12 @@ use tokio::task::JoinHandle;
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 const CONTROL_QUEUE: usize = 8;
-const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+pub(crate) const SWEEP_EVERY: Duration = Duration::from_secs(3600);
 pub(crate) const FORGET_AFTER_MS: u64 = 24 * 3_600_000;
+
+pub(crate) fn after(t: Timestamp, d: Duration) -> Timestamp {
+    Timestamp(t.0.saturating_add(u64::try_from(d.as_millis()).unwrap_or(u64::MAX)))
+}
 
 /// Where the broker this runner joined listens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +106,8 @@ pub(crate) struct State {
     pub(crate) broker_lost_kill_s: Option<u64>,
     pub(crate) draining: bool,
     pub(crate) caps_dirty: bool,
+    pub(crate) lost_since: Option<Timestamp>,
+    pub(crate) in_use: Vec<CacheKey>,
 }
 
 pub(crate) struct Shared {
@@ -108,6 +115,8 @@ pub(crate) struct Shared {
     pub(crate) diag: Arc<Diag>,
     pub(crate) outbox: Outbox,
     pub(crate) wake: Arc<Notify>,
+    pub(crate) status: Notify,
+    pub(crate) sweep_lock: tokio::sync::Mutex<()>,
     pub(crate) state: Mutex<State>,
 }
 
@@ -153,9 +162,25 @@ impl Shared {
         self.deps.settings.capabilities(used)
     }
 
-    pub(crate) fn lost_kill(&self) -> Duration {
-        let broker = self.state().broker_lost_kill_s;
-        Duration::from_secs(self.deps.settings.lost_kill_s(broker))
+    pub(crate) fn set_lost(&self, since: Option<Timestamp>) {
+        self.state().lost_since = since;
+        self.status.notify_one();
+    }
+
+    pub(crate) fn set_broker_lost_kill(&self, seconds: Option<u64>) {
+        self.state().broker_lost_kill_s = seconds.map(|s| s.min(MAX_LOST_KILL_S));
+        self.status.notify_one();
+    }
+
+    pub(crate) async fn claim(&self, keys: Vec<CacheKey>) {
+        let _serial = self.sweep_lock.lock().await;
+        self.state().in_use = keys;
+    }
+
+    pub(crate) async fn sweep(&self) {
+        let _serial = self.sweep_lock.lock().await;
+        let in_use = self.state().in_use.clone();
+        self.caches().sweep(self.now(), &in_use).await;
     }
 
     pub(crate) fn stop_job(&self, stop: Stop, reason: ReasonCode, text: &str) {
@@ -221,19 +246,25 @@ impl RunnerAgent {
             clock: deps.clock.clone(),
             diag: diag.clone(),
             wake: wake.clone(),
+            tail: Default::default(),
         };
         let (control_tx, control_rx) = mpsc::channel(CONTROL_QUEUE);
+        let lost_since = Some(deps.clock.now());
         RunnerAgent {
             shared: Arc::new(Shared {
                 deps,
                 diag,
                 outbox,
                 wake,
+                status: Notify::new(),
+                sweep_lock: tokio::sync::Mutex::new(()),
                 state: Mutex::new(State {
                     job: None,
                     broker_lost_kill_s: None,
                     draining: false,
                     caps_dirty: false,
+                    lost_since,
+                    in_use: Vec::new(),
                 }),
             }),
             control_tx,
@@ -247,83 +278,42 @@ impl RunnerAgent {
     }
 
     /// Recovers from the previous run, then keeps a session with the broker, reconnecting with
-    /// a backoff from 1 to 30 seconds, until stopped or refused.
+    /// a backoff from 1 to 30 seconds, until stopped or refused. While the broker is
+    /// unreachable the running job is killed once the grace has passed since the session was
+    /// lost, however long a dial or a welcome takes.
     pub async fn run(mut self) -> AgentExit {
         let shared = self.shared.clone();
         recover(&shared).await;
         let mut slot = JobSlot::default();
         let mut backoff = MIN_BACKOFF;
-        let mut lost_since = shared.now();
-        let mut next_sweep = Timestamp(shared.now().0 + SWEEP_EVERY.as_millis() as u64);
+        let mut next_sweep = after(shared.now(), SWEEP_EVERY);
         loop {
-            let b = &shared.deps.broker;
-            match shared
-                .deps
-                .dialer
-                .dial(&b.address, b.fingerprint.as_deref())
-                .await
-            {
-                Ok(t) => match tokio::select! {
-                    end = session(&shared, t.as_ref(), &mut slot, &mut self.control_rx) => end,
-                    end = sweeper(&shared, &mut next_sweep) => end,
-                } {
-                    End::Refused(e) => return AgentExit::Refused(e),
-                    End::Stopped => return AgentExit::Stopped,
-                    End::Lost { welcomed: true } => {
-                        backoff = MIN_BACKOFF;
-                        lost_since = shared.now();
-                    }
-                    End::Lost { welcomed: false } => {}
-                },
-                Err(e) => shared.diag.event(
-                    Level::Warn,
-                    "broker unreachable",
-                    &[("address", &b.address), ("error", &e.to_string())],
-                ),
+            let end = tokio::select! {
+                end = connect_once(&shared, &mut slot, &mut self.control_rx) => end,
+                never = background(&shared, &mut next_sweep) => never,
+            };
+            match end {
+                Some(End::Refused(e)) => return AgentExit::Refused(e),
+                Some(End::Stopped) => return AgentExit::Stopped,
+                Some(End::Lost { welcomed: true }) => {
+                    backoff = MIN_BACKOFF;
+                    shared.set_lost(Some(shared.now()));
+                }
+                Some(End::Lost { welcomed: false }) | None => {}
             }
             tokio::select! {
-                _ = self.wait_offline(&shared, backoff, lost_since) => {}
-                _ = sweeper::<()>(&shared, &mut next_sweep) => {}
+                _ = self.wait_offline(&shared, backoff) => {}
+                never = background::<()>(&shared, &mut next_sweep) => never,
             }
-            backoff = (backoff * 2).min(MAX_BACKOFF);
+            backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
         }
     }
 
-    async fn wait_offline(&mut self, shared: &Shared, backoff: Duration, lost_since: Timestamp) {
-        let clock = shared.deps.clock.clone();
-        let retry_at = Timestamp(shared.now().0 + backoff.as_millis() as u64);
+    async fn wait_offline(&mut self, shared: &Shared, backoff: Duration) {
+        let retry_at = after(shared.now(), backoff);
         loop {
-            let (running, killed) = shared
-                .state()
-                .job
-                .as_ref()
-                .map_or((false, false), |c| (true, c.lost_killed));
-            let kill_at = Timestamp(lost_since.0 + shared.lost_kill().as_millis() as u64);
-            if running && !killed && shared.now() >= kill_at {
-                if let Some(c) = shared.state().job.as_mut() {
-                    c.lost_killed = true;
-                }
-                shared.diag.event(
-                    Level::Warn,
-                    "broker unreachable past the grace, job killed",
-                    &[],
-                );
-                shared.stop_job(
-                    Stop::Kill,
-                    ReasonCode::BrokerUnavailable,
-                    "broker unreachable past the grace",
-                );
-            }
-            if shared.now() >= retry_at {
-                return;
-            }
-            let until = if running && !killed && kill_at > shared.now() {
-                kill_at.min(retry_at)
-            } else {
-                retry_at
-            };
             tokio::select! {
-                _ = clock.sleep_until(until) => {}
+                _ = shared.deps.clock.sleep_until(retry_at) => return,
                 cmd = self.control_rx.recv() => {
                     if let Some(cmd) = cmd {
                         apply_control(shared, cmd);
@@ -334,12 +324,26 @@ impl RunnerAgent {
     }
 }
 
-async fn sweeper<T>(shared: &Shared, next: &mut Timestamp) -> T {
-    loop {
-        shared.deps.clock.sleep_until(*next).await;
-        next.0 += SWEEP_EVERY.as_millis() as u64;
-        if shared.state().job.is_none() {
-            shared.caches().sweep(shared.now(), &[]).await;
+async fn connect_once(
+    shared: &Arc<Shared>,
+    slot: &mut JobSlot,
+    control: &mut mpsc::Receiver<Control>,
+) -> Option<End> {
+    let b = &shared.deps.broker;
+    match shared
+        .deps
+        .dialer
+        .dial(&b.address, b.fingerprint.as_deref())
+        .await
+    {
+        Ok(t) => Some(session(shared, t.as_ref(), slot, control).await),
+        Err(e) => {
+            shared.diag.event(
+                Level::Warn,
+                "broker unreachable",
+                &[("address", &b.address), ("error", &e.to_string())],
+            );
+            None
         }
     }
 }
@@ -350,64 +354,4 @@ pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
         shared.stop_job(Stop::Cancel, ReasonCode::RunnerStopped, "runner stopped");
     }
     shared.wake.notify_one();
-}
-
-async fn recover(shared: &Shared) {
-    let marker = shared.marker();
-    match shared.deps.files.read(&marker).await {
-        Ok(Some(bytes)) => {
-            let job = JobId(String::from_utf8_lossy(&bytes).trim().to_string());
-            restarted(shared, job).await;
-            if let Err(e) = shared.deps.files.remove_file(&marker).await {
-                shared.diag.event(
-                    Level::Error,
-                    "active job marker not removed",
-                    &[("error", &e.to_string())],
-                );
-            }
-        }
-        Ok(None) => {}
-        Err(e) => shared.diag.event(
-            Level::Error,
-            "active job marker unreadable",
-            &[("error", &e.to_string())],
-        ),
-    }
-    shared.services().kill_orphans().await;
-    shared.forget_finished().await;
-    shared.caches().sweep(shared.now(), &[]).await;
-}
-
-async fn restarted(shared: &Shared, job: JobId) {
-    let pending = match shared.deps.store.pending_outbox().await {
-        Ok(p) => p,
-        Err(e) => {
-            shared.diag.event(
-                Level::Error,
-                "outbox unreadable at start",
-                &[("error", &e.to_string())],
-            );
-            Vec::new()
-        }
-    };
-    if pending
-        .iter()
-        .any(|e| e.job == job && e.kind == OutboxKind::JobResult)
-    {
-        return;
-    }
-    shared.diag.event(
-        Level::Warn,
-        "runner restarted while a job ran",
-        &[("job", &job.0)],
-    );
-    let msg = RunnerToBroker::JobResult(JobResult {
-        job: job.clone(),
-        seq: 0,
-        state: JobState::Failed,
-        exit_code: None,
-        reason: Some(ReasonCode::RunnerRestarted),
-        detail: Some("the runner restarted while the job ran".into()),
-    });
-    shared.outbox.push_until_stored(&job, &msg).await;
 }

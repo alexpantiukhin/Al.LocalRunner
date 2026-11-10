@@ -59,7 +59,7 @@ pub fn plan_sweep(
         }
     }
     if let Some(max) = limits.max_bytes() {
-        let mut total: u64 = kept.iter().map(|e| e.bytes).sum();
+        let mut total = kept.iter().fold(0u64, |t, e| t.saturating_add(e.bytes));
         kept.sort_by_key(|e| (e.last_used, e.key.clone()));
         for e in kept {
             if total <= max {
@@ -178,8 +178,7 @@ impl Caches<'_> {
                 entries
                     .iter()
                     .filter(|e| !is_workspace(e))
-                    .map(|e| e.bytes)
-                    .sum::<u64>()
+                    .fold(0u64, |t, e| t.saturating_add(e.bytes))
                     / MB,
             ),
             Err(e) => {

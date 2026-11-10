@@ -60,7 +60,19 @@ async fn orphaned_services_of_a_previous_run_are_killed_at_start() {
         vec![alive],
         "only the same process is killed"
     );
-    assert!(rig.store.services().await.unwrap().is_empty());
+    let kept: Vec<String> = rig
+        .store
+        .services()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
+    assert_eq!(
+        kept,
+        vec!["unknown".to_string()],
+        "a process not known gone stays listed"
+    );
     assert!(rig.log.records().iter().any(
         |r| r.level == Level::Warn && r.fields.contains(&("service".into(), "unknown".into()))
     ));

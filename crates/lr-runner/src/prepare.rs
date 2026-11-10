@@ -37,6 +37,13 @@ pub(crate) fn secret_var(name: &str) -> String {
         .collect()
 }
 
+const RESERVED: [&str; 4] = ["PATH", "HOME", "TEMP", "TMP"];
+const RESERVED_PREFIX: &str = "LOCALRUNNER_";
+
+fn reserved(var: &str) -> bool {
+    RESERVED.contains(&var) || var.starts_with(RESERVED_PREFIX)
+}
+
 pub(crate) async fn step_secrets(
     shared: &Shared,
     spec: &AssignSpec,
@@ -47,6 +54,18 @@ pub(crate) async fn step_secrets(
         .iter()
         .flat_map(|s| s.secrets.iter().map(String::as_str))
         .collect();
+    for name in admitted
+        .iter()
+        .map(String::as_str)
+        .chain(by_step.iter().copied())
+    {
+        let var = secret_var(name);
+        if reserved(&var) {
+            return Err(Final::failed(format!(
+                "secret {name} would replace the reserved variable {var}"
+            )));
+        }
+    }
     let mut values: BTreeMap<&str, SecretValue> = BTreeMap::new();
     for name in admitted {
         match shared.deps.secrets.get(name).await {

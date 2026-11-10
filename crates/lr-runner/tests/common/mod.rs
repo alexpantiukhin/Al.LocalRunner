@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod wrap;
+
 use lr_abstractions::fakes::{
     FakeListener, FakeNetwork, FakeProcessRunner, JobScript, ManualClock, MemoryFiles,
     MemoryLogSink, MemoryRunnerStore, MemorySecrets,
@@ -14,9 +16,11 @@ use lr_proto::{
 };
 use lr_runner::{AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps, RunnerSettings};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinHandle;
+use wrap::{CountingStore, Gate, GatedDialer};
 
 pub const BROKER: &str = "broker.example:7443";
 pub const FINGERPRINT: &str = "broker-fp";
@@ -36,6 +40,9 @@ pub struct Rig {
     pub secrets: Arc<MemorySecrets>,
     pub log: Arc<MemoryLogSink>,
     pub settings: RunnerSettings,
+    pub gate: Gate,
+    pub reads: Arc<AtomicUsize>,
+    pub fail_push: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Rig {
@@ -66,7 +73,14 @@ impl Rig {
             secrets: Arc::new(MemorySecrets::new()),
             log: Arc::new(MemoryLogSink::new()),
             settings,
+            gate: Gate::default(),
+            reads: Arc::new(AtomicUsize::new(0)),
+            fail_push: Arc::default(),
         }
+    }
+
+    pub fn outbox_reads(&self) -> usize {
+        self.reads.load(Ordering::SeqCst)
     }
 
     pub fn deps(&self) -> RunnerDeps {
@@ -78,12 +92,19 @@ impl Rig {
         let inspector: Arc<dyn ProcessInspector> = Arc::new(self.process.processes());
         RunnerDeps {
             clock: Arc::new(self.clock.clone()),
-            dialer: Arc::new(dialer),
+            dialer: Arc::new(GatedDialer {
+                inner: dialer,
+                gate: self.gate.clone(),
+            }),
             broker: BrokerAddress {
                 address: BROKER.into(),
                 fingerprint: Some(FINGERPRINT.into()),
             },
-            store: self.store.clone(),
+            store: Arc::new(CountingStore {
+                inner: self.store.clone(),
+                reads: self.reads.clone(),
+                fail_push: self.fail_push.clone(),
+            }),
             process: self.process.clone(),
             inspector,
             secrets: self.secrets.clone(),

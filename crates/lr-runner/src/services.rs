@@ -26,15 +26,16 @@ fn wire_state(s: ServiceState) -> lr_proto::ServiceState {
 }
 
 impl Services<'_> {
-    async fn kill(&self, row: &ServiceRow) {
+    async fn kill(&self, row: &ServiceRow) -> bool {
         let pid = row.pid.to_string();
         let fields = [("service", row.name.as_str()), ("pid", pid.as_str())];
         let Some(start) = row.pid_start else {
-            return self.diag.event(
+            self.diag.event(
                 Level::Warn,
                 "service process has no start time, not killed",
                 &fields,
             );
+            return false;
         };
         match self.inspector.liveness(row.pid, start) {
             Liveness::Alive => {
@@ -43,20 +44,29 @@ impl Services<'_> {
                     start: Some(start),
                 };
                 match self.process.kill_tree(&process).await {
-                    Ok(()) => self.diag.event(Level::Info, "service killed", &fields),
-                    Err(e) => self.diag.event(
-                        Level::Error,
-                        "service not killed",
-                        &[("service", row.name.as_str()), ("error", &e.to_string())],
-                    ),
+                    Ok(()) => {
+                        self.diag.event(Level::Info, "service killed", &fields);
+                        true
+                    }
+                    Err(e) => {
+                        self.diag.event(
+                            Level::Error,
+                            "service not killed",
+                            &[("service", row.name.as_str()), ("error", &e.to_string())],
+                        );
+                        false
+                    }
                 }
             }
-            Liveness::Dead => {}
-            Liveness::Unknown => self.diag.event(
-                Level::Warn,
-                "service process liveness unknown, not killed",
-                &fields,
-            ),
+            Liveness::Dead => true,
+            Liveness::Unknown => {
+                self.diag.event(
+                    Level::Warn,
+                    "service process liveness unknown, not killed",
+                    &fields,
+                );
+                false
+            }
         }
     }
 
@@ -72,8 +82,9 @@ impl Services<'_> {
             }
         };
         for row in rows {
-            self.kill(&row).await;
-            self.forget(&row.name).await;
+            if self.kill(&row).await {
+                self.forget(&row.name).await;
+            }
         }
     }
 
@@ -100,8 +111,9 @@ impl Services<'_> {
         };
         match rows.iter().find(|r| r.name == name) {
             Some(row) => {
-                self.kill(row).await;
-                self.forget(name).await;
+                if self.kill(row).await {
+                    self.forget(name).await;
+                }
             }
             None => self.diag.event(
                 Level::Info,

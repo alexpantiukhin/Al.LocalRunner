@@ -8,6 +8,14 @@ use std::path::PathBuf;
 /// broker nor `runner.toml` says otherwise (spec 3.3: 3 minutes).
 pub const DEFAULT_LOST_KILL_S: u64 = 180;
 
+/// The longest grace a broker may set for killing jobs while it is unreachable (one day);
+/// larger values are clamped to it.
+pub const MAX_LOST_KILL_S: u64 = 86_400;
+
+/// The longest heartbeat interval a broker may set (one hour); its `heartbeat_s` is clamped to
+/// `1..=MAX_HEARTBEAT_S`.
+pub const MAX_HEARTBEAT_S: u64 = 3_600;
+
 const MB_PER_GB: u64 = 1024;
 
 /// Size and age limits of the cache or of the workspace (spec 3.10); `None` is no limit.
@@ -186,9 +194,10 @@ impl RunnerSettings {
     }
 
     /// Seconds after which jobs are killed while the broker is unreachable: the broker's value
-    /// (3 minutes without one), shortened by `[grace] broker_lost_kill_s` but never lengthened.
+    /// (3 minutes without one, at most [`MAX_LOST_KILL_S`]), shortened by `[grace]
+    /// broker_lost_kill_s` but never lengthened.
     pub fn lost_kill_s(&self, broker: Option<u64>) -> u64 {
-        let base = broker.unwrap_or(DEFAULT_LOST_KILL_S);
+        let base = broker.unwrap_or(DEFAULT_LOST_KILL_S).min(MAX_LOST_KILL_S);
         self.broker_lost_kill_s.map_or(base, |own| own.min(base))
     }
 
