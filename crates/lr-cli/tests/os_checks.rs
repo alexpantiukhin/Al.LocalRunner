@@ -21,6 +21,7 @@ fn fine() -> Facts {
         link: false,
         owner: Some("S-1-5-80-9".into()),
         writers: Some(vec!["S-1-5-32-544".into()]),
+        hard_links: 1,
     }
 }
 
@@ -56,8 +57,30 @@ fn a_directory_someone_else_controls_is_refused() {
         owner: Some("0".into()),
         writers: Some(vec!["group".into()]),
         link: false,
+        hard_links: 1,
     };
     assert!(judge(p, &group, &["0".to_string()]).is_err());
+    let linked = Facts {
+        hard_links: 2,
+        ..fine()
+    };
+    assert!(judge(p, &linked, &trusted())
+        .unwrap_err()
+        .contains("2 hard links"));
+}
+
+#[test]
+fn a_file_with_a_second_name_is_refused() {
+    let dir = TempDir::new("trust-hardlink");
+    let trusted = trusted_principals("no-such-service-account-lr");
+    let file = dir.path().join("policy.toml");
+    std::fs::write(&file, "").unwrap();
+    check_children(dir.path(), &trusted).unwrap();
+    let elsewhere = TempDir::new("trust-hardlink-elsewhere");
+    std::fs::hard_link(&file, elsewhere.path().join("other-name")).unwrap();
+    assert!(check_children(dir.path(), &trusted)
+        .unwrap_err()
+        .contains("hard links"));
 }
 
 #[test]
@@ -99,7 +122,10 @@ fn system_programs_have_absolute_paths() {
     assert_eq!(windows_program(system, "icacls"), system.join("icacls.exe"));
     assert_eq!(
         windows_program(system, "powershell"),
-        system.join(r"WindowsPowerShell\v1.0\powershell.exe")
+        system
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe")
     );
     let found = unix_program("systemctl", |p| p == Path::new("/bin/systemctl")).unwrap();
     assert_eq!(found, PathBuf::from("/bin/systemctl"));

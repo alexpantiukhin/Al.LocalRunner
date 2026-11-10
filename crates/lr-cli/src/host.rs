@@ -146,7 +146,7 @@ pub fn machine_id(root: &Path) -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes).map_err(|e| format!("no randomness for machine-id: {e}"))?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    crate::init::ensure_state_dir(root)?;
     std::fs::write(&path, &id).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(id)
 }

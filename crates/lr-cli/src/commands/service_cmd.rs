@@ -5,8 +5,8 @@ use super::{RoleArg, Switch};
 use crate::init::{self, NodeRole};
 use crate::os_service::plans::{self, AutostartInputs, Entry, ServiceInputs};
 use crate::os_service::{
-    apply_all, current_uid, home_dir, original_user, service_binary, Action, DryRun, Os, OsSystem,
-    System,
+    apply_all, apply_or_undo, current_uid, home_dir, original_user, service_binary,
+    service_installed, Action, DryRun, Os, OsSystem, System,
 };
 use crate::paths::{service_root, Layout};
 
@@ -45,7 +45,14 @@ pub fn install_service_plan(layout: &Layout) -> Result<Vec<Action>, String> {
 /// `broker install-service [--dry-run]`.
 pub fn install_service(layout: &Layout, dry_run: bool) -> Result<i32, String> {
     needs_admin("broker install-service", dry_run)?;
-    apply(&install_service_plan(layout)?, dry_run)?;
+    let plan = install_service_plan(layout)?;
+    if dry_run {
+        apply(&plan, true)?;
+    } else {
+        let os = Os::current();
+        let undo = plans::install_service_undo(os, service_installed(os));
+        apply_or_undo(&OsSystem, &plan, &undo)?;
+    }
     if !dry_run {
         println!(
             "the broker runs as a service from {}; `localrunner broker add` prints join codes",
@@ -115,6 +122,7 @@ pub fn autostart_plan(layout: &Layout, entry: Entry, on: bool) -> Result<Vec<Act
         home: home_dir()?,
         uid: current_uid(),
         user: lr_net::current_os_user().map_err(|e| e.to_string())?,
+        principal: lr_net::current_os_principal().map_err(|e| e.to_string())?,
     };
     Ok(if on {
         plans::autostart_on(&inputs)

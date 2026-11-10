@@ -13,7 +13,8 @@ pub mod trust;
 pub mod windows_host;
 
 pub use actions::{
-    apply_all, ensure_local_user, path_script, profile_line, profile_without, DryRun, OsSystem,
+    apply_all, apply_or_undo, ensure_local_user, path_script, profile_line, profile_without,
+    DryRun, OsSystem,
 };
 
 use lr_net::ServerIdentity;

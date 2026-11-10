@@ -152,11 +152,20 @@ pub fn close_to_owner(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The state directory `dir`, created when missing and closed to its owner (spec 10.3); the
+/// broker service's directory keeps the modes `broker install-service` gave it.
+pub fn ensure_state_dir(dir: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if dir == crate::paths::service_root() {
+        return Ok(());
+    }
+    close_to_owner(dir)
+}
+
 /// Creates the state directory (closed to its owner), `machine-id` and the templates of
 /// `roles` for OS user `user`.
 pub fn init(layout: &Layout, roles: &[NodeRole], user: &str) -> Result<Vec<Created>, String> {
-    std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
-    close_to_owner(&layout.root)?;
+    crate::init::ensure_state_dir(&layout.root)?;
     crate::host::machine_id(&layout.root)?;
     let mut out = vec![write_new(
         layout.config_file("logging.toml"),

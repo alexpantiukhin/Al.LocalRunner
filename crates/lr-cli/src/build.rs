@@ -107,7 +107,7 @@ pub struct BrokerParts {
 /// `address = "container"`), `broker.db`, the certificate, the machine registry, IPC for hubs
 /// and runners, the admin channel, and TLS when a code is open or a machine is registered.
 pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, String> {
-    std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
+    crate::init::ensure_state_dir(&layout.root)?;
     layout.prepare_ipc().map_err(|e| e.to_string())?;
     let clock = clock();
     let logger = logger(
@@ -225,7 +225,7 @@ pub struct HubParts {
 /// Builds the hub of the current OS user: `hub.db`, its CLI IPC, the broker of this machine
 /// over IPC and joined brokers over TLS, the real git, files and process inspector.
 pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> {
-    std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
+    crate::init::ensure_state_dir(&layout.root)?;
     layout.prepare_ipc().map_err(|e| e.to_string())?;
     let clock = clock();
     let logger = logger(layout, &layout.root, Role::Hub, clock.clone(), foreground)?;

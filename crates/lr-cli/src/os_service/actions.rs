@@ -13,6 +13,23 @@ pub fn apply_all(system: &dyn System, actions: &[Action]) -> Result<(), String> 
     Ok(())
 }
 
+/// Carries out `plan`; when an action fails, carries out `undo` as far as it goes and returns
+/// the failure.
+pub fn apply_or_undo(system: &dyn System, plan: &[Action], undo: &[Action]) -> Result<(), String> {
+    let Err(e) = apply_all(system, plan) else {
+        return Ok(());
+    };
+    if undo.is_empty() {
+        return Err(e);
+    }
+    for a in undo {
+        let _ = system.apply(a);
+    }
+    Err(format!(
+        "{e} (undone: the service this run registered was removed)"
+    ))
+}
+
 /// Prints each action instead of carrying it out (`--dry-run`).
 pub struct DryRun;
 

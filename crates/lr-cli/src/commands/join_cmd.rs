@@ -102,8 +102,7 @@ pub async fn hub_join(
     code: &str,
     name: Option<String>,
 ) -> Result<i32, String> {
-    std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
-    crate::init::close_to_owner(&layout.root)?;
+    crate::init::ensure_state_dir(&layout.root)?;
     let key = key_at(&layout.root.join(KEY_FILE))?;
     let who = Joiner {
         role: Role::Hub,
@@ -181,6 +180,7 @@ pub async fn runner_join(layout: &Layout, j: RunnerJoin) -> Result<i32, String> 
     let names = instance_names(&base, j.count)?;
     let text = template(layout, &j)?;
     let host = crate::host::resources();
+    crate::init::ensure_state_dir(&layout.root)?;
     let machine_id = crate::host::machine_id(&layout.root)?;
     for name in &names {
         check_runner_name(name)?;

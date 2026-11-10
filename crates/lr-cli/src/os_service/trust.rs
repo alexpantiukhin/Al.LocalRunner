@@ -14,6 +14,8 @@ pub struct Facts {
     /// Who else may write: SIDs of explicit allow entries on Windows, `group` or `others` for
     /// write bits on Unix; `None` when anyone may (no DACL) or the list cannot be read.
     pub writers: Option<Vec<String>>,
+    /// Hard links of a file (1 for a directory): a second name may be someone else's file.
+    pub hard_links: u64,
 }
 
 /// `Ok` when `facts` show `path` is controlled by `trusted` principals only.
@@ -22,6 +24,13 @@ pub fn judge(path: &Path, facts: &Facts, trusted: &[String]) -> Result<(), Strin
     let fix = "remove it (or fix it as administrator) and install again";
     if facts.link {
         return Err(format!("{} is a link or junction; {fix}", path.display()));
+    }
+    if facts.hard_links > 1 {
+        return Err(format!(
+            "{} has {} hard links; {fix}",
+            path.display(),
+            facts.hard_links
+        ));
     }
     match &facts.owner {
         Some(o) if known(o) => {}
@@ -56,8 +65,14 @@ pub fn facts(path: &Path) -> Result<Facts, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let link = meta.file_type().is_symlink() || meta.file_attributes() & REPARSE_POINT != 0;
     let security = lr_net::file_security(path).map_err(|e| e.to_string())?;
+    let hard_links = if meta.is_dir() || link {
+        1
+    } else {
+        u64::from(lr_net::hard_links(path).map_err(|e| e.to_string())?)
+    };
     Ok(Facts {
         link,
+        hard_links,
         owner: security.owner,
         writers: security.explicit_allowed,
     })
@@ -76,6 +91,7 @@ pub fn facts(path: &Path) -> Result<Facts, String> {
         writers.push("others".to_string());
     }
     Ok(Facts {
+        hard_links: if meta.is_dir() { 1 } else { meta.nlink() },
         link: meta.file_type().is_symlink(),
         owner: Some(meta.uid().to_string()),
         writers: Some(writers),
@@ -118,31 +134,44 @@ pub fn require_trusted(path: &Path, account: &str) -> Result<(), String> {
     judge(path, &facts(path)?, &trusted_principals(account))
 }
 
-/// Checks and closes the service state directory `path` (creating it when missing). Windows:
-/// the directory itself is checked and closed first, so nobody can add to it, then everything
-/// below is checked and finally reset to the directory's DACL and owner. Unix: the whole tree
-/// is checked, the directory gets mode 0700.
+/// Checks and closes the service state directory `path`; a missing one is created already
+/// closed (Windows: with the service's protected security descriptor, Unix: mode 0700).
+/// Windows: an existing directory is checked and closed first, so nobody can add to it, then
+/// everything below is checked (links and files with several hard links refused) and finally
+/// reset to the directory's DACL and owner. Unix: the whole tree is checked, the directory
+/// gets mode 0700.
 pub fn secure_service_dir(path: &Path, account: &str) -> Result<(), String> {
     let trusted = trusted_principals(account);
     let exists = std::fs::symlink_metadata(path).is_ok();
     if exists {
         judge(path, &facts(path)?, &trusted)?;
-    } else {
-        std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
     }
     #[cfg(windows)]
     {
         let sid = lr_net::account_principal(account)
             .map_err(|e| format!("service account {account}: {e}"))?;
+        if !exists {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            lr_net::create_service_dir(path, &sid).map_err(|e| e.to_string())?;
+        }
         lr_net::lock_service_dir(path, &sid, false).map_err(|e| e.to_string())?;
         check_children(path, &trusted)?;
         lr_net::lock_service_dir(path, &sid, true).map_err(|e| e.to_string())
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
         if exists {
             check_children(path, &trusted)?;
+        } else {
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
         }
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
             .map_err(|e| format!("{}: {e}", path.display()))

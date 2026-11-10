@@ -80,7 +80,7 @@ fn windows(i: &ServiceInputs) -> Vec<Action> {
             "binPath=",
             &bin_path,
             "start=",
-            "auto",
+            "demand",
             "obj=",
             account,
             "DisplayName=",
@@ -118,8 +118,24 @@ fn windows(i: &ServiceInputs) -> Vec<Action> {
     ];
     out.extend(configs(i));
     out.push(secure(i));
+    out.push(Action::run("sc.exe", &["config", name, "start=", "auto"]));
     out.push(Action::run("sc.exe", &["start", name]).tolerating(Tolerate::Codes(vec![1056])));
     out
+}
+
+/// What undoes a failed `broker install-service`: on Windows the service is registered before
+/// its directory is checked (its account must exist), so a service this run created is
+/// deleted again; one that `existed` before stays, left on manual start by the plan. Other
+/// systems register the service only as the last steps.
+pub fn install_service_undo(os: Os, existed: bool) -> Vec<Action> {
+    if os != Os::Windows || existed {
+        return Vec::new();
+    }
+    let name = service_name(os);
+    vec![
+        Action::run("sc.exe", &["stop", name]).tolerating(Tolerate::Anything),
+        Action::run("sc.exe", &["delete", name]).tolerating(Tolerate::Anything),
+    ]
 }
 
 fn chown_and_close(i: &ServiceInputs, dir_mode: &str) -> Vec<Action> {
@@ -228,7 +244,8 @@ fn macos(i: &ServiceInputs) -> Vec<Action> {
 /// state directory checked (refused when someone else controls it) and closed to the service
 /// account (Windows: plus Administrators and SYSTEM) before the configurations `init` created
 /// go in; the installing user in `[[local_user]]`; the service under its unprivileged account,
-/// started at boot.
+/// started at boot only once everything passed (Windows: registered for manual start until
+/// the last steps; see [`install_service_undo`]).
 pub fn install_service(i: &ServiceInputs) -> Vec<Action> {
     match i.os {
         Os::Windows => windows(i),

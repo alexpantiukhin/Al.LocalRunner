@@ -1,8 +1,11 @@
 use lr_cli::os_service::plans::{
-    autostart_off, autostart_on, install_service, uninstall_service, AutostartInputs, Entry,
-    ServiceInputs,
+    autostart_off, autostart_on, install_service, install_service_undo, task_name,
+    uninstall_service, AutostartInputs, Entry, ServiceInputs,
 };
-use lr_cli::os_service::{ensure_local_user, service_account, Action, Os, Tolerate};
+use lr_cli::os_service::{
+    apply_or_undo, ensure_local_user, service_account, Action, Os, System, Tolerate,
+};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 const ALL: [Os; 3] = [Os::Windows, Os::Linux, Os::MacOs];
@@ -154,6 +157,25 @@ fn the_state_directory_is_checked_and_closed_before_any_configuration_goes_in() 
             "{os:?}: the directory is only created by the check"
         );
         if os == Os::Windows {
+            let runs = runs(&plan);
+            let create = runs
+                .iter()
+                .find(|r| r.starts_with("sc.exe create"))
+                .unwrap();
+            assert!(create.contains("start= demand"), "{create}");
+            let auto = position(&plan, |a| {
+                matches!(a, Action::Run { program, args, .. }
+                    if program == "sc.exe" && args.join(" ") == "config AlLocalRunnerBroker start= auto")
+            });
+            let started = position(
+                &plan,
+                |a| matches!(a, Action::Run { program, args, .. } if program == "sc.exe" && args[0] == "start"),
+            );
+            assert_eq!(auto.len(), 1);
+            assert!(
+                *secured.last().unwrap() < auto[0] && auto[0] < started[0],
+                "the service starts at boot only once everything passed: {plan:#?}"
+            );
             let created = position(
                 &plan,
                 |a| matches!(a, Action::Run { program, args, .. } if program == "sc.exe" && args[0] == "create"),
@@ -168,6 +190,77 @@ fn the_state_directory_is_checked_and_closed_before_any_configuration_goes_in() 
             );
         }
     }
+}
+
+#[test]
+fn a_failed_install_removes_only_a_service_it_registered() {
+    let undo = install_service_undo(Os::Windows, false);
+    assert_eq!(
+        runs(&undo),
+        vec![
+            "sc.exe stop AlLocalRunnerBroker".to_string(),
+            "sc.exe delete AlLocalRunnerBroker".to_string()
+        ]
+    );
+    for a in &undo {
+        assert!(
+            matches!(
+                a,
+                Action::Run {
+                    tolerate: Tolerate::Anything,
+                    ..
+                }
+            ),
+            "{a}"
+        );
+    }
+    assert!(install_service_undo(Os::Windows, true).is_empty());
+    assert!(install_service_undo(Os::Linux, false).is_empty());
+    assert!(install_service_undo(Os::MacOs, false).is_empty());
+}
+
+struct Failing {
+    done: RefCell<Vec<String>>,
+}
+
+impl System for Failing {
+    fn apply(&self, action: &Action) -> Result<(), String> {
+        self.done.borrow_mut().push(action.to_string());
+        match action {
+            Action::SecureServiceDir { .. } => Err("someone else owns it".into()),
+            _ => Ok(()),
+        }
+    }
+}
+
+#[test]
+fn a_rejected_directory_leaves_no_service_registered() {
+    let plan = install_service(&inputs(Os::Windows));
+    let undo = install_service_undo(Os::Windows, false);
+    let system = Failing {
+        done: RefCell::new(Vec::new()),
+    };
+    let err = apply_or_undo(&system, &plan, &undo).unwrap_err();
+    assert!(err.contains("someone else owns it"), "{err}");
+    let done = system.done.into_inner();
+    let tail: Vec<String> = undo.iter().map(|a| a.to_string()).collect();
+    assert!(done.ends_with(&tail), "{done:#?}");
+    assert!(!done.iter().any(|d| d.contains("start= auto")), "{done:#?}");
+
+    let ok = Failing {
+        done: RefCell::new(Vec::new()),
+    };
+    let quiet: Vec<Action> = plan
+        .iter()
+        .filter(|a| !matches!(a, Action::SecureServiceDir { .. }))
+        .cloned()
+        .collect();
+    apply_or_undo(&ok, &quiet, &undo).unwrap();
+    assert_eq!(
+        ok.done.into_inner().len(),
+        quiet.len(),
+        "no undo on success"
+    );
 }
 
 #[test]
@@ -198,6 +291,7 @@ fn autostart(os: Os, entry: Entry) -> AutostartInputs {
         home: PathBuf::from("/home/alex"),
         uid: 1000,
         user: r"PC\alex".into(),
+        principal: "S-1-5-21-1-2-3-1001".into(),
     }
 }
 
@@ -234,7 +328,7 @@ fn windows_autostart_is_a_logon_task_of_the_user_restarted_on_failure_without_a_
     assert_eq!(
         runs,
         vec![format!(
-            "schtasks /Create /TN Al.LocalRunner runner-box /XML {} /F",
+            "schtasks /Create /TN Al.LocalRunner runner-box S-1-5-21-1-2-3-1001 /XML {} /F",
             file.display()
         )]
     );
@@ -244,14 +338,26 @@ fn windows_autostart_is_a_logon_task_of_the_user_restarted_on_failure_without_a_
         off,
         vec![Action::Run {
             program: "schtasks".into(),
-            args: ["/Delete", "/TN", "Al.LocalRunner runner-box", "/F"]
-                .map(String::from)
-                .to_vec(),
+            args: [
+                "/Delete",
+                "/TN",
+                "Al.LocalRunner runner-box S-1-5-21-1-2-3-1001",
+                "/F"
+            ]
+            .map(String::from)
+            .to_vec(),
             tolerate: Tolerate::Anything,
         }]
     );
     let hub = autostart_off(&autostart(Os::Windows, Entry::Hub));
-    assert!(runs_of(&hub)[0].contains("Al.LocalRunner hub"));
+    assert!(runs_of(&hub)[0].contains("Al.LocalRunner hub S-1-5-21-1-2-3-1001"));
+    let other = AutostartInputs {
+        user: r"PC\bob".into(),
+        principal: "S-1-5-21-1-2-3-1002".into(),
+        ..autostart(Os::Windows, Entry::Runner(Some("box".into())))
+    };
+    assert_ne!(task_name(&runner), task_name(&other));
+    assert!(!runs_of(&autostart_off(&other))[0].contains("1001"));
 }
 
 fn runs_of(plan: &[Action]) -> Vec<String> {
@@ -271,7 +377,10 @@ fn unix_autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
         unit.contains("\"runner\" \"run\" \"--name\" \"box\" \"--background\""),
         "{unit}"
     );
-    assert!(unit.contains("UMask=0077"), "{unit}");
+    assert!(
+        !unit.contains("UMask"),
+        "a user's own processes keep the user's umask: {unit}"
+    );
     assert!(
         runs(&plan).contains(&"systemctl --user enable al-localrunner-runner-box.service".into())
     );
@@ -285,6 +394,7 @@ fn unix_autostart_starts_the_role_as_the_user_at_logon_and_off_removes_it() {
         PathBuf::from("/home/alex/Library/LaunchAgents/com.al-localrunner.runner.plist")
     );
     assert!(agent.contains("<string>runner</string>") && !agent.contains("UserName"));
+    assert!(!agent.contains("Umask"), "{agent}");
     assert!(agent.contains("<string>/home/alex/state &amp; more</string>"));
     assert!(runs(&plan)
         .iter()

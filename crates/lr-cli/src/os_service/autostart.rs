@@ -49,6 +49,9 @@ pub struct AutostartInputs {
     pub uid: u32,
     /// The OS user (Windows: `DOMAIN\name`, the task's logon trigger and principal).
     pub user: String,
+    /// The user's principal (Windows: the SID): part of the task's name, so users of one
+    /// machine never replace or remove each other's tasks.
+    pub principal: String,
 }
 
 fn s(p: &Path) -> String {
@@ -92,9 +95,11 @@ pub(crate) fn plist(label: &str, args: &[String], extra: &str) -> String {
     )
 }
 
-/// Name of the Task Scheduler task of `entry`.
-pub fn task_name(entry: &Entry) -> String {
-    format!("Al.LocalRunner {}", entry.name())
+/// Name of the Task Scheduler task of `a.entry` for `a`'s user: `Al.LocalRunner <entry>
+/// <principal>`. The scheduler's folder is shared by the machine's users; the principal keeps
+/// each user's tasks apart.
+pub fn task_name(a: &AutostartInputs) -> String {
+    format!("Al.LocalRunner {} {}", a.entry.name(), a.principal)
 }
 
 /// The task: started at the user's logon in the user's session with the user's ordinary
@@ -153,14 +158,7 @@ pub fn autostart_on(a: &AutostartInputs) -> Vec<Action> {
                 },
                 Action::run(
                     "schtasks",
-                    &[
-                        "/Create",
-                        "/TN",
-                        &task_name(&a.entry),
-                        "/XML",
-                        &s(&file),
-                        "/F",
-                    ],
+                    &["/Create", "/TN", &task_name(a), "/XML", &s(&file), "/F"],
                 ),
                 Action::RemoveFile(file),
             ]
@@ -169,7 +167,7 @@ pub fn autostart_on(a: &AutostartInputs) -> Vec<Action> {
             let (unit, path) = user_unit(a);
             let contents = format!(
                 "[Unit]\nDescription=Al.LocalRunner {}\n\n[Service]\nType=simple\nExecStart={}\n\
-                 Restart=on-failure\nUMask=0077\n\n[Install]\nWantedBy=default.target\n",
+                 Restart=on-failure\n\n[Install]\nWantedBy=default.target\n",
                 a.entry.name(),
                 systemd_command_line(&with_exe(a))
             );
@@ -182,11 +180,10 @@ pub fn autostart_on(a: &AutostartInputs) -> Vec<Action> {
         Os::MacOs => {
             let (label, path) = agent(a);
             let domain = format!("gui/{}", a.uid);
-            let extra = "  <key>Umask</key>\n  <integer>63</integer>\n";
             vec![
                 Action::WriteFile {
                     path: path.clone(),
-                    contents: plist(&label, &with_exe(a), extra),
+                    contents: plist(&label, &with_exe(a), ""),
                 },
                 Action::run("launchctl", &["bootout", &format!("{domain}/{label}")])
                     .tolerating(Tolerate::Anything),
@@ -201,7 +198,7 @@ pub fn autostart_off(a: &AutostartInputs) -> Vec<Action> {
     match a.os {
         Os::Windows => {
             vec![
-                Action::run("schtasks", &["/Delete", "/TN", &task_name(&a.entry), "/F"])
+                Action::run("schtasks", &["/Delete", "/TN", &task_name(a), "/F"])
                     .tolerating(Tolerate::Anything),
             ]
         }
