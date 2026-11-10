@@ -99,6 +99,8 @@ pub fn order_spec() -> OrderSpec {
         identity: identity(),
         code: WireCode::Commit {
             sha: "abc123".into(),
+            repo_url: None,
+            branch: None,
         },
         wanted_priority: Some(5),
     }

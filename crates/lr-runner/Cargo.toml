@@ -8,3 +8,12 @@ publish = false
 lr-core.workspace = true
 lr-abstractions.workspace = true
 lr-proto.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
+
+[dev-dependencies]
+lr-abstractions = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }

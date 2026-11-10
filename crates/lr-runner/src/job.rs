@@ -1,0 +1,242 @@
+use crate::agent::{Current, Shared};
+use crate::connect::Session;
+use crate::prepare::{job_env, step_secrets, Prepared};
+use crate::run::run_phases;
+use lr_abstractions::{stop_signal, Level, Stop, StoreError};
+use lr_core::{JobId, JobState, StepState};
+use lr_proto::{Assign, JobResult, ReasonCode, RunnerCancel, RunnerToBroker, Started, StepResult};
+use std::sync::Arc;
+
+pub(crate) struct Final {
+    pub(crate) state: JobState,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) reason: Option<ReasonCode>,
+    pub(crate) detail: Option<String>,
+}
+
+impl Final {
+    pub(crate) fn failed(detail: impl Into<String>) -> Final {
+        Final {
+            state: JobState::Failed,
+            exit_code: None,
+            reason: None,
+            detail: Some(detail.into()),
+        }
+    }
+}
+
+async fn known(shared: &Shared, job: &JobId) -> Result<bool, StoreError> {
+    if shared.state().job.as_ref().is_some_and(|c| &c.job == job) {
+        return Ok(true);
+    }
+    if shared.deps.store.last_seq(job).await? > 0 {
+        return Ok(true);
+    }
+    Ok(shared
+        .deps
+        .store
+        .pending_outbox()
+        .await?
+        .iter()
+        .any(|e| &e.job == job))
+}
+
+async fn accept(s: &Session<'_>, job: &JobId, seq: u64) -> bool {
+    match s.shared.deps.store.accept_seq(job, seq).await {
+        Ok(true) => {
+            s.ack(job, seq).await;
+            true
+        }
+        Ok(false) => {
+            s.ack(job, seq).await;
+            false
+        }
+        Err(StoreError::SeqGap { expected, got }) => {
+            s.refuse_gap(job, expected, got).await;
+            false
+        }
+        Err(e) => {
+            s.shared.diag.event(
+                Level::Error,
+                "received seq not stored, message dropped",
+                &[("job", &job.0), ("error", &e.to_string())],
+            );
+            false
+        }
+    }
+}
+
+pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
+    let msg = RunnerToBroker::JobResult(JobResult {
+        job: job.clone(),
+        seq: 0,
+        state: f.state,
+        exit_code: f.exit_code,
+        reason: f.reason,
+        detail: f.detail,
+    });
+    shared.outbox.push_until_stored(job, &msg).await;
+}
+
+pub(crate) async fn skip_steps(
+    shared: &Shared,
+    job: &JobId,
+    steps: &[lr_core::StepSpec],
+    from: usize,
+) {
+    for (ord, step) in steps.iter().enumerate().skip(from) {
+        let msg = RunnerToBroker::StepResult(StepResult {
+            job: job.clone(),
+            seq: 0,
+            ord: ord as u32,
+            name: step.name.clone(),
+            state: StepState::Skipped,
+            exit_code: None,
+            duration_ms: 0,
+        });
+        shared.outbox.push_or_log(job, &msg).await;
+    }
+}
+
+pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
+    let shared = s.shared;
+    let was_known = match known(shared, &a.job).await {
+        Ok(k) => k,
+        Err(e) => {
+            shared.diag.event(
+                Level::Error,
+                "runner store unreadable, assignment dropped",
+                &[("job", &a.job.0), ("error", &e.to_string())],
+            );
+            return;
+        }
+    };
+    if !accept(s, &a.job, a.seq).await {
+        return;
+    }
+    if was_known {
+        shared.diag.event(
+            Level::Info,
+            "job already known, not run again",
+            &[("job", &a.job.0)],
+        );
+        shared.wake.notify_one();
+        return;
+    }
+    let busy = shared.state().job.as_ref().map(|c| c.job.clone());
+    let refusal = if shared.state().draining {
+        Some("runner is draining".to_string())
+    } else if let Some(other) = busy {
+        Some(format!("runner is busy with job {other}"))
+    } else {
+        let t = a.spec.requirements.timeout_s;
+        shared
+            .deps
+            .settings
+            .max_job_timeout_s
+            .filter(|ceiling| t > *ceiling)
+            .map(|ceiling| format!("job timeout {t} s is above the runner ceiling {ceiling} s"))
+    };
+    if let Some(detail) = refusal {
+        shared.diag.event(
+            Level::Warn,
+            "assignment refused",
+            &[("job", &a.job.0), ("why", &detail)],
+        );
+        finish(shared, &a.job, Final::failed(detail)).await;
+        return;
+    }
+    let (handle, signal) = stop_signal();
+    shared.state().job = Some(Current {
+        job: a.job.clone(),
+        stop: handle,
+        reason: None,
+        lost_killed: false,
+    });
+    let task_shared: Arc<Shared> = s.shared.clone();
+    s.slot.spawn(async move {
+        execute(&task_shared, a, signal).await;
+    });
+}
+
+pub(crate) async fn on_cancel(s: &mut Session<'_>, c: RunnerCancel) {
+    if !accept(s, &c.job, c.seq).await {
+        return;
+    }
+    let running = s
+        .shared
+        .state()
+        .job
+        .as_ref()
+        .is_some_and(|cur| cur.job == c.job);
+    if !running {
+        s.shared.diag.event(
+            Level::Info,
+            "cancel of a job not running",
+            &[("job", &c.job.0)],
+        );
+        return;
+    }
+    let text = match &c.detail {
+        Some(d) => format!("cancelled ({}): {d}", c.code),
+        None => format!("cancelled ({})", c.code),
+    };
+    s.shared.stop_job(Stop::Cancel, c.code, &text);
+}
+
+async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal) {
+    let job = a.job.clone();
+    let marker = shared.marker();
+    if let Err(e) = shared.deps.files.write(&marker, job.0.as_bytes()).await {
+        shared.diag.event(
+            Level::Error,
+            "active job marker not written",
+            &[("job", &job.0), ("error", &e.to_string())],
+        );
+    }
+    let started = RunnerToBroker::Started(Started {
+        job: job.clone(),
+        seq: 0,
+    });
+    shared.outbox.push_until_stored(&job, &started).await;
+    let f = match step_secrets(shared, &a.spec).await {
+        Err(f) => {
+            skip_steps(shared, &job, &a.spec.steps, 0).await;
+            f
+        }
+        Ok(secrets) => {
+            let env = job_env(shared, &job);
+            let prepared = Prepared {
+                job: job.clone(),
+                spec: &a.spec,
+                secrets,
+                env,
+            };
+            run_phases(shared, prepared, signal).await
+        }
+    };
+    let reason = shared.state().job.as_ref().and_then(|c| c.reason.clone());
+    let f = Final {
+        reason: f.reason.or(if f.state == JobState::Cancelled {
+            reason
+        } else {
+            None
+        }),
+        ..f
+    };
+    finish(shared, &job, f).await;
+    if let Err(e) = shared.deps.files.remove_file(&marker).await {
+        shared.diag.event(
+            Level::Error,
+            "active job marker not removed",
+            &[("job", &job.0), ("error", &e.to_string())],
+        );
+    }
+    {
+        let mut st = shared.state();
+        st.job = None;
+        st.caps_dirty = true;
+    }
+    shared.forget_finished().await;
+    shared.wake.notify_one();
+}

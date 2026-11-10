@@ -118,7 +118,11 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             }],
             enqueued_at: Timestamp(enqueued_ms),
             identity: identity("agent-1"),
-            code: WireCode::Commit { sha: "abc".into() },
+            code: WireCode::Commit {
+                sha: "abc".into(),
+                repo_url: None,
+                branch: None,
+            },
             wanted_priority: None,
         }),
     })

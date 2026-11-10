@@ -5,6 +5,7 @@
 mod broker_jobs;
 mod broker_store;
 mod clock;
+mod files;
 mod hub_runner_store;
 mod misc;
 mod outbox;
@@ -13,6 +14,7 @@ mod transport;
 
 pub use broker_store::MemoryBrokerStore;
 pub use clock::ManualClock;
+pub use files::MemoryFiles;
 pub use hub_runner_store::{MemoryHubStore, MemoryRunnerStore};
 pub use misc::{FakeDataSource, MemoryLogSink, MemorySecrets};
 pub use process::{

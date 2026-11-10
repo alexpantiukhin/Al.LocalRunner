@@ -32,7 +32,7 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
     let id = &spec.identity;
     let (code_source, commit) = match &spec.code {
         WireCode::WorkTree { .. } => (CodeSource::WorkTree, None),
-        WireCode::Commit { sha } => (CodeSource::Commit, Some(sha.clone())),
+        WireCode::Commit { sha, .. } => (CodeSource::Commit, Some(sha.clone())),
     };
     let (source, github) = match &id.source {
         Source::Session => (SourceKind::Session, None),

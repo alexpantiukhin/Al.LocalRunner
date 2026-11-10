@@ -16,6 +16,13 @@ pub enum WireCode {
     Commit {
         /// Commit hash.
         sha: String,
+        /// Address of the repository (`git remote get-url origin`) the runner mirrors and
+        /// fetches; absent from senders of an older minor version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo_url: Option<String>,
+        /// Branch of the submitter, for the `{branch}` placeholder of a profile `source` step.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
 }
 

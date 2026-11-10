@@ -28,7 +28,14 @@ async fn order_accepted_then_assigned_to_matching_runner() {
     assert_eq!(assign.seq, 1);
     assert_eq!(assign.spec.client, ALEX);
     assert_eq!(assign.spec.steps[0].command, "make");
-    assert_eq!(assign.spec.code, WireCode::Commit { sha: "abc".into() });
+    assert_eq!(
+        assign.spec.code,
+        WireCode::Commit {
+            sha: "abc".into(),
+            repo_url: None,
+            branch: None
+        }
+    );
     assert_eq!(assign.spec.broker_lost_kill_s, Some(180));
     assert_eq!(
         h.job_row(ALEX, "j1").await.unwrap().job.runner.as_deref(),

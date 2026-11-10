@@ -157,3 +157,35 @@ fn cache_figures_ride_in_capabilities_for_the_runners_page() {
 fn set<T: Ord>(items: impl IntoIterator<Item = T>) -> BTreeSet<T> {
     items.into_iter().collect()
 }
+
+#[test]
+fn commit_code_without_repository_reads_as_before() {
+    let old: lr_proto::WireCode =
+        serde_json::from_str(r#"{"kind":"commit","sha":"abc1234"}"#).unwrap();
+    assert_eq!(
+        old,
+        lr_proto::WireCode::Commit {
+            sha: "abc1234".into(),
+            repo_url: None,
+            branch: None,
+        }
+    );
+    assert_eq!(
+        serde_json::to_string(&old).unwrap(),
+        r#"{"kind":"commit","sha":"abc1234"}"#
+    );
+    let new = lr_proto::WireCode::Commit {
+        sha: "abc1234".into(),
+        repo_url: Some("https://h/o/r.git".into()),
+        branch: Some("main".into()),
+    };
+    let text = serde_json::to_string(&new).unwrap();
+    assert_eq!(
+        text,
+        r#"{"kind":"commit","sha":"abc1234","repo_url":"https://h/o/r.git","branch":"main"}"#
+    );
+    assert_eq!(
+        serde_json::from_str::<lr_proto::WireCode>(&text).unwrap(),
+        new
+    );
+}
