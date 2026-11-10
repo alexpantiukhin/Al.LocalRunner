@@ -1,24 +1,25 @@
 use crate::error::NetError;
 use std::ffi::c_void;
-use std::path::Path;
 use std::ptr::null_mut;
 use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
-use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-    SetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
-};
+use windows_sys::Win32::Security::Authorization::{ConvertSidToStringSidW, ConvertStringSidToSidW};
 use windows_sys::Win32::Security::{
-    GetSecurityDescriptorDacl, GetTokenInformation, LookupAccountSidW, TokenUser, ACL,
-    DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-    SID_NAME_USE, TOKEN_QUERY, TOKEN_USER,
+    GetTokenInformation, LookupAccountNameW, LookupAccountSidW, TokenUser, PSID, SID_NAME_USE,
+    TOKEN_QUERY, TOKEN_USER,
 };
+use windows_sys::Win32::System::SystemInformation::{ComputerNameNetBIOS, GetComputerNameExW};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-fn last_error(what: &str) -> NetError {
+/// SID of the local SYSTEM account.
+pub(crate) const SYSTEM_SID: &str = "S-1-5-18";
+/// SID of the local Administrators group.
+pub(crate) const ADMINISTRATORS_SID: &str = "S-1-5-32-544";
+
+pub(crate) fn last_error(what: &str) -> NetError {
     NetError::Io(format!("{what}: {}", std::io::Error::last_os_error()))
 }
 
-fn wide(s: &str) -> Vec<u16> {
+pub(crate) fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
@@ -29,6 +30,8 @@ fn from_wide(buf: &[u16]) -> String {
 
 /// Owned token handle, closed on drop.
 pub(crate) struct Token(pub(crate) HANDLE);
+
+unsafe impl Send for Token {}
 
 impl Drop for Token {
     fn drop(&mut self) {
@@ -63,10 +66,23 @@ fn user_sid(buf: &[u8]) -> PSID {
     unsafe { (*user).User.Sid }
 }
 
-/// Account name of the user a token belongs to, without the domain.
-pub(crate) fn token_user_name(token: &Token) -> Result<String, NetError> {
-    let buf = token_user(token)?;
-    let sid = user_sid(&buf);
+/// `S-1-5-...` text of a SID.
+pub(crate) fn sid_to_string(sid: PSID) -> Result<String, NetError> {
+    let mut text: *mut u16 = null_mut();
+    if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {
+        return Err(last_error("ConvertSidToStringSid"));
+    }
+    let mut len = 0;
+    while unsafe { *text.add(len) } != 0 {
+        len += 1;
+    }
+    let s = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
+    unsafe { LocalFree(text as *mut c_void) };
+    Ok(s)
+}
+
+/// Qualified account name `DOMAIN\name` of a SID; local accounts carry the computer name.
+pub(crate) fn sid_account_name(sid: PSID) -> Result<String, NetError> {
     let mut name = vec![0u16; 256];
     let mut domain = vec![0u16; 256];
     let (mut name_len, mut domain_len) = (name.len() as u32, domain.len() as u32);
@@ -85,23 +101,36 @@ pub(crate) fn token_user_name(token: &Token) -> Result<String, NetError> {
     if ok == 0 {
         return Err(last_error("LookupAccountSid"));
     }
-    Ok(from_wide(&name))
+    let (name, domain) = (from_wide(&name), from_wide(&domain));
+    Ok(if domain.is_empty() {
+        name
+    } else {
+        format!("{domain}\\{name}")
+    })
 }
 
-/// String SID (`S-1-5-...`) of the user a token belongs to.
+/// Qualified account name of the SID given as text.
+pub(crate) fn sid_text_account_name(sid: &str) -> Result<String, NetError> {
+    let text = wide(sid);
+    let mut psid: PSID = null_mut();
+    if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut psid) } == 0 {
+        return Err(last_error("ConvertStringSidToSid"));
+    }
+    let name = sid_account_name(psid);
+    unsafe { LocalFree(psid) };
+    name
+}
+
+/// Qualified account name of the user a token belongs to.
+pub(crate) fn token_user_name(token: &Token) -> Result<String, NetError> {
+    let buf = token_user(token)?;
+    sid_account_name(user_sid(&buf))
+}
+
+/// String SID of the user a token belongs to.
 pub(crate) fn token_sid_string(token: &Token) -> Result<String, NetError> {
     let buf = token_user(token)?;
-    let mut text: *mut u16 = null_mut();
-    if unsafe { ConvertSidToStringSidW(user_sid(&buf), &mut text) } == 0 {
-        return Err(last_error("ConvertSidToStringSid"));
-    }
-    let mut len = 0;
-    while unsafe { *text.add(len) } != 0 {
-        len += 1;
-    }
-    let s = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, len) });
-    unsafe { LocalFree(text as *mut c_void) };
-    Ok(s)
+    sid_to_string(user_sid(&buf))
 }
 
 /// Token of this process.
@@ -113,63 +142,61 @@ pub(crate) fn process_token() -> Result<Token, NetError> {
     Ok(Token(handle))
 }
 
-/// A security descriptor built from SDDL, freed on drop.
-pub(crate) struct Descriptor(pub(crate) PSECURITY_DESCRIPTOR);
+/// NetBIOS name of this computer: the domain part of its local accounts.
+pub(crate) fn computer_name() -> Result<String, NetError> {
+    let mut buf = vec![0u16; 64];
+    let mut len = buf.len() as u32;
+    if unsafe { GetComputerNameExW(ComputerNameNetBIOS, buf.as_mut_ptr(), &mut len) } == 0 {
+        return Err(last_error("GetComputerNameEx"));
+    }
+    Ok(from_wide(&buf))
+}
 
-impl Descriptor {
-    pub(crate) fn from_sddl(sddl: &str) -> Result<Descriptor, NetError> {
-        let text = wide(sddl);
-        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
-        let ok = unsafe {
-            ConvertStringSecurityDescriptorToSecurityDescriptorW(
-                text.as_ptr(),
-                SDDL_REVISION_1,
-                &mut sd,
-                null_mut(),
-            )
-        };
-        if ok == 0 {
-            return Err(last_error("ConvertStringSecurityDescriptor"));
+/// An account name as `[[local_user]]` means it: `DOMAIN\name` stays, a bare `name` is a local
+/// account of this computer.
+pub(crate) fn qualify(name: &str, machine: &str) -> String {
+    if name.contains('\\') {
+        name.to_string()
+    } else {
+        format!("{machine}\\{name}")
+    }
+}
+
+/// String SID of an account name, qualified with [`qualify`] first; a SID (`S-1-...`) is
+/// checked and returned in its canonical text.
+pub(crate) fn account_sid(name: &str) -> Result<String, NetError> {
+    if name.starts_with("S-1-") || name.starts_with("s-1-") {
+        let text = wide(name);
+        let mut psid: PSID = null_mut();
+        if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut psid) } == 0 {
+            return Err(last_error(&format!("not a SID `{name}`")));
         }
-        Ok(Descriptor(sd))
+        let canonical = sid_to_string(psid);
+        unsafe { LocalFree(psid) };
+        return canonical;
     }
-}
-
-impl Drop for Descriptor {
-    fn drop(&mut self) {
-        unsafe { LocalFree(self.0) };
-    }
-}
-
-/// Replaces the DACL of `path` with one that grants full access to the current user only and
-/// inherits nothing from the parent directory.
-pub(crate) fn restrict_to_owner(path: &Path) -> Result<(), NetError> {
-    let sid = token_sid_string(&process_token()?)?;
-    let sd = Descriptor::from_sddl(&format!("D:P(A;;FA;;;{sid})"))?;
-    let mut present = 0;
-    let mut defaulted = 0;
-    let mut dacl: *mut ACL = null_mut();
-    if unsafe { GetSecurityDescriptorDacl(sd.0, &mut present, &mut dacl, &mut defaulted) } == 0 {
-        return Err(last_error("GetSecurityDescriptorDacl"));
-    }
-    let name = wide(&path.to_string_lossy());
-    let status = unsafe {
-        SetNamedSecurityInfoW(
-            name.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            null_mut(),
-            null_mut(),
-            dacl,
-            null_mut(),
+    let qualified = wide(&qualify(name, &computer_name()?));
+    let mut sid = vec![0u8; 256];
+    let mut sid_len = sid.len() as u32;
+    let mut domain = vec![0u16; 256];
+    let mut domain_len = domain.len() as u32;
+    let mut kind: SID_NAME_USE = 0;
+    let ok = unsafe {
+        LookupAccountNameW(
+            std::ptr::null(),
+            qualified.as_ptr(),
+            sid.as_mut_ptr() as PSID,
+            &mut sid_len,
+            domain.as_mut_ptr(),
+            &mut domain_len,
+            &mut kind,
         )
     };
-    if status != 0 {
+    if ok == 0 {
         return Err(NetError::Io(format!(
-            "SetNamedSecurityInfo {}: {}",
-            path.display(),
-            std::io::Error::from_raw_os_error(status as i32)
+            "unknown account `{name}`: {}",
+            std::io::Error::last_os_error()
         )));
     }
-    Ok(())
+    sid_to_string(sid.as_mut_ptr() as PSID)
 }

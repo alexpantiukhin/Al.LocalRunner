@@ -1,5 +1,5 @@
 use crate::error::NetError;
-use crate::files::{read_private, write_private};
+use crate::files::{read_private, write_private, write_public};
 use crate::fingerprint::Fingerprint;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
@@ -44,29 +44,41 @@ impl BrokerIdentity {
     }
 
     /// Loads the certificate and key of `dir`, creating and saving them on the first start.
-    /// The key file is written readable by the current OS user only and refused on load when
-    /// others can read it; moving the state directory keeps the fingerprint (spec 16.10).
+    /// The key is written first, then the certificate, each atomically (temporary file and
+    /// rename), so a crash leaves either nothing, the key alone or both. The key alone means no
+    /// certificate was ever shown, so both are created anew; a certificate without its key is
+    /// refused (the identity is lost and must be recreated by the owner). The key file is
+    /// readable by the current OS user only and refused on load when others can read it;
+    /// moving the state directory keeps the fingerprint (spec 16.10).
     pub fn load_or_create(dir: &Path) -> Result<BrokerIdentity, NetError> {
         let cert_path = dir.join(CERT_FILE);
         let key_path = dir.join(KEY_FILE);
-        if cert_path.exists() || key_path.exists() {
-            let cert_pem = std::fs::read(&cert_path)?;
-            let cert = CertificateDer::from_pem_slice(&cert_pem)
-                .map_err(|e| NetError::Tls(format!("{}: {e}", cert_path.display())))?;
-            let key = Zeroizing::new(read_private(&key_path)?);
-            let key_pem = Zeroizing::new(
-                String::from_utf8(key.to_vec())
-                    .map_err(|_| NetError::Tls(format!("{} is not PEM", key_path.display())))?,
-            );
-            let identity = BrokerIdentity { cert, key_pem };
-            identity.private_key()?;
-            return Ok(identity);
+        match (cert_path.exists(), key_path.exists()) {
+            (true, true) => {
+                let cert_pem = std::fs::read(&cert_path)?;
+                let cert = CertificateDer::from_pem_slice(&cert_pem)
+                    .map_err(|e| NetError::Tls(format!("{}: {e}", cert_path.display())))?;
+                let key = Zeroizing::new(read_private(&key_path)?);
+                let key_pem =
+                    Zeroizing::new(String::from_utf8(key.to_vec()).map_err(|_| {
+                        NetError::Tls(format!("{} is not PEM", key_path.display()))
+                    })?);
+                let identity = BrokerIdentity { cert, key_pem };
+                identity.private_key()?;
+                Ok(identity)
+            }
+            (true, false) => Err(NetError::Tls(format!(
+                "{} exists without {}; the broker identity is lost",
+                cert_path.display(),
+                key_path.display()
+            ))),
+            (false, _) => {
+                let identity = BrokerIdentity::generate()?;
+                write_private(&key_path, identity.key_pem.as_bytes())?;
+                write_public(&cert_path, pem_of_cert(&identity.cert).as_bytes())?;
+                Ok(identity)
+            }
         }
-        let identity = BrokerIdentity::generate()?;
-        write_private(&key_path, identity.key_pem.as_bytes())?;
-        let cert_pem = pem_of_cert(&identity.cert);
-        std::fs::write(&cert_path, cert_pem)?;
-        Ok(identity)
     }
 
     /// The pinned fingerprint of the certificate.
@@ -201,6 +213,19 @@ pub(crate) fn client_config(
         .with_no_client_auth();
     config.enable_sni = false;
     Ok((Arc::new(config), verifier))
+}
+
+/// Label of the keying material exported from the TLS session to bind the key proof to it.
+pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-al-localrunner-auth-v1";
+
+/// The channel binding of a TLS connection: 32 bytes exported from its session (RFC 8446
+/// exporter), equal on both ends and different for every session. Signing it ties a key proof
+/// to this very connection, on top of the fresh nonce.
+pub fn channel_binding<D>(
+    conn: &rustls::ConnectionCommon<D>,
+) -> Result<[u8; crate::keys::BINDING_LEN], NetError> {
+    conn.export_keying_material([0u8; crate::keys::BINDING_LEN], EXPORTER_LABEL, None)
+        .map_err(|e| NetError::Tls(format!("exporter: {e}")))
 }
 
 /// A TLS 1.3 client configuration that accepts only the certificate with fingerprint `pin`.

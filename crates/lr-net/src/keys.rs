@@ -17,13 +17,18 @@ pub const NONCE_LEN: usize = 32;
 const SIGN_CONTEXT: &[u8] = b"al-localrunner/auth/v1\0";
 const SECRET_FILE_HEADER: &str = "al-localrunner ed25519 secret key v1";
 
+/// Bytes of the TLS channel binding (keying material exported from the TLS session).
+pub const BINDING_LEN: usize = 32;
+
 /// The message a key signs to prove itself on one connection: a fixed context, the broker's
-/// certificate fingerprint and the connection's fresh nonce. A signature is therefore good for
-/// one broker and one connection only.
-pub fn challenge_message(fingerprint: &Fingerprint, nonce: &[u8]) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(SIGN_CONTEXT.len() + 32 + nonce.len());
+/// certificate fingerprint, the TLS channel binding of this connection and its fresh nonce. A
+/// signature is therefore good for one broker and one TLS session only.
+pub fn challenge_message(fingerprint: &Fingerprint, binding: &[u8], nonce: &[u8]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(SIGN_CONTEXT.len() + 32 + 2 + binding.len() + nonce.len());
     msg.extend_from_slice(SIGN_CONTEXT);
     msg.extend_from_slice(fingerprint.as_bytes());
+    msg.extend_from_slice(&(binding.len() as u16).to_be_bytes());
+    msg.extend_from_slice(binding);
     msg.extend_from_slice(nonce);
     msg
 }
@@ -58,8 +63,15 @@ impl ClientKey {
     }
 
     /// Signs the challenge of one connection, see [`challenge_message`].
-    pub fn sign_challenge(&self, fingerprint: &Fingerprint, nonce: &[u8]) -> String {
-        let sig = self.signing.sign(&challenge_message(fingerprint, nonce));
+    pub fn sign_challenge(
+        &self,
+        fingerprint: &Fingerprint,
+        binding: &[u8],
+        nonce: &[u8],
+    ) -> String {
+        let sig = self
+            .signing
+            .sign(&challenge_message(fingerprint, binding, nonce));
         URL_SAFE_NO_PAD.encode(sig.to_bytes())
     }
 
@@ -115,17 +127,24 @@ fn encode_public(key: &VerifyingKey) -> String {
     )
 }
 
-/// Parses a public key string, refusing anything but a valid ed25519 point.
+/// Parses a public key string, refusing anything but the canonical encoding of a valid,
+/// non-weak ed25519 point, so one key has exactly one string.
 pub fn parse_public_key(s: &str) -> Result<VerifyingKey, NetError> {
     let bad = || NetError::BadKey(format!("not an ed25519 public key: {s}"));
     let b64 = s.strip_prefix(PUBLIC_KEY_PREFIX).ok_or_else(bad)?;
     let bytes = URL_SAFE_NO_PAD.decode(b64).map_err(|_| bad())?;
     let bytes: [u8; 32] = bytes.as_slice().try_into().map_err(|_| bad())?;
     let key = VerifyingKey::from_bytes(&bytes).map_err(|_| bad())?;
-    if key.is_weak() {
+    if key.is_weak() || key.to_edwards().compress().to_bytes() != bytes {
         return Err(bad());
     }
     Ok(key)
+}
+
+/// The one string form of a public key: `ed25519:` and the canonical point in base64url.
+/// Lookups and stored key ids always use it.
+pub fn canonical_public_key(s: &str) -> Result<String, NetError> {
+    Ok(encode_public(&parse_public_key(s)?))
 }
 
 /// Checks that `signature` is `public_key`'s signature of this connection's challenge. Uses
@@ -133,6 +152,7 @@ pub fn parse_public_key(s: &str) -> Result<VerifyingKey, NetError> {
 pub fn verify_challenge(
     public_key: &str,
     fingerprint: &Fingerprint,
+    binding: &[u8],
     nonce: &[u8],
     signature: &str,
 ) -> Result<(), NetError> {
@@ -145,7 +165,7 @@ pub fn verify_challenge(
         .try_into()
         .map_err(|_| NetError::BadSignature)?;
     let sig = Signature::from_bytes(&raw);
-    let msg = challenge_message(fingerprint, nonce);
+    let msg = challenge_message(fingerprint, binding, nonce);
     key.verify_strict(&msg, &sig)
         .map_err(|_| NetError::BadSignature)
 }

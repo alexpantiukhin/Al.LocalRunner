@@ -1,22 +1,35 @@
-use crate::codec::{read_frame, write_end, write_frame};
+use crate::auth::AUTH_FRAME_LIMIT;
+use crate::codec::{read_frame, read_frame_limited, write_end, write_frame};
 use async_trait::async_trait;
 use lr_abstractions::{Frame, Peer, Transport, TransportError, MAX_FRAME_BYTES};
 use lr_proto::{AuthFromBroker, FrameError, ProtocolError, ProtocolErrorCode};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::Mutex;
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
 
+const OPEN: u8 = 0;
+const AWAIT_JOIN: u8 = 1;
+const AWAIT_REPLY: u8 = 2;
+const DONE: u8 = 3;
+
 /// A framed connection over any byte stream: TLS after the key proof, or local IPC after the
 /// kernel reported the peer's OS user.
+///
+/// A joining connection ([`lr_abstractions::PeerAccess::Joining`]) is one request and one
+/// answer (spec 3.8): the first frame must be a `join` of at most
+/// [`AUTH_FRAME_LIMIT`] bytes arriving within the join timeout, the first frame sent is the
+/// last, and the transport closes the connection after it.
 pub struct StreamTransport {
     peer: Peer,
     reader: Mutex<Reader>,
     writer: Mutex<Writer>,
     closed: AtomicBool,
-    join_only: AtomicBool,
+    phase: AtomicU8,
+    join_timeout: Duration,
 }
 
 impl StreamTransport {
@@ -30,12 +43,14 @@ impl StreamTransport {
             reader: Mutex::new(Box::new(r)),
             writer: Mutex::new(Box::new(w)),
             closed: AtomicBool::new(false),
-            join_only: AtomicBool::new(false),
+            phase: AtomicU8::new(OPEN),
+            join_timeout: Duration::ZERO,
         }
     }
 
-    pub(crate) fn join_only(self) -> StreamTransport {
-        self.join_only.store(true, Ordering::SeqCst);
+    pub(crate) fn join_only(mut self, timeout: Duration) -> StreamTransport {
+        self.phase = AtomicU8::new(AWAIT_JOIN);
+        self.join_timeout = timeout;
         self
     }
 
@@ -84,6 +99,10 @@ impl Transport for StreamTransport {
         if matches!(result, Err(TransportError::Closed | TransportError::Io(_))) {
             self.closed.store(true, Ordering::SeqCst);
         }
+        if self.phase.load(Ordering::SeqCst) != OPEN {
+            self.phase.store(DONE, Ordering::SeqCst);
+            self.close().await;
+        }
         result
     }
 
@@ -91,9 +110,23 @@ impl Transport for StreamTransport {
         if self.closed.load(Ordering::SeqCst) {
             return Err(TransportError::Closed);
         }
-        let read = {
+        let (read, joining) = {
             let mut r = self.reader.lock().await;
-            read_frame(&mut *r).await
+            match self.phase.load(Ordering::SeqCst) {
+                OPEN => (read_frame(&mut *r).await, false),
+                AWAIT_JOIN => {
+                    let limited = read_frame_limited(&mut *r, AUTH_FRAME_LIMIT);
+                    match tokio::time::timeout(self.join_timeout, limited).await {
+                        Ok(read) => (read, true),
+                        Err(_) => {
+                            drop(r);
+                            self.close().await;
+                            return Err(TransportError::Io("no join arrived in time".into()));
+                        }
+                    }
+                }
+                _ => return Err(TransportError::Closed),
+            }
         };
         let bytes = match read {
             Ok(bytes) => bytes,
@@ -109,10 +142,11 @@ impl Transport for StreamTransport {
                 });
             }
         };
-        if self.join_only.swap(false, Ordering::SeqCst)
-            && frame_type(&bytes).as_deref() != Some("join")
-        {
-            return Err(self.refuse_not_join().await);
+        if joining {
+            if frame_type(&bytes).as_deref() != Some("join") {
+                return Err(self.refuse_not_join().await);
+            }
+            self.phase.store(AWAIT_REPLY, Ordering::SeqCst);
         }
         Ok(Frame::from_bytes(bytes))
     }

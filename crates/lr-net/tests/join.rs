@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use lr_abstractions::fakes::MemoryBrokerStore;
+use lr_abstractions::fakes::{ManualClock, MemoryBrokerStore};
 use lr_abstractions::{BrokerStore, MachineKind, StoreError};
 use lr_net::{
     BrokerIdentity, CodeError, CodeRequest, Fingerprint, JoinCode, Registry, RegistryError,
@@ -353,7 +353,8 @@ async fn revoke_marks_the_record_and_keeps_others() {
 async fn listener_needed_only_with_live_code_or_machine() {
     let identity = BrokerIdentity::generate().unwrap();
     let store: Arc<dyn BrokerStore> = Arc::new(MemoryBrokerStore::new());
-    let registry = Registry::new(store, BROKER_MACHINE_ID, identity.fingerprint());
+    let clock = Arc::new(ManualClock::new(T0));
+    let registry = Registry::new(store, clock, BROKER_MACHINE_ID, identity.fingerprint());
     assert!(!registry.should_listen(T0).await.unwrap());
     let code = registry
         .issue(request(MachineKind::Runner, 1, 60), T0)

@@ -1,11 +1,11 @@
 mod common;
 
 use common::*;
-use lr_abstractions::{Dialer, Frame, Listener, Peer, Transport, TransportError};
+use lr_abstractions::{Dialer, Frame, Listener, Peer, PeerAccess, Transport, TransportError};
 use lr_core::{Endpoint, Site, Zone};
 use lr_net::{
     current_os_user, peer_kind, IpcAccess, IpcDialer, IpcListener, LocalUser, LocalUsers,
-    PREAMBLE_TIMEOUT,
+    ServerIdentity, PREAMBLE_TIMEOUT,
 };
 use lr_proto::{decode_for_peer, AdminRequest, PeerKind, RejectReason};
 use std::collections::BTreeMap;
@@ -23,10 +23,14 @@ fn address() -> String {
     }
 }
 
+fn dialer() -> IpcDialer {
+    IpcDialer::new(ServerIdentity::current_user().expect("own identity"))
+}
+
 async fn pair(access: IpcAccess) -> (IpcListener, Box<dyn Transport>, Box<dyn Transport>) {
     let addr = address();
     let listener = IpcListener::bind(&addr, access).await.expect("bind");
-    let client = IpcDialer.dial(&addr, None).await.expect("dial");
+    let client = dialer().dial(&addr, None).await.expect("dial");
     let server = tokio::time::timeout(Duration::from_secs(5), listener.accept())
         .await
         .expect("accepted in time")
@@ -45,6 +49,7 @@ async fn ipc_peer_mapped_to_local_user() {
                 os_user: me.clone()
             },
             key: None,
+            access: PeerAccess::Local,
         }
     );
     let users = LocalUsers::new(vec![
@@ -75,10 +80,10 @@ async fn ipc_peer_mapped_to_local_user() {
 
 #[tokio::test]
 async fn foreign_os_user_gets_broker_host_zone() {
-    let (_l, _client, server) = pair(IpcAccess::LocalUsers).await;
+    let (_l, _client, server) = pair(IpcAccess::Principals(vec![current_os_user().unwrap()])).await;
     let runner = server.peer().endpoint.clone();
     let foreign = Endpoint::Ipc {
-        os_user: "another-os-user".into(),
+        os_user: r"CORP\another-os-user".into(),
     };
     let mut networks = BTreeMap::new();
     networks.insert("home".to_string(), vec!["192.168.1.0/24".parse().unwrap()]);
@@ -101,7 +106,7 @@ async fn foreign_os_user_gets_broker_host_zone() {
     assert_eq!(site.zone_between(&foreign, &remote), Zone::Remote);
     let users = LocalUsers::new(vec![
         LocalUser {
-            name: "another-os-user".into(),
+            name: r"CORP\another-os-user".into(),
             label: "".into(),
         },
         LocalUser {
@@ -113,6 +118,7 @@ async fn foreign_os_user_gets_broker_host_zone() {
         .admit(&Peer {
             endpoint: foreign,
             key: None,
+            access: PeerAccess::Local,
         })
         .unwrap();
     let b = users.admit(server.peer()).unwrap();
@@ -128,6 +134,7 @@ async fn network_peer_is_never_a_local_user() {
     let net = Peer {
         endpoint: Endpoint::Addr("127.0.0.1".parse().unwrap()),
         key: None,
+        access: PeerAccess::Member,
     };
     assert_eq!(users.admit(&net), Err(RejectReason::LocalUserUnknown));
     assert_eq!(peer_kind(&net), PeerKind::Network);
@@ -165,7 +172,7 @@ async fn many_clients_each_accepted() {
         .unwrap();
     let mut clients = Vec::new();
     for _ in 0..5 {
-        clients.push(IpcDialer.dial(&addr, None).await.unwrap());
+        clients.push(dialer().dial(&addr, None).await.unwrap());
     }
     for c in &clients {
         let server = listener.accept().await.unwrap();
@@ -195,7 +202,7 @@ async fn client_without_preamble_not_accepted() {
     let mut stray = raw_client(&addr).await;
     stray.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
     let mut silent = raw_client(&addr).await;
-    let real = IpcDialer.dial(&addr, None).await.unwrap();
+    let real = dialer().dial(&addr, None).await.unwrap();
     let server = tokio::time::timeout(Duration::from_secs(3), listener.accept())
         .await
         .expect("the real client is not held up")
@@ -214,11 +221,11 @@ async fn client_without_preamble_not_accepted() {
 async fn ipc_dial_with_fingerprint_refused_and_missing_endpoint_unreachable() {
     let addr = address();
     assert!(matches!(
-        IpcDialer.dial(&addr, Some("sha256:00")).await.err(),
+        dialer().dial(&addr, Some("sha256:00")).await.err(),
         Some(TransportError::Refused(_))
     ));
     assert!(matches!(
-        IpcDialer.dial(&addr, None).await.err(),
+        dialer().dial(&addr, None).await.err(),
         Some(TransportError::Unreachable(_))
     ));
 }
@@ -241,7 +248,10 @@ async fn unix_socket_modes_follow_access() {
     use std::os::unix::fs::PermissionsExt;
     for (access, mode) in [
         (IpcAccess::OwnerOnly, 0o600),
-        (IpcAccess::LocalUsers, 0o660),
+        (
+            IpcAccess::Principals(vec![current_os_user().unwrap()]),
+            0o660,
+        ),
     ] {
         let addr = address();
         let _l = IpcListener::bind(&addr, access).await.unwrap();

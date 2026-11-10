@@ -1,42 +1,72 @@
+use crate::acl_windows::{
+    handle_owner, pipe_sddl, set_handle_dacl, Descriptor, PIPE_CLIENT_ACCESS,
+};
 use crate::error::NetError;
-use crate::ipc::{read_preamble, IpcAccess, PREAMBLE};
-use crate::os_windows::{process_token, token_sid_string, token_user_name, Descriptor, Token};
+use crate::ipc::{read_preamble, IpcAccess, ServerIdentity, PREAMBLE};
+use crate::os_windows::{
+    account_sid, computer_name, process_token, sid_text_account_name, token_sid_string,
+    token_user_name, Token, ADMINISTRATORS_SID, SYSTEM_SID,
+};
 use crate::stream::StreamTransport;
-use lr_abstractions::{Peer, TransportError};
+use lr_abstractions::{Peer, PeerAccess, TransportError};
 use lr_core::Endpoint;
 use std::ffi::c_void;
 use std::os::windows::io::{AsRawHandle, RawHandle};
 use std::ptr::null_mut;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_PIPE_BUSY, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Security::{RevertToSelf, SECURITY_ATTRIBUTES, TOKEN_QUERY};
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, OPEN_EXISTING, SECURITY_IDENTIFICATION,
     SECURITY_SQOS_PRESENT,
 };
-use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, ImpersonateNamedPipeClient};
-use windows_sys::Win32::System::Threading::{
-    GetCurrentThread, OpenProcess, OpenProcessToken, OpenThreadToken,
-    PROCESS_QUERY_LIMITED_INFORMATION,
-};
+use windows_sys::Win32::System::Pipes::ImpersonateNamedPipeClient;
+use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
 
-const CLIENT_ACCESS: u32 = 0x0012_018B;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(crate) struct AccessState {
+    sddl: String,
+    waiting: usize,
+}
+
+pub(crate) type AccessCell = Arc<Mutex<AccessState>>;
+
+fn lock(cell: &AccessCell) -> MutexGuard<'_, AccessState> {
+    cell.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub(crate) fn current_user() -> Result<String, NetError> {
     token_user_name(&process_token()?)
 }
 
-fn sddl(access: IpcAccess) -> Result<String, NetError> {
-    let owner = token_sid_string(&process_token()?)?;
+pub(crate) fn current_principal() -> Result<String, NetError> {
+    token_sid_string(&process_token()?)
+}
+
+pub(crate) fn admin_principals() -> &'static [&'static str] {
+    &[SYSTEM_SID, ADMINISTRATORS_SID]
+}
+
+pub(crate) fn machine_name() -> String {
+    computer_name().unwrap_or_default()
+}
+
+fn sddl(access: &IpcAccess) -> Result<String, NetError> {
+    let owner = current_principal()?;
     Ok(match access {
-        IpcAccess::OwnerOnly => format!("D:P(A;;GA;;;{owner})"),
-        IpcAccess::LocalUsers => {
-            format!("D:P(A;;GA;;;{owner})(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x{CLIENT_ACCESS:08X};;;AU)")
+        IpcAccess::OwnerOnly => pipe_sddl(&owner, None),
+        IpcAccess::Principals(names) => {
+            let sids = names
+                .iter()
+                .map(|n| account_sid(n))
+                .collect::<Result<Vec<_>, _>>()?;
+            pipe_sddl(&owner, Some(&sids))
         }
     })
 }
@@ -52,6 +82,7 @@ fn create(name: &str, sddl: &str, first: bool) -> Result<NamedPipeServer, NetErr
         ServerOptions::new()
             .first_pipe_instance(first)
             .reject_remote_clients(true)
+            .write_dac(true)
             .create_with_security_attributes_raw(name, &mut attrs as *mut _ as *mut c_void)
     };
     server.map_err(|e| NetError::Io(format!("named pipe {name}: {e}")))
@@ -59,22 +90,33 @@ fn create(name: &str, sddl: &str, first: bool) -> Result<NamedPipeServer, NetErr
 
 pub(crate) async fn listen(
     name: &str,
-    access: IpcAccess,
+    access: &IpcAccess,
     tx: mpsc::Sender<StreamTransport>,
-) -> Result<JoinHandle<()>, NetError> {
+) -> Result<(JoinHandle<()>, AccessCell), NetError> {
     let sddl = sddl(access)?;
     let mut server = create(name, &sddl, true)?;
+    let cell: AccessCell = Arc::new(Mutex::new(AccessState {
+        sddl,
+        waiting: server.as_raw_handle() as usize,
+    }));
     let name = name.to_string();
-    Ok(tokio::spawn(async move {
+    let shared = cell.clone();
+    let task = tokio::spawn(async move {
         loop {
             let connected = server.connect().await;
-            let next = loop {
-                match create(&name, &sddl, false) {
-                    Ok(s) => break s,
+            let pipe = loop {
+                let created = {
+                    let mut state = lock(&shared);
+                    create(&name, &state.sddl, false).map(|next| {
+                        state.waiting = next.as_raw_handle() as usize;
+                        std::mem::replace(&mut server, next)
+                    })
+                };
+                match created {
+                    Ok(pipe) => break pipe,
                     Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
                 }
             };
-            let pipe = std::mem::replace(&mut server, next);
             if connected.is_err() {
                 continue;
             }
@@ -85,22 +127,36 @@ pub(crate) async fn listen(
                 }
             });
         }
-    }))
+    });
+    Ok((task, cell))
+}
+
+pub(crate) fn update_access(cell: &AccessCell, access: &IpcAccess) -> Result<(), NetError> {
+    let new = sddl(access)?;
+    let mut state = lock(cell);
+    set_handle_dacl(state.waiting as HANDLE, &new)?;
+    state.sddl = new;
+    Ok(())
 }
 
 async fn handshake(mut pipe: NamedPipeServer) -> Option<StreamTransport> {
     if !read_preamble(&mut pipe).await {
         return None;
     }
-    let os_user = client_user(&pipe).ok()?;
+    let token = client_token(&pipe).ok()?;
+    let os_user = tokio::task::spawn_blocking(move || token_user_name(&token))
+        .await
+        .ok()?
+        .ok()?;
     let peer = Peer {
         endpoint: Endpoint::Ipc { os_user },
         key: None,
+        access: PeerAccess::Local,
     };
     Some(StreamTransport::new(pipe, peer))
 }
 
-fn client_user(pipe: &NamedPipeServer) -> Result<String, NetError> {
+fn client_token(pipe: &NamedPipeServer) -> Result<Token, NetError> {
     let handle = pipe.as_raw_handle() as HANDLE;
     if unsafe { ImpersonateNamedPipeClient(handle) } == 0 {
         return Err(NetError::PeerUser(
@@ -116,7 +172,7 @@ fn client_user(pipe: &NamedPipeServer) -> Result<String, NetError> {
     if opened == 0 {
         return Err(NetError::PeerUser(open_error.to_string()));
     }
-    token_user_name(&Token(token)).map_err(|e| NetError::PeerUser(e.to_string()))
+    Ok(Token(token))
 }
 
 fn open_client(name: &str) -> std::io::Result<NamedPipeClient> {
@@ -124,7 +180,7 @@ fn open_client(name: &str) -> std::io::Result<NamedPipeClient> {
     let handle = unsafe {
         CreateFileW(
             wide.as_ptr(),
-            CLIENT_ACCESS,
+            PIPE_CLIENT_ACCESS,
             0,
             std::ptr::null(),
             OPEN_EXISTING,
@@ -138,28 +194,15 @@ fn open_client(name: &str) -> std::io::Result<NamedPipeClient> {
     unsafe { NamedPipeClient::from_raw_handle(handle as RawHandle) }
 }
 
-fn server_user(pipe: &NamedPipeClient) -> String {
-    let lookup = || -> Option<String> {
-        let mut pid = 0u32;
-        if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle() as HANDLE, &mut pid) } == 0 {
-            return None;
-        }
-        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-        if process.is_null() {
-            return None;
-        }
-        let mut token: HANDLE = null_mut();
-        let ok = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
-        unsafe { CloseHandle(process) };
-        if ok == 0 {
-            return None;
-        }
-        token_user_name(&Token(token)).ok()
-    };
-    lookup().unwrap_or_else(|| "unknown".to_string())
+/// Owner SID of the pipe a client handle is connected to.
+pub(crate) fn pipe_owner(pipe: &NamedPipeClient) -> Result<String, NetError> {
+    handle_owner(pipe.as_raw_handle() as HANDLE)
 }
 
-pub(crate) async fn dial(name: &str) -> Result<StreamTransport, TransportError> {
+pub(crate) async fn dial(
+    name: &str,
+    server: &ServerIdentity,
+) -> Result<StreamTransport, TransportError> {
     let deadline = Instant::now() + DIAL_TIMEOUT;
     let mut pipe = loop {
         match open_client(name) {
@@ -173,14 +216,25 @@ pub(crate) async fn dial(name: &str) -> Result<StreamTransport, TransportError> 
             Err(e) => return Err(TransportError::Unreachable(format!("{name}: {e}"))),
         }
     };
+    let owner = pipe_owner(&pipe).map_err(|e| {
+        TransportError::Refused(format!(
+            "untrusted_server: cannot tell who owns {name}: {e}; nothing was sent"
+        ))
+    })?;
+    server.check(&owner)?;
     pipe.write_all(PREAMBLE)
         .await
         .map_err(|e| TransportError::Io(e.to_string()))?;
+    let sid = owner.clone();
+    let os_user = tokio::task::spawn_blocking(move || sid_text_account_name(&sid))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(owner);
     let peer = Peer {
-        endpoint: Endpoint::Ipc {
-            os_user: server_user(&pipe),
-        },
+        endpoint: Endpoint::Ipc { os_user },
         key: None,
+        access: PeerAccess::Local,
     };
     Ok(StreamTransport::new(pipe, peer))
 }

@@ -53,6 +53,21 @@ impl fmt::Debug for Frame {
     }
 }
 
+/// What the transport established about the peer before the role sees it. A key alone says
+/// nothing about membership: always branch on this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PeerAccess {
+    /// Local IPC; the kernel reported the OS user, no key is involved.
+    Local,
+    /// The peer proved a registered, unrevoked key.
+    Member,
+    /// The peer proved a key the broker does not know: it may send one `join` and get one
+    /// reply, then the transport closes the connection (spec 3.8).
+    Joining,
+    /// The dialed broker presented the pinned certificate.
+    PinnedBroker,
+}
+
 /// The other side of a connection, as established by the transport before any frame is read.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Peer {
@@ -62,10 +77,11 @@ pub struct Peer {
     /// Public key the peer proved to hold (signed nonce for clients and runners, pinned
     /// certificate fingerprint for a dialed broker). `None` on local IPC, which needs no key.
     /// A joiner proves the fresh key it is about to register, so a joining connection carries
-    /// that key too and its `join` must name the same one. The transport may refuse a revoked
-    /// key at the handshake; whether a key is registered is otherwise decided by the role from
-    /// its store.
+    /// that key too and its `join` must name the same one. `key.is_some()` does NOT mean an
+    /// authenticated member: [`Peer::access`] says that.
     pub key: Option<String>,
+    /// What the key proof established.
+    pub access: PeerAccess,
 }
 
 /// Why a transport operation failed.

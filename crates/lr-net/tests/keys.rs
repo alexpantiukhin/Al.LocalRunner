@@ -1,24 +1,19 @@
 mod common;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use common::*;
-use lr_abstractions::{Dialer, Frame, MachineKind, TransportError};
+use lr_abstractions::{Dialer, Frame, TransportError};
 use lr_core::Endpoint;
-use lr_net::codec::{read_frame, write_frame};
+use lr_net::codec::read_frame;
 use lr_net::{
-    peer_kind, pinned_client_config, refusal_code, server_name, verify_challenge, BrokerIdentity,
-    ClientKey, Fingerprint, NetError, TlsDialer, MAX_PENDING_HANDSHAKES,
+    channel_binding, peer_kind, refusal_code, verify_challenge, BrokerIdentity, ClientKey,
+    Fingerprint, NetError, TlsDialer, BINDING_LEN,
 };
 use lr_proto::{
-    decode, decode_for_peer, encode, AdminRequest, AuthFromBroker, AuthToBroker, BrokerToHub,
-    DecodeError, HubToBroker, Join, PeerKind, ProtocolErrorCode, PROTOCOL_VERSION,
+    decode_for_peer, AdminRequest, AuthFromBroker, AuthToBroker, DecodeError, HubToBroker,
+    PeerKind, ProtocolErrorCode,
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
-use tokio_rustls::TlsConnector;
 
 #[tokio::test]
 async fn signed_nonce_authenticates_key() {
@@ -58,45 +53,29 @@ fn signature_for_one_nonce_rejected_for_another() {
     let k = ClientKey::generate().unwrap();
     let fp = BrokerIdentity::generate().unwrap().fingerprint();
     let (n1, n2) = ([1u8; 32], [2u8; 32]);
-    let sig = k.sign_challenge(&fp, &n1);
-    verify_challenge(&k.public_key(), &fp, &n1, &sig).expect("own nonce verifies");
+    let bind = [7u8; BINDING_LEN];
+    let sig = k.sign_challenge(&fp, &bind, &n1);
+    verify_challenge(&k.public_key(), &fp, &bind, &n1, &sig).expect("own nonce verifies");
     assert_eq!(
-        verify_challenge(&k.public_key(), &fp, &n2, &sig),
+        verify_challenge(&k.public_key(), &fp, &bind, &n2, &sig),
         Err(NetError::BadSignature)
     );
     let other_broker = Fingerprint::from_bytes([9; 32]);
     assert_eq!(
-        verify_challenge(&k.public_key(), &other_broker, &n1, &sig),
+        verify_challenge(&k.public_key(), &other_broker, &bind, &n1, &sig),
         Err(NetError::BadSignature),
         "a proof for one broker is useless at another"
     );
+    assert_eq!(
+        verify_challenge(&k.public_key(), &fp, &[8u8; BINDING_LEN], &n1, &sig),
+        Err(NetError::BadSignature),
+        "a proof for one TLS connection is useless on another"
+    );
     let stranger = ClientKey::generate().unwrap();
     assert_eq!(
-        verify_challenge(&stranger.public_key(), &fp, &n1, &sig),
+        verify_challenge(&stranger.public_key(), &fp, &bind, &n1, &sig),
         Err(NetError::BadSignature)
     );
-}
-
-async fn raw_tls(b: &Broker) -> TlsStream<TcpStream> {
-    let config = pinned_client_config(b.identity.fingerprint()).unwrap();
-    let tcp = TcpStream::connect(&b.addr).await.unwrap();
-    TlsConnector::from(config)
-        .connect(server_name(), tcp)
-        .await
-        .unwrap()
-}
-
-async fn challenge(tls: &mut TlsStream<TcpStream>) -> Vec<u8> {
-    let msg: AuthFromBroker = decode(&read_frame(tls).await.unwrap()).unwrap();
-    let AuthFromBroker::Challenge { nonce } = msg else {
-        panic!("expected a challenge, got {msg:?}")
-    };
-    URL_SAFE_NO_PAD.decode(nonce).unwrap()
-}
-
-async fn send_proof(tls: &mut TlsStream<TcpStream>, proof: &AuthToBroker) -> AuthFromBroker {
-    write_frame(tls, &encode(proof).unwrap()).await.unwrap();
-    decode(&read_frame(tls).await.unwrap()).unwrap()
 }
 
 #[tokio::test]
@@ -108,9 +87,10 @@ async fn replayed_proof_refused() {
 
     let mut first = raw_tls(&b).await;
     let n1 = challenge(&mut first).await;
+    let bind1 = channel_binding(first.get_ref().1).unwrap();
     let proof = AuthToBroker::Proof {
         public_key: k.public_key(),
-        signature: k.sign_challenge(&fp, &n1),
+        signature: k.sign_challenge(&fp, &bind1, &n1),
     };
     assert_eq!(
         send_proof(&mut first, &proof).await,
@@ -226,70 +206,6 @@ async fn nobody_listening_is_unreachable() {
 }
 
 #[tokio::test]
-async fn unknown_key_may_only_join() {
-    let b = broker().await;
-    let k = key();
-    let client = b
-        .dial(&k)
-        .await
-        .expect("unknown key gets a joining connection");
-    let server = b.accept().await;
-    client
-        .send(Frame::json(&HubToBroker::Heartbeat).unwrap())
-        .await
-        .unwrap();
-    let err = server.recv().await.expect_err("non-join refused");
-    assert_eq!(refusal_code(&err), Some(ProtocolErrorCode::Unauthorized));
-    let reply: BrokerToHub = client.recv().await.unwrap().parse().unwrap();
-    assert!(matches!(reply, BrokerToHub::Error(e) if e.code == ProtocolErrorCode::Unauthorized));
-}
-
-#[tokio::test]
-async fn join_over_the_network_registers_the_proven_key() {
-    let b = broker().await;
-    let code = b.issue(MachineKind::Hub, 1).await;
-    let k = key();
-    let client = b.dial(&k).await.unwrap();
-    let server = b.accept().await;
-    let join = Join {
-        version: PROTOCOL_VERSION,
-        role: lr_proto::Role::Hub,
-        code: code.clone(),
-        public_key: k.public_key(),
-        name: "laptop".into(),
-        machine_id: "m-91aa".into(),
-        capabilities: None,
-    };
-    client
-        .send(Frame::json(&HubToBroker::Join(join)).unwrap())
-        .await
-        .unwrap();
-    let frame = server.recv().await.expect("a join passes the gate");
-    let HubToBroker::Join(join) = frame.parse().unwrap() else {
-        panic!("expected join")
-    };
-    let proven = server.peer().key.clone().unwrap();
-    let mut req = join_request(&join.code, &join.name, &k);
-    req.kind = MachineKind::Hub;
-    req.machine_id = join.machine_id;
-    let row = b.registry.redeem(req, &proven, at_min(1)).await.unwrap();
-    assert_eq!(row.public_key, k.public_key());
-    exchange(server.as_ref(), client.as_ref()).await;
-    drop((client, server));
-    b.dial(&k).await.expect("now a member");
-    let member = b.accept().await;
-    let heartbeat = Frame::json(&HubToBroker::Heartbeat).unwrap();
-    let client2 = b.dial(&k).await.unwrap();
-    let member2 = b.accept().await;
-    client2.send(heartbeat).await.unwrap();
-    member2
-        .recv()
-        .await
-        .expect("members are not limited to join");
-    drop(member);
-}
-
-#[tokio::test]
 async fn admin_command_from_a_tls_peer_refused() {
     let b = broker().await;
     let k = key();
@@ -306,22 +222,6 @@ async fn admin_command_from_a_tls_peer_refused() {
     let err =
         decode_for_peer::<HubToBroker>(frame.as_bytes(), peer_kind(server.peer())).unwrap_err();
     assert!(matches!(err, DecodeError::NotOverNetwork(_)));
-}
-
-#[tokio::test]
-async fn stalled_handshakes_do_not_block_others() {
-    let b = broker().await;
-    let k = key();
-    b.register(&k, "light").await;
-    let mut idle = Vec::new();
-    for _ in 0..(MAX_PENDING_HANDSHAKES / 2) {
-        idle.push(TcpStream::connect(&b.addr).await.unwrap());
-    }
-    let started = std::time::Instant::now();
-    b.dial(&k).await.expect("a real client still gets in");
-    b.accept().await;
-    assert!(started.elapsed() < Duration::from_secs(5));
-    drop(idle);
 }
 
 #[tokio::test]
@@ -363,4 +263,44 @@ fn client_key_debug_hides_the_secret() {
     let loaded = ClientKey::load(&path).unwrap();
     assert_eq!(loaded.public_key(), k.public_key());
     let _: Arc<ClientKey> = Arc::new(loaded);
+}
+
+#[test]
+fn non_canonical_point_encoding_refused() {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    let mut checked = 0;
+    for y in 2u8..19 {
+        let mut canonical = [0u8; 32];
+        canonical[0] = y;
+        let Ok(point) = ed25519_dalek::VerifyingKey::from_bytes(&canonical) else {
+            continue;
+        };
+        if point.is_weak() {
+            continue;
+        }
+        let mut aliased = [0xFFu8; 32];
+        aliased[0] = 0xED + y;
+        aliased[31] = 0x7F;
+        let good = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(canonical));
+        let alias = format!("ed25519:{}", URL_SAFE_NO_PAD.encode(aliased));
+        assert!(ed25519_dalek::VerifyingKey::from_bytes(&aliased).is_ok());
+        assert_eq!(lr_net::canonical_public_key(&good).unwrap(), good);
+        assert!(
+            lr_net::parse_public_key(&alias).is_err(),
+            "y + p is refused"
+        );
+        assert!(lr_net::canonical_public_key(&alias).is_err());
+        checked += 1;
+    }
+    assert!(checked > 0, "found a point to alias");
+}
+
+#[test]
+fn join_request_debug_hides_the_code() {
+    let k = ClientKey::generate().unwrap();
+    let req = join_request("lrj1.secret-code-text", "light", &k);
+    let shown = format!("{req:?}");
+    assert!(!shown.contains("secret-code-text"), "{shown}");
+    assert!(shown.contains("light"));
 }

@@ -2,10 +2,10 @@ use crate::auth::{Admit, KeyGate};
 use crate::codes::{CodeError, JoinCode};
 use crate::error::NetError;
 use crate::fingerprint::Fingerprint;
-use crate::keys::parse_public_key;
+use crate::keys::canonical_public_key;
 use async_trait::async_trait;
 use lr_abstractions::{
-    BrokerStore, Join, JoinCodeRow, MachineKind, MachineRow, Revoked, StoreError,
+    BrokerStore, Clock, Join, JoinCodeRow, MachineKind, MachineRow, Revoked, StoreError,
 };
 use lr_core::Timestamp;
 use lr_proto::{ProtocolError, ProtocolErrorCode};
@@ -30,8 +30,8 @@ pub struct CodeRequest {
     pub ttl_min: u64,
 }
 
-/// A join as the joiner presents it in the `join` message.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A join as the joiner presents it in the `join` message. `Debug` hides the code.
+#[derive(Clone, PartialEq, Eq)]
 pub struct JoinRequest {
     /// The code string.
     pub code: String,
@@ -43,6 +43,18 @@ pub struct JoinRequest {
     pub machine_id: String,
     /// The public key in the message.
     pub public_key: String,
+}
+
+impl fmt::Debug for JoinRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JoinRequest")
+            .field("code", &"<redacted>")
+            .field("kind", &self.kind)
+            .field("name", &self.name)
+            .field("machine_id", &self.machine_id)
+            .field("public_key", &self.public_key)
+            .finish()
+    }
 }
 
 /// Why the registry refused.
@@ -133,9 +145,11 @@ pub fn check_name(name: &str) -> Result<(), RegistryError> {
 }
 
 /// The broker's machine registry (spec 3.8, 13.2): issues join codes, redeems them into key
-/// records, revokes keys, and as a [`KeyGate`] refuses revoked keys at the handshake.
+/// records, revokes keys, and as a [`KeyGate`] refuses revoked keys at the handshake and lets
+/// an unknown key in to join only while a join code is open.
 pub struct Registry {
     store: Arc<dyn BrokerStore>,
+    clock: Arc<dyn Clock>,
     own_machine_id: String,
     fingerprint: Fingerprint,
 }
@@ -144,11 +158,13 @@ impl Registry {
     /// The registry of the broker with this MachineId and certificate fingerprint.
     pub fn new(
         store: Arc<dyn BrokerStore>,
+        clock: Arc<dyn Clock>,
         own_machine_id: impl Into<String>,
         fingerprint: Fingerprint,
     ) -> Registry {
         Registry {
             store,
+            clock,
             own_machine_id: own_machine_id.into(),
             fingerprint,
         }
@@ -201,10 +217,12 @@ impl Registry {
         if code.fingerprint() != self.fingerprint {
             return Err(RegistryError::ForeignCode);
         }
-        if req.public_key != proven_key {
+        let claimed =
+            canonical_public_key(&req.public_key).map_err(|_| RegistryError::KeyNotProven)?;
+        let proven = canonical_public_key(proven_key).map_err(|_| RegistryError::KeyNotProven)?;
+        if claimed != proven {
             return Err(RegistryError::KeyNotProven);
         }
-        parse_public_key(&req.public_key).map_err(|_| RegistryError::KeyNotProven)?;
         if req.machine_id == self.own_machine_id {
             return Err(RegistryError::MachineIdClash);
         }
@@ -217,7 +235,7 @@ impl Registry {
             machine_id: req.machine_id,
             kind: req.kind,
             label: String::new(),
-            public_key: req.public_key,
+            public_key: claimed,
             registered_at: now,
             last_seen: Some(now),
             revoked_at: None,
@@ -245,31 +263,55 @@ impl Registry {
     /// Whether the network listener must be up (spec 3.8, 17): a code with uses left that has
     /// not expired, or at least one unrevoked machine.
     pub async fn should_listen(&self, now: Timestamp) -> Result<bool, RegistryError> {
-        let codes = self.store.join_codes().await?;
-        if codes.iter().any(|c| c.uses_left > 0 && now < c.expires_at) {
+        if self.code_open(now).await? {
             return Ok(true);
         }
         let machines = self.store.machines().await?;
         Ok(machines.iter().any(|m| m.revoked_at.is_none()))
     }
+
+    /// Whether a join code with uses left has not expired at `now`.
+    pub async fn code_open(&self, now: Timestamp) -> Result<bool, RegistryError> {
+        let codes = self.store.join_codes().await?;
+        Ok(codes.iter().any(|c| c.uses_left > 0 && now < c.expires_at))
+    }
+}
+
+fn storage_refusal(e: impl fmt::Display) -> Admit {
+    Admit::Refused(ProtocolError {
+        code: ProtocolErrorCode::Other,
+        message: format!("broker storage: {e}"),
+        supported: None,
+    })
 }
 
 #[async_trait]
 impl KeyGate for Registry {
     async fn admit(&self, public_key: &str) -> Admit {
-        match self.store.machine_by_key(public_key).await {
+        let Ok(public_key) = canonical_public_key(public_key) else {
+            return Admit::Refused(ProtocolError {
+                code: ProtocolErrorCode::Unauthorized,
+                message: "not an ed25519 public key".into(),
+                supported: None,
+            });
+        };
+        match self.store.machine_by_key(&public_key).await {
             Ok(Some(m)) if m.revoked_at.is_some() => Admit::Refused(ProtocolError {
                 code: ProtocolErrorCode::KeyRevoked,
                 message: format!("the key of `{}` was revoked", m.name),
                 supported: None,
             }),
             Ok(Some(_)) => Admit::Member,
-            Ok(None) => Admit::Joining,
-            Err(e) => Admit::Refused(ProtocolError {
-                code: ProtocolErrorCode::Other,
-                message: format!("broker storage: {e}"),
-                supported: None,
-            }),
+            Ok(None) => match self.code_open(self.clock.now()).await {
+                Ok(true) => Admit::Joining,
+                Ok(false) => Admit::Refused(ProtocolError {
+                    code: ProtocolErrorCode::JoinCodeUnknown,
+                    message: "unknown key and no join code is open on this broker".into(),
+                    supported: None,
+                }),
+                Err(e) => storage_refusal(e),
+            },
+            Err(e) => storage_refusal(e),
         }
     }
 }

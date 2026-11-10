@@ -120,7 +120,9 @@ pub struct Welcome {
 }
 
 /// Broker's answer to [`Join`]: the code is redeemed and the key registered. It is the only
-/// reply on a join connection: no [`Welcome`] follows, so it carries the same session facts.
+/// reply on a join connection: the transport closes the connection after it, and the joiner
+/// reconnects with its key and `hello` for the session. It carries the session facts so the
+/// joiner can report them at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Joined {
     /// The version agreed on.

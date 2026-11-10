@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use lr_abstractions::fakes::ManualClock;
-use lr_abstractions::{Clock, JobSpec, Peer};
+use lr_abstractions::{Clock, JobSpec, Peer, PeerAccess};
 use lr_core::{Endpoint, JobId, StepSpec, Timestamp};
 use std::sync::Arc;
 
@@ -19,6 +19,7 @@ pub fn ipc_peer(user: &str) -> Peer {
             os_user: user.to_string(),
         },
         key: None,
+        access: PeerAccess::Local,
     }
 }
 
@@ -26,6 +27,7 @@ pub fn net_peer(addr: &str, key: &str) -> Peer {
     Peer {
         endpoint: Endpoint::Addr(addr.parse().unwrap()),
         key: Some(key.to_string()),
+        access: PeerAccess::Member,
     }
 }
 

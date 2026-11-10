@@ -3,16 +3,17 @@
 //!
 //! 1. broker → peer `challenge` with 32 fresh random bytes, new for every connection;
 //! 2. peer → broker `proof`: its public key and the signature of
-//!    [`crate::keys::challenge_message`] (context, broker fingerprint, nonce);
+//!    [`crate::keys::challenge_message`] (context, broker fingerprint, TLS channel binding,
+//!    nonce);
 //! 3. broker → peer `authenticated`, or `error` and close: a bad signature is `unauthorized`,
 //!    a revoked key `key_revoked` (decided by the [`KeyGate`]).
 //!
-//! Frames of this exchange are capped at [`AUTH_FRAME_LIMIT`], so an unauthenticated peer
-//! cannot make the broker buffer more.
+//! Frames of this exchange, and the single `join` of a joining peer, are capped at
+//! [`AUTH_FRAME_LIMIT`], so an unauthenticated peer cannot make the broker buffer more.
 
 use crate::codec::{read_frame_limited, write_frame};
 use crate::fingerprint::Fingerprint;
-use crate::keys::{fresh_nonce, verify_challenge, ClientKey, NONCE_LEN};
+use crate::keys::{canonical_public_key, fresh_nonce, verify_challenge, ClientKey, NONCE_LEN};
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -20,16 +21,16 @@ use lr_abstractions::TransportError;
 use lr_proto::{decode, encode, AuthFromBroker, AuthToBroker, ProtocolError, ProtocolErrorCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-/// Largest frame of the key proof.
-pub const AUTH_FRAME_LIMIT: usize = 4096;
+/// Largest frame an unauthenticated or joining peer may send: 64 KiB.
+pub const AUTH_FRAME_LIMIT: usize = 64 * 1024;
 
 /// What the broker lets a key that proved itself do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admit {
     /// A registered, unrevoked key.
     Member,
-    /// A key the broker does not know: the connection may only join with a code; any other
-    /// first message is refused.
+    /// A key the broker does not know, while a join code is open: the connection may send
+    /// one `join` and gets one reply; anything else is refused.
     Joining,
     /// Refused, with the reason sent to the peer.
     Refused(ProtocolError),
@@ -98,6 +99,7 @@ async fn recv<R: AsyncRead + Unpin, T: lr_proto::Message>(r: &mut R) -> Result<T
 pub(crate) async fn accept_proof<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     own: &Fingerprint,
+    binding: &[u8],
     gate: &dyn KeyGate,
 ) -> Result<(String, Admit), TransportError> {
     let nonce = fresh_nonce().map_err(io)?;
@@ -112,9 +114,14 @@ pub(crate) async fn accept_proof<S: AsyncRead + AsyncWrite + Unpin>(
         public_key,
         signature,
     } = recv(stream).await?;
-    let verdict = match verify_challenge(&public_key, own, &nonce, &signature) {
-        Ok(()) => gate.admit(&public_key).await,
-        Err(e) => Admit::Refused(unauthorized(&e.to_string())),
+    let proven = verify_challenge(&public_key, own, binding, &nonce, &signature)
+        .and_then(|()| canonical_public_key(&public_key));
+    let (public_key, verdict) = match proven {
+        Ok(key) => {
+            let verdict = gate.admit(&key).await;
+            (key, verdict)
+        }
+        Err(e) => (public_key, Admit::Refused(unauthorized(&e.to_string()))),
     };
     match &verdict {
         Admit::Refused(error) => {
@@ -132,6 +139,7 @@ pub(crate) async fn accept_proof<S: AsyncRead + AsyncWrite + Unpin>(
 pub(crate) async fn prove<S: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut S,
     pin: &Fingerprint,
+    binding: &[u8],
     key: &ClientKey,
 ) -> Result<(), TransportError> {
     let nonce = match recv(stream).await? {
@@ -152,7 +160,7 @@ pub(crate) async fn prove<S: AsyncRead + AsyncWrite + Unpin>(
         stream,
         &AuthToBroker::Proof {
             public_key: key.public_key(),
-            signature: key.sign_challenge(pin, &nonce),
+            signature: key.sign_challenge(pin, binding, &nonce),
         },
     )
     .await?;

@@ -45,4 +45,6 @@ pub use store::{
     RunnerState, RunnerStore, ServiceRow, ServiceState, SourceKind, Spread, Stats, StatsQuery,
     StepRow, StepStats, StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
-pub use transport::{Dialer, Frame, Listener, Peer, Transport, TransportError, MAX_FRAME_BYTES};
+pub use transport::{
+    Dialer, Frame, Listener, Peer, PeerAccess, Transport, TransportError, MAX_FRAME_BYTES,
+};

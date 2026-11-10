@@ -12,30 +12,92 @@ use crate::ipc_unix as platform;
 #[cfg(windows)]
 use crate::ipc_windows as platform;
 
-/// Bytes every IPC client writes first. On Windows the server can ask the kernel who the
-/// client is only after reading from the pipe; the preamble also refuses a stray program
-/// that is not a LocalRunner client.
+/// Bytes every IPC client writes first, after it verified the server. On Windows the server can
+/// ask the kernel who the client is only after reading from the pipe; the preamble also
+/// refuses a stray program that is not a LocalRunner client.
 pub const PREAMBLE: &[u8; 8] = b"LRIPC/1\n";
 
 /// Time a new IPC client has to send the preamble.
 pub const PREAMBLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Who may open the local channel (spec 10, table "IPC").
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IpcAccess {
     /// Only the OS user that created it (hub, runner control): Windows DACL with the user's SID
     /// alone, Unix socket mode `0600`.
     OwnerOnly,
-    /// Any local user may connect and the broker admits only `[[local_user]]` entries
-    /// (broker service): Windows DACL for authenticated users with read and write but without
-    /// the right to create pipe instances, plus the owner, SYSTEM and administrators; Unix
-    /// socket mode `0660` (the installer gives the socket the `al-localrunner` group).
-    LocalUsers,
+    /// The broker service: these accounts (the `[[local_user]]` names) plus the owner, SYSTEM
+    /// and Administrators. Windows: a protected DACL with the SID of each account, which may
+    /// read and write but not create pipe instances; a bare name is a local account of this
+    /// computer, and a SID (`S-1-...`) may be given instead of a name. Unix: socket mode `0660`; the installer gives the socket the `al-localrunner`
+    /// group, whose members are the listed users (the names are not used by the socket).
+    Principals(Vec<String>),
 }
 
-/// The OS user of this process, as the kernel reports it (the same form as IPC peers).
+/// Whom an IPC client accepts as the server, checked BEFORE it sends anything (a pipe or
+/// socket name can be taken by another user first). Windows: the owner SID of the pipe
+/// object; Unix: the uid of the socket's peer (`SO_PEERCRED`). A server that cannot be
+/// identified is refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerIdentity {
+    principals: Vec<String>,
+}
+
+impl ServerIdentity {
+    /// The current OS user: hub and runner control channels, and a broker run by the same
+    /// user.
+    pub fn current_user() -> Result<ServerIdentity, NetError> {
+        Ok(ServerIdentity::principal(platform::current_principal()?))
+    }
+
+    /// One principal: a SID (`S-1-5-...`) on Windows, a numeric uid on Unix.
+    pub fn principal(id: impl Into<String>) -> ServerIdentity {
+        ServerIdentity {
+            principals: vec![id.into()],
+        }
+    }
+
+    /// Also accepts `id`.
+    pub fn or(mut self, id: impl Into<String>) -> ServerIdentity {
+        self.principals.push(id.into());
+        self
+    }
+
+    /// Also accepts the machine's administrators: SYSTEM and Administrators on Windows, root
+    /// on Unix (a broker service installed by an administrator).
+    pub fn or_admins(self) -> ServerIdentity {
+        platform::admin_principals()
+            .iter()
+            .fold(self, |acc, id| acc.or(*id))
+    }
+
+    /// Whether `id` is one of the accepted principals (SIDs compare case-insensitively).
+    pub fn accepts(&self, id: &str) -> bool {
+        self.principals.iter().any(|p| p.eq_ignore_ascii_case(id))
+    }
+
+    pub(crate) fn check(&self, actual: &str) -> Result<(), TransportError> {
+        if self.accepts(actual) {
+            Ok(())
+        } else {
+            Err(TransportError::Refused(format!(
+                "untrusted_server: the IPC endpoint belongs to {actual}, expected one of {}; \
+                 nothing was sent",
+                self.principals.join(", ")
+            )))
+        }
+    }
+}
+
+/// The OS user of this process, as the kernel reports it (the same form as IPC peers:
+/// `DOMAIN\name` on Windows, the login name on Unix).
 pub fn current_os_user() -> Result<String, NetError> {
     platform::current_user()
+}
+
+/// The computer name that qualifies a bare `[[local_user]]` name on Windows; empty elsewhere.
+pub fn local_machine_name() -> String {
+    platform::machine_name()
 }
 
 pub(crate) async fn read_preamble<R: AsyncRead + Unpin>(r: &mut R) -> bool {
@@ -52,6 +114,7 @@ pub(crate) async fn read_preamble<R: AsyncRead + Unpin>(r: &mut R) -> bool {
 pub struct IpcListener {
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
     task: JoinHandle<()>,
+    access: platform::AccessCell,
     #[cfg_attr(not(unix), allow(dead_code))]
     path: String,
 }
@@ -61,12 +124,19 @@ impl IpcListener {
     /// the pipe must not exist yet, so another user cannot have created it first.
     pub async fn bind(address: &str, access: IpcAccess) -> Result<IpcListener, NetError> {
         let (tx, rx) = mpsc::channel(16);
-        let task = platform::listen(address, access, tx).await?;
+        let (task, cell) = platform::listen(address, &access, tx).await?;
         Ok(IpcListener {
             ready: Mutex::new(rx),
             task,
+            access: cell,
             path: address.to_string(),
         })
+    }
+
+    /// Changes who may connect from now on (`policy reload` changed `[[local_user]]`): new
+    /// pipe instances get the new DACL; connections already open stay.
+    pub fn set_access(&self, access: IpcAccess) -> Result<(), NetError> {
+        platform::update_access(&self.access, &access)
     }
 }
 
@@ -89,10 +159,19 @@ impl Listener for IpcListener {
     }
 }
 
-/// Dials a local IPC endpoint; the fingerprint must be `None`. The peer is the server's OS
-/// user when the OS tells it, else `unknown`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct IpcDialer;
+/// Dials a local IPC endpoint after checking that its server is the expected
+/// [`ServerIdentity`]; the fingerprint must be `None`. The peer is the server's OS user.
+#[derive(Debug, Clone)]
+pub struct IpcDialer {
+    server: ServerIdentity,
+}
+
+impl IpcDialer {
+    /// A dialer that talks only to servers run by `server`.
+    pub fn new(server: ServerIdentity) -> IpcDialer {
+        IpcDialer { server }
+    }
+}
 
 #[async_trait]
 impl Dialer for IpcDialer {
@@ -106,6 +185,6 @@ impl Dialer for IpcDialer {
                 "local IPC takes no certificate fingerprint".into(),
             ));
         }
-        Ok(Box::new(platform::dial(address).await?))
+        Ok(Box::new(platform::dial(address, &self.server).await?))
     }
 }

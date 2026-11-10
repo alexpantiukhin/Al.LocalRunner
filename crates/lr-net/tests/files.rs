@@ -50,6 +50,12 @@ fn explicit_addresses_accepted_with_default_port() {
         assert!(ListenAddr::parse(bad, false).is_err(), "{bad}");
     }
     assert!(ListenAddr::explicit("0.0.0.0:1".parse().unwrap()).is_err());
+    assert!(
+        ListenAddr::explicit("[::ffff:0.0.0.0]:1".parse().unwrap()).is_err(),
+        "a mapped wildcard is a wildcard"
+    );
+    assert!(ListenAddr::parse("[::ffff:0.0.0.0]:7443", false).is_err());
+    assert!(ListenAddr::explicit("[::ffff:127.0.0.1]:1".parse().unwrap()).is_ok());
 }
 
 #[test]
@@ -86,6 +92,27 @@ fn missing_key_with_certificate_present_refused() {
     BrokerIdentity::load_or_create(dir.path()).unwrap();
     std::fs::remove_file(dir.path().join(KEY_FILE)).unwrap();
     assert!(BrokerIdentity::load_or_create(dir.path()).is_err());
+}
+
+#[test]
+fn key_alone_is_a_crashed_first_start_and_is_replaced() {
+    let dir = temp_dir();
+    let first = BrokerIdentity::load_or_create(dir.path()).unwrap();
+    std::fs::remove_file(dir.path().join(CERT_FILE)).unwrap();
+    let again = BrokerIdentity::load_or_create(dir.path()).unwrap();
+    assert_ne!(again.fingerprint(), first.fingerprint());
+    assert!(dir.path().join(CERT_FILE).exists());
+    let third = BrokerIdentity::load_or_create(dir.path()).unwrap();
+    assert_eq!(third.fingerprint(), again.fingerprint());
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n != CERT_FILE && n != KEY_FILE)
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "no temporary files left: {leftovers:?}"
+    );
 }
 
 #[test]
@@ -138,4 +165,51 @@ fn secret_files_grant_only_the_owner_on_windows() {
     assert_eq!(aces.len(), 1, "exactly one entry: {text}");
     assert!(aces[0].to_lowercase().contains(&user), "{text}");
     assert!(!aces[0].contains("(I)"), "nothing inherited: {text}");
+}
+
+#[cfg(windows)]
+#[test]
+fn key_file_readable_by_others_refused_on_windows() {
+    let dir = temp_dir();
+    let path = dir.path().join("runner.key");
+    lr_net::ClientKey::generate().unwrap().save(&path).unwrap();
+    lr_net::ClientKey::load(&path).expect("owner-only file loads");
+    let granted = std::process::Command::new("icacls")
+        .arg(&path)
+        .args(["/grant", "*S-1-1-0:R"])
+        .output()
+        .unwrap();
+    assert!(granted.status.success());
+    assert!(matches!(
+        lr_net::ClientKey::load(&path),
+        Err(NetError::InsecureFile(_))
+    ));
+    assert!(matches!(
+        read_private(&path),
+        Err(NetError::InsecureFile(_))
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn inherited_broad_access_refused_on_windows() {
+    let dir = temp_dir();
+    let path = dir.path().join("plain.key");
+    std::fs::write(&path, b"x").unwrap();
+    let reset = std::process::Command::new("icacls")
+        .arg(&path)
+        .args(["/reset"])
+        .output()
+        .unwrap();
+    assert!(reset.status.success());
+    let users = std::process::Command::new("icacls")
+        .arg(&path)
+        .args(["/grant", "*S-1-5-32-545:R"])
+        .output()
+        .unwrap();
+    assert!(users.status.success());
+    assert!(matches!(
+        read_private(&path),
+        Err(NetError::InsecureFile(_))
+    ));
 }

@@ -12,17 +12,22 @@ pub mod codec;
 
 mod auth;
 mod codes;
+mod dialer;
 mod error;
 mod files;
 mod fingerprint;
 mod ipc;
 mod keys;
+mod listen_addr;
 mod listener;
 mod local_users;
 mod registry;
+mod slots;
 mod stream;
 mod tls;
 
+#[cfg(windows)]
+mod acl_windows;
 #[cfg(unix)]
 mod ipc_unix;
 #[cfg(windows)]
@@ -34,19 +39,25 @@ mod os_windows;
 
 pub use auth::{refusal_code, refused, Admit, KeyGate, AUTH_FRAME_LIMIT};
 pub use codes::{CodeError, JoinCode, DEFAULT_CODE_TTL_MIN};
+pub use dialer::{TlsDialer, TlsTransport};
 pub use error::NetError;
-pub use files::{read_private, write_private};
+pub use files::{read_private, write_private, write_public};
 pub use fingerprint::Fingerprint;
-pub use ipc::{current_os_user, IpcAccess, IpcDialer, IpcListener, PREAMBLE, PREAMBLE_TIMEOUT};
+pub use ipc::{
+    current_os_user, local_machine_name, IpcAccess, IpcDialer, IpcListener, ServerIdentity,
+    PREAMBLE, PREAMBLE_TIMEOUT,
+};
 pub use keys::{
-    challenge_message, fresh_nonce, parse_public_key, verify_challenge, ClientKey, NONCE_LEN,
-    PUBLIC_KEY_PREFIX,
+    canonical_public_key, challenge_message, fresh_nonce, parse_public_key, verify_challenge,
+    ClientKey, BINDING_LEN, NONCE_LEN, PUBLIC_KEY_PREFIX,
 };
-pub use listener::{
-    ListenAddr, TlsDialer, TlsListener, TlsTransport, DEFAULT_PORT, HANDSHAKE_TIMEOUT,
-    MAX_PENDING_HANDSHAKES,
-};
+pub use listen_addr::{ListenAddr, DEFAULT_PORT};
+pub use listener::TlsListener;
 pub use local_users::{peer_kind, LocalClient, LocalUser, LocalUsers, LOCAL_CLIENT_PREFIX};
 pub use registry::{check_name, CodeRequest, JoinRequest, Registry, RegistryError, MAX_NAME_LEN};
+pub use slots::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
 pub use stream::StreamTransport;
-pub use tls::{pinned_client_config, provider, server_name, BrokerIdentity, CERT_FILE, KEY_FILE};
+pub use tls::{
+    channel_binding, pinned_client_config, provider, server_name, BrokerIdentity, CERT_FILE,
+    EXPORTER_LABEL, KEY_FILE,
+};

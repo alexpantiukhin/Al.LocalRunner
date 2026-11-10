@@ -1,106 +1,67 @@
-use crate::auth::{accept_proof, prove, Admit, KeyGate};
+use crate::auth::{accept_proof, Admit, KeyGate};
 use crate::error::NetError;
 use crate::fingerprint::Fingerprint;
-use crate::keys::ClientKey;
+use crate::listen_addr::ListenAddr;
+use crate::slots::{Limits, Slots};
 use crate::stream::StreamTransport;
-use crate::tls::{client_config, server_name, BrokerIdentity};
+use crate::tls::{channel_binding, BrokerIdentity};
 use async_trait::async_trait;
-use lr_abstractions::{Dialer, Listener, Peer, Transport, TransportError};
+use lr_abstractions::{Listener, Peer, PeerAccess, Transport, TransportError};
 use lr_core::Endpoint;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex, Semaphore};
+use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
-use tokio_rustls::{TlsAcceptor, TlsConnector};
-
-/// Port of the broker listener when `[listen] address` names none.
-pub const DEFAULT_PORT: u16 = 7443;
-
-/// Time a new connection has for TLS and the key proof.
-pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Connections in TLS or key proof at once; more are dropped until one finishes.
-pub const MAX_PENDING_HANDSHAKES: usize = 64;
-
-/// A validated `[listen] address` (spec 3.8, 17): an explicit IP address with a port. A
-/// wildcard address (`0.0.0.0`, `::`) is refused; the one exception is the value `container`
-/// inside a container, which listens on all interfaces of the container at [`DEFAULT_PORT`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ListenAddr(SocketAddr);
-
-impl ListenAddr {
-    /// Parses a `[listen] address` value. `in_container` says whether this process runs in a
-    /// container; outside one, `container` is refused.
-    pub fn parse(value: &str, in_container: bool) -> Result<ListenAddr, NetError> {
-        let value = value.trim();
-        if value == "container" {
-            if !in_container {
-                return Err(NetError::BadListenAddress(
-                    "`container` is accepted only inside a container".into(),
-                ));
-            }
-            return Ok(ListenAddr(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                DEFAULT_PORT,
-            )));
-        }
-        let addr = value
-            .parse::<SocketAddr>()
-            .or_else(|_| {
-                value
-                    .parse::<IpAddr>()
-                    .map(|ip| SocketAddr::new(ip, DEFAULT_PORT))
-            })
-            .map_err(|_| {
-                NetError::BadListenAddress(format!(
-                    "`{value}` is not an IP address with an optional port"
-                ))
-            })?;
-        ListenAddr::explicit(addr)
-    }
-
-    /// An explicit address; a wildcard is refused.
-    pub fn explicit(addr: SocketAddr) -> Result<ListenAddr, NetError> {
-        if addr.ip().is_unspecified() {
-            return Err(NetError::BadListenAddress(format!(
-                "wildcard address {} is not allowed; name the interface address",
-                addr.ip()
-            )));
-        }
-        Ok(ListenAddr(addr))
-    }
-
-    /// The socket address.
-    pub fn socket_addr(&self) -> SocketAddr {
-        self.0
-    }
-}
+use tokio_rustls::TlsAcceptor;
 
 /// The broker's TLS listener (spec 3.8, 3.9). Every accepted connection has passed TLS with
-/// the broker certificate and the signed-nonce key proof; the peer is its source address and
-/// the proven key. Handshakes run in background tasks, so a slow peer delays no other.
+/// the broker certificate and the signed-nonce key proof; the peer is its source address, the
+/// proven key and its [`PeerAccess`]. Handshakes run in background tasks under the
+/// [`Limits`], so a slow or flooding peer delays no other.
 pub struct TlsListener {
     local: SocketAddr,
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
     task: JoinHandle<()>,
 }
 
+struct Shared {
+    acceptor: TlsAcceptor,
+    own: Fingerprint,
+    gate: Arc<dyn KeyGate>,
+    slots: Arc<Slots>,
+}
+
 impl TlsListener {
-    /// Binds `addr` and starts accepting. Keys are judged by `gate` after their proof.
+    /// Binds `addr` with the default [`Limits`] and starts accepting. Keys are judged by
+    /// `gate` after their proof.
     pub async fn bind(
         addr: ListenAddr,
         identity: &BrokerIdentity,
         gate: Arc<dyn KeyGate>,
     ) -> Result<TlsListener, NetError> {
+        TlsListener::bind_with(addr, identity, gate, Limits::default()).await
+    }
+
+    /// Like [`TlsListener::bind`] with explicit limits.
+    pub async fn bind_with(
+        addr: ListenAddr,
+        identity: &BrokerIdentity,
+        gate: Arc<dyn KeyGate>,
+        limits: Limits,
+    ) -> Result<TlsListener, NetError> {
         let tcp = TcpListener::bind(addr.socket_addr()).await?;
         let local = tcp.local_addr()?;
-        let acceptor = TlsAcceptor::from(identity.server_config()?);
-        let own = identity.fingerprint();
+        let shared = Arc::new(Shared {
+            acceptor: TlsAcceptor::from(identity.server_config()?),
+            own: identity.fingerprint(),
+            gate,
+            slots: Slots::new(limits),
+        });
         let (tx, rx) = mpsc::channel(16);
-        let task = tokio::spawn(accept_loop(tcp, acceptor, own, gate, tx));
+        let task = tokio::spawn(accept_loop(tcp, shared, tx));
         Ok(TlsListener {
             local,
             ready: Mutex::new(rx),
@@ -120,14 +81,7 @@ impl Drop for TlsListener {
     }
 }
 
-async fn accept_loop(
-    tcp: TcpListener,
-    acceptor: TlsAcceptor,
-    own: Fingerprint,
-    gate: Arc<dyn KeyGate>,
-    tx: mpsc::Sender<StreamTransport>,
-) {
-    let pending = Arc::new(Semaphore::new(MAX_PENDING_HANDSHAKES));
+async fn accept_loop(tcp: TcpListener, shared: Arc<Shared>, tx: mpsc::Sender<StreamTransport>) {
     loop {
         let (stream, from) = match tcp.accept().await {
             Ok(x) => x,
@@ -136,44 +90,54 @@ async fn accept_loop(
                 continue;
             }
         };
-        let Ok(permit) = pending.clone().try_acquire_owned() else {
+        let ip = from.ip().to_canonical();
+        let Some(slot) = shared.slots.acquire(ip) else {
             drop(stream);
             continue;
         };
-        let (acceptor, gate, tx) = (acceptor.clone(), gate.clone(), tx.clone());
+        let (shared, tx) = (shared.clone(), tx.clone());
         tokio::spawn(async move {
-            let handshake = handshake(stream, from, acceptor, own, gate);
-            if let Ok(Some(transport)) = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {
+            let timeout = shared.slots.limits().handshake_timeout;
+            let done = tokio::time::timeout(timeout, handshake(stream, ip, &shared)).await;
+            drop(slot);
+            if let Ok(Some(transport)) = done {
                 let _ = tx.send(transport).await;
             }
-            drop(permit);
         });
     }
 }
 
 async fn handshake(
     stream: TcpStream,
-    from: SocketAddr,
-    acceptor: TlsAcceptor,
-    own: Fingerprint,
-    gate: Arc<dyn KeyGate>,
+    ip: std::net::IpAddr,
+    shared: &Shared,
 ) -> Option<StreamTransport> {
     let _ = stream.set_nodelay(true);
-    let mut tls = acceptor.accept(stream).await.ok()?;
-    let (key, admit) = match accept_proof(&mut tls, &own, gate.as_ref()).await {
+    let mut tls = shared.acceptor.accept(stream).await.ok()?;
+    let binding = channel_binding(tls.get_ref().1).ok()?;
+    let proof = accept_proof(&mut tls, &shared.own, &binding, shared.gate.as_ref()).await;
+    let (key, admit) = match proof {
         Ok(x) => x,
         Err(_) => {
             let _ = tls.shutdown().await;
             return None;
         }
     };
+    let access = match admit {
+        Admit::Member => {
+            shared.slots.remember(ip);
+            PeerAccess::Member
+        }
+        _ => PeerAccess::Joining,
+    };
     let peer = Peer {
-        endpoint: Endpoint::Addr(from.ip().to_canonical()),
+        endpoint: Endpoint::Addr(ip),
         key: Some(key),
+        access,
     };
     let transport = StreamTransport::new(tls, peer);
-    Some(match admit {
-        Admit::Joining => transport.join_only(),
+    Some(match access {
+        PeerAccess::Joining => transport.join_only(shared.slots.limits().join_timeout),
         _ => transport,
     })
 }
@@ -186,72 +150,5 @@ impl Listener for TlsListener {
             Some(t) => Ok(Box::new(t)),
             None => Err(TransportError::Closed),
         }
-    }
-}
-
-/// Dials brokers over TLS as one participant: pins the broker certificate fingerprint and
-/// proves `key` by signing the broker's nonce. The resulting peer is the broker's address with
-/// the pinned fingerprint as its key.
-pub struct TlsDialer {
-    key: Arc<ClientKey>,
-}
-
-impl TlsDialer {
-    /// A dialer proving `key` on every connection.
-    pub fn new(key: Arc<ClientKey>) -> TlsDialer {
-        TlsDialer { key }
-    }
-}
-
-/// The name of the TLS transport: [`StreamTransport`] over a TLS stream.
-pub type TlsTransport = StreamTransport;
-
-#[async_trait]
-impl Dialer for TlsDialer {
-    async fn dial(
-        &self,
-        address: &str,
-        fingerprint: Option<&str>,
-    ) -> Result<Box<dyn Transport>, TransportError> {
-        let pin = fingerprint
-            .ok_or_else(|| {
-                TransportError::Refused("a TLS connection needs the pinned fingerprint".into())
-            })
-            .and_then(|f| {
-                Fingerprint::parse(f).map_err(|e| TransportError::Refused(e.to_string()))
-            })?;
-        let (config, verifier) =
-            client_config(pin).map_err(|e| TransportError::Io(e.to_string()))?;
-        let connect = async {
-            let tcp = TcpStream::connect(address)
-                .await
-                .map_err(|e| TransportError::Unreachable(format!("{address}: {e}")))?;
-            let _ = tcp.set_nodelay(true);
-            let remote = tcp
-                .peer_addr()
-                .map_err(|e| TransportError::Io(e.to_string()))?;
-            let mut tls = match TlsConnector::from(config).connect(server_name(), tcp).await {
-                Ok(tls) => tls,
-                Err(e) => {
-                    let presented = *verifier.presented.lock().unwrap_or_else(|p| p.into_inner());
-                    return Err(match presented {
-                        Some(got) if got != pin => TransportError::Refused(format!(
-                            "wrong_fingerprint: {address} presented certificate {got}, \
-                             expected {pin}; the connection was dropped"
-                        )),
-                        _ => TransportError::Io(format!("tls with {address}: {e}")),
-                    });
-                }
-            };
-            prove(&mut tls, &pin, &self.key).await?;
-            let peer = Peer {
-                endpoint: Endpoint::Addr(remote.ip().to_canonical()),
-                key: Some(pin.to_string()),
-            };
-            Ok::<Box<dyn Transport>, TransportError>(Box::new(StreamTransport::new(tls, peer)))
-        };
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, connect)
-            .await
-            .map_err(|_| TransportError::Unreachable(format!("{address}: handshake timed out")))?
     }
 }

@@ -28,8 +28,26 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), NetError> {
     restrict(path)
 }
 
+/// Writes a non-secret file atomically: next to its final name, then renamed into place.
+pub fn write_public(path: &Path, bytes: &[u8]) -> Result<(), NetError> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::create_dir_all(dir)?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = Path::new(&tmp);
+    {
+        let mut file = fs::File::create(tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(tmp, path)?;
+    Ok(())
+}
+
 /// Reads a secret file, refusing one that other users can read (Unix: any group or other
-/// permission bit).
+/// permission bit; Windows: any allowed DACL entry other than the current user, SYSTEM and
+/// Administrators).
 pub fn read_private(path: &Path) -> Result<Vec<u8>, NetError> {
     check_private(path)?;
     Ok(fs::read(path)?)
@@ -64,7 +82,7 @@ fn restrict(path: &Path) -> Result<(), NetError> {
 
 #[cfg(windows)]
 fn restrict(path: &Path) -> Result<(), NetError> {
-    crate::os_windows::restrict_to_owner(path)
+    crate::acl_windows::restrict_to_owner(path)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -82,7 +100,16 @@ fn check_private(path: &Path) -> Result<(), NetError> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn check_private(path: &Path) -> Result<(), NetError> {
+    fs::metadata(path)?;
+    if !crate::acl_windows::owner_only(path)? {
+        return Err(NetError::InsecureFile(path.display().to_string()));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn check_private(path: &Path) -> Result<(), NetError> {
     fs::metadata(path)?;
     Ok(())
