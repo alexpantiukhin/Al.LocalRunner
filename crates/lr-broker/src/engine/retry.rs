@@ -1,6 +1,7 @@
 use super::{Cancel, Engine, Job};
-use lr_abstractions::{Applied, JobKey, Level, StoreError, Transition};
-use lr_core::{JobState, Timestamp};
+use lr_abstractions::{JobKey, Level, StoreError};
+use lr_core::Timestamp;
+use lr_proto::JobResult;
 use std::collections::HashSet;
 
 const RETRY_AFTER_S: u64 = 1;
@@ -9,16 +10,22 @@ pub(crate) enum Retry {
     Requeue(Job),
     Cancel(Job, Cancel),
     Lose(Job),
-    Start(JobKey, Timestamp),
+    Result(Job, Box<JobResult>, Timestamp),
 }
 
 impl Retry {
     fn key(&self) -> &JobKey {
         match self {
-            Retry::Requeue(job) | Retry::Cancel(job, _) | Retry::Lose(job) => &job.key,
-            Retry::Start(key, _) => key,
+            Retry::Requeue(job)
+            | Retry::Cancel(job, _)
+            | Retry::Lose(job)
+            | Retry::Result(job, _, _) => &job.key,
         }
     }
+}
+
+pub(crate) fn transient(e: &StoreError) -> bool {
+    matches!(e, StoreError::Io(_))
 }
 
 impl Engine {
@@ -34,44 +41,30 @@ impl Engine {
         );
     }
 
-    pub(crate) async fn settle_start(&mut self, job: &Job) {
-        if !self.take_pending_start(&job.key) {
-            return;
-        }
-        let at = job.started_at.unwrap_or(self.now());
-        if let Err(e) = self
-            .store
-            .transition(&job.key, Transition::to(JobState::Running, at))
-            .await
-        {
-            self.store_failed("record the start of a run", &job.key, &e);
+    pub(crate) fn arm_retry(&mut self) {
+        if self.retries.is_empty() && !self.unsaved_starts {
+            self.retry_at = self.now().plus_secs(RETRY_AFTER_S);
         }
     }
 
     pub(crate) fn retry_later(&mut self, what: &str, e: &StoreError, retry: Retry) {
+        if !transient(e) {
+            return self.store_failed(&format!("{what}; the store refused it"), retry.key(), e);
+        }
         if !self.retry_round {
             let key = retry.key().clone();
-            self.diag(
-                Level::Error,
-                &format!("storage failed: could not {what}; retried in a second"),
-                &[
-                    ("client", &key.client),
-                    ("job", &key.job.0),
-                    ("error", &e.to_string()),
-                ],
-            );
+            self.store_failed(&format!("{what}; retried in a second"), &key, e);
         }
-        if self.retries.is_empty() {
-            self.retry_at = self.now().plus_secs(RETRY_AFTER_S);
-        }
+        self.arm_retry();
         self.retries.push(retry);
     }
 
     pub(crate) async fn run_retries(&mut self) -> bool {
-        if self.retries.is_empty() || self.now() < self.retry_at {
+        if (self.retries.is_empty() && !self.unsaved_starts) || self.now() < self.retry_at {
             return false;
         }
         self.retry_round = true;
+        self.save_unsaved_starts().await;
         for retry in std::mem::take(&mut self.retries) {
             match retry {
                 Retry::Requeue(job) => self.requeue_or_retry(job).await,
@@ -80,18 +73,17 @@ impl Engine {
                     let now = self.now();
                     self.lose(job, now).await
                 }
-                Retry::Start(key, at) => {
-                    self.write_start(key, at).await;
-                }
+                Retry::Result(job, r, at) => self.job_result(job, &r, at).await,
             }
         }
         self.retry_round = false;
-        if !self.retries.is_empty() {
-            let left = self.retries.len().to_string();
+        let left = self.retries.len() + self.active.iter().filter(|j| j.start_unsaved).count();
+        if left > 0 {
+            self.retry_at = self.now().plus_secs(RETRY_AFTER_S);
             self.diag(
                 Level::Error,
                 &format!("storage failed: {left} writes still failing; retried in a second"),
-                &[("pending", &left)],
+                &[("pending", &left.to_string())],
             );
         }
         true
@@ -108,32 +100,8 @@ impl Engine {
         }
     }
 
-    pub(crate) async fn write_start(&mut self, key: JobKey, at: Timestamp) -> bool {
-        match self
-            .store
-            .transition(&key, Transition::to(JobState::Running, at))
-            .await
-        {
-            Ok(applied) => applied == Applied::Changed,
-            Err(e) => {
-                self.retry_later("record the start of a run", &e, Retry::Start(key, at));
-                true
-            }
-        }
-    }
-
-    pub(crate) fn take_pending_start(&mut self, key: &JobKey) -> bool {
-        let before = self.retries.len();
-        self.retries
-            .retain(|r| !matches!(r, Retry::Start(k, _) if k == key));
-        self.retries.len() != before
-    }
-
     pub(crate) fn cancel_parked(&mut self, key: &JobKey, cancel: &Cancel) -> Option<bool> {
-        let retry = self
-            .retries
-            .iter_mut()
-            .find(|r| !matches!(r, Retry::Start(..)) && r.key() == key)?;
+        let retry = self.retries.iter_mut().find(|r| r.key() == key)?;
         match retry {
             Retry::Requeue(job) if job.cancel.is_none() => {
                 job.cancel = Some(cancel.clone());
@@ -144,10 +112,7 @@ impl Engine {
     }
 
     pub(crate) fn parked_keys(&self) -> impl Iterator<Item = &JobKey> {
-        self.retries
-            .iter()
-            .filter(|r| !matches!(r, Retry::Start(..)))
-            .map(Retry::key)
+        self.retries.iter().map(Retry::key)
     }
 
     pub(crate) fn forget_clients(&mut self) {

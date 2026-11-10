@@ -226,6 +226,7 @@ impl Engine {
             assigned_at: self.now(),
             started_at: None,
             cancel: None,
+            start_unsaved: false,
         }
     }
 

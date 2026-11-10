@@ -1,14 +1,11 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
-use super::{Engine, Job};
-use lr_abstractions::{
-    Applied, Frame, Inbound, JobKey, Level, OutboxKind, StepUpdate, StoreError, Transition,
-};
+use super::Engine;
+use lr_abstractions::{Applied, Frame, Inbound, JobKey, Level, OutboxKind, StepUpdate, StoreError};
 use lr_core::{pick_next, Assignment, JobId, JobState, QueueState, RunningJob, Timestamp, Wait};
 use lr_proto::{
     receive, Ack, Assign, AssignSpec, BrokerToHub, BrokerToRunner, Chunk, JobResult, ProtocolError,
-    ProtocolErrorCode, QueueEvent, ReasonCode, Received, RunnerToBroker, StartedNotice, StepResult,
-    StepView,
+    ProtocolErrorCode, QueueEvent, ReasonCode, Received, RunnerToBroker, StepResult, StepView,
 };
 use serde_json::Value;
 
@@ -311,37 +308,6 @@ impl Engine {
         }
     }
 
-    async fn started(&mut self, i: usize, runner: &str, now: Timestamp) {
-        let key = self.active[i].key.clone();
-        if !self.write_start(key.clone(), now).await {
-            return;
-        }
-        self.active[i].started_at = Some(now);
-        if let Some(c) = self.active[i].cancel.clone() {
-            let mut t = Transition::to(JobState::Cancelling, now);
-            t.cancelled_by = Some(c.by);
-            t.cancel_reason = Some(c.reason);
-            if let Err(e) = self.store.transition(&key, t).await {
-                self.store_failed("record the cancel of a started run", &key, &e);
-            }
-        }
-        let msg = BrokerToHub::Started(StartedNotice {
-            job: key.job.clone(),
-            seq: 0,
-            runner: runner.to_string(),
-            started_at: now,
-        });
-        self.notify_hub(&key.client, &key.job, OutboxKind::Started, &msg)
-            .await;
-        self.publish(
-            Some(&key.client),
-            QueueEvent::JobStarted {
-                job: key.job.clone(),
-                runner: runner.to_string(),
-            },
-        );
-    }
-
     async fn step_result(&mut self, i: usize, s: &StepResult, now: Timestamp) {
         let key = self.active[i].key.clone();
         let timeout_s = self.active[i]
@@ -383,42 +349,5 @@ impl Engine {
                 },
             },
         );
-    }
-
-    async fn job_result(&mut self, job: Job, r: &JobResult, now: Timestamp) {
-        if r.state == JobState::Cancelled {
-            self.take_pending_start(&job.key);
-        } else if job.started_at.is_some() {
-            self.settle_start(&job).await;
-        } else if let Err(e) = self
-            .store
-            .transition(&job.key, Transition::to(JobState::Running, now))
-            .await
-        {
-            self.store_failed("record the start of a reported run", &job.key, &e);
-        }
-        let cancel = job
-            .cancel
-            .as_ref()
-            .filter(|_| r.state == JobState::Cancelled);
-        let reason = r.reason.clone().or_else(|| cancel.map(|c| c.code.clone()));
-        let mut t = Transition::to(r.state, now);
-        t.exit_code = r.exit_code;
-        match cancel {
-            Some(c) => {
-                t.cancelled_by = Some(c.by.clone());
-                t.cancel_reason = Some(c.reason.clone());
-            }
-            None => {
-                t.cancel_reason = r.reason.as_ref().map(|code| match &r.detail {
-                    Some(d) => format!("{code}: {d}"),
-                    None => code.to_string(),
-                });
-            }
-        }
-        if let Ok(Applied::Changed) = self.store.transition(&job.key, t).await {
-            self.finish(&job.key, r.state, r.exit_code, reason, r.detail.clone())
-                .await;
-        }
     }
 }

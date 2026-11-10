@@ -20,6 +20,7 @@ mod retry;
 mod runners;
 mod same_machine;
 mod services;
+mod start;
 mod wire;
 
 pub use events::BusEvent;
@@ -130,6 +131,7 @@ impl Broker {
                 retries: Vec::new(),
                 retry_at: Timestamp(0),
                 retry_round: false,
+                unsaved_starts: false,
             },
             listener: deps.listener,
             tx,
@@ -268,6 +270,7 @@ pub(crate) struct Job {
     pub(crate) assigned_at: Timestamp,
     pub(crate) started_at: Option<Timestamp>,
     pub(crate) cancel: Option<Cancel>,
+    pub(crate) start_unsaved: bool,
 }
 
 pub(crate) struct Engine {
@@ -295,6 +298,7 @@ pub(crate) struct Engine {
     pub(crate) retries: Vec<retry::Retry>,
     pub(crate) retry_at: Timestamp,
     pub(crate) retry_round: bool,
+    pub(crate) unsaved_starts: bool,
 }
 
 const MIB: u64 = 1024 * 1024;

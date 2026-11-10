@@ -156,7 +156,7 @@ impl Engine {
     pub(crate) async fn mark_cancel(&mut self, i: usize, cancel: Cancel) {
         let key = self.active[i].key.clone();
         self.active[i].cancel = Some(cancel.clone());
-        let written = if self.active[i].started_at.is_some() {
+        let written = if self.active[i].started_at.is_some() && !self.active[i].start_unsaved {
             let mut t = Transition::to(JobState::Cancelling, self.now());
             t.cancelled_by = Some(cancel.by);
             t.cancel_reason = Some(cancel.reason);

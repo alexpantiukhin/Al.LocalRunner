@@ -1,4 +1,5 @@
 use super::retry::Retry;
+use super::start::StartWrite;
 use super::{Cancel, Engine, Job};
 use crate::policy::{OrphanQueued, OrphanRunning};
 use lr_abstractions::{Applied, Transition};
@@ -48,8 +49,12 @@ impl Engine {
         }
     }
 
-    pub(crate) async fn lose(&mut self, job: Job, now: Timestamp) {
-        self.settle_start(&job).await;
+    pub(crate) async fn lose(&mut self, mut job: Job, now: Timestamp) {
+        if job.start_unsaved {
+            if let StartWrite::Pending(e) = self.save_start(&mut job, false).await {
+                return self.retry_later("mark a run lost", &e, Retry::Lose(job));
+            }
+        }
         let mut t = Transition::to(JobState::Lost, now);
         t.cancel_reason = Some(ReasonCode::RunnerLost.to_string());
         match self.store.transition(&job.key, t).await {

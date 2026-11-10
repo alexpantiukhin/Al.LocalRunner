@@ -202,7 +202,10 @@ async fn a_failing_retry_round_logs_one_line_with_the_count() {
     h.poke().await;
     let after = errors(&h);
     assert_eq!(after.len(), 3, "{after:?}");
-    assert!(after[2].contains("2 "), "{}", after[2]);
+    assert_eq!(
+        after[2],
+        "storage failed: 2 writes still failing; retried in a second"
+    );
 }
 
 #[tokio::test]
