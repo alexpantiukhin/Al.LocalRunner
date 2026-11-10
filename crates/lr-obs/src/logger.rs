@@ -121,6 +121,7 @@ pub struct Logger {
     env: ObsEnv,
     redactor: Arc<Redactor>,
     current: RwLock<Arc<Pipeline>>,
+    io: Mutex<()>,
     workers_on: AtomicBool,
     stopped: AtomicBool,
     retired_dropped: AtomicU64,
@@ -136,6 +137,7 @@ impl Logger {
         Ok(Logger {
             redactor: Arc::new(Redactor::new(&config.redact_fields)),
             current: RwLock::new(Arc::new(pipeline)),
+            io: Mutex::new(()),
             env,
             workers_on: AtomicBool::new(false),
             stopped: AtomicBool::new(false),
@@ -157,9 +159,20 @@ impl Logger {
             .clone()
     }
 
+    fn io(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.io.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Applies a new configuration (`logging reload`). On error the old one stays.
+    ///
+    /// The swap, the retirement of the old sinks (their files closed) and the start of the
+    /// new workers happen under one lock that [`Logger::flush`] and [`Logger::shutdown`] also
+    /// take, so no new writer opens a file while the old one still has it open. Records
+    /// written during a reload go to whichever pipeline is current when they are enqueued
+    /// (see [`LogSink::write`] below), so none is left in a retired queue uncounted.
     pub fn reload(&self, config: &LoggingConfig) -> Result<(), ConfigError> {
         let fresh = Arc::new(build(config, &self.env)?);
+        let _io = self.io();
         self.redactor.set_fields(&config.redact_fields);
         self.env.metrics.set_client_label(config.client_label);
         let old = std::mem::replace(
@@ -186,6 +199,7 @@ impl Logger {
 
     /// Delivers everything queued now, on the calling thread.
     pub fn flush(&self) {
+        let _io = self.io();
         for sink in &self.pipeline().sinks {
             sink.queue.flush();
         }
@@ -193,6 +207,7 @@ impl Logger {
 
     /// Starts one worker thread per sink, also for sinks of later reloads.
     pub fn start_workers(&self) {
+        let _io = self.io();
         if self.stopped.load(Ordering::SeqCst) || self.workers_on.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -205,6 +220,7 @@ impl Logger {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return;
         }
+        let _io = self.io();
         stop(&self.pipeline());
     }
 
@@ -246,12 +262,12 @@ impl Drop for Logger {
 
 impl LogSink for Logger {
     fn write(&self, record: &Record) {
-        let p = self.pipeline();
-        if record.level < p.config.level_for(&record.component) {
+        if record.level < self.pipeline().config.level_for(&record.component) {
             return;
         }
         let redacted = self.redactor.redact(record);
-        for sink in p.sinks.iter().filter(|s| s.logs) {
+        let current = self.current.read().unwrap_or_else(|e| e.into_inner());
+        for sink in current.sinks.iter().filter(|s| s.logs) {
             sink.queue.accept(redacted.clone());
         }
     }

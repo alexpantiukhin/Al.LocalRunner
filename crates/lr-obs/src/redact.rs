@@ -20,15 +20,24 @@
 //! acronyms and letter/digit changes, case-insensitive: `APIKey` is `api`, `key`; `token2`
 //! is `token`, `2`), or when the name with separators removed contains one of
 //! [`SENSITIVE_PARTS`] (`PGPASSWORD`, `accesstoken`, `dbPwd`, `OAuthHeader`). Names in
-//! [`NOT_SENSITIVE`] are the documented exceptions to the second rule. The configured list
-//! only extends the built-in one.
+//! [`NOT_SENSITIVE`] are exceptions to the second rule only; neither the built-in names nor
+//! the configured `[redact] fields` can be weakened by them. The configured list only
+//! extends the built-in one.
 //!
-//! Registered values are found with one Aho-Corasick automaton (rebuilt after
-//! [`Redactor::protect`]); overlapping matches are masked as their union, so no tail of a
-//! longer or overlapping value is left. A message or value is cut to its limit plus the
-//! longest registered value before redaction, moved back to the start of a registered
-//! value that straddles the cut, so redaction costs a bounded amount and a cut never leaves
-//! an unmasked prefix of a registered value.
+//! Registered values are found with one Aho-Corasick automaton. [`Redactor::protect`] only
+//! marks it stale; the next redaction rebuilds it outside the lock (a burst of registrations
+//! costs one rebuild), and a redaction that starts after `protect` returned always uses an
+//! automaton that holds the value. Overlapping matches are merged into their union while
+//! they are found, so no tail of a longer or overlapping value is left; past 65 536 matches
+//! in one text (a degenerate set of values) the rest of the text is masked.
+//!
+//! A message or value is cut before redaction at its limit plus the longest registered
+//! value, and the cut is moved back, until stable, to the start of a registered value it
+//! falls inside and to the start of the token it falls inside (tokens end at whitespace,
+//! `,` and `;`). Every pattern is therefore judged on complete tokens: a URL credential,
+//! `Basic` value or key-value pair split by the limit is dropped whole, never emitted as an
+//! unmasked prefix. A text whose first token is longer than the limit becomes
+//! [`TRUNCATED`] alone. The result is then cut to the limit and marked with [`TRUNCATED`].
 //!
 //! Limits (no false confidence): a secret that was never registered and appears without a
 //! sensitive name, scheme or known format next to it is not recognised; registered values
@@ -77,10 +86,11 @@ pub const SENSITIVE_PARTS: &[&str] = &[
 ];
 
 /// Names that contain one of [`SENSITIVE_PARTS`] but are known not to hold secrets
-/// (counters, people, outcomes); compared without separators, case-insensitive.
+/// (counters, people, outcomes); compared without separators, case-insensitive. They are
+/// exceptions to the [`SENSITIVE_PARTS`] rule only: a built-in or configured name that
+/// matches by segments is always sensitive (`token_count` is, by the segment `token`).
 pub const NOT_SENSITIVE: &[&str] = &[
     "tokens_used",
-    "token_count",
     "author",
     "authority",
     "unauthorized",
@@ -133,17 +143,47 @@ impl Redacted {
 struct Secrets {
     order: VecDeque<String>,
     known: HashSet<String>,
+    generation: u64,
     matcher: Option<Arc<Matcher>>,
 }
 
 struct Matcher {
+    generation: u64,
     automaton: Option<AhoCorasick>,
     values: Vec<String>,
     longest: usize,
 }
 
+const MATCH_BUDGET: usize = 65_536;
+const TOKEN_ENDS: [char; 2] = [',', ';'];
+
+fn merge(merged: &mut Vec<(usize, usize)>, mut start: usize, mut end: usize) {
+    while let Some(&(s, e)) = merged.last() {
+        if start > e {
+            break;
+        }
+        start = start.min(s);
+        end = end.max(e);
+        merged.pop();
+    }
+    merged.push((start, end));
+}
+
+fn is_token_end(c: char) -> bool {
+    c.is_whitespace() || TOKEN_ENDS.contains(&c)
+}
+
+fn token_start(text: &str, at: usize) -> usize {
+    let before = text[..at].chars().next_back();
+    let after = text[at..].chars().next();
+    if before.is_none_or(is_token_end) || after.is_none_or(is_token_end) {
+        return at;
+    }
+    text[..at].rfind(is_token_end).unwrap_or(0)
+}
+
 impl Matcher {
-    fn build(order: &VecDeque<String>) -> Matcher {
+    fn build(order: &VecDeque<String>, generation: u64) -> Matcher {
         let values: Vec<String> = order.iter().cloned().collect();
         let longest = values.iter().map(String::len).max().unwrap_or(0);
         let automaton = if values.is_empty() {
@@ -152,6 +192,7 @@ impl Matcher {
             AhoCorasick::new(&values).ok()
         };
         Matcher {
+            generation,
             automaton,
             values,
             longest,
@@ -159,27 +200,32 @@ impl Matcher {
     }
 
     fn spans(&self, text: &str) -> Vec<(usize, usize)> {
-        let mut spans: Vec<(usize, usize)> = match &self.automaton {
-            Some(ac) => ac
-                .find_overlapping_iter(text)
-                .map(|m| (m.start(), m.end()))
-                .collect(),
-            None => self
+        let mut merged = Vec::new();
+        let Some(ac) = &self.automaton else {
+            let mut all: Vec<(usize, usize)> = self
                 .values
                 .iter()
                 .flat_map(|v| {
                     text.match_indices(v.as_str())
                         .map(|(i, _)| (i, i + v.len()))
                 })
-                .collect(),
-        };
-        spans.sort_unstable();
-        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(spans.len());
-        for (start, end) in spans {
-            match merged.last_mut() {
-                Some(last) if start <= last.1 => last.1 = last.1.max(end),
-                _ => merged.push((start, end)),
+                .collect();
+            all.sort_unstable_by_key(|&(start, end)| (end, start));
+            for (start, end) in all {
+                merge(&mut merged, start, end);
             }
+            return merged;
+        };
+        for (n, m) in ac.find_overlapping_iter(text).enumerate() {
+            if n >= MATCH_BUDGET {
+                let mut from = m.end().saturating_sub(self.longest);
+                while !text.is_char_boundary(from) {
+                    from -= 1;
+                }
+                merge(&mut merged, from, text.len());
+                break;
+            }
+            merge(&mut merged, m.start(), m.end());
         }
         merged
     }
@@ -192,19 +238,25 @@ impl Matcher {
         while !text.is_char_boundary(at) {
             at -= 1;
         }
-        let window = (at + self.longest).min(text.len());
-        let mut window_end = window;
+        let mut window_end = (at + self.longest).min(text.len());
         while !text.is_char_boundary(window_end) {
             window_end += 1;
         }
-        if let Some(&(start, _)) = self
-            .spans(&text[..window_end])
-            .iter()
-            .find(|(start, end)| *start < at && at < *end)
-        {
-            at = start;
+        let spans = if self.longest > 0 {
+            self.spans(&text[..window_end])
+        } else {
+            Vec::new()
+        };
+        loop {
+            let before = at;
+            if let Some(&(start, _)) = spans.iter().find(|(s, e)| *s < at && at < *e) {
+                at = start;
+            }
+            at = token_start(text, at);
+            if at == before {
+                return Some(at);
+            }
         }
-        Some(at)
     }
 
     fn mask(&self, text: &str) -> String {
@@ -271,6 +323,7 @@ impl Redactor {
             secrets: RwLock::new(Secrets {
                 order: VecDeque::new(),
                 known: HashSet::new(),
+                generation: 0,
                 matcher: None,
             }),
         }
@@ -296,25 +349,23 @@ impl Redactor {
                 s.known.remove(&old);
             }
         }
-        s.matcher = None;
+        s.generation += 1;
     }
 
     fn matcher(&self) -> Arc<Matcher> {
-        if let Some(m) = &self
-            .secrets
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .matcher
-        {
-            return m.clone();
-        }
+        let (order, generation) = {
+            let s = self.secrets.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(m) = s.matcher.as_ref().filter(|m| m.generation == s.generation) {
+                return m.clone();
+            }
+            (s.order.clone(), s.generation)
+        };
+        let built = Arc::new(Matcher::build(&order, generation));
         let mut s = self.secrets.write().unwrap_or_else(|e| e.into_inner());
-        if let Some(m) = &s.matcher {
-            return m.clone();
+        if s.matcher.as_ref().is_none_or(|m| m.generation < generation) {
+            s.matcher = Some(built.clone());
         }
-        let m = Arc::new(Matcher::build(&s.order));
-        s.matcher = Some(m.clone());
-        m
+        built
     }
 
     /// Number of registered secret values.
@@ -328,18 +379,19 @@ impl Redactor {
 
     /// Whether a field of this name has its whole value masked.
     pub fn is_sensitive_field(&self, name: &str) -> bool {
-        let flat = squashed(name);
-        if NOT_SENSITIVE.iter().any(|n| squashed(n) == flat) {
-            return false;
-        }
-        if SENSITIVE_PARTS.iter().any(|p| flat.contains(p)) {
+        let segs = scan::segments(name);
+        let by_segments = {
+            let patterns = self.patterns.read().unwrap_or_else(|e| e.into_inner());
+            patterns
+                .iter()
+                .any(|p| p.len() <= segs.len() && segs.windows(p.len()).any(|w| w == p.as_slice()))
+        };
+        if by_segments {
             return true;
         }
-        let segs = scan::segments(name);
-        let patterns = self.patterns.read().unwrap_or_else(|e| e.into_inner());
-        patterns
-            .iter()
-            .any(|p| p.len() <= segs.len() && segs.windows(p.len()).any(|w| w == p.as_slice()))
+        let flat = squashed(name);
+        SENSITIVE_PARTS.iter().any(|p| flat.contains(p))
+            && !NOT_SENSITIVE.iter().any(|n| squashed(n) == flat)
     }
 
     /// Masks registered values, known secret formats and sensitive `name=value` pairs in text.

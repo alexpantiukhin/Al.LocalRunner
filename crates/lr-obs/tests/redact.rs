@@ -146,8 +146,8 @@ fn key_value_pairs_in_text_are_masked() {
     let r = plain();
     assert_eq!(r.redact_text("token=abc def"), format!("token={MASK} def"));
     assert_eq!(
-        r.redact_text("bad password: hunter2, retry"),
-        format!("bad password: {MASK}, retry")
+        r.redact_text("bad password: hunter2, retry\nnext"),
+        format!("bad password: {MASK}\nnext")
     );
     assert_eq!(
         r.redact_text(r#"{"secret":"x y","ok":"1"}"#),
@@ -376,7 +376,6 @@ fn documented_false_positive_guards_are_not_masked() {
         NOT_SENSITIVE,
         &[
             "tokens_used",
-            "token_count",
             "author",
             "authority",
             "unauthorized",

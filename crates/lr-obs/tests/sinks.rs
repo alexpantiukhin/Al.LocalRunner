@@ -91,3 +91,113 @@ fn paused_writer_does_not_spin_the_worker() {
         ticks.load(Ordering::Relaxed)
     );
 }
+
+struct Counting {
+    calls: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl lr_obs::queue::Writer for Counting {
+    fn write(&mut self, _batch: &[lr_obs::redact::Redacted]) -> u64 {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        0
+    }
+
+    fn tick(&mut self) -> u64 {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        0
+    }
+
+    fn flush(&mut self) -> u64 {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        0
+    }
+}
+
+#[test]
+fn a_finished_queue_never_touches_its_writer_again() {
+    use lr_obs::queue::{Queued, SinkKind};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let calls = Arc::new(AtomicU64::new(0));
+    let meter: Arc<dyn Meter> = Arc::new(Metrics::new(T0, false));
+    let q = Queued::new(
+        SinkKind::File,
+        Box::new(Counting {
+            calls: calls.clone(),
+        }),
+        QueueLimits::default(),
+        meter,
+    );
+    q.close();
+    q.finish();
+    let after_finish = calls.load(Ordering::Relaxed);
+    let redactor = lr_obs::Redactor::new(&[]);
+    q.accept(redactor.redact(&record("engine", Level::Info, "late")));
+    q.flush();
+    q.pump();
+    q.finish();
+    assert_eq!(calls.load(Ordering::Relaxed), after_finish);
+    assert_eq!(q.dropped(), 1);
+}
+
+#[test]
+fn reload_racing_flush_never_has_two_writers_on_one_path() {
+    use lr_abstractions::fakes::ManualClock;
+    use lr_abstractions::{Clock, LogSink};
+    use lr_obs::config::LoggingConfig;
+    use lr_obs::fs::{LogFs, MemoryLogFs};
+    use lr_obs::logger::{Logger, ObsEnv, OtlpFactory, OtlpSettings, Resource};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let fs = MemoryLogFs::new();
+    let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(T0));
+    let otlp: OtlpFactory =
+        Arc::new(|_: &OtlpSettings| Err(lr_obs::config::ConfigError("unused".into())));
+    let env = ObsEnv {
+        state_dir: PathBuf::from("state"),
+        clock,
+        fs: Arc::new(fs.clone()) as Arc<dyn LogFs>,
+        console: None,
+        os_log: None,
+        otlp,
+        metrics: Arc::new(Metrics::new(T0, false)),
+        resource: Resource {
+            role: Role::Broker,
+            machine_id: "m-1".into(),
+        },
+        limits: QueueLimits::default(),
+    };
+    let cfg = LoggingConfig::parse("[[sink]]\nkind = \"file\"\n").unwrap();
+    let logger = Arc::new(Logger::new(&cfg, env).unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let busy: Vec<_> = (0..2)
+        .map(|_| {
+            let (logger, stop) = (logger.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut n = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    logger.write(&record("engine", Level::Info, &format!("f{n}")));
+                    logger.flush();
+                    n += 1;
+                }
+                n
+            })
+        })
+        .collect();
+    for _ in 0..200 {
+        logger.reload(&cfg).unwrap();
+        std::thread::yield_now();
+    }
+    stop.store(true, Ordering::Relaxed);
+    let written: u64 = busy.into_iter().map(|t| t.join().unwrap()).sum();
+    logger.shutdown();
+    let path = PathBuf::from("state").join("logs").join("daemon.log");
+    assert_eq!(fs.max_open(&path), 1);
+    let delivered = String::from_utf8(fs.file(&path).unwrap_or_default())
+        .unwrap()
+        .lines()
+        .count() as u64;
+    assert_eq!(delivered + logger.dropped(), written);
+}

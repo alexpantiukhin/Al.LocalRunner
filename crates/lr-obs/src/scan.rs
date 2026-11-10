@@ -181,15 +181,20 @@ fn closing_bracket(s: &str, from: usize) -> usize {
 #[derive(Clone, Copy, PartialEq)]
 enum Until {
     Space,
-    Separator,
     LineEnd,
 }
 
+fn escaped_quote(s: &str, at: usize) -> Option<&str> {
+    let slashes = s[at..].len() - s[at..].trim_start_matches('\\').len();
+    let quote = s[at + slashes..].chars().next()?;
+    (slashes > 0 && matches!(quote, '"' | '\'')).then(|| &s[at..at + slashes + 1])
+}
+
 fn value_span(s: &str, start: usize, until: Until) -> Option<(usize, usize, usize)> {
-    if s[start..].starts_with("\\\"") {
-        let inner = start + 2;
-        return match s[inner..].find("\\\"") {
-            Some(rel) => Some((inner, inner + rel, inner + rel + 2)),
+    if let Some(open) = escaped_quote(s, start) {
+        let inner = start + open.len();
+        return match s[inner..].find(open) {
+            Some(rel) => Some((inner, inner + rel, inner + rel + open.len())),
             None => Some((inner, s.len(), s.len())),
         };
     }
@@ -212,9 +217,6 @@ fn value_span(s: &str, start: usize, until: Until) -> Option<(usize, usize, usiz
                     !(c.is_whitespace()
                         || matches!(c, ',' | ';' | '&' | ')' | '}' | ']' | '"' | '\''))
                 }),
-                Until::Separator => {
-                    take_while(s, start, |c| !matches!(c, '\n' | '\r' | ',' | ';' | '&'))
-                }
                 Until::LineEnd => take_while(s, start, |c| !matches!(c, '\n' | '\r')),
             };
             let end = s[start..end].trim_end().len() + start;
@@ -244,8 +246,8 @@ pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
             continue;
         }
         let mut j = end;
-        if s[j..].starts_with("\\\"") {
-            j += 2;
+        if let Some(close) = escaped_quote(s, j) {
+            j += close.len();
         } else if s[j..].starts_with(['"', '\'']) {
             j += 1;
         }
@@ -253,10 +255,8 @@ pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
         if !s[j..].starts_with(['=', ':']) || s[j..].starts_with("://") {
             continue;
         }
-        let until = if is_authorization(word) {
+        let until = if is_authorization(word) || s[j..].starts_with(':') {
             Until::LineEnd
-        } else if s[j..].starts_with(':') {
-            Until::Separator
         } else {
             Until::Space
         };

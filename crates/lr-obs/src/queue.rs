@@ -8,7 +8,7 @@
 use crate::redact::Redacted;
 use lr_abstractions::Meter;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
@@ -108,6 +108,7 @@ pub struct Queued {
     pending: Mutex<Pending>,
     wake: Condvar,
     writer: Mutex<Box<dyn Writer>>,
+    finished: AtomicBool,
     dropped: AtomicU64,
     errors: AtomicU64,
     meter: Arc<dyn Meter>,
@@ -131,6 +132,7 @@ impl Queued {
             }),
             wake: Condvar::new(),
             writer: Mutex::new(writer),
+            finished: AtomicBool::new(false),
             dropped: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             meter,
@@ -194,6 +196,9 @@ impl Queued {
     /// whether the writer was still ready at the end (`false` while an exporter backs off).
     pub fn pump(&self) -> bool {
         let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        if self.finished.load(Ordering::SeqCst) {
+            return false;
+        }
         let ready = loop {
             if !w.ready() {
                 break false;
@@ -215,6 +220,9 @@ impl Queued {
     pub fn flush(&self) -> bool {
         let ready = self.pump();
         let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        if self.finished.load(Ordering::SeqCst) {
+            return false;
+        }
         let lost = w.flush();
         self.lose(lost);
         self.errors.store(w.errors(), Ordering::Relaxed);
@@ -232,12 +240,17 @@ impl Queued {
         self.pending().closed
     }
 
-    /// Final delivery after [`Queued::close`]: flushes, and counts what still could not be
-    /// delivered as dropped.
+    /// Final delivery after [`Queued::close`]: flushes, closes the writer and counts what
+    /// still could not be delivered as dropped. From then on the writer is never used again:
+    /// a later `pump`, `flush` or `finish` (from a thread still holding the queue) does
+    /// nothing, so a retired file sink cannot reopen its file.
     pub fn finish(&self) {
         self.pump();
         {
             let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+            if self.finished.swap(true, Ordering::SeqCst) {
+                return;
+            }
             let lost = w.close();
             self.lose(lost);
             self.errors.store(w.errors(), Ordering::Relaxed);
