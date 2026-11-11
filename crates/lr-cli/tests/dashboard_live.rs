@@ -2,7 +2,8 @@ mod common;
 
 use common::loopback::{layout, place, repo, until_ready};
 use common::TempDir;
-use lr_cli::dashboard::{hub_stopped, HubSource};
+use lr_cli::dashboard::HubSource;
+use lr_cli::hub_watch::{hub_stopped, stopped_after_misses};
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_dashboard::{Dashboard, DashboardOptions};
 use std::sync::Arc;
@@ -130,4 +131,31 @@ async fn the_dashboard_ends_once_the_hub_it_serves_stops_answering() {
         .await
         .expect("the dashboard ends after the hub is gone")
         .unwrap();
+}
+
+async fn ends_within(answers: Vec<bool>, checks: u32) -> bool {
+    let script = std::sync::Mutex::new(answers.into_iter());
+    let probe = || {
+        let answer = script.lock().unwrap().next().unwrap_or(true);
+        async move { answer }
+    };
+    let every = Duration::from_secs(1);
+    tokio::time::timeout(every * checks, stopped_after_misses(probe, every))
+        .await
+        .is_ok()
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_missed_check_does_not_end_the_dashboard() {
+    assert!(!ends_within(vec![true, false, true, true, false, true], 20).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_missed_checks_in_a_row_end_the_dashboard() {
+    assert!(ends_within(vec![true, false, true, false, false], 20).await);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hub_that_never_answered_does_not_end_the_dashboard() {
+    assert!(!ends_within(vec![false; 30], 20).await);
 }
