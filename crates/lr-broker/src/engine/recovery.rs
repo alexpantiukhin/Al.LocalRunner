@@ -85,6 +85,18 @@ impl Engine {
                 &[("error", &e.to_string())],
             ),
         }
+        match self.store.machines().await {
+            Ok(rows) => self.revoked.extend(
+                rows.into_iter()
+                    .filter(|m| m.revoked_at.is_some())
+                    .map(|m| m.name),
+            ),
+            Err(e) => self.diag(
+                Level::Error,
+                "storage failed: could not load revoked keys at start",
+                &[("error", &e.to_string())],
+            ),
+        }
         let filter = JobFilter {
             active_only: true,
             limit: Some(RECOVERY_SCAN),

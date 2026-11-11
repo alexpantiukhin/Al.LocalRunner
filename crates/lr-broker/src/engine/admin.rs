@@ -1,8 +1,8 @@
 use super::conn::Command;
-use super::{Engine, Role};
+use super::Engine;
 use crate::policy::{Applied, PolicyError};
 use lr_abstractions::Level;
-use lr_proto::{BrokerToRunner, ReasonCode};
+use lr_proto::BrokerToRunner;
 use tokio::sync::{mpsc, oneshot};
 
 pub(crate) enum AdminCommand {
@@ -37,7 +37,10 @@ impl BrokerHandle {
 
     /// The key of machine `name` was revoked: its live connections are closed at once, and a
     /// job running on one of its runners is `lost` with `runner_removed` right away, its
-    /// resources back in the pool (spec 3.9). Waiting orders stay queued for other runners.
+    /// resources back in the pool (spec 3.9); waiting orders of other clients stay queued for
+    /// other runners. For a client (hub) key its waiting orders are cancelled with
+    /// `client_removed`, its running orders follow `[orphans] running`, and its result outbox
+    /// is deleted (spec 15.5).
     pub async fn revoked(&self, name: &str) {
         let (reply, rx) = oneshot::channel();
         let cmd = Command::Admin(AdminCommand::Revoked {
@@ -69,46 +72,7 @@ impl Engine {
                 self.plan().await;
             }
             AdminCommand::Revoked { name, reply } => {
-                let conns: Vec<_> = self
-                    .conns
-                    .iter()
-                    .filter(|(_, c)| match &c.role {
-                        Role::Hub(client) => client.machine.as_deref() == Some(name.as_str()),
-                        Role::Runner(runner) => self
-                            .runners
-                            .get(runner)
-                            .is_some_and(|r| r.persisted && r.owner == name),
-                        Role::Pending => false,
-                    })
-                    .map(|(id, _)| *id)
-                    .collect();
-                for conn in conns {
-                    self.close(conn);
-                }
-                let removed: Vec<String> = self
-                    .runners
-                    .iter()
-                    .filter(|(_, r)| r.persisted && r.owner == name)
-                    .map(|(n, _)| n.clone())
-                    .collect();
-                let now = self.now();
-                let mut i = 0;
-                while i < self.active.len() {
-                    let on_removed = self.active[i]
-                        .runner
-                        .as_ref()
-                        .is_some_and(|r| removed.contains(r));
-                    if on_removed {
-                        let job = self.active.remove(i);
-                        self.lose(job, now, ReasonCode::RunnerRemoved).await;
-                    } else {
-                        i += 1;
-                    }
-                }
-                for r in &removed {
-                    self.runners.remove(r);
-                    self.forget_runner(r);
-                }
+                self.revoke(&name).await;
                 let _ = reply.send(());
                 self.plan().await;
             }

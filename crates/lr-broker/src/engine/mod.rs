@@ -19,6 +19,7 @@ mod orders;
 mod read;
 mod recovery;
 mod retry;
+mod revoke;
 mod runners;
 mod same_machine;
 mod services;
@@ -38,7 +39,7 @@ use lr_abstractions::{
 use lr_core::{Endpoint, JobId, QueueEntry, ServeLog, Site, Timestamp};
 use lr_proto::{OrderSpec, Topic};
 use runners::RunnerSlot;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -139,6 +140,7 @@ impl Broker {
                 retry_at: Timestamp(0),
                 retry_round: false,
                 unsaved_starts: false,
+                revoked: HashSet::new(),
             },
             listener: deps.listener,
             tx,
@@ -317,6 +319,7 @@ pub(crate) struct Engine {
     pub(crate) retry_at: Timestamp,
     pub(crate) retry_round: bool,
     pub(crate) unsaved_starts: bool,
+    pub(crate) revoked: HashSet<String>,
 }
 
 const MIB: u64 = 1024 * 1024;

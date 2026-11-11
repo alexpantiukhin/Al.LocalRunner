@@ -132,6 +132,9 @@ impl Engine {
         kind: OutboxKind,
         msg: &BrokerToHub,
     ) {
+        if !self.delivers_to(client) {
+            return;
+        }
         let Ok(payload) = serde_json::to_string(msg) else {
             return;
         };
