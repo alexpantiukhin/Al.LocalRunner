@@ -58,7 +58,7 @@ async fn seconds_from_drain_to_bye(stop_timeout_s: u64) -> u64 {
             _ = rig.advance(SEC) => {
                 ticks += 1;
                 assert!(ticks < 500, "no bye: {}", rig.logs_text());
-                if ticks % 10 == 0 {
+                if ticks.is_multiple_of(10) {
                     b.send(BrokerToRunner::Heartbeat).await;
                 }
             }

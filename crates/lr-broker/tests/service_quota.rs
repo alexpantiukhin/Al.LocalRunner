@@ -42,11 +42,9 @@ async fn a_queued_order_counts_its_service_memory_against_the_quota() {
     r1.send(&started("j1", 1)).await;
     r1.send(&result("j1", 2, JobState::Passed, 0)).await;
     r1.acked(2).await;
-    let next = loop {
-        tokio::select! {
-            a = r1.assign() => break a,
-            a = r2.assign() => break a,
-        }
+    let next = tokio::select! {
+        a = r1.assign() => a,
+        a = r2.assign() => a,
     };
     assert_eq!(next.job, JobId("j2".into()));
 }
