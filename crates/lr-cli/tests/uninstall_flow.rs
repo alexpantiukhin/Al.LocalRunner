@@ -1,10 +1,11 @@
 mod common;
 
+use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
-use lr_cli::commands::down_cmd::{wait_for_runners, Waited};
+use lr_cli::commands::down_cmd::down_with;
 use lr_cli::commands::setup::uninstall_with;
 use lr_cli::os_service::{Action, System};
-use lr_cli::paths::Layout;
+use std::future::pending;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -18,47 +19,39 @@ impl System for Recorder {
     }
 }
 
-fn layout(dir: &TempDir) -> Layout {
-    Layout::new(dir.path().join("state"), dir.path().join("config"))
-}
-
 #[tokio::test(start_paused = true)]
 async fn uninstall_removes_nothing_when_a_runner_outlives_the_30_second_wait() {
-    let dir = TempDir::new("uninstall-stuck");
-    let layout = layout(&dir);
-    let bin = dir.path().join("bin");
-    let system = Recorder::default();
-    let start = tokio::time::Instant::now();
-    let stuck_runner = async {
-        let waited = wait_for_runners(|| async { true }, true, std::future::pending::<()>()).await;
-        assert_eq!(waited, Waited::TimedOut);
-        Ok(1)
-    };
-    let code = uninstall_with(
-        &layout,
-        false,
-        false,
-        Some(bin),
-        false,
-        stuck_runner,
-        &system,
-    )
-    .await;
-    assert_eq!(code, Ok(1));
-    assert!(start.elapsed() >= Duration::from_secs(30));
-    assert!(
-        system.0.lock().unwrap().is_empty(),
-        "no autostart entry, service, binary or PATH entry is touched"
-    );
+    for service in [false, true] {
+        let dir = TempDir::new("uninstall-stuck");
+        let layout = with_runner(&dir);
+        let bin = dir.path().join("bin");
+        let system = Recorder::default();
+        let roles = FakeRoles::new(service, usize::MAX);
+        let start = tokio::time::Instant::now();
+        let stop = down_with(&layout, Vec::new(), true, &roles, pending::<()>());
+        let code = uninstall_with(&layout, false, false, Some(bin), false, stop, &system).await;
+        assert_eq!(code, Ok(1), "service broker: {service}");
+        let took = start.elapsed();
+        assert!(
+            took >= Duration::from_secs(30) && took < Duration::from_secs(31),
+            "{took:?}"
+        );
+        assert_eq!(roles.broker_stops(), 0, "the broker keeps running");
+        assert!(
+            system.0.lock().unwrap().is_empty(),
+            "no autostart entry, service, binary or PATH entry is touched"
+        );
+    }
 }
 
 #[tokio::test]
 async fn uninstall_after_every_role_stopped_removes_autostart_binary_and_path_entry() {
     let dir = TempDir::new("uninstall-go");
-    let layout = layout(&dir);
+    let layout = with_runner(&dir);
     let bin = dir.path().join("bin");
     let system = Recorder::default();
-    let stopped = async { Ok(0) };
+    let roles = FakeRoles::new(false, 0);
+    let stopped = down_with(&layout, Vec::new(), true, &roles, pending::<()>());
     uninstall_with(
         &layout,
         false,
@@ -70,6 +63,7 @@ async fn uninstall_after_every_role_stopped_removes_autostart_binary_and_path_en
     )
     .await
     .unwrap();
+    assert_eq!(roles.broker_stops(), 1);
     let applied = system.0.lock().unwrap().clone();
     assert!(
         applied.contains(&Action::RemoveFromUserPath(bin.clone())),
