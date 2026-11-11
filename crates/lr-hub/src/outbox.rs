@@ -160,7 +160,7 @@ impl Engine {
                 &[("job", &job.0)],
             );
             let code = ReasonCode::Rejected(RejectReason::OutboxExpired);
-            let detail = format!("ни один брокер не принял заказ за {ttl_h} ч");
+            let detail = format!("брокер не появился за срок: {ttl_h} ч");
             self.final_reject(&job, code, detail).await;
         }
     }
