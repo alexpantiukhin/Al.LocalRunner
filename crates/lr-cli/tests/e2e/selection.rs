@@ -150,6 +150,10 @@ async fn a_hub_only_laptop_refuses_a_lan_order_once_no_admissible_broker_is_left
         ReasonCode::Rejected(RejectReason::NoLocalBroker),
         "{detail}"
     );
+    assert!(
+        detail.contains("init --role broker") && detail.contains("--platform"),
+        "the hint fits a machine without a broker: {detail}"
+    );
     let (client, job) = submit(&laptop, &repo, "lan-only", Some(PLATFORM)).await;
     let ended = until_exit(client, &job, ENDS).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");

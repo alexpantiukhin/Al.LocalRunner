@@ -91,7 +91,9 @@ impl Engine {
             return Some(CliReply::Rejected {
                 code: ReasonCode::Rejected(RejectReason::NoLocalBroker),
                 detail:
-                    "заказ на эту машину, а локальный брокер не настроен: запустите localrunner up"
+                    "заказ на эту машину, а брокер на этой машине не настроен: закажите платформу \
+                     удалённого брокера (--platform; hub подключается к нему через hub join) или \
+                     настройте брокер здесь: localrunner init --role broker, затем localrunner up"
                         .into(),
             });
         }
