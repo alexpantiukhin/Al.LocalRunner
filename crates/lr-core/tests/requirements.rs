@@ -25,6 +25,7 @@ fn runner() -> Capabilities {
         zone: Zone::Lan,
         machine: None,
         accept: Accept::default(),
+        commands: BTreeSet::new(),
     }
 }
 
@@ -418,4 +419,28 @@ fn secrets_and_cache_do_not_affect_placement() {
 fn cache_variable_name_is_upper_cased() {
     assert_eq!(cache_env_var("gradle"), "LOCALRUNNER_CACHE_GRADLE");
     assert_eq!(cache_env_var("my-cache.1"), "LOCALRUNNER_CACHE_MY_CACHE_1");
+}
+
+#[test]
+fn command_names_must_all_be_declared_by_the_runner() {
+    let mut r = req(BASIC, Some("linux"));
+    assert!(r.commands.is_empty(), "profiles never name commands");
+    r.commands = set(&["build", "test"]);
+    let mut caps = runner();
+    caps.commands = set(&["build"]);
+    assert_eq!(
+        reasons(&caps, &r),
+        [MismatchReason::CommandMissing {
+            name: "test".into()
+        }]
+    );
+    assert_eq!(
+        MismatchReason::CommandMissing {
+            name: "test".into()
+        }
+        .to_string(),
+        "команда test не описана"
+    );
+    caps.commands = set(&["build", "test", "lint"]);
+    assert!(satisfies(&caps, &r).is_ok());
 }

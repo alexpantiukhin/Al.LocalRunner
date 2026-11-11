@@ -28,6 +28,7 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         secrets: BTreeSet::new(),
         cache: Vec::new(),
         max_zone: None,
+        commands: BTreeSet::new(),
     }
 }
 
@@ -100,6 +101,7 @@ pub fn caps() -> Capabilities {
         zone: Zone::Remote,
         machine: None,
         accept: Accept::default(),
+        commands: BTreeSet::new(),
     }
 }
 

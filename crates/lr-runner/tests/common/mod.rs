@@ -286,6 +286,7 @@ pub fn requirements(timeout_s: u64) -> Requirements {
         secrets: Default::default(),
         cache: Vec::new(),
         max_zone: None,
+        commands: Default::default(),
     }
 }
 
@@ -298,6 +299,8 @@ pub fn worktree_spec(cwd: &str, steps: Vec<StepSpec>, timeout_s: u64) -> AssignS
         secrets: Vec::new(),
         code: WireCode::WorkTree { cwd: cwd.into() },
         broker_lost_kill_s: Some(180),
+        named_commands: false,
+        cache_client: None,
     }
 }
 

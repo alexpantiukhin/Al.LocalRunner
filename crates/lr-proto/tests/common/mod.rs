@@ -54,6 +54,7 @@ pub fn requirements() -> Requirements {
         secrets: ["registry_auth".to_string()].into(),
         cache: vec!["gradle".into()],
         max_zone: Some(Zone::Lan),
+        commands: Default::default(),
     }
 }
 
@@ -88,6 +89,7 @@ pub fn caps() -> WireCapabilities {
         cache_max_mb: Some(40_000),
         cache_used_mb: Some(1200),
         service_mem_mb: Default::default(),
+        commands: Default::default(),
     }
 }
 
@@ -119,6 +121,8 @@ pub fn assign_spec() -> AssignSpec {
             cwd: "/work/repo".into(),
         },
         broker_lost_kill_s: Some(180),
+        named_commands: false,
+        cache_client: None,
     }
 }
 

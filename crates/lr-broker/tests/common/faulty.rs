@@ -9,10 +9,14 @@ use lr_abstractions::{
 use lr_core::{JobId, Timestamp};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 pub struct FaultyStore {
     pub inner: Arc<MemoryBrokerStore>,
     pub fail_accept: AtomicBool,
+    pub hold_accept: AtomicBool,
+    pub accept_entered: Notify,
+    pub accept_release: Notify,
     pub fail_accept_seq: AtomicBool,
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
@@ -26,6 +30,9 @@ impl FaultyStore {
         FaultyStore {
             inner,
             fail_accept: AtomicBool::new(false),
+            hold_accept: AtomicBool::new(false),
+            accept_entered: Notify::new(),
+            accept_release: Notify::new(),
             fail_accept_seq: AtomicBool::new(false),
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
@@ -61,6 +68,10 @@ impl BrokerStore for FaultyStore {
     async fn accept(&self, intake: Intake) -> Result<Admission, StoreError> {
         if self.fail_accept.load(Ordering::SeqCst) {
             return Err(io());
+        }
+        if self.hold_accept.load(Ordering::SeqCst) {
+            self.accept_entered.notify_one();
+            self.accept_release.notified().await;
         }
         self.inner.accept(intake).await
     }

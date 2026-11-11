@@ -299,3 +299,68 @@ async fn late_result_of_a_runner_no_longer_assigned_is_ignored() {
     assert_eq!(row.state, JobState::Queued);
     assert_eq!(row.runner.as_deref(), Some("rB"));
 }
+
+#[tokio::test]
+async fn project_cache_share_sends_one_cache_client_for_two_clients_of_a_project() {
+    let h = Harness::start("[cache]\nshare = \"project\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut laptop = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    let mut desk = h.member_hub("desk", "agent", "10.0.0.21").await;
+    laptop.send(&order("j1", req(512, 1, 60))).await;
+    laptop.accepted().await;
+    let first = r.assign().await;
+    r.send(&started("j1", 1)).await;
+    r.send(&result("j1", 2, JobState::Passed, 0)).await;
+    desk.send(&order("j2", req(512, 1, 60))).await;
+    desk.accepted().await;
+    let second = r.assign().await;
+    assert_ne!(first.spec.client, second.spec.client);
+    assert_eq!(first.spec.project, second.spec.project);
+    assert_eq!(
+        first.spec.cache_client.as_deref(),
+        Some(SHARED_CACHE_CLIENT)
+    );
+    assert_eq!(second.spec.cache_client, first.spec.cache_client);
+}
+
+#[tokio::test]
+async fn default_cache_share_keeps_the_cache_of_each_client() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut laptop = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    laptop.send(&order("j1", req(512, 1, 60))).await;
+    laptop.accepted().await;
+    let a = r.assign().await;
+    assert_eq!(a.spec.client, "laptop");
+    assert_eq!(a.spec.cache_client, None);
+}
+
+#[tokio::test]
+async fn ci_order_takes_the_pool_budget_once() {
+    let h = Harness::start("");
+    let mut ci_runner = h
+        .member_runner("al-ci", "10.0.0.21", caps(&["linux"], 16384, 8))
+        .await;
+    let mut r2 = h
+        .member_runner("r2", "10.0.0.7", caps(&["linux"], 8000, 8))
+        .await;
+    let mut r3 = h
+        .member_runner("r3", "10.0.0.8", caps(&["linux"], 8000, 8))
+        .await;
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.21").await;
+    ci.send(&order("ci-1", req(10000, 5, 600))).await;
+    assert_eq!(ci.accepted().await.waiting, None);
+    assert_eq!(ci_runner.assign().await.job, JobId("ci-1".into()));
+    ci_runner.send(&started("ci-1", 1)).await;
+    let mut agent = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    agent.send(&order("rest", req(6384, 3, 600))).await;
+    assert_eq!(agent.accepted().await.waiting, None);
+    assert_eq!(r2.assign().await.job, JobId("rest".into()));
+    agent.send(&order("over", req(512, 1, 600))).await;
+    let over = agent.accepted().await;
+    assert!(
+        over.waiting.is_some(),
+        "the pool is full: 16384 MB and 8 CPU"
+    );
+    r3.quiet().await;
+}

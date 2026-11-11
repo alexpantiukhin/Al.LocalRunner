@@ -39,6 +39,7 @@ pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
         cache_max_mb: None,
         cache_used_mb: None,
         service_mem_mb: Default::default(),
+        commands: Default::default(),
     }
 }
 

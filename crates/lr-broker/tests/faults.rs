@@ -5,6 +5,7 @@ use common::harness::*;
 use lr_abstractions::Level;
 use lr_proto::*;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 const ALEX: &str = "local:alex";
 
@@ -32,6 +33,23 @@ async fn store_failure_at_intake_is_answered_and_logged() {
     h.faults.fail_accept.store(false, Ordering::SeqCst);
     hub.send(&order("j1", req(512, 1, 60))).await;
     hub.accepted().await;
+}
+
+#[tokio::test]
+async fn accepted_is_sent_only_after_the_order_is_committed() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    FaultyStore::set(&h.faults.hold_accept);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    tokio::time::timeout(Duration::from_secs(5), h.faults.accept_entered.notified())
+        .await
+        .expect("the broker commits the order");
+    hub.quiet().await;
+    assert!(h.job_row(ALEX, "j1").await.is_none());
+    h.faults.accept_release.notify_one();
+    hub.accepted().await;
+    assert!(h.job_row(ALEX, "j1").await.is_some());
 }
 
 #[tokio::test]

@@ -51,6 +51,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         cache_max_mb: None,
         cache_used_mb: None,
         service_mem_mb: Default::default(),
+        commands: Default::default(),
     }
 }
 
@@ -73,6 +74,7 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         secrets: BTreeSet::new(),
         cache: Vec::new(),
         max_zone: None,
+        commands: Default::default(),
     }
 }
 

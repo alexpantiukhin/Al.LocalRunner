@@ -31,6 +31,7 @@ pub fn req(mem_mb: u64, cpu: u32) -> Requirements {
         secrets: BTreeSet::new(),
         cache: Vec::new(),
         max_zone: None,
+        commands: Default::default(),
     }
 }
 

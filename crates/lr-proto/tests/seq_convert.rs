@@ -132,6 +132,7 @@ fn capabilities_convert_without_loss() {
         accept: Accept {
             min_mem_mb: Some(4096),
         },
+        commands: set(["build".to_string()]),
     };
     let wire = WireCapabilities::from(&caps);
     assert_eq!(wire.accept_min_mem_mb, Some(4096));

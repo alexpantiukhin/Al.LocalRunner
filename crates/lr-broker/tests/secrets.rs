@@ -90,33 +90,3 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
     };
     assert_eq!(result.reason, Some(ReasonCode::SecretMissing));
 }
-
-#[tokio::test]
-async fn named_command_mode_rejects_orders_of_that_client() {
-    let h = Harness::start("[[commands.client]]\nlabel = \"guest\"\nmode = \"named\"\n");
-    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
-    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
-    guest.send(&order("j1", req(512, 1, 60))).await;
-    let r = guest.rejected().await;
-    assert_eq!(r.code.as_str(), "rejected_command_not_allowed");
-    assert!(r.detail.contains("make"), "{}", r.detail);
-    let mut agent = h.member_hub("laptop", "agent", "10.0.0.20").await;
-    agent.send(&order("j1", req(512, 1, 60))).await;
-    agent.accepted().await;
-}
-
-#[tokio::test]
-async fn named_command_mode_rejects_an_order_without_steps_too() {
-    let h = Harness::start("[[commands.client]]\nlabel = \"guest\"\nmode = \"named\"\n");
-    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
-    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
-    let HubToBroker::Order(mut o) = order("j1", req(512, 1, 60)) else {
-        unreachable!()
-    };
-    o.spec.steps.clear();
-    guest.send(&HubToBroker::Order(o)).await;
-    assert_eq!(
-        guest.rejected().await.code.as_str(),
-        "rejected_command_not_allowed"
-    );
-}

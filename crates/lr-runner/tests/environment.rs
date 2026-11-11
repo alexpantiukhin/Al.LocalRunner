@@ -4,7 +4,7 @@ use common::*;
 use lr_abstractions::fakes::{JobScript, StepScript};
 use lr_abstractions::{CacheEntry, CacheKey, RunnerStore};
 use lr_core::{cache_env_var, JobState, Timestamp};
-use lr_proto::{ReasonCode, RunnerToBroker};
+use lr_proto::{ReasonCode, RunnerToBroker, SHARED_CACHE_CLIENT};
 use lr_runner::{plan_sweep, CacheLayout, Retention};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -136,6 +136,38 @@ async fn caches_of_two_clients_never_share_a_directory() {
         name: "deps".into(),
     };
     assert_ne!(l.path(&k("client-1")), l.path(&k("client-2")));
+}
+
+async fn cache_path_of(client: &str, project: &str, cache_client: Option<&str>) -> String {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    let mut spec = worktree_spec("/w/tree", vec![step("b", "make", 60)], 60);
+    spec.client = client.into();
+    spec.project = project.into();
+    spec.cache_client = cache_client.map(str::to_string);
+    spec.requirements.cache = vec!["deps".into()];
+    b.assign("job-1", 1, spec).await;
+    b.until_result().await;
+    let env = env_of(&rig.process.runs()[0]);
+    env.into_iter()
+        .find(|(n, _)| *n == cache_env_var("deps"))
+        .map(|(_, v)| v)
+        .expect("cache variable")
+}
+
+#[tokio::test]
+async fn project_shared_cache_is_one_directory_for_two_clients() {
+    let shared = Some(SHARED_CACHE_CLIENT);
+    let first = cache_path_of("client-1", "acme/app", shared).await;
+    assert_eq!(first, cache_path_of("client-2", "acme/app", shared).await);
+    assert_ne!(first, cache_path_of("client-2", "acme/other", shared).await);
+    assert_ne!(first, cache_path_of("client-1", "acme/app", None).await);
+    assert_ne!(
+        cache_path_of("client-1", "acme/app", None).await,
+        cache_path_of("client-2", "acme/app", None).await
+    );
 }
 
 #[tokio::test]
