@@ -3,11 +3,27 @@ use lr_abstractions::fakes::FakeListener;
 use lr_abstractions::{Frame, Listener, Peer, Transport, TransportError};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Stall {
     pub on: Arc<AtomicBool>,
     pub closed: Arc<AtomicUsize>,
+    pub sent: Arc<AtomicUsize>,
+    pub reads: Arc<AtomicUsize>,
+    permits: Arc<Semaphore>,
+}
+
+impl Default for Stall {
+    fn default() -> Stall {
+        Stall {
+            on: Arc::default(),
+            closed: Arc::default(),
+            sent: Arc::default(),
+            reads: Arc::default(),
+            permits: Arc::new(Semaphore::new(0)),
+        }
+    }
 }
 
 impl Stall {
@@ -17,6 +33,18 @@ impl Stall {
 
     pub fn closes(&self) -> usize {
         self.closed.load(Ordering::SeqCst)
+    }
+
+    pub fn let_through(&self, frames: usize) {
+        self.permits.add_permits(frames);
+    }
+
+    pub fn sent(&self) -> usize {
+        self.sent.load(Ordering::SeqCst)
+    }
+
+    pub fn reads_started(&self) -> usize {
+        self.reads.load(Ordering::SeqCst)
     }
 }
 
@@ -49,12 +77,18 @@ impl Transport for StallTransport {
 
     async fn send(&self, frame: Frame) -> Result<(), TransportError> {
         if self.stall.on.load(Ordering::SeqCst) {
-            std::future::pending::<()>().await;
+            match self.stall.permits.acquire().await {
+                Ok(p) => p.forget(),
+                Err(_) => std::future::pending::<()>().await,
+            }
         }
-        self.inner.send(frame).await
+        let sent = self.inner.send(frame).await;
+        self.stall.sent.fetch_add(1, Ordering::SeqCst);
+        sent
     }
 
     async fn recv(&self) -> Result<Frame, TransportError> {
+        self.stall.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.recv().await
     }
 

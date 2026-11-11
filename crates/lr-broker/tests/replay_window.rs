@@ -5,7 +5,6 @@ use common::listeners::Stall;
 use lr_abstractions::{OutboxEntry, OutboxKind};
 use lr_core::{JobId, Timestamp};
 use lr_proto::*;
-use std::time::Duration;
 
 async fn pending_chunks(h: &Harness, n: u64) {
     let msg = BrokerToHub::Chunk(Chunk {
@@ -35,19 +34,22 @@ fn resume() -> HubToBroker {
     })
 }
 
-async fn settle() {
-    for _ in 0..2000 {
+async fn until(what: &str, probe: impl Fn() -> bool) {
+    for _ in 0..200_000 {
+        if probe() {
+            return;
+        }
         tokio::task::yield_now().await;
     }
+    panic!("never happened: {what}");
 }
 
-async fn stalled_replay_then_replies(replies: u64) -> (Harness, Stall) {
-    let (h, stall) = Harness::stalling("[limits]\napi_requests_per_min = 100000\n");
-    pending_chunks(&h, 5000).await;
-    let hub = h.local_hub("alex").await;
-    stall.start();
-    hub.send(&resume()).await;
-    settle().await;
+async fn engine_caught_up(h: &Harness) {
+    h.handle.revoked("nobody-at-all").await;
+}
+
+async fn read_requests(h: &Harness, hub: &Conn, stall: &Stall, replies: u64) {
+    let before = stall.reads_started();
     for req in 0..replies {
         hub.send(&HubToBroker::Read(ReadCall {
             req,
@@ -55,11 +57,40 @@ async fn stalled_replay_then_replies(replies: u64) -> (Harness, Stall) {
         }))
         .await;
     }
-    settle().await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    settle().await;
-    std::mem::forget(hub);
-    (h, stall)
+    let all = before + replies as usize;
+    until("every request is handed to the engine", || {
+        stall.reads_started() >= all
+    })
+    .await;
+    engine_caught_up(h).await;
+}
+
+async fn stalled_replay(let_through: usize) -> (Harness, Stall, Conn) {
+    let (h, stall) = Harness::stalling("[limits]\napi_requests_per_min = 100000\n");
+    pending_chunks(&h, 5000).await;
+    let hub = h.local_hub("alex").await;
+    let sent_before = stall.sent();
+    stall.start();
+    let reads = stall.reads_started();
+    hub.send(&resume()).await;
+    until("the resume is handed to the engine", || {
+        stall.reads_started() > reads
+    })
+    .await;
+    engine_caught_up(&h).await;
+    stall.let_through(let_through);
+    until("the allowed frames are written", || {
+        stall.sent() == sent_before + let_through
+    })
+    .await;
+    engine_caught_up(&h).await;
+    (h, stall, hub)
+}
+
+async fn stalled_replay_then_replies(let_through: usize, replies: u64) -> (Harness, Stall, Conn) {
+    let (h, stall, hub) = stalled_replay(let_through).await;
+    read_requests(&h, &hub, &stall, replies).await;
+    (h, stall, hub)
 }
 
 fn slow_disconnects(h: &Harness, why: &str) -> usize {
@@ -70,17 +101,37 @@ fn slow_disconnects(h: &Harness, why: &str) -> usize {
         .count()
 }
 
+const FULL: &str = "its outgoing queue is full";
+
 #[tokio::test]
 async fn a_replay_keeps_at_most_256_frames_queued_so_live_replies_fit_the_rest() {
-    let (h, stall) = stalled_replay_then_replies(1024 - 255).await;
-    assert_eq!(slow_disconnects(&h, "its outgoing queue is full"), 0);
+    let (h, stall, _hub) = stalled_replay_then_replies(0, 1024 - 255).await;
+    assert_eq!(slow_disconnects(&h, FULL), 0);
     assert_eq!(stall.closes(), 0);
 }
 
 #[tokio::test]
 async fn one_live_reply_past_the_free_room_disconnects_the_hub() {
-    let (h, _stall) = stalled_replay_then_replies(1024 - 255 + 1).await;
-    assert_eq!(slow_disconnects(&h, "its outgoing queue is full"), 1);
+    let (h, _stall, _hub) = stalled_replay_then_replies(0, 1024 - 255 + 1).await;
+    assert_eq!(slow_disconnects(&h, FULL), 1);
+}
+
+#[tokio::test]
+async fn no_next_portion_while_more_than_half_of_the_window_is_queued() {
+    let (h, _stall, _hub) = stalled_replay_then_replies(100, 1024 - 255 + 100).await;
+    assert_eq!(slow_disconnects(&h, FULL), 0, "the 100 sent frames were not refilled");
+    let (h, _stall, _hub) = stalled_replay_then_replies(100, 1024 - 255 + 101).await;
+    assert_eq!(slow_disconnects(&h, FULL), 1);
+}
+
+#[tokio::test]
+async fn the_next_portion_comes_once_the_queue_is_down_to_half() {
+    let (h, _stall, _hub) = stalled_replay_then_replies(200, 1024 - 255 + 128).await;
+    assert_eq!(
+        slow_disconnects(&h, FULL),
+        1,
+        "the queue was topped up at 128 frames, so its free room shrank again"
+    );
 }
 
 #[tokio::test]
