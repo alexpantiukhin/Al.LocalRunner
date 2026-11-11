@@ -212,8 +212,15 @@ pub fn autostart_with(
             }
         }
     }
-    if on && !dry_run && Os::current() == Os::Linux {
-        println!("to start without logging in: loginctl enable-linger");
+    if let Some(hint) = linger_hint(Os::current(), on, dry_run) {
+        println!("{hint}");
     }
     Ok(0)
+}
+
+/// The hint `autostart on` prints on Linux once the user units are in place: without
+/// `loginctl enable-linger` they start only when the user logs in.
+pub fn linger_hint(os: Os, on: bool, dry_run: bool) -> Option<&'static str> {
+    (on && !dry_run && os == Os::Linux)
+        .then_some("to start without logging in: loginctl enable-linger")
 }

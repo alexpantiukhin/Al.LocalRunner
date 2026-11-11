@@ -425,3 +425,16 @@ fn installing_user_is_added_to_local_users_once() {
     let two = ensure_local_user(&empty, "ci-agent").unwrap().unwrap();
     assert_eq!(lr_broker::policy::load(&two).unwrap().local_users.len(), 2);
 }
+
+#[test]
+fn autostart_on_linux_hints_at_enable_linger_and_nowhere_else() {
+    use lr_cli::commands::service_cmd::linger_hint;
+    assert_eq!(
+        linger_hint(Os::Linux, true, false),
+        Some("to start without logging in: loginctl enable-linger")
+    );
+    assert_eq!(linger_hint(Os::Linux, false, false), None);
+    assert_eq!(linger_hint(Os::Linux, true, true), None);
+    assert_eq!(linger_hint(Os::Windows, true, false), None);
+    assert_eq!(linger_hint(Os::MacOs, true, false), None);
+}
