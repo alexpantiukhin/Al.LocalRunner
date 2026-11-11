@@ -1,7 +1,7 @@
 mod common;
 
 use common::TempDir;
-use lr_cli::commands::down_cmd::down;
+use lr_cli::commands::down_cmd::{down, wait_for_runners, Waited};
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
 use lr_cli::paths::Layout;
@@ -34,4 +34,35 @@ fn up_leaves_a_stopped_broker_service_to_the_service_manager_with_exit_code_1() 
     let stopped = service_broker(false).unwrap_err();
     assert!(stopped.contains("not running"), "{stopped}");
     assert!(stopped.contains("OS service manager"), "{stopped}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn after_cancel_down_waits_for_runners_30_seconds_and_no_longer() {
+    let start = tokio::time::Instant::now();
+    let never = std::future::pending::<()>();
+    let waited = wait_for_runners(|| async { true }, true, never).await;
+    assert_eq!(waited, Waited::TimedOut);
+    let took = start.elapsed();
+    assert!(
+        took >= std::time::Duration::from_secs(30) && took < std::time::Duration::from_secs(31),
+        "{took:?}"
+    );
+
+    let mut left = 3;
+    let waited = wait_for_runners(
+        move || {
+            left -= 1;
+            async move { left > 0 }
+        },
+        true,
+        std::future::pending::<()>(),
+    )
+    .await;
+    assert_eq!(waited, Waited::Gone);
+
+    let start = tokio::time::Instant::now();
+    let ctrl_c = tokio::time::sleep(std::time::Duration::from_secs(600));
+    let waited = wait_for_runners(|| async { true }, false, ctrl_c).await;
+    assert_eq!(waited, Waited::Interrupted, "a drain has no time limit");
+    assert!(start.elapsed() >= std::time::Duration::from_secs(600));
 }

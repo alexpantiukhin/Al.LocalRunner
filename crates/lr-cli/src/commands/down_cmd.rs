@@ -162,6 +162,47 @@ pub async fn stop_broker(layout: &Layout) -> Result<Option<Vec<String>>, String>
     Ok(Some(warnings))
 }
 
+/// How the wait for stopping runners ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Waited {
+    /// Every runner went.
+    Gone,
+    /// After `--cancel` a runner still answered 30 s later.
+    TimedOut,
+    /// Ctrl+C came first.
+    Interrupted,
+}
+
+/// Waits until `still_running` says no: with `cancel` at most 30 s, otherwise until
+/// `interrupt`.
+pub async fn wait_for_runners<F, Fut>(
+    still_running: F,
+    cancel: bool,
+    interrupt: impl Future<Output = ()>,
+) -> Waited
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let timed_out = AtomicBool::new(false);
+    let stop = async {
+        match cancel {
+            true => tokio::select! {
+                _ = interrupt => {}
+                _ = tokio::time::sleep(CANCELLED_EXIT_WITHIN) => {
+                    timed_out.store(true, Ordering::Relaxed);
+                }
+            },
+            false => interrupt.await,
+        }
+    };
+    match drained(still_running, stop).await {
+        true => Waited::Gone,
+        false if timed_out.load(Ordering::Relaxed) => Waited::TimedOut,
+        false => Waited::Interrupted,
+    }
+}
+
 async fn ctrl_c() {
     if tokio::signal::ctrl_c().await.is_err() {
         std::future::pending::<()>().await;
@@ -240,26 +281,15 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                         }
                         false
                     };
-                    let timed_out = AtomicBool::new(false);
-                    let interrupt = async {
-                        match cancel {
-                            true => tokio::select! {
-                                _ = ctrl_c() => {}
-                                _ = tokio::time::sleep(CANCELLED_EXIT_WITHIN) => {
-                                    timed_out.store(true, Ordering::Relaxed);
-                                }
-                            },
-                            false => ctrl_c().await,
-                        }
-                    };
-                    if !drained(any_answers, interrupt).await {
-                        let why = match timed_out.load(Ordering::Relaxed) {
-                            true => format!(
+                    let waited = wait_for_runners(any_answers, cancel, ctrl_c()).await;
+                    if waited != Waited::Gone {
+                        let why = match waited {
+                            Waited::TimedOut => format!(
                                 "{} did not exit within {} s after the cancel",
                                 stopping.join(", "),
                                 CANCELLED_EXIT_WITHIN.as_secs()
                             ),
-                            false => {
+                            _ => {
                                 format!("stopped waiting: {} keep running", stopping.join(", "))
                             }
                         };
