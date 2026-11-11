@@ -231,7 +231,7 @@ fn table(path: &std::path::Path) -> toml::Table {
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-fn normal_deps(manifest: &toml::Table) -> Vec<(String, &toml::Value)> {
+fn normal_deps(manifest: &toml::Table, workspace: &toml::Table) -> Vec<(String, Vec<String>)> {
     let mut sections: Vec<&toml::Table> = manifest
         .get("dependencies")
         .and_then(toml::Value::as_table)
@@ -244,30 +244,58 @@ fn normal_deps(manifest: &toml::Table) -> Vec<(String, &toml::Value)> {
                 .filter_map(|t| t.get("dependencies").and_then(toml::Value::as_table)),
         );
     }
+    let package = |v: &toml::Value| {
+        v.get("package")
+            .and_then(toml::Value::as_str)
+            .map(String::from)
+    };
+    let features = |v: Option<&toml::Value>| -> Vec<String> {
+        v.and_then(|v| v.get("features"))
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(toml::Value::as_str)
+            .map(String::from)
+            .collect()
+    };
     sections
         .into_iter()
         .flat_map(|t| t.iter())
         .map(|(key, spec)| {
-            let name = spec
-                .get("package")
-                .and_then(toml::Value::as_str)
-                .unwrap_or(key);
-            (name.to_string(), spec)
+            let inherited = spec
+                .get("workspace")
+                .and_then(toml::Value::as_bool)
+                .unwrap_or(false);
+            let shared = workspace.get(key).filter(|_| inherited);
+            let name = package(spec)
+                .or_else(|| shared.and_then(package))
+                .unwrap_or_else(|| key.clone());
+            let mut enabled = features(Some(spec));
+            enabled.extend(features(shared));
+            (name, enabled)
         })
         .collect()
 }
 
-fn features<'a>(spec: &'a toml::Value, workspace: &'a toml::Table, name: &str) -> Vec<&'a str> {
-    let own = spec.get("features").and_then(toml::Value::as_array);
-    let shared = workspace
-        .get(name)
-        .and_then(|w| w.get("features"))
-        .and_then(toml::Value::as_array);
-    own.into_iter()
-        .chain(shared)
-        .flatten()
-        .filter_map(toml::Value::as_str)
-        .collect()
+fn direct_clients(
+    crate_name: &str,
+    manifest: &toml::Table,
+    workspace: &toml::Table,
+) -> (Vec<String>, Vec<String>) {
+    let mut deps = Vec::new();
+    let mut found = Vec::new();
+    for (dep, enabled) in normal_deps(manifest, workspace) {
+        if HTTP_CLIENTS.contains(&dep.as_str()) {
+            found.push(format!("{crate_name} depends on {dep}"));
+        }
+        for (krate, client) in CLIENT_FEATURES {
+            if dep == *krate && client.iter().any(|c| enabled.iter().any(|e| e == c)) {
+                found.push(format!("{crate_name} enables {dep} {enabled:?}"));
+            }
+        }
+        deps.push(dep);
+    }
+    (deps, found)
 }
 
 fn lock_dependencies() -> BTreeMap<String, BTreeSet<String>> {
@@ -308,21 +336,37 @@ fn http_clients_of(root: &str, lock: &BTreeMap<String, BTreeSet<String>>) -> (us
         }
         let manifest = crates.join(&name).join("Cargo.toml");
         if manifest.is_file() {
-            let manifest = table(&manifest);
-            for (dep, spec) in normal_deps(&manifest) {
-                let enabled = features(spec, workspace, &dep);
-                for (krate, client) in CLIENT_FEATURES {
-                    if dep == *krate && client.iter().any(|c| enabled.contains(c)) {
-                        found.push(format!("{root}: {name} enables {dep} {enabled:?}"));
-                    }
-                }
-                todo.push(dep);
-            }
+            let (deps, clients) = direct_clients(&name, &table(&manifest), workspace);
+            found.extend(clients.into_iter().map(|c| format!("{root}: {c}")));
+            todo.extend(deps);
         } else {
             todo.extend(lock.get(&name).into_iter().flatten().cloned());
         }
     }
     (seen.len(), found)
+}
+
+#[test]
+fn the_http_client_lint_reads_normal_target_and_renamed_workspace_dependencies() {
+    let workspace: toml::Table = r#"
+        web = { package = "reqwest", version = "0.12" }
+        hyper = { version = "1", features = ["client"] }
+        serde = "1"
+    "#
+    .parse()
+    .unwrap();
+    let found = |manifest: &str| direct_clients("x", &manifest.parse().unwrap(), &workspace).1;
+    assert!(!found("[dependencies]\nreqwest = \"0.12\"\n").is_empty());
+    assert!(!found("[target.'cfg(unix)'.dependencies]\nureq = \"2\"\n").is_empty());
+    assert!(!found("[dependencies]\nweb = { workspace = true }\n").is_empty());
+    assert!(!found("[dependencies]\nhyper = { workspace = true }\n").is_empty());
+    assert!(!found(
+        "[dependencies]\nh = { package = \"hyper\", version = \"1\", features = [\"client\"] }\n"
+    )
+    .is_empty());
+    assert!(found("[dev-dependencies]\nreqwest = \"0.12\"\n").is_empty());
+    assert!(found("[build-dependencies]\nreqwest = \"0.12\"\n").is_empty());
+    assert!(found("[dependencies]\nserde = { workspace = true }\nhyper = { version = \"1\", features = [\"server\"] }\n").is_empty());
 }
 
 #[test]
