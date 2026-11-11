@@ -29,6 +29,15 @@ pub(super) fn reject_reason(r: &Reject) -> RejectReason {
     }
 }
 
+fn rejected(o: &Order, reason: RejectReason, detail: String) -> BrokerToHub {
+    BrokerToHub::Rejected(Rejected {
+        job: o.job.clone(),
+        order_seq: o.seq,
+        code: ReasonCode::Rejected(reason),
+        detail,
+    })
+}
+
 pub(super) fn overridden(
     r: &Reject,
     over: &ResourceOverride,
@@ -360,15 +369,7 @@ impl Engine {
         let job = self.job_of(client, &key, *o.spec.clone());
         if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
             self.count_rejected(&job);
-            return self.send(
-                conn,
-                &BrokerToHub::Rejected(Rejected {
-                    job: o.job.clone(),
-                    order_seq: o.seq,
-                    code: ReasonCode::Rejected(reason),
-                    detail,
-                }),
-            );
+            return self.send(conn, &rejected(&o, reason, detail));
         }
         let intake = intake(&key, client, &job.spec, &job.entry);
         if let Err(e) = self.store.accept(intake).await {
@@ -410,10 +411,22 @@ impl Engine {
             }
         }
         if rec.job.state == JobState::Queued && self.find(key).is_none() {
-            if let Some(mut job) = self.stored_job(&rec) {
-                job.entry.client.endpoint = client.endpoint.clone();
-                self.enqueue(job).await;
-            }
+            let job = match self.stored_job(&rec) {
+                Some(mut job) => {
+                    job.runner = None;
+                    job.entry.client.endpoint = client.endpoint.clone();
+                    job
+                }
+                None => {
+                    let job = self.job_of(client, key, *o.spec.clone());
+                    if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
+                        self.count_rejected(&job);
+                        return self.send(conn, &rejected(&o, reason, detail));
+                    }
+                    job
+                }
+            };
+            self.enqueue(job).await;
         }
         self.send(conn, &self.accepted(key, &o, trimmed));
     }

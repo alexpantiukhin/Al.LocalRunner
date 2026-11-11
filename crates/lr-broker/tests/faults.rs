@@ -79,6 +79,38 @@ async fn late_message_for_a_job_not_on_the_runner_is_logged() {
 }
 
 #[tokio::test]
+async fn a_resent_order_whose_stored_spec_is_unreadable_is_queued_from_the_resent_order() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    FaultyStore::set(&h.faults.fail_accept_seq);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    unavailable(hub.hub().await);
+    FaultyStore::clear(&h.faults.fail_accept_seq);
+    FaultyStore::set(&h.faults.garble_spec);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    let a = r.assign().await;
+    assert_eq!(a.job, lr_core::JobId("j1".into()));
+    assert_eq!(a.spec.requirements.mem_mb, 512);
+}
+
+#[tokio::test]
+async fn a_resent_order_with_an_unreadable_stored_spec_that_no_longer_fits_is_rejected() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    FaultyStore::set(&h.faults.fail_accept_seq);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    unavailable(hub.hub().await);
+    FaultyStore::clear(&h.faults.fail_accept_seq);
+    FaultyStore::set(&h.faults.garble_spec);
+    hub.send(&order("j1", req(10_000_000, 1, 60))).await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_pool_memory");
+}
+
+#[tokio::test]
 async fn repeated_order_at_seq_0_is_malformed() {
     let h = Harness::start("");
     let _r = h.member_runner("r1", "10.0.0.7", linux()).await;

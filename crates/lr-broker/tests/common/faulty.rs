@@ -18,6 +18,7 @@ pub struct FaultyStore {
     pub accept_entered: Notify,
     pub accept_release: Notify,
     pub fail_accept_seq: AtomicBool,
+    pub garble_spec: AtomicBool,
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
     pub panic_prune: AtomicBool,
@@ -34,6 +35,7 @@ impl FaultyStore {
             accept_entered: Notify::new(),
             accept_release: Notify::new(),
             fail_accept_seq: AtomicBool::new(false),
+            garble_spec: AtomicBool::new(false),
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
             panic_prune: AtomicBool::new(false),
@@ -133,7 +135,13 @@ impl BrokerStore for FaultyStore {
         self.inner.read_log_tail(key, max_bytes).await
     }
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError> {
-        self.inner.job(key).await
+        let mut rec = self.inner.job(key).await?;
+        if self.garble_spec.load(Ordering::SeqCst) {
+            if let Some(rec) = rec.as_mut() {
+                rec.spec.resolved_json = "{".into();
+            }
+        }
+        Ok(rec)
     }
     async fn jobs(&self, filter: &JobFilter) -> Result<Vec<JobRecord>, StoreError> {
         self.filters.lock().unwrap().push(filter.clone());
