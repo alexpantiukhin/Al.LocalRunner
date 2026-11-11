@@ -3,8 +3,8 @@ use crate::outbox::{self, RESULTS};
 use crate::{job_read, job_write, logs, prune, registry, schema};
 use async_trait::async_trait;
 use lr_abstractions::{
-    Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, Join,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
+    Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, JobSpecRow,
+    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
     PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
     StoreError, Transition,
 };
@@ -94,6 +94,13 @@ impl BrokerStore for SqliteBrokerStore {
         let (key, by, reason) = (key.clone(), by.to_string(), reason.to_string());
         self.db
             .run(move |c| job_write::record_cancel(c, &key, &by, &reason))
+            .await
+    }
+
+    async fn replace_spec(&self, key: &JobKey, spec: JobSpecRow) -> Result<Applied, StoreError> {
+        let key = key.clone();
+        self.db
+            .run(move |c| job_write::replace_spec(c, &key, &spec))
             .await
     }
 

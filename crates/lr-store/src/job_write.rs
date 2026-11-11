@@ -4,8 +4,8 @@ use crate::codec::{col_enum, col_opt_time, int, json, opt_int, opt_time, time, T
 use crate::db::{not_found, write, Fail, R};
 use crate::seq::decide;
 use lr_abstractions::{
-    outlives_cancel, Admission, Applied, Inbound, Intake, JobKey, OrderRow, StepUpdate, StoreError,
-    Transition,
+    outlives_cancel, Admission, Applied, Inbound, Intake, JobKey, JobSpecRow, OrderRow, StepUpdate,
+    StoreError, Transition,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -307,6 +307,20 @@ pub(crate) fn record_cancel(
             "UPDATE job SET cancelled_by = COALESCE(cancelled_by, ?3), \
              cancel_reason = COALESCE(cancel_reason, ?4) WHERE client_key = ?1 AND id = ?2",
             params![key.client, key.job.0, by, reason],
+        )?;
+        Ok(Applied::Changed)
+    })
+}
+
+pub(crate) fn replace_spec(conn: &mut Connection, key: &JobKey, spec: &JobSpecRow) -> R<Applied> {
+    write(conn, |tx| {
+        let (state, _, _) = current(tx, key)?;
+        if state.is_final() {
+            return Ok(Applied::Ignored);
+        }
+        tx.execute(
+            "UPDATE job_spec SET resolved_json = ?3, profile_commit = ?4 \n             WHERE client_key = ?1 AND job_id = ?2",
+            params![key.client, key.job.0, spec.resolved_json, spec.profile_commit],
         )?;
         Ok(Applied::Changed)
     })

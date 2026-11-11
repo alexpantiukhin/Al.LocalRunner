@@ -67,6 +67,7 @@ macro_rules! broker_store_contract {
             broker::order_row_removed_after_grant,
             broker::start_requires_grant_and_records_broker_time,
             broker::final_state_written_once,
+            broker::spec_is_replaced_only_before_the_run_is_final,
             broker::disallowed_transition_is_refused,
             broker::cancel_of_waiting_order_removes_it_at_once,
             broker::accepted_cancel_keeps_canceller_until_runner_reports,

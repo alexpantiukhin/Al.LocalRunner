@@ -1,8 +1,8 @@
 use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
     outlives_cancel, Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow, StepUpdate,
-    StoreError, Transition, LOG_TRUNCATED_MARK,
+    JobSpecRow, JoinCodeRow, LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow,
+    StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::BTreeMap;
@@ -174,6 +174,19 @@ impl BrokerState {
         if job.cancel_reason.is_none() {
             job.cancel_reason = Some(reason.to_string());
         }
+        Ok(Applied::Changed)
+    }
+
+    pub(crate) fn replace_spec(
+        &mut self,
+        key: &JobKey,
+        spec: JobSpecRow,
+    ) -> Result<Applied, StoreError> {
+        let record = &mut self.run(key)?.record;
+        if record.job.state.is_final() {
+            return Ok(Applied::Ignored);
+        }
+        record.spec = spec;
         Ok(Applied::Changed)
     }
 

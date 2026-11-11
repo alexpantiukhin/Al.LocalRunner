@@ -1,7 +1,7 @@
 use super::broker_rows::{
-    Admission, Applied, Inbound, Intake, JobKey, JobRecord, Join, JoinCodeRow, LogAppend,
-    MachineRow, OrderRow, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, StepUpdate,
-    Transition,
+    Admission, Applied, Inbound, Intake, JobKey, JobRecord, JobSpecRow, Join, JoinCodeRow,
+    LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState,
+    StepUpdate, Transition,
 };
 use super::query::{JobFilter, Stats, StatsQuery};
 use super::{OutboxBacklog, OutboxEntry, OutboxKind, StoreError};
@@ -60,6 +60,10 @@ pub trait BrokerStore: Send + Sync {
         by: &str,
         reason: &str,
     ) -> Result<Applied, StoreError>;
+
+    /// Replaces the stored spec of a run that is not final, when a repeated order restores one
+    /// that can no longer be read; a final run is [`Applied::Ignored`].
+    async fn replace_spec(&self, key: &JobKey, spec: JobSpecRow) -> Result<Applied, StoreError>;
 
     /// Updates one step; ignored when the run is final or the step already ended.
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError>;

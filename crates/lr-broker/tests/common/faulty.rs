@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use lr_abstractions::fakes::MemoryBrokerStore;
 use lr_abstractions::{
-    Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, Join,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
+    Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, JobSpecRow,
+    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
     PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
     StoreError, Transition,
 };
@@ -18,7 +18,6 @@ pub struct FaultyStore {
     pub accept_entered: Notify,
     pub accept_release: Notify,
     pub fail_accept_seq: AtomicBool,
-    pub garble_spec: AtomicBool,
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
     pub panic_prune: AtomicBool,
@@ -35,7 +34,6 @@ impl FaultyStore {
             accept_entered: Notify::new(),
             accept_release: Notify::new(),
             fail_accept_seq: AtomicBool::new(false),
-            garble_spec: AtomicBool::new(false),
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
             panic_prune: AtomicBool::new(false),
@@ -103,6 +101,9 @@ impl BrokerStore for FaultyStore {
     ) -> Result<Applied, StoreError> {
         self.inner.record_cancel(key, by, reason).await
     }
+    async fn replace_spec(&self, key: &JobKey, spec: JobSpecRow) -> Result<Applied, StoreError> {
+        self.inner.replace_spec(key, spec).await
+    }
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError> {
         self.inner.update_step(key, update).await
     }
@@ -135,13 +136,7 @@ impl BrokerStore for FaultyStore {
         self.inner.read_log_tail(key, max_bytes).await
     }
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError> {
-        let mut rec = self.inner.job(key).await?;
-        if self.garble_spec.load(Ordering::SeqCst) {
-            if let Some(rec) = rec.as_mut() {
-                rec.spec.resolved_json = "{".into();
-            }
-        }
-        Ok(rec)
+        self.inner.job(key).await
     }
     async fn jobs(&self, filter: &JobFilter) -> Result<Vec<JobRecord>, StoreError> {
         self.filters.lock().unwrap().push(filter.clone());

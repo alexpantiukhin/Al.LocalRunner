@@ -2,8 +2,8 @@
 
 use super::fixtures::{at, intake, T0};
 use crate::store::{
-    Admission, Applied, BrokerStore, JobKey, LogAppend, StepUpdate, StoreError, Transition,
-    LOG_TRUNCATED_MARK,
+    Admission, Applied, BrokerStore, JobKey, JobSpecRow, LogAppend, StepUpdate, StoreError,
+    Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState};
 
@@ -135,6 +135,31 @@ pub async fn final_state_written_once(store: &dyn BrokerStore) {
     assert_eq!(record.job.state, JobState::Passed);
     assert_eq!(record.job.exit_code, Some(0));
     assert_eq!(record.job.finished_at, Some(at(20)));
+}
+
+/// The spec of a run that is not final can be replaced; a final run keeps its spec.
+pub async fn spec_is_replaced_only_before_the_run_is_final(store: &dyn BrokerStore) {
+    let key = queued(store, "c1", "j1").await;
+    let spec = JobSpecRow {
+        resolved_json: "{\"restored\":true}".into(),
+        profile_commit: Some("abc".into()),
+    };
+    assert_eq!(
+        store.replace_spec(&key, spec.clone()).await.unwrap(),
+        Applied::Changed
+    );
+    assert_eq!(store.job(&key).await.unwrap().unwrap().spec, spec);
+    let done = running(store, "c1", "j2").await;
+    store
+        .transition(&done, Transition::to(JobState::Failed, at(20)))
+        .await
+        .unwrap();
+    let before = store.job(&done).await.unwrap().unwrap().spec;
+    assert_eq!(
+        store.replace_spec(&done, spec).await.unwrap(),
+        Applied::Ignored
+    );
+    assert_eq!(store.job(&done).await.unwrap().unwrap().spec, before);
 }
 
 /// Changes the state machine of spec 15.1 does not allow are refused.

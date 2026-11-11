@@ -5,7 +5,7 @@ use super::{Client, Engine, Job};
 use crate::policy::TimeoutAboveMax;
 use lr_abstractions::{
     CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level,
-    OrderRow, SourceKind, StepRow, StoreError,
+    OrderRow, SourceKind, StepRow, StoreError, Transition,
 };
 use lr_core::{
     ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject, Requirements,
@@ -421,7 +421,16 @@ impl Engine {
                     let job = self.job_of(client, key, *o.spec.clone());
                     if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
                         self.count_rejected(&job);
+                        let mut end = Transition::to(JobState::Cancelled, self.now());
+                        end.cancel_reason = Some(ReasonCode::Rejected(reason.clone()).to_string());
+                        if let Err(e) = self.store.transition(key, end).await {
+                            return self.unavailable(conn, key, "end the unreadable order", &e);
+                        }
                         return self.send(conn, &rejected(&o, reason, detail));
+                    }
+                    let restored = intake(key, client, &job.spec, &job.entry).spec;
+                    if let Err(e) = self.store.replace_spec(key, restored).await {
+                        return self.unavailable(conn, key, "restore the order spec", &e);
                     }
                     job
                 }

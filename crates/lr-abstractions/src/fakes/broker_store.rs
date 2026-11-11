@@ -1,9 +1,9 @@
 use super::broker_jobs::BrokerState;
 use crate::store::{
     compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
-    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
-    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
-    StoreError, Transition,
+    JobSpecRow, Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry,
+    OutboxKind, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery,
+    StepUpdate, StoreError, Transition,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};
@@ -138,6 +138,10 @@ impl BrokerStore for MemoryBrokerStore {
         reason: &str,
     ) -> Result<Applied, StoreError> {
         self.lock().record_cancel(key, by, reason)
+    }
+
+    async fn replace_spec(&self, key: &JobKey, spec: JobSpecRow) -> Result<Applied, StoreError> {
+        self.lock().replace_spec(key, spec)
     }
 
     async fn update_step(&self, key: &JobKey, update: StepUpdate) -> Result<Applied, StoreError> {
