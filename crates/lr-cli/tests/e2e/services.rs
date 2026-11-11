@@ -12,16 +12,26 @@ fn alive(pid: u32, start: u64) -> bool {
     OsProcessInspector.liveness(pid, start) == Liveness::Alive
 }
 
-/// Opens the helpers' gate when the test ends, even by a panic, and waits until the watched
-/// service processes are gone, so none holds the temporary directory.
+/// Opens the helpers' gates when the test ends, even by a panic, and waits until the watched
+/// processes are gone, so none holds the temporary directory.
 struct Release {
-    gate: PathBuf,
+    gates: Vec<PathBuf>,
     watched: Vec<(u32, u64)>,
+}
+
+impl Release {
+    fn watch(&mut self, pid: u32) {
+        if let Some(start) = process_start(pid) {
+            self.watched.push((pid, start));
+        }
+    }
 }
 
 impl Drop for Release {
     fn drop(&mut self) {
-        let _ = std::fs::write(&self.gate, b"open");
+        for gate in &self.gates {
+            let _ = std::fs::write(gate, b"open");
+        }
         let started = Instant::now();
         while self.watched.iter().any(|&(p, s)| alive(p, s))
             && started.elapsed() < Duration::from_secs(20)
@@ -56,8 +66,9 @@ fn service_toml(dir: &TempDir) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_per_job_service_tree_is_ready_for_the_job_and_gone_after_it() {
     let dir = TempDir::new("e2e-service");
+    let step_gate = dir.path().join("step-gate");
     let mut release = Release {
-        gate: dir.path().join("gate"),
+        gates: vec![dir.path().join("gate"), step_gate.clone()],
         watched: Vec::new(),
     };
     let layout = layout(&dir, "machine", "");
@@ -71,9 +82,17 @@ async fn a_per_job_service_tree_is_ready_for_the_job_and_gone_after_it() {
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    let profile = "[profile.with-service]\ncommand = \"exit 0\"\ntimeout_s = 120\nmem_mb = 64\n\
-                   services = [\"svc\"]\n";
-    let repo = repo(&dir, profile);
+    let step_pids = dir.path().join("step.pid");
+    let profile = format!(
+        "[profile.with-service]
+command = {}
+timeout_s = 120
+mem_mb = 64
+services = [\"svc\"]
+",
+        toml_str(&helper_command(Mode::Wait, &step_pids, &step_gate))
+    );
+    let repo = repo(&dir, &profile);
     let (client, job) = submit(&layout, &repo, "with-service", None).await;
     let pids = dir.path().join("svc.pid");
     let child = helper_pid(&pids, "child").await;
@@ -83,10 +102,17 @@ async fn a_per_job_service_tree_is_ready_for_the_job_and_gone_after_it() {
         .filter_map(|pid| process_start(pid).map(|s| (pid, s)))
         .collect();
     release.watched.extend(tree.iter().copied());
+    let step = helper_pid(&step_pids, "child").await;
+    release.watch(step);
+    assert_eq!(tree.len(), 2, "the service tree runs");
+    assert!(
+        tree.iter().all(|&(p, s)| alive(p, s)),
+        "the service is alive while the step runs"
+    );
+    std::fs::write(&step_gate, b"open").unwrap();
 
     let ended = until_exit(client, &job, Duration::from_secs(90)).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
-    assert_eq!(tree.len(), 2, "the service tree ran while the job ran");
     eventually(
         "the service tree to be gone after the job",
         Duration::from_secs(15),
