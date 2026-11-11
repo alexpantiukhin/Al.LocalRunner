@@ -1,6 +1,6 @@
 use crate::background::{background, recover};
 use crate::cache::{CacheLayout, Caches};
-use crate::connect::{session, End};
+use crate::connect::{give_up, session, End};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
 use crate::service_book::Book;
@@ -9,10 +9,10 @@ use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
 use lr_abstractions::{
     CacheKey, Clock, Dialer, DiskSpace, Files, KeepAwake, Level, LogSink, Meter, ProcessInspector,
-    ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle,
+    ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle, TransportError,
 };
 use lr_core::{JobId, Timestamp};
-use lr_proto::{ProtocolError, ReasonCode, WireCapabilities, WireServiceStatus};
+use lr_proto::{ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -361,6 +361,10 @@ async fn connect_once(
     {
         Ok(t) => Some(session(shared, t.as_ref(), slot, control).await),
         Err(e) => {
+            if let Some(refusal) = handshake_refusal(&e) {
+                give_up(shared, slot, &refusal).await;
+                return Some(End::Refused(refusal));
+            }
             shared.diag.event(
                 Level::Warn,
                 "broker unreachable",
@@ -369,6 +373,20 @@ async fn connect_once(
             None
         }
     }
+}
+
+fn handshake_refusal(e: &TransportError) -> Option<ProtocolError> {
+    let TransportError::Refused(text) = e else {
+        return None;
+    };
+    let (code, message) = text.split_once(':')?;
+    let code: ProtocolErrorCode =
+        serde_json::from_value(serde_json::Value::String(code.trim().to_string())).ok()?;
+    code.kills_running_jobs().then(|| ProtocolError {
+        code,
+        message: message.trim().to_string(),
+        supported: None,
+    })
 }
 
 pub(crate) fn apply_control(shared: &Shared, cmd: Control) {

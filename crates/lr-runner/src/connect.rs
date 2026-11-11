@@ -134,25 +134,7 @@ impl Session<'_> {
     }
 
     async fn refused(&mut self, e: ProtocolError) -> End {
-        self.shared.diag.event(
-            Level::Error,
-            "broker refused authorization, job killed and outbox dropped",
-            &[("code", &format!("{:?}", e.code))],
-        );
-        self.shared.stop_job(
-            Stop::Kill,
-            ReasonCode::RunnerRemoved,
-            "authorization refused",
-        );
-        self.slot.wait().await;
-        self.shared.stop_all_services().await;
-        if let Err(err) = self.shared.deps.store.clear_outbox().await {
-            self.shared.diag.event(
-                Level::Error,
-                "outbox not cleared",
-                &[("error", &err.to_string())],
-            );
-        }
+        give_up(self.shared, self.slot, &e).await;
         self.t.close().await;
         End::Refused(e)
     }
@@ -273,6 +255,28 @@ async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
             Err(lost)
         }
         _ => Err(lost),
+    }
+}
+
+pub(crate) async fn give_up(shared: &Arc<Shared>, slot: &mut JobSlot, e: &ProtocolError) {
+    shared.diag.event(
+        Level::Error,
+        "broker refused authorization, job killed and outbox dropped",
+        &[("code", &format!("{:?}", e.code))],
+    );
+    shared.stop_job(
+        Stop::Kill,
+        ReasonCode::RunnerRemoved,
+        "authorization refused",
+    );
+    slot.wait().await;
+    shared.stop_all_services().await;
+    if let Err(err) = shared.deps.store.clear_outbox().await {
+        shared.diag.event(
+            Level::Error,
+            "outbox not cleared",
+            &[("error", &err.to_string())],
+        );
     }
 }
 

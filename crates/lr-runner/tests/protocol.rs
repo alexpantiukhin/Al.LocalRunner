@@ -194,3 +194,63 @@ async fn runner_never_listens() {
     );
     assert_eq!(rig.net.connections(BROKER).len(), 1);
 }
+
+fn running_job(rig: &Rig) {
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script(
+        "job-1",
+        lr_abstractions::fakes::JobScript::new(vec![lr_abstractions::fakes::StepScript::new(
+            600 * SEC,
+            0,
+        )
+        .ignores_soft_stop()]),
+    );
+}
+
+#[tokio::test]
+async fn a_revoked_key_refused_at_the_handshake_kills_the_job_and_stops() {
+    let rig = Rig::new();
+    running_job(&rig);
+    let (_c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 600)], 600),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    rig.gate
+        .refuse_dials(Some("key_revoked: the key of `r1` was revoked"));
+    rig.net.cut(BROKER);
+    for _ in 0..5 {
+        rig.advance(SEC).await;
+    }
+    rig.settle().await;
+    assert!(h.is_finished(), "the agent stops on the refusal");
+    let exit = h.await.unwrap();
+    assert!(matches!(exit, AgentExit::Refused(ref e) if e.code == ProtocolErrorCode::KeyRevoked));
+    assert!(rig.pending().await.is_empty(), "outbox dropped");
+}
+
+#[tokio::test]
+async fn another_refusal_at_the_handshake_is_retried() {
+    let rig = Rig::new();
+    let (_c, h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    rig.gate
+        .refuse_dials(Some("rate_limited: too many connections"));
+    rig.net.cut(BROKER);
+    for _ in 0..5 {
+        rig.advance(SEC).await;
+    }
+    rig.settle().await;
+    assert!(!h.is_finished(), "the agent keeps dialing");
+    rig.gate.refuse_dials(None);
+    for _ in 0..40 {
+        rig.advance(SEC).await;
+    }
+    let again = rig.listener.accept().await.unwrap();
+    let hello = decode::<RunnerToBroker>(again.recv().await.unwrap().as_bytes()).unwrap();
+    assert!(matches!(hello, RunnerToBroker::Hello(_)));
+}

@@ -6,13 +6,14 @@ use lr_abstractions::{
 };
 use lr_core::{JobId, Timestamp};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 pub struct Gate {
     pub hang_dials: Arc<AtomicBool>,
     pub stall_sends: Arc<AtomicBool>,
     pub sent: Arc<AtomicUsize>,
+    pub refusal: Arc<Mutex<Option<String>>>,
 }
 
 impl Gate {
@@ -22,6 +23,10 @@ impl Gate {
 
     pub fn stall_sends(&self, on: bool) {
         self.stall_sends.store(on, Ordering::SeqCst);
+    }
+
+    pub fn refuse_dials(&self, refusal: Option<&str>) {
+        *self.refusal.lock().unwrap() = refusal.map(str::to_string);
     }
 
     pub fn sent(&self) -> usize {
@@ -71,6 +76,9 @@ impl Dialer for GatedDialer {
     ) -> Result<Box<dyn Transport>, TransportError> {
         if self.gate.hang_dials.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
+        }
+        if let Some(text) = self.gate.refusal.lock().unwrap().clone() {
+            return Err(TransportError::Refused(text));
         }
         let inner = self.inner.dial(address, fingerprint).await?;
         Ok(Box::new(GatedTransport {
