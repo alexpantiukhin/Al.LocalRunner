@@ -1,7 +1,7 @@
 mod common;
 
 use common::dir;
-use lr_store::{SqliteBrokerStore, SqliteHubStore, SqliteRunnerStore};
+use lr_store::SqliteBrokerStore;
 
 #[test]
 fn new_databases_open_and_an_existing_one_is_reused() {
@@ -16,6 +16,7 @@ fn new_databases_open_and_an_existing_one_is_reused() {
 #[cfg(unix)]
 #[test]
 fn every_database_is_created_readable_by_its_owner_only() {
+    use lr_store::{SqliteHubStore, SqliteRunnerStore};
     use std::os::unix::fs::PermissionsExt;
     let d = dir();
     let broker = d.path().join("broker.db");
