@@ -61,6 +61,25 @@ pub struct OutboxEntry {
     pub created_at: Timestamp,
 }
 
+/// Size of an outbox for the metrics (spec 12.2 `outbox_pending`, `outbox_oldest_age_seconds`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutboxBacklog {
+    /// Unacknowledged entries.
+    pub pending: u64,
+    /// When the oldest of them was stored; `None` when nothing is pending.
+    pub oldest: Option<Timestamp>,
+}
+
+impl OutboxBacklog {
+    /// The backlog of these pending entries.
+    pub fn of(entries: &[OutboxEntry]) -> OutboxBacklog {
+        OutboxBacklog {
+            pending: entries.len() as u64,
+            oldest: entries.iter().map(|e| e.created_at).min(),
+        }
+    }
+}
+
 /// Why a store operation failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreError {

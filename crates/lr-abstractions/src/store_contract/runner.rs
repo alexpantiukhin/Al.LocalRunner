@@ -2,7 +2,8 @@
 
 use super::fixtures::at;
 use crate::store::{
-    CacheEntry, CacheKey, OutboxKind, RunnerStore, ServiceRow, ServiceState, StoreError,
+    CacheEntry, CacheKey, OutboxBacklog, OutboxKind, RunnerStore, ServiceRow, ServiceState,
+    StoreError,
 };
 use lr_core::JobId;
 
@@ -165,4 +166,23 @@ pub async fn finished_jobs_are_forgotten_after_the_keep_period(store: &dyn Runne
         .collect();
     assert!(pending.contains(&waiting));
     assert_eq!(store.forget_finished(at(100)).await.unwrap(), 0);
+}
+
+/// The backlog counts unacknowledged entries and the oldest of them (spec 12.2).
+pub async fn runner_outbox_backlog_counts_pending_and_oldest(store: &dyn RunnerStore) {
+    assert_eq!(
+        store.outbox_backlog().await.unwrap(),
+        OutboxBacklog::default()
+    );
+    for (job, t) in [("j1", 4), ("j1", 6), ("j2", 9)] {
+        store
+            .push_outbox(&id(job), OutboxKind::Chunk, "x".into(), at(t))
+            .await
+            .unwrap();
+    }
+    let b = store.outbox_backlog().await.unwrap();
+    assert_eq!((b.pending, b.oldest), (3, Some(at(4))));
+    store.ack_outbox(&id("j1"), 2).await.unwrap();
+    let b = store.outbox_backlog().await.unwrap();
+    assert_eq!((b.pending, b.oldest), (1, Some(at(9))));
 }

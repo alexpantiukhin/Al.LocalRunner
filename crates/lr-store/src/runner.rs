@@ -5,7 +5,8 @@ use crate::schema;
 use crate::seq::decide;
 use async_trait::async_trait;
 use lr_abstractions::{
-    CacheEntry, CacheKey, OutboxEntry, OutboxKind, RunnerStore, ServiceRow, StoreError,
+    CacheEntry, CacheKey, OutboxBacklog, OutboxEntry, OutboxKind, RunnerStore, ServiceRow,
+    StoreError,
 };
 use lr_core::{JobId, Timestamp};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -85,6 +86,10 @@ impl RunnerStore for SqliteRunnerStore {
 
     async fn pending_outbox(&self) -> Result<Vec<OutboxEntry>, StoreError> {
         self.db.run(|c| outbox::pending(c, RUNNER, "")).await
+    }
+
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        self.db.run(|c| outbox::backlog(c, RUNNER)).await
     }
 
     async fn ack_outbox(&self, job: &JobId, seq: u64) -> Result<usize, StoreError> {

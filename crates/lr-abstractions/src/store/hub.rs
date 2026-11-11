@@ -1,4 +1,4 @@
-use super::{OutboxEntry, OutboxKind, StoreError};
+use super::{OutboxBacklog, OutboxEntry, OutboxKind, StoreError};
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp, Zone};
 use std::path::Path;
@@ -117,6 +117,9 @@ pub trait HubStore: Send + Sync {
 
     /// Unacknowledged entries, oldest first, by seq within a job.
     async fn pending_outbox(&self) -> Result<Vec<OutboxEntry>, StoreError>;
+
+    /// How many entries are unacknowledged and since when, without reading their payloads.
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError>;
 
     /// Removes the job's entries up to and including `seq` (`Accepted` or ack); returns how
     /// many.

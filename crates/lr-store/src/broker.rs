@@ -4,9 +4,9 @@ use crate::{job_read, job_write, logs, prune, registry, schema};
 use async_trait::async_trait;
 use lr_abstractions::{
     Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, Join,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxEntry, OutboxKind, PruneLimits,
-    PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate, StoreError,
-    Transition,
+    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
+    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
+    StoreError, Transition,
 };
 use lr_core::{JobId, Timestamp};
 use std::any::Any;
@@ -285,5 +285,9 @@ impl BrokerStore for SqliteBrokerStore {
         self.db
             .run(move |c| crate::db::write(c, |tx| outbox::expire(tx, RESULTS, before)))
             .await
+    }
+
+    async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        self.db.run(|c| outbox::backlog(c, RESULTS)).await
     }
 }

@@ -126,6 +126,99 @@ impl MemoryMeter {
     pub fn updates(&self) -> Vec<MeterUpdate> {
         self.updates.lock().unwrap().clone()
     }
+
+    fn replay<T>(
+        &self,
+        name: &str,
+        labels: &[(&str, &str)],
+        start: T,
+        step: impl Fn(T, &MeterUpdate) -> T,
+        reset: impl Fn() -> T,
+    ) -> T {
+        let want = sorted(owned(labels));
+        let mut acc = start;
+        for u in self.updates() {
+            match &u {
+                MeterUpdate::Forget(k, v) if want.iter().any(|(wk, wv)| wk == k && wv == v) => {
+                    acc = reset();
+                }
+                MeterUpdate::Add(n, l, _)
+                | MeterUpdate::Set(n, l, _)
+                | MeterUpdate::Observe(n, l, _)
+                    if n == name && sorted(l.clone()) == want =>
+                {
+                    acc = step(acc, &u);
+                }
+                _ => {}
+            }
+        }
+        acc
+    }
+
+    /// The last value set on gauge `name` with exactly `labels` (in any order); `None` when
+    /// never set or forgotten since.
+    pub fn gauge(&self, name: &str, labels: &[(&str, &str)]) -> Option<f64> {
+        let step = |acc, u: &MeterUpdate| match u {
+            MeterUpdate::Set(_, _, v) => Some(*v),
+            _ => acc,
+        };
+        self.replay(name, labels, None, step, || None)
+    }
+
+    /// The total added to counter `name` with exactly `labels` since it was last forgotten.
+    pub fn counter(&self, name: &str, labels: &[(&str, &str)]) -> u64 {
+        let step = |acc: u64, u: &MeterUpdate| match u {
+            MeterUpdate::Add(_, _, d) => acc.saturating_add(*d),
+            _ => acc,
+        };
+        self.replay(name, labels, 0, step, || 0)
+    }
+
+    /// Observations of histogram `name` with exactly `labels` since it was last forgotten.
+    pub fn observed(&self, name: &str, labels: &[(&str, &str)]) -> Vec<f64> {
+        let step = |mut acc: Vec<f64>, u: &MeterUpdate| {
+            if let MeterUpdate::Observe(_, _, v) = u {
+                acc.push(*v);
+            }
+            acc
+        };
+        self.replay(name, labels, Vec::new(), step, Vec::new)
+    }
+
+    /// Every distinct metric name updated so far.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .updates()
+            .into_iter()
+            .filter_map(|u| match u {
+                MeterUpdate::Add(n, ..) | MeterUpdate::Set(n, ..) | MeterUpdate::Observe(n, ..) => {
+                    Some(n)
+                }
+                MeterUpdate::Forget(..) => None,
+            })
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Every label `(key, value)` pair of every update so far.
+    pub fn label_pairs(&self) -> Vec<(String, String)> {
+        self.updates()
+            .into_iter()
+            .flat_map(|u| match u {
+                MeterUpdate::Add(_, l, _)
+                | MeterUpdate::Set(_, l, _)
+                | MeterUpdate::Observe(_, l, _) => l,
+                MeterUpdate::Forget(..) => Vec::new(),
+            })
+            .collect()
+    }
+}
+
+fn sorted(mut labels: Vec<(String, String)>) -> Vec<(String, String)> {
+    labels.sort();
+    labels
 }
 
 fn owned(labels: &[(&str, &str)]) -> Vec<(String, String)> {

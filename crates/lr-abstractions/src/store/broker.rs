@@ -4,7 +4,7 @@ use super::broker_rows::{
     Transition,
 };
 use super::query::{JobFilter, Stats, StatsQuery};
-use super::{OutboxEntry, OutboxKind, StoreError};
+use super::{OutboxBacklog, OutboxEntry, OutboxKind, StoreError};
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};
 
@@ -176,4 +176,7 @@ pub trait BrokerStore: Send + Sync {
 
     /// Removes entries created before `before` (`[results] keep_hours`); returns how many.
     async fn expire_results(&self, before: Timestamp) -> Result<usize, StoreError>;
+
+    /// Unacknowledged messages for all clients together, without reading their payloads.
+    async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError>;
 }

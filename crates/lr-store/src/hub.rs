@@ -4,7 +4,9 @@ use crate::outbox::{self, HUB};
 use crate::schema;
 use crate::seq::decide;
 use async_trait::async_trait;
-use lr_abstractions::{ActiveOrder, BrokerLink, HubStore, OutboxEntry, OutboxKind, StoreError};
+use lr_abstractions::{
+    ActiveOrder, BrokerLink, HubStore, OutboxBacklog, OutboxEntry, OutboxKind, StoreError,
+};
 use lr_core::{JobId, Timestamp, Zone};
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::any::Any;
@@ -247,6 +249,10 @@ impl HubStore for SqliteHubStore {
 
     async fn pending_outbox(&self) -> Result<Vec<OutboxEntry>, StoreError> {
         self.db.run(|c| outbox::pending(c, HUB, "")).await
+    }
+
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        self.db.run(|c| outbox::backlog(c, HUB)).await
     }
 
     async fn ack_outbox(&self, job: &JobId, seq: u64) -> Result<usize, StoreError> {

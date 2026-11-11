@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use lr_abstractions::fakes::{FakeDialer, MemoryRunnerStore};
 use lr_abstractions::{
-    CacheEntry, CacheKey, Dialer, Frame, OutboxEntry, OutboxKind, Peer, RunnerStore, ServiceRow,
-    StoreError, Transport, TransportError,
+    CacheEntry, CacheKey, Dialer, Frame, OutboxBacklog, OutboxEntry, OutboxKind, Peer, RunnerStore,
+    ServiceRow, StoreError, Transport, TransportError,
 };
 use lr_core::{JobId, Timestamp};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -103,6 +103,9 @@ impl RunnerStore for CountingStore {
     async fn pending_outbox(&self) -> Result<Vec<OutboxEntry>, StoreError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.pending_outbox().await
+    }
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        self.inner.outbox_backlog().await
     }
     async fn ack_outbox(&self, job: &JobId, seq: u64) -> Result<usize, StoreError> {
         self.inner.ack_outbox(job, seq).await

@@ -1,6 +1,7 @@
 use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
-    ActiveOrder, BrokerLink, HubStore, OutboxEntry, OutboxKind, RunnerStore, StoreError,
+    ActiveOrder, BrokerLink, HubStore, OutboxBacklog, OutboxEntry, OutboxKind, RunnerStore,
+    StoreError,
 };
 use crate::store::{CacheEntry, CacheKey, ServiceRow};
 use async_trait::async_trait;
@@ -139,6 +140,12 @@ impl HubStore for MemoryHubStore {
         Ok(self.state.lock().unwrap().outbox.pending(None))
     }
 
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        Ok(OutboxBacklog::of(
+            &self.state.lock().unwrap().outbox.pending(None),
+        ))
+    }
+
     async fn ack_outbox(&self, job: &JobId, seq: u64) -> Result<usize, StoreError> {
         Ok(self.state.lock().unwrap().outbox.ack("", job, seq))
     }
@@ -271,6 +278,12 @@ impl RunnerStore for MemoryRunnerStore {
 
     async fn pending_outbox(&self) -> Result<Vec<OutboxEntry>, StoreError> {
         Ok(self.state.lock().unwrap().outbox.pending(None))
+    }
+
+    async fn outbox_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        Ok(OutboxBacklog::of(
+            &self.state.lock().unwrap().outbox.pending(None),
+        ))
     }
 
     async fn ack_outbox(&self, job: &JobId, seq: u64) -> Result<usize, StoreError> {

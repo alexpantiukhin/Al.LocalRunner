@@ -35,7 +35,7 @@ pub use clock::{Clock, Sleep};
 pub use datasource::{CancelRequest, DataError, DataSource, EventStream};
 pub use files::{Files, FilesError};
 pub use logsink::{Level, LogSink, Record, Role};
-pub use meter::Meter;
+pub use meter::{metric, Meter};
 pub use process::{
     mask_secrets, stop_signal, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, Liveness,
     ProcessError, ProcessInspector, ProcessRef, ProcessRunner, SpawnSpec, StepOutcome, Stop,
@@ -47,9 +47,10 @@ pub use store::{
     outlives_cancel, ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry,
     CacheKey, ClientUsage, CodeSource, GithubRunRow, HubStore, Inbound, Intake, JobFilter, JobKey,
     JobLogRow, JobRecord, JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind,
-    MachineRow, OrderRow, OutboxEntry, OutboxKind, ProfileStats, PruneLimits, PruneReport, Revoked,
-    RunnerRow, RunnerState, RunnerStore, ServiceRow, ServiceState, SourceKind, Spread, Stats,
-    StatsQuery, StepRow, StepStats, StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
+    MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind, ProfileStats, PruneLimits,
+    PruneReport, Revoked, RunnerRow, RunnerState, RunnerStore, ServiceRow, ServiceState,
+    SourceKind, Spread, Stats, StatsQuery, StepRow, StepStats, StepUpdate, StoreError, Transition,
+    LOG_TRUNCATED_MARK,
 };
 pub use transport::{
     Dialer, Frame, Listener, Peer, PeerAccess, Transport, TransportError, MAX_FRAME_BYTES,

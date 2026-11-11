@@ -103,6 +103,7 @@ macro_rules! broker_store_contract {
             broker_registry::chunks_over_limit_dropped_results_kept,
             broker_registry::expired_results_removed,
             broker_registry::result_seq_never_reused_after_expire_or_revoke,
+            broker_registry::results_backlog_counts_every_client,
         );
         $crate::__store_reopen_cases!($make, $reopen;
             broker_seq_counters_survive_reopen,
@@ -127,6 +128,7 @@ macro_rules! hub_store_contract {
             hub::broker_of_active_order_set_and_cleared,
             hub::rebroker_restarts_both_streams_at_one,
             hub::broker_list_upsert_zone_and_remove,
+            hub::outbox_backlog_counts_pending_and_oldest,
             seq::hub_seq_gap_is_refused,
         );
         $crate::__store_reopen_cases!($make, $reopen;
@@ -146,6 +148,7 @@ macro_rules! runner_store_contract {
             runner::finished_jobs_are_forgotten_after_the_keep_period,
             runner::service_registry_upsert_list_remove,
             runner::cache_index_keyed_by_client_project_and_name,
+            runner::runner_outbox_backlog_counts_pending_and_oldest,
             seq::runner_received_seq_per_job,
             seq::runner_outbox_counters_independent_across_jobs,
         );

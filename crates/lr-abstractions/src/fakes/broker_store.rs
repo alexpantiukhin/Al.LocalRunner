@@ -1,9 +1,9 @@
 use super::broker_jobs::BrokerState;
 use crate::store::{
     compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
-    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxEntry, OutboxKind, PruneLimits,
-    PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate, StoreError,
-    Transition,
+    Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
+    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
+    StoreError, Transition,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};
@@ -286,5 +286,9 @@ impl BrokerStore for MemoryBrokerStore {
 
     async fn expire_results(&self, before: Timestamp) -> Result<usize, StoreError> {
         Ok(self.lock().results.remove(|_, e| e.created_at < before))
+    }
+
+    async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        Ok(OutboxBacklog::of(&self.lock().results.pending(None)))
     }
 }

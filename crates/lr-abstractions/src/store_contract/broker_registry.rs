@@ -1,7 +1,7 @@
 //! Contract cases of [`BrokerStore`]: join codes, key records, runners and the result outbox.
 
 use super::fixtures::{at, code, join, machine, runner};
-use crate::store::{BrokerStore, MachineKind, OutboxKind, RunnerState, StoreError};
+use crate::store::{BrokerStore, MachineKind, OutboxBacklog, OutboxKind, RunnerState, StoreError};
 use lr_core::JobId;
 
 async fn joined(store: &dyn BrokerStore, name: &str, kind: MachineKind) {
@@ -358,4 +358,37 @@ pub async fn result_seq_never_reused_after_expire_or_revoke(store: &dyn BrokerSt
     store.revoke("c1", at(500)).await.unwrap();
     assert!(store.pending_results("c1").await.unwrap().is_empty());
     assert_eq!(push("c1", 600).await, 4);
+}
+
+/// The backlog counts the unacknowledged results of every client and the oldest of them,
+/// without the acknowledged ones (spec 12.2 `outbox_pending`).
+pub async fn results_backlog_counts_every_client(store: &dyn BrokerStore) {
+    assert_eq!(
+        store.results_backlog().await.unwrap(),
+        OutboxBacklog::default()
+    );
+    let job = JobId("j1".into());
+    for (client, t) in [("c1", 5), ("c1", 7), ("c2", 3)] {
+        store
+            .push_result(client, &job, OutboxKind::Chunk, "x".into(), at(t), 1 << 20)
+            .await
+            .unwrap();
+    }
+    let all = store.results_backlog().await.unwrap();
+    assert_eq!(
+        all,
+        OutboxBacklog {
+            pending: 3,
+            oldest: Some(at(3))
+        }
+    );
+    store.ack_results("c2", &job, 1).await.unwrap();
+    let left = store.results_backlog().await.unwrap();
+    assert_eq!(
+        left,
+        OutboxBacklog {
+            pending: 2,
+            oldest: Some(at(5))
+        }
+    );
 }

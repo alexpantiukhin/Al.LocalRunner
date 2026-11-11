@@ -6,9 +6,9 @@
 //! next seq is `max(seq) + 1` even when nothing is pending. A closed entry carries no time:
 //! the store never reads a clock, so `acked_at` holds `created_at` as a marker.
 
-use crate::codec::{col_enum, col_time, col_u64, int, time, Text};
+use crate::codec::{col_enum, col_opt_time, col_time, col_u64, int, time, Text};
 use crate::db::R;
-use lr_abstractions::{OutboxEntry, OutboxKind};
+use lr_abstractions::{OutboxBacklog, OutboxEntry, OutboxKind};
 use lr_core::{JobId, Timestamp};
 use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection};
@@ -103,6 +103,17 @@ pub(crate) fn pending_bytes(conn: &Connection, t: Table, scope: &str) -> R<u64> 
     );
     let n: i64 = conn.query_row(&sql, params_from_iter(f.args.iter()), |r| r.get(0))?;
     Ok(n as u64)
+}
+
+/// Unacknowledged entries of every recipient and the oldest creation time among them.
+pub(crate) fn backlog(conn: &Connection, t: Table) -> R<OutboxBacklog> {
+    let sql = format!(
+        "SELECT COUNT(*), MIN(created_at) FROM {} WHERE acked_at IS NULL AND seq > 0",
+        t.name
+    );
+    let (pending, oldest) =
+        conn.query_row(&sql, [], |r| Ok((col_u64(r, 0)?, col_opt_time(r, 1)?)))?;
+    Ok(OutboxBacklog { pending, oldest })
 }
 
 /// Unacknowledged entries of one recipient (or of everyone when the table has no scope), the

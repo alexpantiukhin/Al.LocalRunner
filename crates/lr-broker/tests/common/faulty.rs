@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use lr_abstractions::fakes::MemoryBrokerStore;
 use lr_abstractions::{
     Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, Join,
-    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxEntry, OutboxKind, PruneLimits,
-    PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate, StoreError,
-    Transition,
+    JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
+    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
+    StoreError, Transition,
 };
 use lr_core::{JobId, Timestamp};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -191,5 +191,8 @@ impl BrokerStore for FaultyStore {
     }
     async fn expire_results(&self, before: Timestamp) -> Result<usize, StoreError> {
         self.inner.expire_results(before).await
+    }
+    async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError> {
+        self.inner.results_backlog().await
     }
 }

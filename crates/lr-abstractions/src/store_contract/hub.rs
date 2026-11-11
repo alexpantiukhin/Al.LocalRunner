@@ -1,7 +1,7 @@
 //! Contract cases of [`HubStore`].
 
 use super::fixtures::at;
-use crate::store::{ActiveOrder, BrokerLink, HubStore, OutboxKind, StoreError};
+use crate::store::{ActiveOrder, BrokerLink, HubStore, OutboxBacklog, OutboxKind, StoreError};
 use lr_core::{JobId, Zone};
 
 fn id(s: &str) -> JobId {
@@ -212,4 +212,19 @@ pub async fn broker_list_upsert_zone_and_remove(store: &dyn HubStore) {
         store.set_zone("win-host", Zone::Lan).await,
         Err(StoreError::NotFound(_))
     ));
+}
+
+/// The backlog counts unacknowledged entries and the oldest of them (spec 12.2).
+pub async fn outbox_backlog_counts_pending_and_oldest(store: &dyn HubStore) {
+    assert_eq!(
+        store.outbox_backlog().await.unwrap(),
+        OutboxBacklog::default()
+    );
+    let first = submitted(store, "j1", 3).await;
+    submitted(store, "j2", 8).await;
+    let b = store.outbox_backlog().await.unwrap();
+    assert_eq!((b.pending, b.oldest), (2, Some(at(3))));
+    store.ack_outbox(&id("j1"), first).await.unwrap();
+    let b = store.outbox_backlog().await.unwrap();
+    assert_eq!((b.pending, b.oldest), (1, Some(at(8))));
 }
