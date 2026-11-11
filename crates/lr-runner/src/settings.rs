@@ -68,6 +68,9 @@ pub struct RunnerSettings {
     /// Directory where the runners of one installation write their disk reservations
     /// (`<runner>.mb`); `None`: this runner sees no other runner's reservation.
     pub disk_ledger: Option<PathBuf>,
+    /// This runner's own process (pid and start fingerprint), written into its disk
+    /// reservation so other runners can skip it once the process is gone.
+    pub process: Option<lr_abstractions::ProcessRef>,
     /// `[env] path`: `PATH` of every job; an empty or blank value counts as absent.
     pub path: Option<String>,
     /// `HOME` of every job.
@@ -168,6 +171,7 @@ impl RunnerSettings {
             workspace: Retention::default(),
             broker_lost_kill_s: None,
             disk_ledger: None,
+            process: None,
             path: None,
             home: None,
             temp: None,

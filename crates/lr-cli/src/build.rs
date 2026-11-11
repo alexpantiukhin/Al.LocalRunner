@@ -343,6 +343,11 @@ pub async fn runner(
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
     cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
+    let pid = std::process::id();
+    cfg.settings.process = Some(lr_abstractions::ProcessRef {
+        pid,
+        start: lr_exec::process_start(pid),
+    });
     cfg.settings.home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
