@@ -2,7 +2,7 @@ mod common;
 
 use common::loopback::{layout, place, repo, until_ready};
 use common::TempDir;
-use lr_cli::dashboard::HubSource;
+use lr_cli::dashboard::{hub_stopped, HubSource};
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_dashboard::{Dashboard, DashboardOptions};
 use std::sync::Arc;
@@ -112,4 +112,22 @@ async fn the_live_dashboard_streams_events_to_a_session_and_refuses_one_without_
     runners.stop();
     hub_role.stop();
     broker.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_dashboard_ends_once_the_hub_it_serves_stops_answering() {
+    let dir = TempDir::new("dashboard-down");
+    let layout = layout(&dir);
+    let hub_role = start_hub(&layout, false).await.expect("hub starts");
+    let watch = tokio::spawn({
+        let layout = layout.clone();
+        async move { hub_stopped(&layout, Duration::from_millis(100)).await }
+    });
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert!(!watch.is_finished(), "the hub still answers");
+    hub_role.stop();
+    tokio::time::timeout(Duration::from_secs(10), watch)
+        .await
+        .expect("the dashboard ends after the hub is gone")
+        .unwrap();
 }

@@ -441,15 +441,39 @@ impl DataSource for HubSource {
     }
 }
 
-/// `dashboard`: serves until Ctrl+C. The URL goes to stdout only.
+/// How often `dashboard` checks that the hub it serves still answers.
+pub const HUB_CHECK: Duration = Duration::from_secs(1);
+
+/// Resolves once the hub of `layout` stops answering on its CLI channel after it answered
+/// (`down` stopped it), checking every `every`; never while the hub was not seen at all.
+pub async fn hub_stopped(layout: &Layout, every: Duration) {
+    let mut seen = false;
+    loop {
+        match hub(layout).await {
+            Ok(client) => {
+                client.close().await;
+                seen = true;
+            }
+            Err(_) if seen => return,
+            Err(_) => {}
+        }
+        tokio::time::sleep(every).await;
+    }
+}
+
+/// `dashboard`: serves until Ctrl+C or until `down` stops the hub it serves. The URL goes to
+/// stdout only.
 pub async fn run(layout: &Layout) -> Result<i32, String> {
     let user = lr_net::current_os_user().map_err(|e| e.to_string())?;
     let source = Arc::new(HubSource::new(layout.clone()));
     let dashboard = Dashboard::new(source, DashboardOptions { user }).map_err(|e| e.to_string())?;
     let running = dashboard.serve().await.map_err(|e| e.to_string())?;
     println!("{}", running.url());
-    eprintln!("dashboard on loopback; Ctrl+C stops it");
-    let _ = tokio::signal::ctrl_c().await;
+    eprintln!("dashboard on loopback; Ctrl+C or down stops it");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = hub_stopped(layout, HUB_CHECK) => eprintln!("the hub stopped; dashboard ends"),
+    }
     running.shutdown().await;
     Ok(0)
 }
