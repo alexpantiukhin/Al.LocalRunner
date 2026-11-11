@@ -136,7 +136,7 @@ async fn a_successful_connection_to_the_broker_is_logged_without_secrets() {
     assert_eq!(connected[0].level, Level::Info);
     assert_eq!(
         connected[0].fields,
-        vec![("broker".to_string(), BROKER.to_string())]
+        vec![("address".to_string(), BROKER.to_string())]
     );
     let text = format!("{:?}", connected[0].fields);
     assert!(!text.contains(FINGERPRINT) && !text.contains("runner-key"));
