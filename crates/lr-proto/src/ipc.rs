@@ -113,6 +113,19 @@ pub struct BrokerStatus {
     pub outbox: u64,
 }
 
+/// An active order of a hub (answer to [`CliRequest::Orders`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HubOrder {
+    /// Broker it went to; `None` while no broker is chosen.
+    pub broker: Option<String>,
+    /// No broker has accepted it yet: it waits in the outbox.
+    pub outbox: bool,
+    /// The job.
+    pub summary: JobSummary,
+    /// Log copy in the submitter's directory.
+    pub log: Option<String>,
+}
+
 /// Messages from the CLI to its hub over local IPC.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -143,6 +156,9 @@ pub enum CliRequest {
         /// `--active`: only queued and running jobs.
         active: bool,
     },
+    /// The active orders of this hub (dashboard): those waiting in its outbox and those a broker
+    /// accepted, each with its log copy.
+    Orders,
     /// `down`: stop the hub. Only its owner reaches the CLI channel; answered with
     /// [`CliReply::Stopping`] before the hub ends.
     Shutdown,
@@ -207,6 +223,11 @@ pub enum CliReply {
     Jobs {
         /// The jobs, oldest first.
         jobs: Vec<JobSummary>,
+    },
+    /// Answer to [`CliRequest::Orders`].
+    Orders {
+        /// The orders, oldest first.
+        orders: Vec<HubOrder>,
     },
     /// A piece of the log a `log` read asked for, relayed from the broker in order; `end`
     /// closes the stream. A refusal comes as [`CliReply::Read`] instead.
@@ -334,7 +355,9 @@ pub enum ControlReply {
 message!(
     CliRequest,
     local: true,
-    ["submit", "done", "wait", "cancel", "read", "brokers", "jobs", "shutdown"]
+    [
+        "submit", "done", "wait", "cancel", "read", "brokers", "jobs", "orders", "shutdown"
+    ]
 );
 message!(
     CliReply,
@@ -348,6 +371,7 @@ message!(
         "read",
         "brokers",
         "jobs",
+        "orders",
         "log_chunk",
         "stopping",
         "error"

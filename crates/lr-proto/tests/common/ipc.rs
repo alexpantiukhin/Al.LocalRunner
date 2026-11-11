@@ -37,6 +37,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
             label: "agent".into(),
             active: true,
         },
+        CliRequest::Orders,
         CliRequest::Shutdown,
     ]
 }
@@ -77,6 +78,14 @@ pub fn cli_replies() -> Vec<CliReply> {
             }],
         },
         CliReply::Jobs { jobs: vec![] },
+        CliReply::Orders {
+            orders: vec![HubOrder {
+                broker: None,
+                outbox: true,
+                summary: summary(),
+                log: Some("/w/temp/runner/j1.log".into()),
+            }],
+        },
         CliReply::LogChunk {
             broker: "local".into(),
             text: "line\n".into(),

@@ -7,8 +7,8 @@ use crate::track::{Stage, Track};
 use lr_abstractions::{ActiveOrder, Level, OutboxKind};
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
-    BrokerStatus, CancelRequest, CancelTarget, CliRead, CliReply, CliRequest, HubToBroker,
-    ProtocolErrorCode, ReadCall, ReadRequest, ReasonCode, RejectReason, SubmitRequest,
+    BrokerStatus, CancelRequest, CancelTarget, CliRead, CliReply, CliRequest, HubOrder,
+    HubToBroker, ProtocolErrorCode, ReadCall, ReadRequest, ReasonCode, RejectReason, SubmitRequest,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,6 +40,7 @@ impl Engine {
             CliRequest::Read(r) => self.read(r, &e.reply),
             CliRequest::Brokers => Some(self.brokers().await),
             CliRequest::Jobs { label, active } => Some(self.jobs(&e.os_user, &label, active)),
+            CliRequest::Orders => Some(self.orders(&e.os_user)),
             CliRequest::Shutdown => None,
         };
         if let Some(a) = answer {
@@ -404,5 +405,23 @@ impl Engine {
         }
         jobs.sort_by(|a, b| (a.queued_at, &a.job).cmp(&(b.queued_at, &b.job)));
         CliReply::Jobs { jobs }
+    }
+
+    fn orders(&self, os_user: &str) -> CliReply {
+        let mut orders: Vec<HubOrder> = self
+            .tracks
+            .values()
+            .filter(|t| t.order.os_user == os_user)
+            .map(|t| HubOrder {
+                broker: t.order.broker.clone(),
+                outbox: !t.stage.accepted(),
+                summary: t.summary(t.state()),
+                log: t.log.as_ref().map(|p| p.display().to_string()),
+            })
+            .collect();
+        orders.sort_by(|a, b| {
+            (a.summary.queued_at, &a.summary.job).cmp(&(b.summary.queued_at, &b.summary.job))
+        });
+        CliReply::Orders { orders }
     }
 }

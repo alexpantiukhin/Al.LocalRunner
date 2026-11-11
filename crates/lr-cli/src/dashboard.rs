@@ -9,13 +9,13 @@ use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use async_trait::async_trait;
 use lr_abstractions::{CancelRequest, DataError, DataSource, EventStream};
-use lr_core::{JobId, Timestamp};
+use lr_core::{JobId, JobState, Timestamp};
 use lr_dashboard::{Dashboard, DashboardOptions, LOG_TAIL_BYTES};
 use lr_obs::Redactor;
 use lr_proto::{
     BrokerRunners, CancelTarget, CliReply, CliRequest, DashboardEvent, DashboardJob, DashboardList,
-    DashboardSnapshot, HistoryFilter, JobDetail, JobSummary, QueueEvent, ReadReply, ReadRequest,
-    StatsFilter, StatsView, StatusFilter, StepView,
+    DashboardSnapshot, HistoryFilter, HubOrder, JobDetail, JobSummary, QueueEvent, ReadReply,
+    ReadRequest, StatsFilter, StatsView, StatusFilter, StepView,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,12 +26,16 @@ pub const REFRESH: Duration = Duration::from_secs(2);
 /// The dashboard's data from the hub of this OS user.
 pub struct HubSource {
     layout: Layout,
+    last: std::sync::Mutex<Option<DashboardSnapshot>>,
 }
 
 impl HubSource {
     /// Data from the hub of `layout`.
     pub fn new(layout: Layout) -> HubSource {
-        HubSource { layout }
+        HubSource {
+            layout,
+            last: std::sync::Mutex::new(None),
+        }
     }
 }
 
@@ -192,7 +196,160 @@ pub async fn build_snapshot(
             merge_stats(&mut snap.stats, s);
         }
     }
+    add_hub_orders(&mut snap, hub_orders(client).await, filter);
     Ok(snap)
+}
+
+/// The hub's active orders; empty when the hub does not answer within [`ORDERS_WAIT`].
+pub async fn hub_orders(client: &IpcClient) -> Vec<HubOrder> {
+    let call = client.call::<_, CliReply>(&CliRequest::Orders);
+    match tokio::time::timeout(ORDERS_WAIT, call).await {
+        Ok(Ok(CliReply::Orders { orders })) => orders,
+        _ => Vec::new(),
+    }
+}
+
+/// How long the dashboard waits for the hub's list of its orders.
+pub const ORDERS_WAIT: Duration = Duration::from_secs(5);
+
+fn matches(filter: &StatusFilter, s: &JobSummary) -> bool {
+    filter
+        .project
+        .as_ref()
+        .is_none_or(|p| s.project.as_ref() == Some(p))
+        && filter
+            .label
+            .as_ref()
+            .is_none_or(|l| s.label.as_ref() == Some(l))
+        && filter.source.is_none_or(|w| s.source == Some(w))
+}
+
+/// Adds the orders of the hub the brokers did not report: those waiting in its outbox, and
+/// those of an unreachable broker, marked stale (spec 9.3).
+pub fn add_hub_orders(snap: &mut DashboardSnapshot, orders: Vec<HubOrder>, filter: &StatusFilter) {
+    for o in orders.into_iter().filter(|o| matches(filter, &o.summary)) {
+        if snap
+            .jobs
+            .iter()
+            .any(|j| j.detail.summary.job == o.summary.job)
+        {
+            continue;
+        }
+        let reachable = |b: &str| snap.brokers.iter().any(|s| s.name == b && s.available);
+        let (list, stale) = match (&o.broker, o.outbox) {
+            (_, true) => (DashboardList::Outbox, false),
+            (Some(b), false) if !reachable(b) => match o.summary.state {
+                JobState::Running => (DashboardList::Running, true),
+                _ => (DashboardList::Queued, true),
+            },
+            _ => continue,
+        };
+        snap.jobs.push(DashboardJob {
+            broker: o.broker,
+            list,
+            position: None,
+            detail: detail_of(o.summary, Vec::new(), None),
+            last_lines: Vec::new(),
+            stale,
+        });
+    }
+}
+
+/// Keeps the last known rows of every broker `snap` found unreachable, marked stale: its jobs
+/// (in place of the hub's thinner rows of the same jobs) and its runners (spec 9.3).
+pub fn keep_last_known(snap: &mut DashboardSnapshot, last: Option<&DashboardSnapshot>) {
+    let Some(last) = last else {
+        return;
+    };
+    let down: Vec<String> = snap
+        .brokers
+        .iter()
+        .filter(|b| !b.available)
+        .map(|b| b.name.clone())
+        .collect();
+    let of_down = |b: &Option<String>| b.as_ref().is_some_and(|b| down.contains(b));
+    for old in last
+        .jobs
+        .iter()
+        .filter(|j| of_down(&j.broker) && j.list != DashboardList::Outbox)
+    {
+        let kept = DashboardJob {
+            stale: true,
+            ..old.clone()
+        };
+        let id = &old.detail.summary.job;
+        match snap.jobs.iter_mut().find(|j| &j.detail.summary.job == id) {
+            Some(j) if j.stale => *j = kept,
+            Some(_) => {}
+            None => snap.jobs.push(kept),
+        }
+    }
+    for old in last.runners.iter().filter(|r| down.contains(&r.broker)) {
+        if !snap.runners.iter().any(|r| r.broker == old.broker) {
+            snap.runners.push(BrokerRunners {
+                stale: true,
+                ..old.clone()
+            });
+        }
+    }
+}
+
+/// The log copy of `job` for the page: from the directory of the run a reachable broker
+/// knows, else the copy the hub keeps for its own active order; masked by `redactor`.
+pub async fn log_copy(
+    client: &IpcClient,
+    job: &JobId,
+    redactor: &Redactor,
+) -> Result<Vec<u8>, DataError> {
+    let safe = !job.0.is_empty()
+        && job.0.len() <= 64
+        && job.0.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !safe {
+        return Err(DataError::NotFound);
+    }
+    let brokers = known_brokers(client).await.map_err(unavailable)?;
+    for b in brokers.iter().filter(|b| b.available) {
+        let req = ReadRequest::HistoryShow {
+            job: job.clone(),
+            client: None,
+        };
+        if let Ok(ReadReply::Job(d)) = read(client, &b.name, req).await {
+            let Some(cwd) = d.cwd else {
+                return Err(DataError::NotFound);
+            };
+            let dir = std::path::Path::new(&cwd);
+            if !clean_absolute(dir) {
+                return Err(DataError::NotFound);
+            }
+            let path = dir.join("temp").join("runner").join(format!("{job}.log"));
+            let bytes = std::fs::read(&path).map_err(|_| DataError::NotFound)?;
+            return Ok(masked_tail(&bytes, redactor));
+        }
+    }
+    let order = hub_orders(client)
+        .await
+        .into_iter()
+        .find(|o| &o.summary.job == job);
+    let Some(path) = order.and_then(|o| o.log) else {
+        return Err(DataError::NotFound);
+    };
+    let path = std::path::Path::new(&path);
+    let named = path.file_name() == Some(std::ffi::OsStr::new(&format!("{job}.log")));
+    if !named || !clean_absolute(path) {
+        return Err(DataError::NotFound);
+    }
+    let bytes = std::fs::read(path).map_err(|_| DataError::NotFound)?;
+    Ok(masked_tail(&bytes, redactor))
+}
+
+fn clean_absolute(path: &std::path::Path) -> bool {
+    path.is_absolute()
+        && path.components().all(|c| {
+            !matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
 }
 
 #[async_trait]
@@ -205,7 +362,11 @@ impl DataSource for HubSource {
         let redactor = cli_redactor(&self.layout);
         let snap = build_snapshot(&client, &StatusFilter::default(), true, &redactor).await;
         client.close().await;
-        snap.map_err(unavailable)
+        let mut snap = snap.map_err(unavailable)?;
+        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+        keep_last_known(&mut snap, last.as_ref());
+        *last = Some(snap.clone());
+        Ok(snap)
     }
 
     async fn subscribe(&self) -> Result<Box<dyn EventStream<DashboardEvent>>, DataError> {
@@ -213,40 +374,10 @@ impl DataSource for HubSource {
     }
 
     async fn log(&self, job: &JobId) -> Result<Vec<u8>, DataError> {
-        let safe = !job.0.is_empty()
-            && job.0.len() <= 64
-            && job.0.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-        if !safe {
-            return Err(DataError::NotFound);
-        }
         let client = hub(&self.layout).await.map_err(unavailable)?;
-        let brokers = known_brokers(&client).await.map_err(unavailable)?;
-        for b in brokers.iter().filter(|b| b.available) {
-            let req = ReadRequest::HistoryShow {
-                job: job.clone(),
-                client: None,
-            };
-            if let Ok(ReadReply::Job(d)) = read(&client, &b.name, req).await {
-                let Some(cwd) = d.cwd else {
-                    return Err(DataError::NotFound);
-                };
-                let dir = std::path::Path::new(&cwd);
-                let clean = dir.is_absolute()
-                    && dir.components().all(|c| {
-                        !matches!(
-                            c,
-                            std::path::Component::ParentDir | std::path::Component::CurDir
-                        )
-                    });
-                if !clean {
-                    return Err(DataError::NotFound);
-                }
-                let path = dir.join("temp").join("runner").join(format!("{job}.log"));
-                let bytes = std::fs::read(&path).map_err(|_| DataError::NotFound)?;
-                return Ok(masked_tail(&bytes, &cli_redactor(&self.layout)));
-            }
-        }
-        Err(DataError::NotFound)
+        let copy = log_copy(&client, job, &cli_redactor(&self.layout)).await;
+        client.close().await;
+        copy
     }
 
     async fn cancel(&self, job: &JobId, request: CancelRequest) -> Result<(), DataError> {
