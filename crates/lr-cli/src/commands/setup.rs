@@ -112,24 +112,41 @@ pub fn install(
     Ok(0)
 }
 
-fn confirmed(layout: &Layout, yes: bool) -> Result<bool, String> {
+/// Whether `uninstall --purge` may delete the state directory of `layout`: `--yes`, or `yes`
+/// typed at the prompt written to `out`; without a terminal only `--yes` confirms.
+pub fn purge_confirmed(
+    layout: &Layout,
+    yes: bool,
+    terminal: bool,
+    input: &mut dyn BufRead,
+    out: &mut dyn Write,
+) -> Result<bool, String> {
     if yes {
         return Ok(true);
     }
-    if !std::io::stdin().is_terminal() {
+    if !terminal {
         return Err("--purge deletes the state directory; confirm with --yes".into());
     }
-    print!(
+    let _ = write!(
+        out,
         "delete {} with keys, databases and logs? type yes: ",
         layout.root.display()
     );
-    let _ = std::io::stdout().flush();
+    let _ = out.flush();
     let mut line = String::new();
-    std::io::stdin()
-        .lock()
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
+    input.read_line(&mut line).map_err(|e| e.to_string())?;
     Ok(line.trim() == "yes")
+}
+
+fn confirmed(layout: &Layout, yes: bool) -> Result<bool, String> {
+    let terminal = std::io::stdin().is_terminal();
+    purge_confirmed(
+        layout,
+        yes,
+        terminal,
+        &mut std::io::stdin().lock(),
+        &mut std::io::stdout(),
+    )
 }
 
 /// The plan of `uninstall` without stopping roles: autostart entries off, the broker service

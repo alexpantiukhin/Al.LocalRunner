@@ -116,15 +116,49 @@ fn compose_runs_broker_and_runner_from_the_versioned_image_as_non_root() {
         "runner publishes no port"
     );
     let ports = strings(&services["broker"]["ports"]);
-    assert_eq!(ports.len(), 1);
-    assert!(ports[0].ends_with(":7443:7443"), "{ports:?}");
-    assert!(
-        !ports[0].starts_with("0.0.0.0") && ports[0] != "7443:7443",
-        "the published port is bound to one host interface: {ports:?}"
+    assert_eq!(
+        ports,
+        ["127.0.0.1:7443:7443"],
+        "the broker port is published on the host's loopback only"
     );
     assert_eq!(
         services["broker"]["build"]["dockerfile"],
         "install/Dockerfile"
+    );
+    assert_eq!(
+        services["broker"]["build"]["context"], "..",
+        "the build context is the repository root"
+    );
+    assert_eq!(
+        services["runner"]["hostname"], "runner",
+        "the runner's name in the pool"
+    );
+}
+
+#[test]
+fn image_is_built_on_alpine_musl_and_runs_on_distroless_nonroot() {
+    let stages = dockerfile_stages();
+    let build = stages[0].from.split_whitespace().next().unwrap();
+    let (name, tag) = build.split_once(':').unwrap();
+    assert_eq!(name, "rust");
+    assert!(tag.ends_with("-alpine"), "musl build image: {build}");
+    assert_eq!(
+        stages.last().unwrap().from,
+        "gcr.io/distroless/static-debian12:nonroot"
+    );
+    let dirs: Vec<&str> = instruction(stages.last().unwrap(), "COPY")
+        .into_iter()
+        .filter(|c| c.contains("/out/empty"))
+        .map(|c| c.rsplit(' ').next().unwrap())
+        .collect();
+    assert_eq!(
+        dirs,
+        [
+            "/var/lib/al-localrunner",
+            "/etc/al-localrunner",
+            "/run/al-localrunner"
+        ],
+        "state, configuration and IPC directories owned by 65532"
     );
 }
 

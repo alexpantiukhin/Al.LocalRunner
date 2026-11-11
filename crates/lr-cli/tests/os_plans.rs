@@ -84,6 +84,10 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
                     "{create}"
                 );
                 assert!(runs.contains(&"sc.exe failureflag AlLocalRunnerBroker 1".to_string()));
+                assert!(runs.contains(
+                    &"sc.exe failure AlLocalRunnerBroker reset= 86400 actions= restart/5000"
+                        .to_string()
+                ));
                 assert!(
                     !runs.iter().any(|r| r.starts_with("icacls")),
                     "the DACL is set whole, not patched with icacls: {runs:?}"
@@ -129,6 +133,12 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
                 assert!(path.starts_with("/Library/LaunchDaemons"));
                 assert!(daemon.contains(&format!("<string>{account}</string>")));
                 assert!(daemon.contains("<key>Umask</key>\n  <integer>63</integer>"));
+                assert!(
+                    daemon.contains(
+                        "<key>KeepAlive</key>\n  <true/>\n  <key>ThrottleInterval</key>\n  <integer>5</integer>"
+                    ),
+                    "{daemon}"
+                );
                 assert!(runs
                     .iter()
                     .any(|r| r.starts_with("launchctl bootstrap system")));
@@ -321,7 +331,7 @@ fn windows_autostart_is_a_logon_task_of_the_user_restarted_on_failure_without_a_
         r"<UserId>PC\alex</UserId>",
         "<LogonType>InteractiveToken</LogonType>",
         "<RunLevel>LeastPrivilege</RunLevel>",
-        "<RestartOnFailure>",
+        "<RestartOnFailure>\n      <Interval>PT1M</Interval>\n      <Count>999</Count>\n    </RestartOnFailure>",
         "<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>",
         "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
         "<Arguments>runner run --name box --background --state-dir &quot;/home/alex/state &amp; more&quot;</Arguments>",

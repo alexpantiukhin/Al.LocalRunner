@@ -1,5 +1,6 @@
 //! `hub run`, `broker run`, `runner run`: roles in the foreground (spec 11.1).
 
+use crate::os_service::service_run::{self, ServiceEnd};
 use crate::paths::Layout;
 use crate::roles::{self, Running};
 use lr_runner::AgentExit;
@@ -63,6 +64,18 @@ pub async fn broker_run(layout: &Layout, background: bool, service: bool) -> Res
     }
     if background || service {
         crate::os_service::background_console();
+    }
+    if service {
+        let stop = async {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminated() => {}
+            }
+        };
+        return Ok(match service_run::serve(layout, || {}, stop).await {
+            ServiceEnd::Stopped => 0,
+            ServiceEnd::NotStarted | ServiceEnd::Ended => 1,
+        });
     }
     let running = roles::start_broker(layout, true).await?;
     for a in running.network_addresses() {

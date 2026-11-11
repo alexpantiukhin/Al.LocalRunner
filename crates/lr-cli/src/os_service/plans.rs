@@ -220,7 +220,7 @@ fn macos(i: &ServiceInputs) -> Vec<Action> {
     let extra = format!(
         "  <key>UserName</key>\n  <string>{}</string>\n  <key>GroupName</key>\n  \
          <string>{}</string>\n  <key>Umask</key>\n  <integer>63</integer>\n  \
-         <key>KeepAlive</key>\n  <true/>\n",
+         <key>KeepAlive</key>\n  <true/>\n  <key>ThrottleInterval</key>\n  <integer>5</integer>\n",
         xml(account),
         xml(group)
     );

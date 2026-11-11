@@ -2,6 +2,7 @@
 //! gives the process a hidden console (so the soft stop reaches steps of any role it hosts,
 //! spec 10) and runs the broker until the manager stops the service.
 
+use super::service_run::{self, ServiceEnd};
 use super::{service_name, Os};
 use crate::paths::Layout;
 use std::ffi::c_void;
@@ -79,41 +80,14 @@ unsafe extern "system" fn handler(control: u32, _: u32, _: *mut c_void, _: *mut 
     }
 }
 
-fn log(layout: Option<&Layout>, text: &str) {
-    let Some(layout) = layout else {
-        return;
-    };
-    let dir = layout.root.join("logs");
-    let _ = std::fs::create_dir_all(&dir);
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("service.log"))
-    {
-        let _ = writeln!(f, "{at} {text}");
-    }
-}
-
 async fn serve(layout: &Layout, mut stop: watch::Receiver<bool>) -> u32 {
-    let running = match crate::roles::start_broker(layout, false).await {
-        Ok(r) => r,
-        Err(e) => {
-            log(Some(layout), &format!("the broker did not start: {e}"));
-            return 1;
-        }
+    let stopped = async move {
+        let _ = stop.wait_for(|s| *s).await;
     };
-    report(SERVICE_RUNNING, 0, 0);
-    tokio::select! {
-        _ = stop.wait_for(|s| *s) => 0,
-        _ = running.wait() => {
-            log(Some(layout), "the broker ended on its own");
-            BROKER_ENDED
-        }
+    match service_run::serve(layout, || report(SERVICE_RUNNING, 0, 0), stopped).await {
+        ServiceEnd::Stopped => 0,
+        ServiceEnd::NotStarted => 1,
+        ServiceEnd::Ended => BROKER_ENDED,
     }
 }
 
@@ -138,8 +112,8 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
             rt.shutdown_timeout(Duration::from_secs(10));
             code
         }
-        (_, Err(e)) => {
-            log(layout, &format!("no async runtime: {e}"));
+        (Some(layout), Err(e)) => {
+            service_run::service_log(layout, &format!("no async runtime: {e}"));
             1
         }
         (None, _) => 1,
