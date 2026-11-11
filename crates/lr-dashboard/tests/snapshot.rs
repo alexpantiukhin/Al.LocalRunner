@@ -189,3 +189,25 @@ fn job_card_shows_secret_names_without_values() {
         "a secret entry is a bare name: an entry with a value does not fit the model"
     );
 }
+
+#[test]
+fn job_card_shows_the_reason_code_of_the_end() {
+    let mut snapshot = common::snapshot();
+    snapshot.jobs[0].detail.summary.reason = Some(lr_proto::ReasonCode::SenderGone);
+    let html = render_snapshot(&snapshot, &[]);
+    assert!(
+        html.contains("\"reason\":\"sender_gone\""),
+        "the card data carries the code"
+    );
+    let script = include_str!("../src/page.js");
+    let card = &script[script.find("function fillCard(").unwrap()..];
+    let card = &card[..card.find("var dl").unwrap()];
+    assert!(
+        card.contains("s = d.summary"),
+        "s is the summary of the card"
+    );
+    assert!(
+        card.contains("[\"Reason\", s.reason]"),
+        "the card lists the code under Reason"
+    );
+}
