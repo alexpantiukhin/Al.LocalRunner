@@ -168,6 +168,13 @@ fn runner_without_env_path_does_not_start() {
         .unwrap_err()
         .to_string();
     assert!(e.contains("[env] path") && e.contains("13.4"), "{e}");
+    for blank in ["", "   "] {
+        let text = format!("[env]\npath = \"{blank}\"\n");
+        let e = RunnerConfig::parse(&text, None, "h", PathBuf::new(), HOST)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("[env] path") && e.contains("13.4"), "{e}");
+    }
     let set = parse("[env]\npath = \"/opt/tools/bin\"\n", None);
     assert_eq!(set.settings.path.as_deref(), Some("/opt/tools/bin"));
 }

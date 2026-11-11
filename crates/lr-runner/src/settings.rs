@@ -65,7 +65,7 @@ pub struct RunnerSettings {
     pub workspace: Retention,
     /// `[grace] broker_lost_kill_s`: may only shorten the broker's value.
     pub broker_lost_kill_s: Option<u64>,
-    /// `[env] path`: `PATH` of every job.
+    /// `[env] path`: `PATH` of every job; an empty or blank value counts as absent.
     pub path: Option<String>,
     /// `HOME` of every job.
     pub home: Option<String>,
@@ -189,7 +189,7 @@ impl RunnerSettings {
         s.cache = retention("cache", f.cache)?;
         s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
-        s.path = f.env.path;
+        s.path = f.env.path.filter(|p| !p.trim().is_empty());
         Ok(s)
     }
 
