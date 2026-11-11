@@ -25,6 +25,9 @@ function Read-InstallArgs {
     $i = 0
     while ($i -lt $Arguments.Count) {
         $given = $Arguments[$i]
+        if (-not $given.StartsWith('-')) {
+            Stop-Install "unknown argument: $given (see --help)"
+        }
         $name = $given.TrimStart('-').ToLowerInvariant()
         $value = ''
         if (@('version', 'dir', 'offline', 'role') -contains $name) {
@@ -53,7 +56,7 @@ function Read-InstallArgs {
     if ($opts.Version.StartsWith('v')) {
         $opts.Version = $opts.Version.Substring(1)
     }
-    if ($opts.Version -notmatch '^[0-9A-Za-z.+-]*$') {
+    if ($opts.Version -cnotmatch '^[0-9A-Za-z.+-]*\z') {
         Stop-Install '--version must look like 1.2.3'
     }
     $opts
@@ -99,7 +102,7 @@ function Find-SshKeygen {
     if ($found) {
         return $found.Path
     }
-    Stop-Install 'ssh-keygen (OpenSSH 8.0 or newer) is needed to check the release signature'
+    Stop-Install 'ssh-keygen (OpenSSH 8.1 or newer) is needed to check the release signature'
 }
 
 function Test-ReleaseSignature {
@@ -119,6 +122,10 @@ function Test-ReleaseSignature {
         -RedirectStandardOutput (Join-Path $Work 'verify.out') -RedirectStandardError (Join-Path $Work 'verify.err') `
         -NoNewWindow -Wait -PassThru
     if ($proc.ExitCode -ne 0) {
+        $errors = [IO.File]::ReadAllText((Join-Path $Work 'verify.err'))
+        if ($errors -match '(illegal|unknown) option') {
+            Stop-Install 'this ssh-keygen cannot check signatures: OpenSSH 8.1 or newer is needed'
+        }
         Stop-Install 'the signature of SHA256SUMS does not match the release key: nothing installed'
     }
 }
@@ -141,6 +148,25 @@ function Test-ReleaseChecksum {
     }
 }
 
+function Invoke-LocalRunnerInstall {
+    param([string]$Exe, [hashtable]$Opts)
+    $installArgs = @('install', '--role', $Opts.Role)
+    if ($Opts.Dir) {
+        $installArgs += "--dir=$($Opts.Dir)"
+    }
+    if ($Opts.AllowElevated) {
+        $installArgs += '--allow-elevated'
+    }
+    & $Exe @installArgs
+    if ($LASTEXITCODE -ne 0) {
+        Stop-Install 'localrunner install failed'
+    }
+    & $Exe 'doctor'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'install.ps1: localrunner doctor reported problems (above); the installation is kept'
+    }
+}
+
 function Install-LocalRunner {
     param([string[]]$Arguments)
     $ErrorActionPreference = 'Stop'
@@ -160,11 +186,18 @@ function Install-LocalRunner {
             if (-not (Test-Path -LiteralPath $opts.Offline -PathType Leaf)) {
                 Stop-Install "$($opts.Offline) is not a file"
             }
-            $archive = (Resolve-Path -LiteralPath $opts.Offline).ProviderPath
-            $name = Split-Path -Leaf $archive
-            $sums = Join-Path (Split-Path -Parent $archive) 'SHA256SUMS'
-            if (-not (Test-Path -LiteralPath $sums -PathType Leaf)) {
-                Stop-Install "SHA256SUMS must lie next to $archive"
+            $source = (Resolve-Path -LiteralPath $opts.Offline).ProviderPath
+            $name = Split-Path -Leaf $source
+            $from = Join-Path (Split-Path -Parent $source) 'SHA256SUMS'
+            if (-not (Test-Path -LiteralPath $from -PathType Leaf)) {
+                Stop-Install "SHA256SUMS must lie next to $source"
+            }
+            $sums = Join-Path $work 'SHA256SUMS'
+            $archive = Join-Path $work $name
+            Copy-Item -LiteralPath $source -Destination $archive
+            Copy-Item -LiteralPath $from -Destination $sums
+            if (Test-Path -LiteralPath "$from.sig" -PathType Leaf) {
+                Copy-Item -LiteralPath "$from.sig" -Destination "$sums.sig"
             }
         } else {
             $name = Get-ReleaseTarget
@@ -188,17 +221,7 @@ function Install-LocalRunner {
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             Stop-Install "$name has no localrunner.exe"
         }
-        $installArgs = @('install', '--role', $opts.Role)
-        if ($opts.Dir) {
-            $installArgs += @('--dir', $opts.Dir)
-        }
-        if ($opts.AllowElevated) {
-            $installArgs += '--allow-elevated'
-        }
-        & $exe @installArgs
-        if ($LASTEXITCODE -ne 0) {
-            Stop-Install 'localrunner install failed'
-        }
+        Invoke-LocalRunnerInstall -Exe $exe -Opts $opts
     } finally {
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -206,4 +229,6 @@ function Install-LocalRunner {
 
 if ($env:LOCALRUNNER_INSTALL_SOURCED -ne '1') {
     Install-LocalRunner -Arguments $args
+} else {
+    Write-Warning 'install.ps1: LOCALRUNNER_INSTALL_SOURCED=1 is set: functions loaded for tests, nothing installed'
 }

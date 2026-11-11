@@ -94,7 +94,7 @@ detect_target() {
 
 fetch() {
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1" || die "download failed: $1"
+        curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$2" "$1" || die "download failed: $1"
     elif command -v wget >/dev/null 2>&1; then
         wget -q --https-only -O "$2" "$1" || die "download failed: $1"
     else
@@ -119,12 +119,16 @@ verify_signature() {
         "" | @*@) die "this install.sh carries no release key: take install.sh from the release page" ;;
     esac
     command -v ssh-keygen >/dev/null 2>&1 ||
-        die "ssh-keygen (OpenSSH 8.0 or newer) is needed to check the release signature"
+        die "ssh-keygen (OpenSSH 8.1 or newer) is needed to check the release signature"
     [ -f "$2" ] || die "signature $2 is missing: nothing installed"
     signers="$WORK/allowed_signers"
     printf '%s namespaces="%s" %s\n' "$SIG_NAMESPACE" "$SIG_NAMESPACE" "$RELEASE_KEY" >"$signers"
-    ssh-keygen -Y verify -f "$signers" -I "$SIG_NAMESPACE" -n "$SIG_NAMESPACE" -s "$2" <"$1" >/dev/null 2>&1 ||
+    if ! ssh-keygen -Y verify -f "$signers" -I "$SIG_NAMESPACE" -n "$SIG_NAMESPACE" -s "$2" <"$1" >/dev/null 2>"$WORK/verify.err"; then
+        if grep -qiE '(illegal|unknown) option' "$WORK/verify.err"; then
+            die "this ssh-keygen cannot check signatures: OpenSSH 8.1 or newer is needed"
+        fi
         die "the signature of SHA256SUMS does not match the release key: nothing installed"
+    fi
 }
 
 verify_checksum() {
@@ -144,12 +148,18 @@ extract() {
 run_install() {
     set -- install --role "$ROLE"
     if [ -n "$DIR" ]; then
-        set -- "$@" --dir "$DIR"
+        set -- "$@" --dir="$DIR"
     fi
     if [ "$ALLOW_ELEVATED" = 1 ]; then
         set -- "$@" --allow-elevated
     fi
     "$WORK/bin/localrunner" "$@" || die "localrunner install failed"
+}
+
+run_doctor() {
+    if ! "$WORK/bin/localrunner" doctor; then
+        printf 'install.sh: warning: localrunner doctor reported problems (above); the installation is kept\n' >&2
+    fi
 }
 
 main() {
@@ -160,10 +170,16 @@ main() {
     trap 'exit 1' HUP INT TERM
     if [ -n "$OFFLINE" ]; then
         [ -f "$OFFLINE" ] || die "$OFFLINE is not a file"
-        archive=$OFFLINE
         name=$(basename "$OFFLINE")
-        sums="$(dirname "$OFFLINE")/SHA256SUMS"
-        [ -f "$sums" ] || die "SHA256SUMS must lie next to $OFFLINE"
+        from="$(dirname "$OFFLINE")/SHA256SUMS"
+        [ -f "$from" ] || die "SHA256SUMS must lie next to $OFFLINE"
+        sums="$WORK/SHA256SUMS"
+        archive="$WORK/$name"
+        cp "$OFFLINE" "$archive" || die "cannot copy $OFFLINE"
+        cp "$from" "$sums" || die "cannot copy $from"
+        if [ -f "$from.sig" ]; then
+            cp "$from.sig" "$sums.sig" || die "cannot copy $from.sig"
+        fi
     else
         name="al-localrunner-$(detect_target).tar.gz"
         if [ -n "$VERSION" ]; then
@@ -181,8 +197,11 @@ main() {
     verify_checksum "$sums" "$archive" "$name"
     extract "$archive"
     run_install
+    run_doctor
 }
 
 if [ "${LOCALRUNNER_INSTALL_SOURCED:-}" != 1 ]; then
     main "$@"
+else
+    printf 'install.sh: LOCALRUNNER_INSTALL_SOURCED=1 is set: functions loaded for tests, nothing installed\n' >&2
 fi
