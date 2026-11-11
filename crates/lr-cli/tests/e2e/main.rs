@@ -1,3 +1,4 @@
+mod admin;
 #[path = "../common/mod.rs"]
 mod common;
 mod dashboard_events;
