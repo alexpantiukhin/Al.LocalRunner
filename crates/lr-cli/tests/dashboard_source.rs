@@ -10,7 +10,7 @@ use lr_obs::Redactor;
 use lr_proto::{
     BrokerStatus, CliReply, CliRequest, DashboardList, DashboardSnapshot, HubOrder, IpcChannel,
     IpcOpenReply, JobSummary, PoolLoad, ProfileStatsView, QueueItem, ReadReply, ReadRequest,
-    RunningView, SpreadView, StatsView, StatusFilter, StatusView, PROTOCOL_VERSION,
+    ReasonCode, RunningView, SpreadView, StatsView, StatusFilter, StatusView, PROTOCOL_VERSION,
 };
 use std::sync::{Arc, Mutex};
 
@@ -152,7 +152,10 @@ fn hub(
                 ReadRequest::Status(_) => ReadReply::Status(status(&name)),
                 ReadRequest::History(_) => ReadReply::History {
                     jobs: vec![
-                        summary(&format!("done-{name}"), JobState::Passed),
+                        JobSummary {
+                            reason: Some(ReasonCode::SenderGone),
+                            ..summary(&format!("done-{name}"), JobState::Cancelled)
+                        },
                         summary(&format!("still-{name}"), JobState::Running),
                     ],
                     next: None,
@@ -228,6 +231,16 @@ async fn snapshot_collects_queue_runners_and_history_from_every_broker() {
         waiting.detail.wait_reason.as_deref(),
         Some("runner of office busy")
     );
+    let done = snap
+        .jobs
+        .iter()
+        .find(|j| j.detail.summary.job.0 == "done-home")
+        .unwrap();
+    assert_eq!(done.detail.summary.reason, Some(ReasonCode::SenderGone));
+    let json = serde_json::to_value(&snap).unwrap();
+    let text = json.to_string();
+    assert!(text.contains("\"sender_gone\""), "{text}");
+    assert!(text.contains("\"runner of office busy\""), "{text}");
     let running = snap
         .jobs
         .iter()
