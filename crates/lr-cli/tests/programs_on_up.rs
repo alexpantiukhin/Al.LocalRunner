@@ -50,7 +50,10 @@ async fn online_r1(layout: &Layout) -> Option<BTreeSet<String>> {
     found
 }
 
-async fn until_online(layout: &Layout, expected: Option<&BTreeSet<String>>) -> Option<BTreeSet<String>> {
+async fn until_online(
+    layout: &Layout,
+    expected: Option<&BTreeSet<String>>,
+) -> Option<BTreeSet<String>> {
     let mut last = None;
     for _ in 0..150 {
         last = online_r1(layout).await;

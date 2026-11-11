@@ -58,9 +58,10 @@ async fn read_requests(h: &Harness, hub: &Conn, stall: &Stall, replies: u64) {
         .await;
     }
     let all = before + replies as usize;
-    until("every request is handed to the engine or the hub is cut off", || {
-        stall.reads_started() >= all || stall.closes() > 0
-    })
+    until(
+        "every request is handed to the engine or the hub is cut off",
+        || stall.reads_started() >= all || stall.closes() > 0,
+    )
     .await;
     engine_caught_up(h).await;
 }
@@ -119,7 +120,11 @@ async fn one_live_reply_past_the_free_room_disconnects_the_hub() {
 #[tokio::test]
 async fn no_next_portion_while_more_than_half_of_the_window_is_queued() {
     let (h, _stall, _hub) = stalled_replay_then_replies(100, 1024 - 255 + 100).await;
-    assert_eq!(slow_disconnects(&h, FULL), 0, "the 100 sent frames were not refilled");
+    assert_eq!(
+        slow_disconnects(&h, FULL),
+        0,
+        "the 100 sent frames were not refilled"
+    );
     let (h, _stall, _hub) = stalled_replay_then_replies(100, 1024 - 255 + 101).await;
     assert_eq!(slow_disconnects(&h, FULL), 1);
 }

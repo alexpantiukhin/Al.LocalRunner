@@ -1,7 +1,9 @@
 mod common;
 
 use common::TempDir;
-use lr_cli::commands::service_cmd::{autostart, autostart_with, install_service, install_service_with};
+use lr_cli::commands::service_cmd::{
+    autostart, autostart_with, install_service, install_service_with,
+};
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::os_service::{service_installed, Os};
 use lr_cli::paths::Layout;

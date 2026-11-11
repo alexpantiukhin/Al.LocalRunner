@@ -49,5 +49,9 @@ async fn a_broker_reconnecting_from_another_network_is_judged_by_its_new_zone() 
         }
         other => panic!("{other:?}"),
     }
-    assert_eq!(laptop.orders().len(), 1, "no lan order goes to a remote broker");
+    assert_eq!(
+        laptop.orders().len(),
+        1,
+        "no lan order goes to a remote broker"
+    );
 }

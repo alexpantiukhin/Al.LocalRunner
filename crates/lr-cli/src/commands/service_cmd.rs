@@ -157,7 +157,14 @@ pub fn autostart(
     runner: Option<String>,
     dry_run: bool,
 ) -> Result<i32, String> {
-    autostart_with(layout, switch, role, runner, dry_run, crate::host::is_elevated())
+    autostart_with(
+        layout,
+        switch,
+        role,
+        runner,
+        dry_run,
+        crate::host::is_elevated(),
+    )
 }
 
 /// `autostart` in a process whose rights are `elevated`: the broker service needs them unless
