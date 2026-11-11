@@ -82,12 +82,21 @@ pub fn add_ages(doc: &mut Value, now: Timestamp) {
     }
 }
 
+pub(crate) fn source_name(source: Option<WireSource>) -> &'static str {
+    match source {
+        Some(WireSource::Session) => "session",
+        Some(WireSource::Github) => "github",
+        None => "-",
+    }
+}
+
 fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
     let mut out = format!(
-        "  {}  {:?}  {}  {}  {}  {}{}",
+        "  {}  {:?}  {}  {}  {}  {}  {}{}",
         s.job,
         s.state,
         s.project.as_deref().unwrap_or("-"),
+        source_name(s.source),
         s.label.as_deref().unwrap_or("-"),
         s.runner.as_deref().unwrap_or("-"),
         format_ms(age_ms(s, now)),

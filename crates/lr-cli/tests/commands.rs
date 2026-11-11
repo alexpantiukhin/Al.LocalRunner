@@ -134,7 +134,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     let now = Timestamp(195_000);
     let text = status_text(&views, now);
     assert!(
-        text.contains("  j2  Queued  owner/repo  agent-1  local:r1  3m05s  #1"),
+        text.contains("  j2  Queued  owner/repo  session  agent-1  local:r1  3m05s  #1"),
         "{text}"
     );
     assert!(

@@ -4,7 +4,7 @@
 
 use super::jobs::hub;
 use super::timefmt::{format_ms, format_time, now};
-use super::view::{print_json, problem, reachable, read};
+use super::view::{print_json, problem, reachable, read, source_name};
 use super::{HistoryFilters, ShowArgs, SourceArg};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
@@ -96,10 +96,7 @@ fn when(t: Option<Timestamp>) -> String {
 /// The card of `history show`.
 pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
     let s = &d.summary;
-    let source = d.source.or(s.source).map_or("-", |w| match w {
-        WireSource::Session => "session",
-        WireSource::Github => "github",
-    });
+    let source = source_name(d.source.or(s.source));
     let exit = s.exit_code.map_or("-".into(), |c| c.to_string());
     let reason = s
         .reason
