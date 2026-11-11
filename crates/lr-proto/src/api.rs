@@ -427,7 +427,7 @@ pub enum QueueEvent {
     /// An order entered the queue.
     JobQueued {
         /// The run.
-        job: JobSummary,
+        job: Box<JobSummary>,
     },
     /// A job started.
     JobStarted {

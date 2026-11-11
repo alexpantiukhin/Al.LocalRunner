@@ -120,7 +120,9 @@ pub fn read_replies() -> Vec<ReadReply> {
 
 pub fn events() -> Vec<QueueEvent> {
     vec![
-        QueueEvent::JobQueued { job: summary() },
+        QueueEvent::JobQueued {
+            job: Box::new(summary()),
+        },
         QueueEvent::JobStarted {
             job: job(1),
             runner: "r-1".into(),

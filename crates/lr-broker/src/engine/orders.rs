@@ -317,7 +317,12 @@ impl Engine {
         let summary = crate::api::summary_of_job(&job);
         let client = job.key.client.clone();
         self.queue.push(job);
-        self.publish(Some(&client), QueueEvent::JobQueued { job: summary });
+        self.publish(
+            Some(&client),
+            QueueEvent::JobQueued {
+                job: Box::new(summary),
+            },
+        );
         self.plan().await;
     }
 

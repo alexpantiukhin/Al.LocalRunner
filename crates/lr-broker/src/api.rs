@@ -99,7 +99,7 @@ pub fn mask_detail(mut d: JobDetail, access: Access) -> Option<JobDetail> {
 pub fn mask_event(event: QueueEvent, access: Access) -> Option<QueueEvent> {
     match event {
         QueueEvent::JobQueued { job } => {
-            mask_summary(job, access).map(|job| QueueEvent::JobQueued { job })
+            mask_summary(*job, access).map(|job| QueueEvent::JobQueued { job: Box::new(job) })
         }
         QueueEvent::StepChanged { .. } => access.sees_fields().then_some(event),
         QueueEvent::JobStarted { .. } | QueueEvent::JobFinished { .. } => {
