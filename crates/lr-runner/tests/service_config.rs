@@ -55,6 +55,13 @@ fn defaults_are_same_client_reuse_and_bounded_restarts() {
 }
 
 #[test]
+fn lifetime_defaults_to_per_job() {
+    let s = spec("start = \"d\"\nready_check = \"c\"\nmax_lifetime_s = 60\n");
+    assert_eq!(s.lifetime, Lifetime::PerJob);
+    assert_eq!(s.idle_timeout_s, None);
+}
+
+#[test]
 fn max_lifetime_is_mandatory_for_every_lifetime() {
     for lifetime in ["per_job", "idle", "keep"] {
         let e = parse(&format!(
