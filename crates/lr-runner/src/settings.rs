@@ -1,4 +1,5 @@
-use lr_proto::WireCapabilities;
+use crate::service_config::{services, RawService, ServiceSpec};
+use lr_proto::{WireCapabilities, WireServiceStatus};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -77,6 +78,8 @@ pub struct RunnerSettings {
     pub home: Option<String>,
     /// `TEMP` of every job.
     pub temp: Option<String>,
+    /// `[service.*]`: declared services by name.
+    pub services: BTreeMap<String, ServiceSpec>,
 }
 
 /// Why `runner.toml` was refused.
@@ -139,6 +142,8 @@ struct File {
     grace: Grace,
     #[serde(default)]
     env: Env,
+    #[serde(default)]
+    service: BTreeMap<String, RawService>,
 }
 
 fn retention(section: &str, f: RetentionFile) -> Result<Retention, SettingsError> {
@@ -175,11 +180,11 @@ impl RunnerSettings {
             path: None,
             home: None,
             temp: None,
+            services: BTreeMap::new(),
         }
     }
 
-    /// Reads `runner.toml`. Sections the runner agent does not use (`[service.*]`,
-    /// `[secret.*]`) are left to their owners; `[programs]` gives the names only, their
+    /// Reads `runner.toml`. `[secret.*]` is left to its owner; `[programs]` gives the names only, their
     /// checks run in the assembly.
     pub fn from_toml(text: &str, state_dir: PathBuf) -> Result<RunnerSettings, SettingsError> {
         let f: File = toml::from_str(text).map_err(|e| SettingsError(e.message().to_string()))?;
@@ -198,6 +203,7 @@ impl RunnerSettings {
         s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
+        s.services = services(f.service)?;
         Ok(s)
     }
 
@@ -219,7 +225,11 @@ impl RunnerSettings {
             programs: self.programs.clone(),
             tags: self.tags.clone(),
             max_job_timeout_s: self.max_job_timeout_s,
-            services: BTreeMap::new(),
+            services: self
+                .services
+                .keys()
+                .map(|n| (n.clone(), WireServiceStatus::Available))
+                .collect(),
             machine: None,
             accept_min_mem_mb: self.accept_min_mem_mb,
             cache_max_mb: self

@@ -15,12 +15,16 @@ mod outbox;
 mod output;
 mod prepare;
 mod run;
+mod service_config;
 mod services;
 mod settings;
 mod source;
 
 pub use agent::{AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps};
 pub use cache::{plan_sweep, CacheLayout, WORKSPACE_CLIENT};
+pub use service_config::{
+    Lifetime, Reuse, ServiceSpec, DEFAULT_READY_TIMEOUT_S, DEFAULT_RESTARTS, DEFAULT_STOP_TIMEOUT_S,
+};
 pub use settings::{
     Retention, RunnerSettings, SettingsError, DEFAULT_LOST_KILL_S, MAX_HEARTBEAT_S, MAX_LOST_KILL_S,
 };
