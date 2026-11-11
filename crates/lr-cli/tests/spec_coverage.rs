@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const SPEC: &str = include_str!("../../../docs/architecture.html");
 const SECTION: &str = "16";
@@ -49,6 +49,46 @@ fn is_test_attribute(line: &str) -> bool {
     line.starts_with("#[tokio::test") || line.starts_with("#[test]")
 }
 
+fn skipped(line: &str) -> bool {
+    line.starts_with("#[ignore") || line.starts_with("#[cfg(")
+}
+
+fn fn_name(line: &str) -> Option<String> {
+    let rest = line
+        .strip_prefix("async fn ")
+        .or_else(|| line.strip_prefix("fn "))?;
+    Some(rest.split('(').next().unwrap().to_string())
+}
+
+fn attributes_above(lines: &[&str], at: usize) -> Vec<String> {
+    lines[..at]
+        .iter()
+        .rev()
+        .take_while(|l| l.starts_with("#[") || l.starts_with("//"))
+        .filter(|l| l.starts_with("#["))
+        .map(|l| l.to_string())
+        .collect()
+}
+
+fn check_attributes(attrs: &[String]) -> Result<(), String> {
+    if !attrs.iter().any(|a| is_test_attribute(a)) {
+        return Err("no test attribute".into());
+    }
+    match attrs.iter().find(|a| skipped(a)) {
+        Some(a) => Err(format!("`{a}` keeps it from running")),
+        None => Ok(()),
+    }
+}
+
+fn runs_as_a_test(text: &str, name: &str) -> Result<(), String> {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let at = lines
+        .iter()
+        .position(|l| fn_name(l).as_deref() == Some(name))
+        .ok_or_else(|| format!("no fn {name}"))?;
+    check_attributes(&attributes_above(&lines, at))
+}
+
 fn tags_of(file: &Path, text: &str, errors: &mut Vec<String>) -> BTreeMap<String, Vec<String>> {
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -69,15 +109,19 @@ fn tags_of(file: &Path, text: &str, errors: &mut Vec<String>) -> BTreeMap<String
             ));
             continue;
         }
-        let name = lines[i + 1..]
-            .iter()
-            .find_map(|l| {
-                let rest = l
-                    .strip_prefix("async fn ")
-                    .or_else(|| l.strip_prefix("fn "))?;
-                Some(rest.split('(').next().unwrap().to_string())
-            })
-            .unwrap_or_default();
+        let Some(at) = (i + 1..lines.len()).find(|&j| fn_name(lines[j]).is_some()) else {
+            errors.push(format!(
+                "{}:{}: no test after `{line}`",
+                file.display(),
+                i + 1
+            ));
+            continue;
+        };
+        let name = fn_name(lines[at]).unwrap();
+        if let Err(why) = check_attributes(&attributes_above(&lines, at)) {
+            errors.push(format!("{}::{name}: {why}", file.display()));
+            continue;
+        }
         found
             .entry(id.trim().to_string())
             .or_default()
@@ -86,34 +130,54 @@ fn tags_of(file: &Path, text: &str, errors: &mut Vec<String>) -> BTreeMap<String
     found
 }
 
-fn e2e_tags(errors: &mut Vec<String>) -> BTreeMap<String, Vec<String>> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("e2e");
+fn collect_tags(
+    files: &[(String, String)],
+    main: &str,
+    errors: &mut Vec<String>,
+) -> BTreeMap<String, Vec<String>> {
     let mut all: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for entry in std::fs::read_dir(&dir).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_none_or(|e| e != "rs") {
+    for (name, text) in files {
+        let tags = tags_of(Path::new(name), text, errors);
+        if tags.is_empty() {
             continue;
         }
-        let text = std::fs::read_to_string(&path).unwrap();
-        let short = PathBuf::from(path.file_name().unwrap());
-        for (id, tests) in tags_of(&short, &text, errors) {
+        let stem = name.trim_end_matches(".rs");
+        let declared = format!("mod {stem};");
+        if !main.lines().any(|l| l.trim() == declared) {
+            errors.push(format!(
+                "{name} has scenario tags but main.rs lacks `{declared}`, so its tests never run"
+            ));
+            continue;
+        }
+        for (id, tests) in tags {
             all.entry(id).or_default().extend(tests);
         }
     }
     all
 }
 
-fn covering_test_exists(reference: &str) -> bool {
+fn e2e_tags(errors: &mut Vec<String>) -> BTreeMap<String, Vec<String>> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("e2e");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        files.push((name, std::fs::read_to_string(&path).unwrap()));
+    }
+    let main = std::fs::read_to_string(dir.join("main.rs")).unwrap();
+    collect_tags(&files, &main, errors)
+}
+
+fn covering_test_exists(reference: &str) -> Result<(), String> {
     let (file, name) = reference.split_once("::").unwrap();
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    std::fs::read_to_string(crates.join(file)).is_ok_and(|text| {
-        text.lines().any(|l| {
-            let l = l.trim();
-            l.starts_with(&format!("fn {name}(")) || l.starts_with(&format!("async fn {name}("))
-        })
-    })
+    let text = std::fs::read_to_string(crates.join(file)).map_err(|e| e.to_string())?;
+    runs_as_a_test(&text, name)
 }
 
 #[test]
@@ -139,6 +203,34 @@ fn a_tag_is_found_only_directly_above_a_test() {
 }
 
 #[test]
+fn an_ignored_or_conditional_test_covers_nothing() {
+    let mut errors = Vec::new();
+    let text = "// scenario: 16.1\n#[tokio::test]\n#[ignore]\nasync fn later() {}\n\n\
+                // scenario: 16.2\n#[test]\n#[cfg(unix)]\nfn elsewhere() {}\n";
+    let tags = tags_of(Path::new("x.rs"), text, &mut errors);
+    assert!(tags.is_empty(), "{tags:?}");
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(runs_as_a_test(text, "later").is_err());
+    assert!(runs_as_a_test(text, "elsewhere").is_err());
+    assert!(runs_as_a_test("#[test]\nfn plain() {}\n", "plain").is_ok());
+    assert!(runs_as_a_test("fn helper() {}\n", "helper").is_err());
+}
+
+#[test]
+fn tags_of_a_module_main_rs_does_not_declare_are_errors() {
+    let mut errors = Vec::new();
+    let files = [
+        ("on.rs", "// scenario: 16.1\n#[test]\nfn a() {}\n"),
+        ("off.rs", "// scenario: 16.2\n#[test]\nfn b() {}\n"),
+    ]
+    .map(|(n, t)| (n.to_string(), t.to_string()));
+    let tags = collect_tags(&files, "mod common;\nmod on;\n", &mut errors);
+    assert_eq!(tags.keys().cloned().collect::<Vec<_>>(), ["16.1"]);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("mod off;"), "{errors:?}");
+}
+
+#[test]
 fn every_scenario_of_section_16_is_named_by_an_e2e_test() {
     let mut errors = Vec::new();
     let tagged = e2e_tags(&mut errors);
@@ -160,8 +252,10 @@ fn every_scenario_of_section_16_is_named_by_an_e2e_test() {
         if tagged.contains_key(*id) {
             errors.push(format!("{id} is both tagged and exempt"));
         }
-        if !covering_test_exists(test) {
-            errors.push(format!("{id}: the covering test {test} does not exist"));
+        if let Err(why) = covering_test_exists(test) {
+            errors.push(format!(
+                "{id}: the covering test {test} does not run: {why}"
+            ));
         }
     }
     let missing: Vec<&String> = ordered
