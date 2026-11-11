@@ -274,3 +274,54 @@ async fn override_with_an_exclusive_tag_is_accepted_not_rejected() {
         assert_eq!(hub.accepted().await.job.0, job);
     }
 }
+
+fn rate_limited(reply: &ReadReply) -> bool {
+    matches!(reply, ReadReply::Denied { reason } if reason.starts_with("rejected_rate_limited"))
+}
+
+#[tokio::test]
+async fn api_requests_over_the_rate_are_rejected_rate_limited() {
+    let h = Harness::start("[limits]\napi_requests_per_min = 3\n");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    for _ in 0..2 {
+        let reply = alex.read(ReadRequest::Runners).await;
+        assert!(matches!(reply, ReadReply::Runners { .. }), "{reply:?}");
+    }
+    let refused = alex.read(ReadRequest::Runners).await;
+    assert!(rate_limited(&refused), "{refused:?}");
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    let r = alex.rejected().await;
+    assert_eq!(r.code, ReasonCode::Rejected(RejectReason::RateLimited));
+    assert!(r.detail.contains('3'), "{}", r.detail);
+    let mut bob = h.local_hub("bob").await;
+    let reply = bob.read(ReadRequest::Runners).await;
+    assert!(matches!(reply, ReadReply::Runners { .. }), "{reply:?}");
+    for _ in 0..4 {
+        h.clock.advance(Duration::from_secs(15));
+        alex.send(&HubToBroker::Heartbeat).await;
+    }
+    let again = alex.read(ReadRequest::Runners).await;
+    assert!(matches!(again, ReadReply::Runners { .. }), "{again:?}");
+}
+
+#[tokio::test]
+async fn unsubscribe_is_never_rate_limited() {
+    let h = Harness::start("[limits]\napi_requests_per_min = 2\n");
+    let mut alex = h.local_hub("alex").await;
+    let ReadReply::Subscribed { sub } = alex
+        .read(ReadRequest::Subscribe {
+            topics: vec![Topic::Queue],
+        })
+        .await
+    else {
+        panic!("no subscription")
+    };
+    alex.send(&order("j1", same_machine_req())).await;
+    alex.rejected().await;
+    assert!(rate_limited(&alex.read(ReadRequest::Runners).await));
+    let reply = alex.read(ReadRequest::Unsubscribe { sub }).await;
+    assert_eq!(reply, ReadReply::Unsubscribed { sub });
+}

@@ -124,6 +124,7 @@ fn default_limits_have_no_timeout_ceiling_and_spec_ceilings() {
     assert_eq!(f.limits.job_log_max_mb.get(), 256);
     assert_eq!(f.limits.outbox_max_mb.get(), 512);
     assert_eq!(f.limits.max_active_per_client.get(), 100);
+    assert_eq!(f.limits.api_requests_per_min.get(), 1200);
 }
 
 #[test]

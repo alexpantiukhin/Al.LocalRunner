@@ -12,7 +12,8 @@ use lr_core::{
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
-    ReasonCode, Received, RejectReason, Rejected, ResourceOverride, Resume, WireCode,
+    ReadAnswer, ReadReply, ReadRequest, ReasonCode, Received, RejectReason, Rejected,
+    ResourceOverride, Resume, WireCode,
 };
 
 fn reject_reason(r: &Reject) -> RejectReason {
@@ -158,6 +159,12 @@ impl Engine {
                 return;
             }
         };
+        if let Some(detail) = Self::counted(&msg)
+            .then(|| self.rate_limited(&client.key))
+            .flatten()
+        {
+            return self.refuse_rate(conn, msg, detail);
+        }
         match msg {
             HubToBroker::Order(o) => self.order(conn, &client, o).await,
             HubToBroker::Cancel(c) => self.cancel(conn, &client, c).await,
@@ -180,6 +187,37 @@ impl Engine {
             ),
             HubToBroker::Error(_) => {}
         }
+    }
+
+    fn counted(msg: &HubToBroker) -> bool {
+        match msg {
+            HubToBroker::Order(_) => true,
+            HubToBroker::Read(call) => !matches!(
+                call.request,
+                ReadRequest::Unsubscribe { .. } | ReadRequest::Unfollow { .. }
+            ),
+            _ => false,
+        }
+    }
+
+    fn refuse_rate(&mut self, conn: ConnId, msg: HubToBroker, detail: String) {
+        let code = ReasonCode::Rejected(RejectReason::RateLimited);
+        let reply = match msg {
+            HubToBroker::Order(o) => BrokerToHub::Rejected(Rejected {
+                job: o.job,
+                order_seq: o.seq,
+                code,
+                detail,
+            }),
+            HubToBroker::Read(call) => BrokerToHub::ReadReply(ReadAnswer {
+                req: call.req,
+                reply: ReadReply::Denied {
+                    reason: format!("{code}: {detail}"),
+                },
+            }),
+            _ => return,
+        };
+        self.send(conn, &reply);
     }
 
     pub(crate) fn unavailable(&self, conn: ConnId, key: &JobKey, what: &str, e: &StoreError) {

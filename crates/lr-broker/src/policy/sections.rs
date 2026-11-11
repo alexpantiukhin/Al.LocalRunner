@@ -214,6 +214,9 @@ pub struct LimitsSection {
     pub outbox_max_mb: NonZeroU64,
     /// `max_active_per_client`: active orders per client key, default 100 (spec 8).
     pub max_active_per_client: NonZeroU32,
+    /// `api_requests_per_min`: orders and read requests per client key in any 60 seconds,
+    /// default 1200; above it the request is refused `rejected_rate_limited` (spec 8).
+    pub api_requests_per_min: NonZeroU32,
 }
 
 impl Default for LimitsSection {
@@ -223,6 +226,7 @@ impl Default for LimitsSection {
             job_log_max_mb: nz(256),
             outbox_max_mb: nz(512),
             max_active_per_client: nz32(100),
+            api_requests_per_min: nz32(1200),
         }
     }
 }

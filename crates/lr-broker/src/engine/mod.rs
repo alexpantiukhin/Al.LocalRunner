@@ -16,6 +16,7 @@ mod local;
 mod lost;
 mod metrics;
 mod orders;
+mod rate;
 mod read;
 mod recovery;
 mod retention;
@@ -137,6 +138,7 @@ impl Broker {
                 booted_at: Timestamp(0),
                 restored: false,
                 client_seen: HashMap::new(),
+                rate: rate::Rate::default(),
                 follows: Vec::new(),
                 retries: Vec::new(),
                 retry_at: Timestamp(0),
@@ -317,6 +319,7 @@ pub(crate) struct Engine {
     pub(crate) booted_at: Timestamp,
     pub(crate) restored: bool,
     pub(crate) client_seen: HashMap<String, Timestamp>,
+    pub(crate) rate: rate::Rate,
     pub(crate) follows: Vec<follow::Follow>,
     pub(crate) retries: Vec<retry::Retry>,
     pub(crate) retry_at: Timestamp,
@@ -335,6 +338,7 @@ impl Engine {
         match cmd {
             Command::Tick => {
                 self.forget_clients();
+                self.forget_idle_rates();
                 self.report();
                 self.sample_outbox().await;
             }
