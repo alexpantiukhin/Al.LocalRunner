@@ -4,7 +4,8 @@ use lr_broker::policy::HostResources;
 use lr_cli::commands::join_cmd::with_flags;
 use lr_cli::host::elevated_from;
 use lr_cli::runner_config::{
-    check_runner_name, elevation_allowed, instance_names, RunnerConfig, SecretFrom, MAX_COUNT,
+    check_runner_name, elevation_allowed, instance_names, RunnerConfig, SecretFrom,
+    DEFAULT_CHECK_TIMEOUT_S, MAX_COUNT,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -116,6 +117,30 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
     assert!(!c.settings.programs.contains("surely-missing-program-xyz"));
     assert!(!c.settings.programs.contains("failing"));
     assert_eq!(problems.len(), 2, "{problems:?}");
+}
+
+#[test]
+fn a_check_that_outlives_its_timeout_is_stopped_and_the_program_is_not_offered() {
+    assert_eq!(DEFAULT_CHECK_TIMEOUT_S, 10);
+    let slow = if cfg!(windows) {
+        r"%SystemRoot%\System32\PING.EXE -n 30 127.0.0.1"
+    } else {
+        "sleep 30"
+    };
+    let text = format!(
+        "[programs]\nslow = {{ path = '{}', check = '{slow}', check_timeout_s = 1 }}\n{}",
+        std::env::current_exe().unwrap().display(),
+        common::env_path_toml()
+    );
+    let mut c = parse(&text, None);
+    let started = std::time::Instant::now();
+    let problems = c.check_programs();
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(
+        problems,
+        [format!("program slow: check `{slow}` took longer than 1s")]
+    );
+    assert!(c.settings.programs.is_empty());
 }
 
 #[test]

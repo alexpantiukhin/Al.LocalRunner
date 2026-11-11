@@ -191,6 +191,64 @@ async fn broker_restart_keeps_queue() {
     remove(dir).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() {
+    let dir = TempDir::new("e2e-cancel");
+    let mut release = Release::new(&dir);
+    let layout = layout(&dir, "machine", "");
+    add_runner(&layout, "r1");
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let hub_role = start_hub(&layout, false).await.expect("hub starts");
+    let runner = start_runners(&layout, Some("r1"), 1, None, false)
+        .await
+        .expect("runner starts");
+    runner_online(&layout, "r1").await;
+
+    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &dir, 120));
+    let (client, job) = submit(&layout, &repo, "held", None).await;
+    release.watch(helper_pid(&pids(&dir, "held"), "child").await);
+    let reason = "superseded by a newer push";
+    let code = lr_cli::commands::jobs::cancel(
+        &layout,
+        Some(job.0.clone()),
+        LABEL,
+        false,
+        false,
+        Some(reason.into()),
+    )
+    .await
+    .expect("cancel");
+    assert_eq!(code, 0);
+
+    let ended = until_exit(client, &job, Duration::from_secs(60)).await;
+    assert_eq!(ended.state, JobState::Cancelled, "{ended:?}");
+    assert_eq!(ended.reason, Some(ReasonCode::CancelledByUser), "{ended:?}");
+    let log = std::fs::read_to_string(
+        repo.join("temp")
+            .join("runner")
+            .join(format!("{}.log", job.0)),
+    )
+    .expect("log copy");
+    let line = log
+        .lines()
+        .find(|l| l.starts_with("=== cancel requested by "))
+        .unwrap_or_else(|| panic!("no cancel line in {log}"));
+    assert!(
+        line.ends_with(&format!("(cancelled_by_user): {reason} ===")),
+        "{line}"
+    );
+    let rows = history(&layout).await;
+    let row = rows.iter().find(|r| r.job == job).expect("history row");
+    assert_eq!(row.state, JobState::Cancelled);
+    assert_eq!(row.reason, Some(ReasonCode::CancelledByUser));
+
+    runner.stop();
+    hub_role.stop();
+    broker.stop();
+    drop(release);
+    remove(dir).await;
+}
+
 fn alive(pid: u32, start: u64) -> bool {
     OsProcessInspector.liveness(pid, start) == Liveness::Alive
 }
