@@ -39,7 +39,8 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     let repo = repo(&dir, &held_profile("held", dir.path(), &gate, 120, &extra));
     push_origin(&dir, &repo);
     let (client, job) = submit(&main, &repo, "held", Some(PLATFORM)).await;
-    release.watch(started(dir.path(), "held", "child").await);
+    let child = started(dir.path(), "held", "child").await;
+    release.watch(child);
     let view = status(&main).await.expect("status");
     assert_eq!(view.pool.used_mem_mb, 256, "{view:?}");
 
@@ -71,6 +72,7 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
         matches!(exits.as_slice(), [AgentExit::Refused(_)]),
         "its key is refused on reconnect: {exits:?}"
     );
+    gone("the removed runner's job tree", &[child]).await;
     assert!(names(&main, AdminRequest::RunnerList).await.is_empty());
     let left = runners(&main).await.expect("runners");
     assert!(left.is_empty(), "{left:?}");
@@ -199,7 +201,7 @@ async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
         "the running job is untouched by the reload: {view:?}"
     );
 
-    std::fs::write(&file, format!("{old}{rule}\n[grace]\nlost_min = 0\n")).unwrap();
+    std::fs::write(&file, format!("{old}\n[grace]\nlost_min = 0\n")).unwrap();
     let refused = admin(&main, AdminRequest::PolicyReload).await;
     let AdminReply::Failed { message } = refused else {
         panic!("a bad file is refused: {refused:?}");
