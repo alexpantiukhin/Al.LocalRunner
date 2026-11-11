@@ -172,13 +172,17 @@ mem_mb = 256
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn hub_without_broker_reports_it_unreachable() {
+async fn hub_on_a_machine_without_a_broker_lists_no_local_broker() {
     let dir = TempDir::new("nobroker");
     let layout = layout(&dir);
     let hub_role = start_hub(&layout, false).await.expect("hub starts");
     let client = eventually("the hub channel", || async { hub(&layout).await.ok() }).await;
     let brokers = known_brokers(&client).await.expect("brokers");
     client.close().await;
-    assert!(brokers.iter().all(|b| !b.available), "{brokers:?}");
+    assert!(
+        brokers.iter().all(|b| b.name != "local"),
+        "no broker is configured here, so the hub lists none as local: {brokers:?}"
+    );
+    assert!(brokers.is_empty(), "{brokers:?}");
     hub_role.stop();
 }
