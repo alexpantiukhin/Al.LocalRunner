@@ -113,11 +113,23 @@ impl Engine {
         match m {
             BrokerToHub::Accepted(a) if self.is_current(&a.job, name) => {
                 self.ack_sent(name, &a.job, a.order_seq).await;
+                let mut trimmed = None;
                 if let Some(t) = self.tracks.get_mut(&a.job) {
                     if t.stage == Stage::Sent {
                         t.stage = Stage::Accepted;
+                        let asked = t.spec.as_ref().map(|s| s.requirements.timeout_s);
+                        trimmed = a.timeout_trimmed_to.map(|to| (asked, to));
                     }
                     t.wait_reason = a.waiting;
+                }
+                if let Some((asked, to)) = trimmed {
+                    let line = crate::logs::trimmed_line(asked, to);
+                    self.log_copy(&a.job, &line).await;
+                    let reply = CliReply::Output {
+                        job: a.job.clone(),
+                        text: line,
+                    };
+                    self.notify(&a.job, &reply);
                 }
             }
             BrokerToHub::Rejected(r) if self.is_current(&r.job, name) => {

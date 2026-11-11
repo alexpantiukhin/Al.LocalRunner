@@ -3,7 +3,7 @@ mod common;
 use common::{entry, ok, HOST};
 use lr_broker::policy::{
     into_policy, rule_policy, CacheShare, CancelOthers, CommandMode, OrphanQueued, OrphanRunning,
-    OthersOrders, DEFAULT_CI_PRIORITY,
+    OthersOrders, TimeoutAboveMax, DEFAULT_CI_PRIORITY,
 };
 use lr_core::{GroupBy, ServeLog, Strategy, Timestamp, Zone};
 
@@ -120,6 +120,7 @@ fn default_pool_is_the_whole_host() {
 fn default_limits_have_no_timeout_ceiling_and_spec_ceilings() {
     let f = ok("");
     assert_eq!(f.limits.max_job_timeout_s, None);
+    assert_eq!(f.limits.timeout_above_max, TimeoutAboveMax::Reject);
     assert_eq!(rule_policy(&f, &HOST).max_job_timeout_s, None);
     assert_eq!(f.limits.job_log_max_mb.get(), 256);
     assert_eq!(f.limits.outbox_max_mb.get(), 512);

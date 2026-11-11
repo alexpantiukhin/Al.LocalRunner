@@ -40,7 +40,8 @@ fn control_and_reply_messages_carry_no_seq() {
     assert!(BrokerToHub::Accepted(Accepted {
         job: job(1),
         order_seq: 1,
-        waiting: None
+        waiting: None,
+        timeout_trimmed_to: None
     })
     .sequence()
     .is_none());

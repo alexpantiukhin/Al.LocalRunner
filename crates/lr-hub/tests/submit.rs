@@ -30,12 +30,35 @@ async fn submit_returns_jobid_and_keeps_order_in_outbox_until_accepted() {
             job: job.clone(),
             order_seq: 1,
             waiting: None,
+            timeout_trimmed_to: None,
         }))
         .await;
     settle().await;
     assert!(rig.pending().await.is_empty());
     let active = rig.active(&job).await.expect("still active after Accepted");
     assert_eq!(active.broker.as_deref(), Some("local"));
+}
+
+#[tokio::test]
+async fn timeout_trimmed_by_the_broker_policy_is_told_in_the_log_copy() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Silent));
+    rig.start();
+    let job = rig.cli().await.submit(submit("unit", None)).await;
+    eventually("order reaches the broker", || local.orders().len() == 1).await;
+    let accepted = BrokerToHub::Accepted(Accepted {
+        job: job.clone(),
+        order_seq: 1,
+        waiting: None,
+        timeout_trimmed_to: Some(300),
+    });
+    local.send(accepted.clone()).await;
+    local.send(accepted).await;
+    settle().await;
+    let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
+    let line = "=== timeout trimmed by the broker policy: 600 s -> 300 s ===
+";
+    assert_eq!(log.matches(line).count(), 1, "{log}");
 }
 
 #[tokio::test]

@@ -420,6 +420,7 @@ pub fn broker_to_hub() -> Vec<BrokerToHub> {
             job: job(1),
             order_seq: 1,
             waiting: Some("runner busy".into()),
+            timeout_trimmed_to: Some(600),
         }),
         BrokerToHub::Rejected(Rejected {
             job: job(1),

@@ -325,3 +325,22 @@ async fn unsubscribe_is_never_rate_limited() {
     let reply = alex.read(ReadRequest::Unsubscribe { sub }).await;
     assert_eq!(reply, ReadReply::Unsubscribed { sub });
 }
+
+#[tokio::test]
+async fn timeout_above_the_broker_maximum_is_trimmed_when_the_policy_says_trim() {
+    let h = Harness::start("[limits]\nmax_job_timeout_s = 600\ntimeout_above_max = \"trim\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let HubToBroker::Order(mut o) = order("j1", req(512, 1, 1200)) else {
+        unreachable!()
+    };
+    o.spec.steps[0].timeout_s = 900;
+    hub.send(&HubToBroker::Order(o)).await;
+    let a = hub.accepted().await;
+    assert_eq!(a.timeout_trimmed_to, Some(600));
+    let assign = r.assign().await;
+    assert_eq!(assign.spec.requirements.timeout_s, 600);
+    assert_eq!(assign.spec.steps[0].timeout_s, 600);
+    hub.send(&order("j2", req(512, 1, 300))).await;
+    assert_eq!(hub.accepted().await.timeout_trimmed_to, None);
+}

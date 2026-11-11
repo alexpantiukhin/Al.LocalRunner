@@ -2,6 +2,7 @@ use super::assign::with_seq;
 use super::conn::ConnId;
 use super::hello::peer_kind;
 use super::{Client, Engine, Job};
+use crate::policy::TimeoutAboveMax;
 use lr_abstractions::{
     CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRow, JobSpecRow, Level, OrderRow,
     SourceKind, StepRow, StoreError,
@@ -314,15 +315,30 @@ impl Engine {
         self.plan().await;
     }
 
-    fn accepted(&self, key: &JobKey, o: &Order) -> BrokerToHub {
+    fn accepted(&self, key: &JobKey, o: &Order, trimmed: Option<u64>) -> BrokerToHub {
         BrokerToHub::Accepted(Accepted {
             job: o.job.clone(),
             order_seq: o.seq,
             waiting: self.waits.get(key).cloned(),
+            timeout_trimmed_to: trimmed,
         })
     }
 
-    async fn order(&mut self, conn: ConnId, client: &Client, o: Order) {
+    fn trim_timeout(&self, spec: &mut OrderSpec) -> Option<u64> {
+        let limits = &self.policy.file().limits;
+        let max = limits.max_job_timeout_s?.get();
+        if limits.timeout_above_max != TimeoutAboveMax::Trim || spec.requirements.timeout_s <= max {
+            return None;
+        }
+        spec.requirements.timeout_s = max;
+        for step in &mut spec.steps {
+            step.timeout_s = step.timeout_s.min(max);
+        }
+        Some(max)
+    }
+
+    async fn order(&mut self, conn: ConnId, client: &Client, mut o: Order) {
+        let trimmed = self.trim_timeout(&mut o.spec);
         let key = JobKey {
             client: client.key.clone(),
             job: o.job.clone(),
@@ -330,7 +346,7 @@ impl Engine {
         match self.store.job(&key).await {
             Ok(Some(rec)) => {
                 return self
-                    .repeated_order(conn, client, &key, rec.job.state, o)
+                    .repeated_order(conn, client, &key, rec.job.state, o, trimmed)
                     .await
             }
             Ok(None) => {}
@@ -367,7 +383,7 @@ impl Engine {
             return self.unavailable(conn, &key, "record the order seq", &e);
         }
         self.enqueue(job).await;
-        self.send(conn, &self.accepted(&key, &o));
+        self.send(conn, &self.accepted(&key, &o, trimmed));
     }
 
     async fn repeated_order(
@@ -377,6 +393,7 @@ impl Engine {
         key: &JobKey,
         state: JobState,
         o: Order,
+        trimmed: Option<u64>,
     ) {
         let last = match self.store.last_seq(key, Inbound::Hub).await {
             Ok(last) => last,
@@ -401,7 +418,7 @@ impl Engine {
             let job = self.job_of(client, key, *o.spec.clone());
             self.enqueue(job).await;
         }
-        self.send(conn, &self.accepted(key, &o));
+        self.send(conn, &self.accepted(key, &o, trimmed));
     }
 
     async fn resume(&mut self, conn: ConnId, client: &Client, r: Resume) {

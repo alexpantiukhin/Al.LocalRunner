@@ -57,6 +57,19 @@ pub(crate) fn cancel_line(
     text
 }
 
+pub(crate) fn trimmed_line(asked: Option<u64>, to: u64) -> String {
+    match asked {
+        Some(asked) => format!(
+            "=== timeout trimmed by the broker policy: {asked} s -> {to} s ===
+"
+        ),
+        None => format!(
+            "=== timeout trimmed by the broker policy to {to} s ===
+"
+        ),
+    }
+}
+
 pub(crate) fn started_line(runner: &str, at: Timestamp) -> String {
     format!("=== started on runner {runner} at {at} ===\n")
 }

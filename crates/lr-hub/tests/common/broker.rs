@@ -190,6 +190,7 @@ impl FakeBroker {
                             job: o.job.clone(),
                             order_seq: o.seq,
                             waiting: None,
+                            timeout_trimmed_to: None,
                         });
                         Self::reply(&t, &a).await;
                     }

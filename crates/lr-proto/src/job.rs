@@ -251,6 +251,10 @@ pub struct Accepted {
     pub order_seq: u64,
     /// Why the order waits right away (runner busy, memory, rule), if it does.
     pub waiting: Option<String>,
+    /// The timeout the order runs with when the policy trimmed a longer one to its maximum
+    /// (`[limits] timeout_above_max = "trim"`); absent from older brokers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_trimmed_to: Option<u64>,
 }
 
 /// The order was refused at intake.

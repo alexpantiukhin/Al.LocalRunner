@@ -19,7 +19,7 @@ pub use sections::{
     CommandClient, CommandMode, CommandsSection, GraceSection, HistorySection, JoinSection,
     LimitsSection, LocalUserEntry, OrphanQueued, OrphanRunning, OrphansSection, OthersOrders,
     Percent, PoolSection, QueueSection, ResultsSection, RoutingSection, SaturationSection,
-    SecretsSection, ServicesSection, VisibilitySection,
+    SecretsSection, ServicesSection, TimeoutAboveMax, VisibilitySection,
 };
 pub use validate::{check, WIDE_V4_PREFIX, WIDE_V6_PREFIX};
 

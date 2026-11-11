@@ -208,6 +208,8 @@ pub struct PoolSection {
 pub struct LimitsSection {
     /// `max_job_timeout_s`: intake ceiling of an order timeout; default none.
     pub max_job_timeout_s: Option<NonZeroU64>,
+    /// `timeout_above_max`: what intake does with a timeout above `max_job_timeout_s`.
+    pub timeout_above_max: TimeoutAboveMax,
     /// `job_log_max_mb`: log of one job, default 256 (spec 8).
     pub job_log_max_mb: NonZeroU64,
     /// `outbox_max_mb`: broker outbox per recipient, default 512 (spec 8).
@@ -223,12 +225,24 @@ impl Default for LimitsSection {
     fn default() -> Self {
         LimitsSection {
             max_job_timeout_s: None,
+            timeout_above_max: TimeoutAboveMax::Reject,
             job_log_max_mb: nz(256),
             outbox_max_mb: nz(512),
             max_active_per_client: nz32(100),
             api_requests_per_min: nz32(1200),
         }
     }
+}
+
+/// `[limits] timeout_above_max` (spec 3.10).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeoutAboveMax {
+    /// The order is rejected `rejected_timeout` (default).
+    #[default]
+    Reject,
+    /// The order is accepted with the timeout trimmed to the maximum, and told so.
+    Trim,
 }
 
 /// `[routing]`: preference between suitable runners.

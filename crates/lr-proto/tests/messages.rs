@@ -451,9 +451,16 @@ fn accepted_and_rejected_answer_a_specific_order_seq() {
         job: job(1),
         order_seq: 4,
         waiting: None,
+        timeout_trimmed_to: None,
     }))
     .unwrap();
     assert_eq!(v["order_seq"], 4);
+    assert!(v.get("timeout_trimmed_to").is_none());
+    let older: BrokerToHub = serde_json::from_value(v).unwrap();
+    let BrokerToHub::Accepted(a) = older else {
+        panic!("not accepted")
+    };
+    assert_eq!(a.timeout_trimmed_to, None);
 }
 
 #[test]
