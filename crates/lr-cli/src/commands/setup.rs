@@ -10,7 +10,7 @@ use crate::os_service::{
 };
 use crate::paths::Layout;
 use std::io::{BufRead, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn roles_of(role: RoleArg) -> Vec<NodeRole> {
     match role {
@@ -112,10 +112,10 @@ pub fn install(
     Ok(0)
 }
 
-/// Whether `uninstall --purge` may delete the state directory of `layout`: `--yes`, or `yes`
+/// Whether `uninstall --purge` may delete the state directory `root`: `--yes`, or `yes`
 /// typed at the prompt written to `out`; without a terminal only `--yes` confirms.
 pub fn purge_confirmed(
-    layout: &Layout,
+    root: &Path,
     yes: bool,
     terminal: bool,
     input: &mut dyn BufRead,
@@ -130,7 +130,7 @@ pub fn purge_confirmed(
     let _ = write!(
         out,
         "delete {} with keys, databases and logs? type yes: ",
-        layout.root.display()
+        root.display()
     );
     let _ = out.flush();
     let mut line = String::new();
@@ -138,10 +138,10 @@ pub fn purge_confirmed(
     Ok(line.trim() == "yes")
 }
 
-fn confirmed(layout: &Layout, yes: bool) -> Result<bool, String> {
+fn confirmed(root: &Path, yes: bool) -> Result<bool, String> {
     let terminal = std::io::stdin().is_terminal();
     purge_confirmed(
-        layout,
+        root,
         yes,
         terminal,
         &mut std::io::stdin().lock(),
@@ -150,13 +150,13 @@ fn confirmed(layout: &Layout, yes: bool) -> Result<bool, String> {
 }
 
 /// The plan of `uninstall` without stopping roles: autostart entries off, the broker service
-/// removed when `with_service`, the binary of `dir` removed, and the state directory with
-/// `purge`.
+/// removed when `with_service`, the binary of `dir` removed, and `purge`, the state directory
+/// [`crate::purge::purge_target`] allowed, deleted last.
 pub fn uninstall_plan(
     layout: &Layout,
     dir: PathBuf,
     with_service: bool,
-    purge: bool,
+    purge: Option<PathBuf>,
 ) -> Result<Vec<Action>, String> {
     let mut out = Vec::new();
     let mut all = entries(layout, NodeRole::Runner);
@@ -174,8 +174,8 @@ pub fn uninstall_plan(
         out.push(Action::RemoveFile(dir.join(name)));
     }
     out.push(Action::RemoveFromUserPath(dir));
-    if purge {
-        out.push(Action::RemoveDirAll(layout.root.clone()));
+    if let Some(root) = purge {
+        out.push(Action::RemoveDirAll(root));
     }
     Ok(out)
 }
@@ -206,6 +206,14 @@ pub async fn uninstall(
         Some(d) => d,
         None => default_bin_dir()?,
     };
+    let target = if purge {
+        Some(crate::purge::purge_target(
+            &layout.root,
+            &crate::purge::Protected::of_process(&dir),
+        )?)
+    } else {
+        None
+    };
     let mut code = 0;
     if !dry_run {
         let stopped = super::down_cmd::down(layout, Vec::new(), true).await;
@@ -222,16 +230,29 @@ pub async fn uninstall(
         );
         code = 1;
     }
-    let purge = purge && (dry_run || confirmed(layout, yes)?);
-    let plan = uninstall_plan(layout, dir, with_service, purge)?;
+    let target = match target {
+        Some(t) if dry_run || confirmed(&t, yes)? => Some(t),
+        _ => None,
+    };
+    if let Some(t) = target.as_ref().filter(|_| !dry_run) {
+        println!("deleting the state directory {}", t.display());
+    }
+    let plan = uninstall_plan(layout, dir, with_service, target.clone())?;
+    let mut purged = false;
     for a in &plan {
-        if let Err(e) = system(dry_run).apply(a) {
-            eprintln!("{a}: {e}");
-            code = 1;
+        match system(dry_run).apply(a) {
+            Ok(()) => purged |= matches!(a, Action::RemoveDirAll(_)),
+            Err(e) => {
+                eprintln!("{a}: {e}");
+                code = 1;
+            }
         }
     }
     if !dry_run {
-        println!("uninstalled");
+        match target.filter(|_| purged) {
+            Some(t) => println!("uninstalled; deleted {}", t.display()),
+            None => println!("uninstalled"),
+        }
     }
     Ok(code)
 }
