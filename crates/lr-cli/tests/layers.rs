@@ -221,76 +221,118 @@ const CLIENT_FEATURES: &[(&str, &[&str])] = &[
     ("hyper-util", &["client", "client-legacy"]),
 ];
 
-fn closure<'a>(nodes: &'a [Value], names: &BTreeMap<String, String>, root: &str) -> Vec<&'a Value> {
-    let by_id = |id: &str| nodes.iter().find(|n| n["id"] == id);
-    let start = nodes
-        .iter()
-        .find(|n| names.get(n["id"].as_str().unwrap()).map(String::as_str) == Some(root))
-        .unwrap_or_else(|| panic!("{root} is not resolved"));
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut out = Vec::new();
-    let mut todo = vec![start];
-    while let Some(n) = todo.pop() {
-        if !seen.insert(n["id"].as_str().unwrap().to_string()) {
-            continue;
-        }
-        out.push(n);
-        for d in n["deps"].as_array().unwrap() {
-            let normal = d["dep_kinds"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|k| k["kind"].is_null());
-            if normal {
-                todo.extend(by_id(d["pkg"].as_str().unwrap()));
-            }
+fn root_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+fn table(path: &std::path::Path) -> toml::Table {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    text.parse()
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+fn normal_deps(manifest: &toml::Table) -> Vec<(String, &toml::Value)> {
+    let mut sections: Vec<&toml::Table> = manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .collect();
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        sections.extend(
+            targets
+                .values()
+                .filter_map(|t| t.get("dependencies").and_then(toml::Value::as_table)),
+        );
+    }
+    sections
+        .into_iter()
+        .flat_map(|t| t.iter())
+        .map(|(key, spec)| {
+            let name = spec
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(key);
+            (name.to_string(), spec)
+        })
+        .collect()
+}
+
+fn features<'a>(spec: &'a toml::Value, workspace: &'a toml::Table, name: &str) -> Vec<&'a str> {
+    let own = spec.get("features").and_then(toml::Value::as_array);
+    let shared = workspace
+        .get(name)
+        .and_then(|w| w.get("features"))
+        .and_then(toml::Value::as_array);
+    own.into_iter()
+        .chain(shared)
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .collect()
+}
+
+fn lock_dependencies() -> BTreeMap<String, BTreeSet<String>> {
+    let lock = table(&root_dir().join("Cargo.lock"));
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for p in lock["package"].as_array().unwrap() {
+        let deps = out
+            .entry(p["name"].as_str().unwrap().to_string())
+            .or_default();
+        for d in p
+            .get("dependencies")
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let d = d.as_str().unwrap();
+            deps.insert(d.split(' ').next().unwrap().to_string());
         }
     }
     out
 }
 
+fn http_clients_of(root: &str, lock: &BTreeMap<String, BTreeSet<String>>) -> (usize, Vec<String>) {
+    let crates = root_dir().join("crates");
+    let workspace_toml = table(&root_dir().join("Cargo.toml"));
+    let workspace = workspace_toml["workspace"]["dependencies"]
+        .as_table()
+        .unwrap();
+    let mut seen = BTreeSet::new();
+    let mut found = Vec::new();
+    let mut todo = vec![root.to_string()];
+    while let Some(name) = todo.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if HTTP_CLIENTS.contains(&name.as_str()) {
+            found.push(format!("{root}: {name}"));
+        }
+        let manifest = crates.join(&name).join("Cargo.toml");
+        if manifest.is_file() {
+            let manifest = table(&manifest);
+            for (dep, spec) in normal_deps(&manifest) {
+                let enabled = features(spec, workspace, &dep);
+                for (krate, client) in CLIENT_FEATURES {
+                    if dep == *krate && client.iter().any(|c| enabled.contains(c)) {
+                        found.push(format!("{root}: {name} enables {dep} {enabled:?}"));
+                    }
+                }
+                todo.push(dep);
+            }
+        } else {
+            todo.extend(lock.get(&name).into_iter().flatten().cloned());
+        }
+    }
+    (seen.len(), found)
+}
+
 #[test]
 fn nothing_leaves_the_machine_hub_cli_and_dashboard_carry_no_http_client() {
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let out = Command::new(cargo)
-        .args(["metadata", "--format-version", "1", "--offline"])
-        .output()
-        .expect("cargo metadata must run");
-    assert!(out.status.success(), "cargo metadata failed");
-    let meta: Value = serde_json::from_slice(&out.stdout).expect("metadata is json");
-    let nodes = meta["resolve"]["nodes"].as_array().expect("resolve nodes");
-    let names: BTreeMap<String, String> = meta["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| {
-            (
-                p["id"].as_str().unwrap().into(),
-                p["name"].as_str().unwrap().into(),
-            )
-        })
-        .collect();
+    let lock = lock_dependencies();
     let mut found = Vec::new();
     for root in ["lr-hub", "lr-cli", "lr-dashboard"] {
-        let reached = closure(nodes, &names, root);
-        assert!(reached.len() > 3, "{root}");
-        for n in reached {
-            let name = names[n["id"].as_str().unwrap()].clone();
-            if HTTP_CLIENTS.contains(&name.as_str()) {
-                found.push(format!("{root}: {name}"));
-            }
-            let features: Vec<&str> = n["features"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|f| f.as_str().unwrap())
-                .collect();
-            for (krate, client) in CLIENT_FEATURES {
-                if name == *krate && client.iter().any(|c| features.contains(c)) {
-                    found.push(format!("{root}: {name} with a client feature {features:?}"));
-                }
-            }
-        }
+        let (reached, clients) = http_clients_of(root, &lock);
+        assert!(reached > 3, "{root}");
+        found.extend(clients);
     }
     assert!(found.is_empty(), "an HTTP client: {found:#?}");
 }
