@@ -8,6 +8,7 @@ mod background;
 mod cache;
 mod connect;
 mod diag;
+mod disk;
 mod job;
 mod metrics;
 mod outbox;

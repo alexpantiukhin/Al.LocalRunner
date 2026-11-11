@@ -41,4 +41,7 @@ pub trait Files: Send + Sync {
 
     /// Removes a file; a missing file is not an error.
     async fn remove_file(&self, path: &Path) -> Result<(), FilesError>;
+
+    /// Names of the files directly inside `dir`, sorted; a missing directory has none.
+    async fn list_files(&self, dir: &Path) -> Result<Vec<String>, FilesError>;
 }

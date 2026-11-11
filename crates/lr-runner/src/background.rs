@@ -89,6 +89,7 @@ pub(crate) async fn recover(shared: &Shared) {
             &[("error", &e.to_string())],
         ),
     }
+    shared.release_disk().await;
     shared.services().kill_orphans().await;
     shared.forget_finished().await;
     shared.sweep().await;

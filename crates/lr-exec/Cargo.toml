@@ -11,7 +11,7 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["process", "io-util", "time", "rt", "rt-multi-thread", "sync", "macros"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_System_JobObjects", "Win32_System_Console", "Win32_Security"] }
+windows-sys = { workspace = true, features = ["Win32_System_JobObjects", "Win32_System_Console", "Win32_Security", "Win32_System_Power"] }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

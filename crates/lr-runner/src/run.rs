@@ -172,6 +172,10 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         .claim(keys.iter().cloned().chain(mirror_key.clone()).collect())
         .await;
     shared.sweep().await;
+    if let Err(detail) = shared.reserve_disk(spec).await {
+        skip_steps(shared, &p.job, &spec.steps, 0).await;
+        return Final::failed(detail);
+    }
     let mut env = p.env.clone();
     match caches
         .open(&spec.client, &spec.project, &spec.requirements.cache, now)

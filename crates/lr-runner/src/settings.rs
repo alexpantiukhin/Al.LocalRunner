@@ -65,6 +65,9 @@ pub struct RunnerSettings {
     pub workspace: Retention,
     /// `[grace] broker_lost_kill_s`: may only shorten the broker's value.
     pub broker_lost_kill_s: Option<u64>,
+    /// Directory where the runners of one installation write their disk reservations
+    /// (`<runner>.mb`); `None`: this runner sees no other runner's reservation.
+    pub disk_ledger: Option<PathBuf>,
     /// `[env] path`: `PATH` of every job; an empty or blank value counts as absent.
     pub path: Option<String>,
     /// `HOME` of every job.
@@ -164,6 +167,7 @@ impl RunnerSettings {
             cache: Retention::default(),
             workspace: Retention::default(),
             broker_lost_kill_s: None,
+            disk_ledger: None,
             path: None,
             home: None,
             temp: None,

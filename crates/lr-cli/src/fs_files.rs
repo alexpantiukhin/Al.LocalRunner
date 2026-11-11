@@ -123,4 +123,26 @@ impl Files for StdFiles {
         })
         .await
     }
+
+    async fn list_files(&self, dir: &Path) -> Result<Vec<String>, FilesError> {
+        blocking(dir, |p| {
+            let entries = match std::fs::read_dir(&p) {
+                Ok(e) => e,
+                Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+                Err(e) => return Err(err(&p, e)),
+            };
+            let mut names = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|e| err(&p, e))?;
+                if entry.file_type().map_err(|e| err(&p, e))?.is_file() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+            names.sort();
+            Ok(names)
+        })
+        .await
+    }
 }

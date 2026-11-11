@@ -240,6 +240,7 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
         seq: 0,
     });
     shared.outbox.push_until_stored(&job, &started).await;
+    shared.deps.awake.hold();
     let f = match step_secrets(shared, &a.spec).await {
         Err(f) => {
             skip_steps(shared, &job, &a.spec.steps, 0).await;
@@ -266,6 +267,8 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
         ..f
     };
     finish(shared, &job, f).await;
+    shared.release_disk().await;
+    shared.deps.awake.release();
     if let Err(e) = shared.deps.files.remove_file(&marker).await {
         shared.diag.event(
             Level::Error,

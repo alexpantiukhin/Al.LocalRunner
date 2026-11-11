@@ -29,6 +29,9 @@ use std::sync::Arc;
 pub const KEY_FILE: &str = "participant.key";
 /// Address and pinned fingerprint of the broker a runner joined (`address`, `fingerprint`).
 pub const BROKER_FILE: &str = "broker.toml";
+/// Directory of the state root where the runners of the installation record the disk their
+/// running jobs reserved (`<runner>.mb`).
+pub const DISK_LEDGER: &str = "disk-reservations";
 
 fn read_optional(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(path) {
@@ -339,6 +342,7 @@ pub async fn runner(
         .map_err(|e| format!("runner {name}: {e}"))?;
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
+    cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
     cfg.settings.home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
@@ -367,6 +371,8 @@ pub async fn runner(
         log: logger.clone(),
         meter: logger.metrics(),
         settings: cfg.settings,
+        disk: Arc::new(host::HostDiskSpace),
+        awake: Arc::new(lr_exec::system_keep_awake()),
     });
     Ok(RunnerParts {
         agent,

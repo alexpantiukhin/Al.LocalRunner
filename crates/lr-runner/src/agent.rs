@@ -7,8 +7,8 @@ use crate::services::Services;
 use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
 use lr_abstractions::{
-    CacheKey, Clock, Dialer, Files, Level, LogSink, Meter, ProcessInspector, ProcessRunner,
-    RunnerStore, SecretSource, Stop, StopHandle,
+    CacheKey, Clock, Dialer, DiskSpace, Files, KeepAwake, Level, LogSink, Meter, ProcessInspector,
+    ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle,
 };
 use lr_core::{JobId, Timestamp};
 use lr_proto::{ProtocolError, ReasonCode, WireCapabilities};
@@ -62,6 +62,10 @@ pub struct RunnerDeps {
     pub meter: Arc<dyn Meter>,
     /// Settings of this runner.
     pub settings: RunnerSettings,
+    /// Free space of volumes (`disk_mb`).
+    pub disk: Arc<dyn DiskSpace>,
+    /// Keeps the machine awake while a job runs.
+    pub awake: Arc<dyn KeepAwake>,
 }
 
 /// How [`RunnerAgent::run`] ended.
@@ -164,7 +168,9 @@ impl Shared {
 
     pub(crate) async fn capabilities(&self) -> WireCapabilities {
         let used = self.caches().used_mb().await;
-        self.deps.settings.capabilities(used)
+        let mut caps = self.deps.settings.capabilities(used);
+        caps.disk_mb = self.free_disk_mb().await;
+        caps
     }
 
     pub(crate) fn set_lost(&self, since: Option<Timestamp>) {

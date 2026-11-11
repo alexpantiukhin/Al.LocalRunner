@@ -3,8 +3,8 @@
 pub mod wrap;
 
 use lr_abstractions::fakes::{
-    FakeListener, FakeNetwork, FakeProcessRunner, JobScript, ManualClock, MemoryFiles,
-    MemoryLogSink, MemoryMeter, MemoryRunnerStore, MemorySecrets,
+    FakeDiskSpace, FakeKeepAwake, FakeListener, FakeNetwork, FakeProcessRunner, JobScript,
+    ManualClock, MemoryFiles, MemoryLogSink, MemoryMeter, MemoryRunnerStore, MemorySecrets,
 };
 use lr_abstractions::{
     Clock, Frame, Listener, Peer, PeerAccess, ProcessInspector, RunnerStore, Transport,
@@ -44,6 +44,8 @@ pub struct Rig {
     pub gate: Gate,
     pub reads: Arc<AtomicUsize>,
     pub fail_push: Arc<std::sync::atomic::AtomicBool>,
+    pub disk: FakeDiskSpace,
+    pub awake: FakeKeepAwake,
 }
 
 impl Rig {
@@ -78,6 +80,8 @@ impl Rig {
             gate: Gate::default(),
             reads: Arc::new(AtomicUsize::new(0)),
             fail_push: Arc::default(),
+            disk: FakeDiskSpace::new(),
+            awake: FakeKeepAwake::new(),
         }
     }
 
@@ -114,6 +118,8 @@ impl Rig {
             log: self.log.clone(),
             meter: self.meter.clone(),
             settings: self.settings.clone(),
+            disk: Arc::new(self.disk.clone()),
+            awake: Arc::new(self.awake.clone()),
         }
     }
 

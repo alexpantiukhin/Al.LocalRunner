@@ -18,6 +18,7 @@
 pub mod clock;
 pub mod datasource;
 pub mod files;
+pub mod host;
 pub mod logsink;
 pub mod meter;
 pub mod process;
@@ -34,6 +35,7 @@ pub mod store_contract;
 pub use clock::{Clock, Sleep};
 pub use datasource::{CancelRequest, DataError, DataSource, EventStream};
 pub use files::{Files, FilesError};
+pub use host::{DiskSpace, KeepAwake};
 pub use logsink::{Level, LogSink, Record, Role};
 pub use meter::{metric, Meter};
 pub use process::{

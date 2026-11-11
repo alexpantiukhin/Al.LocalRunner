@@ -138,4 +138,13 @@ impl Files for MemoryFiles {
         }
         Ok(())
     }
+
+    async fn list_files(&self, dir: &Path) -> Result<Vec<String>, FilesError> {
+        let s = self.check()?;
+        Ok(s.nodes
+            .iter()
+            .filter(|(p, n)| matches!(n, Node::File(_)) && p.parent() == Some(dir))
+            .filter_map(|(p, _)| p.file_name()?.to_str().map(str::to_string))
+            .collect())
+    }
 }

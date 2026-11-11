@@ -46,6 +46,15 @@ fn total_memory_mb() -> Option<u64> {
     None
 }
 
+/// [`lr_abstractions::DiskSpace`] of this machine, by [`free_disk_mb`].
+pub struct HostDiskSpace;
+
+impl lr_abstractions::DiskSpace for HostDiskSpace {
+    fn free_mb(&self, path: &Path) -> Option<u64> {
+        free_disk_mb(path)
+    }
+}
+
 /// Free space in MB on the volume of `path` (the nearest existing ancestor).
 pub fn free_disk_mb(path: &Path) -> Option<u64> {
     let existing = path.ancestors().find(|p| p.exists())?;
