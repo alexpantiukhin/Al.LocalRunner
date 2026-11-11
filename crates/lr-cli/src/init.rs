@@ -75,26 +75,39 @@ pub const HUB_POLICY_TEMPLATE: &str =
 # [outbox]\n\
 # ttl_hours = 24\n";
 
-/// `runner.toml` template of the runners of this installation.
-pub const RUNNER_TEMPLATE: &str =
-    "# Runner settings (spec 3.10). Each runner copies this template into\n\
-# runner/<name>/runner.toml when it joins; the file there wins.\n\
-\n\
-# name = \"linux-heavy\"          # default: --name, else the host name\n\
-# platforms = [\"linux\"]\n\
-# tags = []\n\
-# mem_mb = 16384                 # default: all memory of the host\n\
-# cpu = 8                        # default: all cores of the host\n\
-# allow_elevated = false         # running as root or administrator needs true\n\
-\n\
-# [env]                          # PATH of every job; without it jobs are refused\n\
-# path = \"/usr/local/bin:/usr/bin:/bin\"\n\
-\n\
-# [programs]                     # looked up in [env] path\n\
-# git = {}\n\
-\n\
-# [limits]\n\
-# max_job_timeout_s = 3600\n";
+/// `runner.toml` template of the runners of this installation. `[env] path` is set to `path`
+/// (the `PATH` of the shell that runs `init`): jobs get `PATH` only from it and the runner does
+/// not start without it (spec 13.4). Without `path` the entry stays a comment to fill in.
+pub fn runner_template(path: Option<&str>) -> String {
+    let env = match path {
+        Some(p) => format!(
+            "[env]                            # PATH of every job (spec 13.4)\npath = {}\n",
+            toml::Value::String(p.to_string())
+        ),
+        None => "# [env]                          # required: PATH of every job (spec 13.4)\n\
+                 # path = \"/usr/local/bin:/usr/bin:/bin\"\n"
+            .to_string(),
+    };
+    format!(
+        "# Runner settings (spec 3.10). Each runner copies this template into\n\
+         # runner/<name>/runner.toml when it joins; the file there wins.\n\
+         \n\
+         # name = \"linux-heavy\"          # default: --name, else the host name\n\
+         # platforms = [\"linux\"]\n\
+         # tags = []\n\
+         # mem_mb = 16384                 # default: all memory of the host\n\
+         # cpu = 8                        # default: all cores of the host\n\
+         # allow_elevated = false         # running as root or administrator needs true\n\
+         \n\
+         # [programs]                     # looked up in [env] path\n\
+         # git = {{}}\n\
+         \n\
+         # [limits]\n\
+         # max_job_timeout_s = 3600\n\
+         \n\
+         {env}"
+    )
+}
 
 /// `logging.toml` of every role.
 pub const LOGGING_TEMPLATE: &str =
@@ -159,7 +172,10 @@ pub fn init(layout: &Layout, roles: &[NodeRole], user: &str) -> Result<Vec<Creat
                 write_new(layout.config_file("policy.toml"), &policy_template(user))?
             }
             NodeRole::Hub => write_new(layout.config_file("hub-policy.toml"), HUB_POLICY_TEMPLATE)?,
-            NodeRole::Runner => write_new(layout.config_file("runner.toml"), RUNNER_TEMPLATE)?,
+            NodeRole::Runner => write_new(
+                layout.config_file("runner.toml"),
+                &runner_template(std::env::var("PATH").ok().as_deref()),
+            )?,
         });
     }
     let mut all = self::roles(layout);

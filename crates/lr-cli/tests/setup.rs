@@ -43,14 +43,19 @@ fn init_writes_templates_every_loader_accepts() {
     assert_eq!(policy.local_users[0].name, "alex");
     lr_hub::parse_hub_policy(&read("hub-policy.toml")).unwrap();
     lr_obs::LoggingConfig::parse(&read("logging.toml")).unwrap();
-    RunnerConfig::parse(
+    let runner = RunnerConfig::parse(
         &read("runner.toml"),
         None,
         "box",
         layout.runner_dir("box"),
         host(),
     )
-    .unwrap();
+    .expect("the runner.toml of init starts a runner");
+    assert_eq!(runner.settings.path, std::env::var("PATH").ok());
+    let without_path = init::runner_template(None);
+    assert!(
+        RunnerConfig::parse(&without_path, None, "box", layout.runner_dir("box"), host()).is_err()
+    );
     assert!(layout.root.join("machine-id").exists());
     assert_eq!(init::roles(&layout), NodeRole::ALL.to_vec());
 }

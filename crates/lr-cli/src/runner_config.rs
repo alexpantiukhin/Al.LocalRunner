@@ -82,7 +82,8 @@ impl RunnerConfig {
     /// Reads `text`. The name is `name` when given (`--name`), else `name` of the file, else
     /// `default_name` (the host name). Without `mem_mb` or `cpu` the runner offers all of
     /// `host`: one runner runs one job at a time and gives it everything it declares. `PATH`
-    /// of jobs comes only from `[env] path`; the `PATH` of the runner process is not inherited.
+    /// of jobs comes only from `[env] path`, which is required: the `PATH` of the runner process
+    /// is not inherited.
     pub fn parse(
         text: &str,
         name: Option<&str>,
@@ -109,6 +110,12 @@ impl RunnerConfig {
         table.insert("name".into(), toml::Value::String(chosen));
         let text = toml::to_string(&table).map_err(|e| SettingsError(e.to_string()))?;
         let mut settings = RunnerSettings::from_toml(&text, state_dir)?;
+        if settings.path.is_none() {
+            return Err(SettingsError(
+                "runner.toml has no [env] path: jobs get PATH only from it (spec 13.4); set [env] path"
+                    .into(),
+            ));
+        }
         settings.mem_mb = mem_mb;
         settings.cpu = u32::try_from(cpu).unwrap_or(u32::MAX);
         let secrets = extra

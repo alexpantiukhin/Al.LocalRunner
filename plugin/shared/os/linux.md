@@ -5,7 +5,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 | Item | Value |
 |---|---|
 | State and runner directories | `${XDG_DATA_HOME:-~/.local/share}/al-localrunner` |
-| IPC | Unix socket `$XDG_RUNTIME_DIR/al-localrunner.sock`, mode 0600 |
+| IPC | Unix sockets in `ipc/` of the state directory (closed to the user, 0700); not `$XDG_RUNTIME_DIR`, which autostart without login, containers and `sudo -u` lack |
 | Process-tree kill | own process group or cgroup, `killpg` then SIGKILL after a grace period |
 | Free memory and CPU | `MemAvailable` in `/proc/meminfo`, `nproc` |
 

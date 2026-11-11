@@ -11,8 +11,25 @@ const HOST: HostResources = HostResources {
     cpu: 12,
 };
 
+const ENV_PATH: &str = "[env]\npath = \"/usr/bin\"\n";
+
+fn with_path(text: &str) -> String {
+    if text.contains("[env]") {
+        text.to_string()
+    } else {
+        format!("{text}\n{ENV_PATH}")
+    }
+}
+
 fn parse(text: &str, name: Option<&str>) -> RunnerConfig {
-    RunnerConfig::parse(text, name, "host-pc", PathBuf::from("/state/r"), HOST).expect("parses")
+    RunnerConfig::parse(
+        &with_path(text),
+        name,
+        "host-pc",
+        PathBuf::from("/state/r"),
+        HOST,
+    )
+    .expect("parses")
 }
 
 #[test]
@@ -71,8 +88,9 @@ fn elevation_and_secret_sources_are_read() {
     );
     assert_eq!(c.secrets["signing"], SecretFrom::Keychain("release".into()));
     assert!(!parse("", None).allow_elevated);
-    let bad = "[secret.x]\nfrom = \"file:/etc/x\"\n";
-    assert!(RunnerConfig::parse(bad, None, "h", PathBuf::new(), HOST).is_err());
+    let bad = with_path("[secret.x]\nfrom = \"file:/etc/x\"\n");
+    let e = RunnerConfig::parse(&bad, None, "h", PathBuf::new(), HOST).unwrap_err();
+    assert!(e.to_string().contains("secret.x"), "{e}");
 }
 
 #[test]
@@ -130,7 +148,8 @@ fn resources_above_the_host_or_an_unmeasured_host_are_refused() {
     assert!(err("cpu = 13\n", HOST).contains("cpu"));
     let unmeasured = HostResources { mem_mb: 0, cpu: 4 };
     assert!(err("", unmeasured).contains("mem_mb"));
-    let declared = RunnerConfig::parse("mem_mb = 2048\n", None, "h", PathBuf::new(), unmeasured)
+    let text = with_path("mem_mb = 2048\n");
+    let declared = RunnerConfig::parse(&text, None, "h", PathBuf::new(), unmeasured)
         .expect("a declared size needs no measurement");
     assert_eq!(declared.settings.mem_mb, 2048);
 }
@@ -144,13 +163,11 @@ fn elevated_start_needs_allow_elevated() {
 }
 
 #[test]
-fn without_env_path_jobs_get_no_path_and_programs_are_not_looked_up_in_the_runner_path() {
-    let mut c = parse("[programs]\ngit = {}\n", None);
-    assert_eq!(c.settings.path, None);
-    let problems = c.check_programs();
-    assert!(!c.settings.programs.contains("git"), "{problems:?}");
-    assert_eq!(problems.len(), 1, "{problems:?}");
-    assert!(problems[0].contains("[env] path"), "{problems:?}");
+fn runner_without_env_path_does_not_start() {
+    let e = RunnerConfig::parse("[programs]\ngit = {}\n", None, "h", PathBuf::new(), HOST)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("[env] path") && e.contains("13.4"), "{e}");
     let set = parse("[env]\npath = \"/opt/tools/bin\"\n", None);
     assert_eq!(set.settings.path.as_deref(), Some("/opt/tools/bin"));
 }
