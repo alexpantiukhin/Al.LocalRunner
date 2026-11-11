@@ -279,3 +279,13 @@ fn service_directory_contents_are_checked_after_it_is_closed() {
     secure_service_dir(&fresh, account).unwrap();
     assert!(fresh.is_dir());
 }
+
+#[cfg(unix)]
+#[test]
+fn hub_and_runner_sockets_live_in_ipc_of_the_state_directory() {
+    let root = PathBuf::from("/home/alex/.al-localrunner-test");
+    let layout = lr_cli::paths::Layout::new(root.clone(), root.join("config"));
+    let ipc = root.join("ipc");
+    assert!(Path::new(&layout.hub_ipc("1000")).starts_with(&ipc));
+    assert!(Path::new(&layout.runner_ipc("1000", "r1")).starts_with(&ipc));
+}

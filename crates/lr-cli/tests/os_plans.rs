@@ -107,6 +107,10 @@ fn broker_service_runs_under_its_own_unprivileged_account_on_every_os() {
                 );
                 assert!(unit.contains(&format!("User={account}")), "{unit}");
                 assert!(unit.contains("UMask=0077"), "{unit}");
+                assert!(
+                    unit.contains("Restart=on-failure\nRestartSec=5\n"),
+                    "{unit}"
+                );
                 assert!(unit.contains("RuntimeDirectory=al-localrunner"), "{unit}");
                 assert!(unit.contains("\"broker\" \"run\" \"--service\""), "{unit}");
                 assert!(runs

@@ -181,7 +181,7 @@ fn linux(i: &ServiceInputs) -> Vec<Action> {
         "[Unit]\nDescription=Al.LocalRunner pool broker\nAfter=network-online.target\n\
          Wants=network-online.target\n\n[Service]\nType=simple\nUser={account}\nGroup={group}\n\
          ExecStart={}\nRuntimeDirectory=al-localrunner\nRuntimeDirectoryMode=0750\nUMask=0077\n\
-         Restart=on-failure\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n",
+         Restart=on-failure\nRestartSec=5\nNoNewPrivileges=true\n\n[Install]\nWantedBy=multi-user.target\n",
         systemd_command_line(&service_args(i))
     );
     out.push(Action::WriteFile {
