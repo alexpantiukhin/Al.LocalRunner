@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod loopback;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

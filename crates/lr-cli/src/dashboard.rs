@@ -382,16 +382,14 @@ impl DataSource for HubSource {
 
     async fn cancel(&self, job: &JobId, request: CancelRequest) -> Result<(), DataError> {
         let cwd = std::env::current_dir().map_err(unavailable)?;
-        let actor = crate::facts::collect_session("dashboard", None, &cwd).map_err(unavailable)?;
+        let actor =
+            crate::facts::collect_session(&request.actor, None, &cwd).map_err(unavailable)?;
         let client = hub(&self.layout).await.map_err(unavailable)?;
         let req = CliRequest::Cancel(lr_proto::CancelRequest {
             actor,
             target: CancelTarget::Job(job.clone()),
             force: true,
-            reason: Some(match request.reason {
-                Some(r) => format!("{}: {r}", request.actor),
-                None => request.actor,
-            }),
+            reason: request.reason,
         });
         match client
             .call::<_, CliReply>(&req)
