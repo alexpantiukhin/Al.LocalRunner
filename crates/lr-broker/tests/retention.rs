@@ -1,13 +1,16 @@
 mod common;
 
+use common::faulty::FaultyStore;
 use common::harness::*;
 use lr_abstractions::{BrokerStore, JobKey};
+use lr_broker::RETENTION_EVERY_S;
 use lr_core::JobState;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 const ALEX: &str = "local:alex";
 const MONTH_S: u64 = 30 * 86_400;
-const RETENTION_EVERY: Duration = Duration::from_secs(600);
+const RETENTION_EVERY: Duration = Duration::from_secs(RETENTION_EVERY_S);
 
 async fn eventually<F, Fut>(what: &str, mut f: F)
 where
@@ -93,6 +96,21 @@ async fn history_retention_prunes_on_the_tick() {
 #[tokio::test]
 async fn results_expire_after_keep_hours() {
     let h = Harness::start("[results]\nkeep_hours = 1\n");
+    expires_after_keep_hours(&h).await;
+}
+
+#[tokio::test]
+async fn a_panicking_pass_does_not_stop_retention() {
+    let h = Harness::start("[results]\nkeep_hours = 1\n");
+    FaultyStore::set(&h.faults.panic_prune);
+    expires_after_keep_hours(&h).await;
+    assert!(
+        !h.faults.panic_prune.load(Ordering::SeqCst),
+        "a pass panicked"
+    );
+}
+
+async fn expires_after_keep_hours(h: &Harness) {
     let r = h.member_runner("r0", "10.0.0.7", linux()).await;
     r.close().await;
     let mut hub = h.local_hub("alex").await;
@@ -102,17 +120,17 @@ async fn results_expire_after_keep_hours() {
     hub.send(&cancel("j1", 2)).await;
     hub.sync().await;
     hub.close().await;
-    assert!(pending(&h).await > 0);
+    assert!(pending(h).await > 0);
 
     h.clock.advance(Duration::from_secs(3_599));
     h.poke().await;
     settle().await;
-    assert!(pending(&h).await > 0, "kept for keep_hours");
+    assert!(pending(h).await > 0, "kept for keep_hours");
 
     h.clock.advance(RETENTION_EVERY);
     h.poke().await;
     eventually("results for the absent hub are removed", || async {
-        pending(&h).await == 0
+        pending(h).await == 0
     })
     .await;
 }

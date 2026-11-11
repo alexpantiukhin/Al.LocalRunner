@@ -16,6 +16,7 @@ pub struct FaultyStore {
     pub fail_accept_seq: AtomicBool,
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
+    pub panic_prune: AtomicBool,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
 }
@@ -28,6 +29,7 @@ impl FaultyStore {
             fail_accept_seq: AtomicBool::new(false),
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
+            panic_prune: AtomicBool::new(false),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
         }
@@ -130,6 +132,9 @@ impl BrokerStore for FaultyStore {
         self.inner.stats(query).await
     }
     async fn prune(&self, limits: PruneLimits) -> Result<PruneReport, StoreError> {
+        if self.panic_prune.swap(false, Ordering::SeqCst) {
+            panic!("injected prune panic");
+        }
         self.inner.prune(limits).await
     }
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {

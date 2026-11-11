@@ -30,6 +30,7 @@ mod wire;
 pub use admin::BrokerHandle;
 pub use events::BusEvent;
 pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
+pub use retention::RETENTION_EVERY_S;
 
 use crate::policy::{ActivePolicy, ListenValue};
 use conn::{Command, ConnId, Outlet, COMMAND_QUEUE};
@@ -141,7 +142,7 @@ impl Broker {
                 retry_at: Timestamp(0),
                 retry_round: false,
                 unsaved_starts: false,
-                revoked: HashSet::new(),
+                silenced: HashSet::new(),
                 retention: retention::Retention::default(),
             },
             listener: deps.listener,
@@ -321,7 +322,7 @@ pub(crate) struct Engine {
     pub(crate) retry_at: Timestamp,
     pub(crate) retry_round: bool,
     pub(crate) unsaved_starts: bool,
-    pub(crate) revoked: HashSet<String>,
+    pub(crate) silenced: HashSet<JobKey>,
     retention: retention::Retention,
 }
 

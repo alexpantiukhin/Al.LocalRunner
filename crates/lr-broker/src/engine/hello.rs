@@ -166,7 +166,6 @@ impl Engine {
         };
         if let Some(name) = &client.machine {
             let _ = self.store.touch_machine(name, self.now()).await;
-            self.revoked.remove(name);
         }
         self.hubs.insert(client.key.clone(), conn);
         self.refresh_client(&client);

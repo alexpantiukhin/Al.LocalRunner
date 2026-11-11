@@ -1,7 +1,9 @@
 use super::{Cancel, Engine, Job, Role};
 use crate::policy::OrphanRunning;
-use lr_abstractions::{Level, StoreError};
+use lr_abstractions::{JobKey, Level, StoreError};
+use lr_core::JobId;
 use lr_proto::ReasonCode;
+use std::collections::HashSet;
 
 const BROKER: &str = "broker";
 
@@ -17,11 +19,9 @@ fn removal_cancel() -> Cancel {
 
 impl Engine {
     /// The key of machine `name` was revoked (spec 3.9, 15.5): its connections are closed,
-    /// a job on one of its runners is `lost` with `runner_removed`, its waiting orders are
-    /// cancelled with `client_removed`, its running orders follow `[orphans] running`, and its
-    /// result outbox is deleted and stays empty.
+    /// a job on one of its runners is `lost` with `runner_removed`, the runs of the key are
+    /// retired (see [`Engine::retire`]) and its result outbox is deleted.
     pub(crate) async fn revoke(&mut self, name: &str) {
-        self.revoked.insert(name.to_string());
         let conns: Vec<_> = self
             .conns
             .iter()
@@ -39,7 +39,16 @@ impl Engine {
             self.close(conn);
         }
         self.remove_runners_of(name).await;
-        self.drop_orders_of(name).await;
+        let keys: HashSet<JobKey> = self
+            .queue
+            .iter()
+            .chain(self.active.iter())
+            .map(|j| &j.key)
+            .chain(self.parked_keys())
+            .filter(|k| k.client == name)
+            .cloned()
+            .collect();
+        self.retire(keys).await;
         let now = self.now();
         match self.store.revoke(name, now).await {
             Ok(_) | Err(StoreError::NotFound(_)) => {}
@@ -78,10 +87,16 @@ impl Engine {
         }
     }
 
-    async fn drop_orders_of(&mut self, client: &str) {
+    /// Runs of a revoked key: never reported to any hub again, waiting ones cancelled with
+    /// `client_removed`, running ones as `[orphans] running` says.
+    pub(crate) async fn retire(&mut self, keys: HashSet<JobKey>) {
+        if keys.is_empty() {
+            return;
+        }
+        self.silenced.extend(keys.iter().cloned());
         let (gone, keep): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.queue)
             .into_iter()
-            .partition(|j| j.key.client == client);
+            .partition(|j| keys.contains(&j.key));
         self.queue = keep;
         for job in gone {
             self.cancel_waiting(job, removal_cancel()).await;
@@ -92,7 +107,7 @@ impl Engine {
         let targets: Vec<usize> = (0..self.active.len())
             .filter(|&i| {
                 let j = &self.active[i];
-                j.key.client == client && j.cancel.is_none()
+                keys.contains(&j.key) && j.cancel.is_none()
             })
             .collect();
         for i in targets {
@@ -100,8 +115,11 @@ impl Engine {
         }
     }
 
-    /// Whether results for `client` may be stored: never for a revoked key.
-    pub(crate) fn delivers_to(&self, client: &str) -> bool {
-        !self.revoked.contains(client)
+    pub(crate) fn delivers_to(&self, client: &str, job: &JobId) -> bool {
+        self.silenced.is_empty()
+            || !self.silenced.contains(&JobKey {
+                client: client.to_string(),
+                job: job.clone(),
+            })
     }
 }

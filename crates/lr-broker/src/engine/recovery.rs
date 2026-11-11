@@ -1,9 +1,10 @@
 use super::local::LOCAL_RUNNER_PREFIX;
 use super::runners::RunnerSlot;
 use super::{Cancel, Client, Engine, Job};
-use lr_abstractions::{JobFilter, JobRecord, Level, RunnerRow, RunnerState};
+use lr_abstractions::{JobFilter, JobKey, JobRecord, Level, MachineRow, RunnerRow, RunnerState};
 use lr_core::{ClientView, Declared, Endpoint, JobState, MachineRef, QueueEntry};
 use lr_proto::{OrderSpec, ReasonCode, WireCapabilities, WireServiceStatus};
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
 
 const RECOVERY_SCAN: usize = 100_000;
@@ -37,6 +38,12 @@ fn stored_cancel(rec: &JobRecord) -> Cancel {
         reason,
         sent: false,
     }
+}
+
+fn of_revoked_key(rec: &JobRecord, machines: &HashMap<String, MachineRow>) -> bool {
+    machines
+        .get(&rec.job.key.client)
+        .is_some_and(|m| m.revoked_at.is_some() || rec.job.queued_at < m.registered_at)
 }
 
 impl Engine {
@@ -85,18 +92,17 @@ impl Engine {
                 &[("error", &e.to_string())],
             ),
         }
-        match self.store.machines().await {
-            Ok(rows) => self.revoked.extend(
-                rows.into_iter()
-                    .filter(|m| m.revoked_at.is_some())
-                    .map(|m| m.name),
-            ),
-            Err(e) => self.diag(
-                Level::Error,
-                "storage failed: could not load revoked keys at start",
-                &[("error", &e.to_string())],
-            ),
-        }
+        let machines: HashMap<String, MachineRow> = match self.store.machines().await {
+            Ok(rows) => rows.into_iter().map(|m| (m.name.clone(), m)).collect(),
+            Err(e) => {
+                self.diag(
+                    Level::Error,
+                    "storage failed: could not load revoked keys at start",
+                    &[("error", &e.to_string())],
+                );
+                HashMap::new()
+            }
+        };
         let filter = JobFilter {
             active_only: true,
             limit: Some(RECOVERY_SCAN),
@@ -127,9 +133,16 @@ impl Engine {
             ))
         });
         self.restored = records.iter().any(|r| r.job.started_at.is_none());
+        let retired: HashSet<JobKey> = records
+            .iter()
+            .filter(|r| of_revoked_key(r, &machines))
+            .map(|r| r.job.key.clone())
+            .collect();
+        self.silenced.extend(retired.iter().cloned());
         for rec in records {
             self.restore(rec).await;
         }
+        self.retire(retired).await;
     }
 
     async fn restore(&mut self, rec: JobRecord) {

@@ -1,8 +1,8 @@
 mod common;
 
 use common::harness::*;
-use lr_abstractions::BrokerStore;
-use lr_core::{JobId, JobState};
+use lr_abstractions::{BrokerStore, Clock, Join, JoinCodeRow, MachineKind, MachineRow};
+use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::*;
 
 #[tokio::test]
@@ -125,6 +125,7 @@ async fn revoked_client_cancels_waiting_orders_with_client_removed() {
     let row = h.job_row(LAPTOP, "j1").await.unwrap();
     assert_eq!(row.job.state, JobState::Cancelled);
     assert_eq!(row.job.cancel_reason.as_deref(), Some("client_removed"));
+    assert_eq!(row.job.cancelled_by.as_deref(), Some("broker"));
     assert_eq!(
         h.job_row("local:alex", "j1").await.unwrap().job.state,
         JobState::Queued
@@ -198,6 +199,93 @@ async fn revoked_client_running_job_finishes_by_default_without_outbox() {
     r.acked(2).await;
     h.until_state(LAPTOP, "j1", JobState::Passed).await;
     assert_eq!(pending(&h, LAPTOP).await, 0);
+}
+
+#[tokio::test]
+async fn waiting_order_of_a_key_revoked_before_a_crash_is_cancelled_at_start() {
+    let h = Harness::start("");
+    let mut hub = hub_with_offline_runner(&h).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    h.store.revoke(LAPTOP, Timestamp(START)).await.unwrap();
+
+    let h = h.restart().await;
+
+    let row = h.until_state(LAPTOP, "j1", JobState::Cancelled).await;
+    assert_eq!(row.job.cancel_reason.as_deref(), Some("client_removed"));
+    assert_eq!(pending(&h, LAPTOP).await, 0);
+    let mut r = h.member_runner("r1", "10.0.0.5", linux()).await;
+    r.quiet().await;
+}
+
+async fn rejoin(h: &Harness, name: &str) -> Conn {
+    let code_hash = format!("h2-{name}");
+    let key = format!("pk2-{name}");
+    h.store
+        .issue_code(JoinCodeRow {
+            code_hash: code_hash.clone(),
+            kind: MachineKind::Hub,
+            name: None,
+            label: None,
+            uses_left: 1,
+            issued_at: Timestamp(0),
+            expires_at: Timestamp(u64::MAX),
+            redeemed_at: None,
+            machine_name: None,
+        })
+        .await
+        .unwrap();
+    let at = h.clock.now();
+    h.store
+        .redeem(Join {
+            code_hash,
+            at,
+            machine: MachineRow {
+                name: name.into(),
+                machine_id: format!("mid2-{name}"),
+                kind: MachineKind::Hub,
+                label: String::new(),
+                public_key: key.clone(),
+                registered_at: at,
+                last_seen: None,
+                revoked_at: None,
+            },
+        })
+        .await
+        .unwrap();
+    let mut c = h.dial(member_peer(&key, "10.0.0.8")).await;
+    c.send(&hello(name, None)).await;
+    c.welcome().await;
+    c
+}
+
+#[tokio::test]
+async fn rejoined_name_gets_no_outcome_of_runs_from_before_the_revoke() {
+    let h = Harness::start("");
+    let mut hub = h.member_hub(LAPTOP, "", "10.0.0.8").await;
+    let mut r = running_on_r1(&h, &mut hub).await;
+    h.handle.revoked(LAPTOP).await;
+    h.clock.advance(std::time::Duration::from_secs(1));
+    let mut hub = rejoin(&h, LAPTOP).await;
+
+    r.send(&result("j1", 2, JobState::Passed, 0)).await;
+    r.acked(2).await;
+    h.until_state(LAPTOP, "j1", JobState::Passed).await;
+    assert_eq!(pending(&h, LAPTOP).await, 0);
+
+    hub.send(&order("j3", req(512, 1, 3600))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job, JobId("j3".into()));
+    r.send(&started("j3", 1)).await;
+    r.acked(1).await;
+    r.send(&result("j3", 2, JobState::Passed, 0)).await;
+    r.acked(2).await;
+    let first = loop {
+        if let BrokerToHub::JobResult(res) = hub.hub().await {
+            break res;
+        }
+    };
+    assert_eq!(first.job, JobId("j3".into()));
 }
 
 #[tokio::test]

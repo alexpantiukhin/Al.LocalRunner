@@ -8,8 +8,8 @@ use lr_core::Timestamp;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// Seconds between two retention passes.
-pub(crate) const RETENTION_EVERY_S: u64 = 600;
+/// Seconds between two retention passes of the broker.
+pub const RETENTION_EVERY_S: u64 = 600;
 
 const HOUR_MS: u64 = 3_600_000;
 const DAY_MS: u64 = 24 * HOUR_MS;
@@ -19,6 +19,21 @@ const GIB: u64 = 1024 * 1024 * 1024;
 pub(crate) struct Retention {
     next: Timestamp,
     busy: Arc<AtomicBool>,
+}
+
+struct Pass(Arc<AtomicBool>);
+
+impl Pass {
+    fn begin(busy: &Arc<AtomicBool>) -> Pass {
+        busy.store(true, Ordering::Release);
+        Pass(busy.clone())
+    }
+}
+
+impl Drop for Pass {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 fn warn(log: &dyn LogSink, at: Timestamp, message: &str, field: (&str, &str)) {
@@ -34,7 +49,6 @@ impl Engine {
             return;
         }
         self.retention.next = now.plus_secs(RETENTION_EVERY_S);
-        self.retention.busy.store(true, Ordering::Release);
         let file = self.policy.file();
         let keep_ms = file.results.keep_hours.get().saturating_mul(HOUR_MS);
         let expire_before = Timestamp(now.0.saturating_sub(keep_ms));
@@ -44,12 +58,10 @@ impl Engine {
             log_max_bytes: file.history.logs_max_gb.get().saturating_mul(GIB),
             row_max_age_ms: file.history.rows_keep_days.get().saturating_mul(DAY_MS),
         };
-        let (store, log, busy) = (
-            self.store.clone(),
-            self.log.clone(),
-            self.retention.busy.clone(),
-        );
+        let (store, log) = (self.store.clone(), self.log.clone());
+        let pass = Pass::begin(&self.retention.busy);
         tokio::spawn(async move {
+            let _pass = pass;
             if let Err(e) = store.expire_results(expire_before).await {
                 let msg = "storage failed: expired results were not removed";
                 warn(log.as_ref(), now, msg, ("error", &e.to_string()));
@@ -69,7 +81,6 @@ impl Engine {
                 ),
                 Ok(_) => {}
             }
-            busy.store(false, Ordering::Release);
         });
     }
 }

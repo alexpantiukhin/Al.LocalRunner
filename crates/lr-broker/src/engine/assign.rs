@@ -132,7 +132,7 @@ impl Engine {
         kind: OutboxKind,
         msg: &BrokerToHub,
     ) {
-        if !self.delivers_to(client) {
+        if !self.delivers_to(client, job) {
             return;
         }
         let Ok(payload) = serde_json::to_string(msg) else {
@@ -170,6 +170,7 @@ impl Engine {
         });
         self.notify_hub(&key.client, &key.job, OutboxKind::JobResult, &msg)
             .await;
+        self.silenced.remove(key);
         self.end_follows(key);
         self.publish(
             Some(&key.client),
