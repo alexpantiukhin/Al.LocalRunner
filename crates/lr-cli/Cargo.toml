@@ -39,6 +39,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Securit
 libc.workspace = true
 
 [dev-dependencies]
+rusqlite.workspace = true
 lr-abstractions = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time", "process", "test-util"] }

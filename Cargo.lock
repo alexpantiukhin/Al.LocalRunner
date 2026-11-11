@@ -642,6 +642,7 @@ dependencies = [
  "lr-proto",
  "lr-runner",
  "lr-store",
+ "rusqlite",
  "serde",
  "serde_json",
  "tokio",
