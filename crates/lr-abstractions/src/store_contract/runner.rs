@@ -96,11 +96,11 @@ pub async fn cache_index_keyed_by_client_project_and_name(store: &dyn RunnerStor
     let key = |client: &str| CacheKey {
         client: client.to_string(),
         project: "owner/repo".into(),
-        name: "cargo".into(),
+        name: "deps".into(),
     };
     let entry = |client: &str, bytes: u64, t: u64| CacheEntry {
         key: key(client),
-        path: format!("/cache/{client}/cargo"),
+        path: format!("/cache/{client}/deps"),
         bytes,
         last_used: at(t),
     };
