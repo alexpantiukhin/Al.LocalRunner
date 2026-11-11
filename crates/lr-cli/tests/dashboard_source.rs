@@ -63,6 +63,9 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         label: Some("agent".into()),
         profile: Some("unit".into()),
         source: None,
+        note: None,
+        branch: None,
+        cwd: None,
     }
 }
 

@@ -119,6 +119,9 @@ impl Track {
                 lr_core::Source::Session => lr_proto::WireSource::Session,
                 lr_core::Source::Github(_) => lr_proto::WireSource::Github,
             }),
+            note: spec.and_then(|s| s.identity.note.clone()),
+            branch: spec.and_then(|s| s.identity.branch.clone()),
+            cwd: spec.map(|s| s.identity.cwd.display().to_string()),
         }
     }
 }

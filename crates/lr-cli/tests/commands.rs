@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use lr_abstractions::fakes::{FakeNetwork, ManualClock};
 use lr_abstractions::{Dialer, Frame, Peer, PeerAccess};
 use lr_cli::admin::{serve, AdminApi};
-use lr_cli::commands::view::status_json;
+use lr_cli::commands::view::{add_ages, status_json, status_text};
 use lr_core::{Endpoint, JobId, JobState, Timestamp};
 use lr_proto::{
     AdminReply, AdminRequest, IpcChannel, IpcOpen, IpcOpenReply, JobSummary, PoolLoad, QueueItem,
@@ -66,6 +66,9 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         label: Some("agent-1".into()),
         profile: Some("unit".into()),
         source: Some(WireSource::Session),
+        note: None,
+        branch: None,
+        cwd: None,
     }
 }
 
@@ -102,6 +105,61 @@ fn status_json_has_project_source_label() {
         assert_eq!(item["label"], "agent-1", "{list}: {item}");
     }
     assert_eq!(brokers[0]["queue"][0]["wait_reason"], "runner busy");
+}
+
+#[test]
+fn status_shows_note_branch_directory_and_age_of_each_job() {
+    let mut queued = summary("j2", JobState::Queued);
+    queued.queued_at = Timestamp(10_000);
+    queued.note = Some("fix flaky test".into());
+    queued.branch = Some("feat/x".into());
+    queued.cwd = Some("/work/repo".into());
+    let view = StatusView {
+        running: Vec::new(),
+        queue: vec![QueueItem {
+            summary: queued,
+            position: 1,
+            wait_reason: None,
+        }],
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+    };
+    let views = [("local".to_string(), view)];
+    let now = Timestamp(195_000);
+    let text = status_text(&views, now);
+    assert!(
+        text.contains("  j2  Queued  owner/repo  agent-1  local:r1  3m05s  #1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("branch feat/x  dir /work/repo  note: fix flaky test"),
+        "{text}"
+    );
+    let mut json = status_json(&views);
+    add_ages(&mut json, now);
+    let item = &json["brokers"][0]["queue"][0];
+    assert_eq!(item["age_s"], 185);
+    assert_eq!(item["note"], "fix flaky test");
+    assert_eq!(item["branch"], "feat/x");
+    assert_eq!(item["cwd"], "/work/repo");
+    let bare = serde_json::to_value(summary("j3", JobState::Queued)).unwrap();
+    assert!(
+        bare.get("note").is_none() && bare.get("cwd").is_none(),
+        "{bare}"
+    );
+    let old: JobSummary = serde_json::from_value({
+        let mut v = bare.clone();
+        v.as_object_mut().unwrap().remove("source");
+        v
+    })
+    .unwrap();
+    assert_eq!(old.note, None);
 }
 
 #[derive(Default)]

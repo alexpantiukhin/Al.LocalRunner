@@ -151,6 +151,9 @@ pub fn summary() -> JobSummary {
         label: Some("agent-1".into()),
         profile: Some("build".into()),
         source: Some(WireSource::Session),
+        note: None,
+        branch: None,
+        cwd: None,
     }
 }
 

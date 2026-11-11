@@ -56,8 +56,8 @@ pub fn access(viewer: &Viewer, run_client: &str, others: OthersOrders) -> Access
     }
 }
 
-/// The summary as `access` allows: `None` when hidden; project, label and profile removed at
-/// `summary`.
+/// The summary as `access` allows: `None` when hidden; project, label, profile, source, note,
+/// branch and directory removed at `summary`.
 pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
     match access {
         Access::Hidden => None,
@@ -66,6 +66,9 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.label = None;
             s.profile = None;
             s.source = None;
+            s.note = None;
+            s.branch = None;
+            s.cwd = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -152,6 +155,9 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         label: Some(row.label.clone()),
         profile: Some(row.profile.clone()),
         source: Some(wire_source(row.source)),
+        note: row.note.clone(),
+        branch: row.branch.clone(),
+        cwd: Some(row.cwd.clone()),
     }
 }
 
@@ -211,6 +217,9 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
             lr_core::Source::Session => WireSource::Session,
             lr_core::Source::Github(_) => WireSource::Github,
         }),
+        note: job.spec.identity.note.clone(),
+        branch: job.spec.identity.branch.clone(),
+        cwd: Some(job.spec.identity.cwd.display().to_string()),
     }
 }
 

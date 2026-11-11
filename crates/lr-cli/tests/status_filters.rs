@@ -190,10 +190,18 @@ async fn status_jobs_and_brokers_filter_and_print_json_through_the_hub() {
     assert_eq!(status_jobs(&named), sorted(&[&a, &o]));
     let elsewhere = cli(&dir, &repo, &["status", "--json", "--broker", "nowhere"]);
     assert!(status_jobs(&elsewhere).is_empty());
-    let first = all["brokers"][0]["running"][0].clone();
+    let first = ["running", "queue"]
+        .iter()
+        .flat_map(|l| all["brokers"][0][l].as_array().unwrap().clone())
+        .find(|j| j["job"] == a.0.as_str())
+        .unwrap();
     assert_eq!(first["project"], agent.project.as_str());
     assert_eq!(first["label"], "agent");
     assert_eq!(first["profile"], "slow");
+    assert_eq!(first["note"], "first");
+    assert_eq!(first["cwd"], agent.cwd.display().to_string().as_str());
+    assert_eq!(first["branch"], agent.branch.as_deref().unwrap());
+    assert!(first["age_s"].as_u64().is_some_and(|a| a < 600), "{first}");
 
     let jobs = cli(
         &dir,

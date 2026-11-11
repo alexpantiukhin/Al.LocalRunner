@@ -3,9 +3,11 @@
 
 use super::jobs::hub;
 use super::log_cmd::cli_redactor;
+use super::timefmt::format_ms;
 use super::SourceArg;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use lr_core::Timestamp;
 use lr_obs::Redactor;
 use lr_proto::{
     BrokerStatus, CliRead, CliReply, CliRequest, JobSummary, ReadReply, ReadRequest, StatusFilter,
@@ -57,24 +59,65 @@ pub fn mask_status(views: &mut [(String, StatusView)], redactor: &Redactor) {
     }
 }
 
-fn line(s: &JobSummary, tail: &str) -> String {
-    format!(
-        "  {}  {:?}  {}  {}  {}{}",
+fn age_ms(s: &JobSummary, now: Timestamp) -> u64 {
+    now.0.saturating_sub(s.queued_at.0)
+}
+
+/// Adds `age_s` (seconds since the job was queued, by `now` of this machine) to every job of
+/// a `status --json` document.
+pub fn add_ages(doc: &mut Value, now: Timestamp) {
+    let Some(brokers) = doc["brokers"].as_array_mut() else {
+        return;
+    };
+    for b in brokers {
+        for list in ["running", "queue", "recent"] {
+            let Some(jobs) = b[list].as_array_mut() else {
+                continue;
+            };
+            for j in jobs {
+                let queued = j["queued_at"].as_u64().unwrap_or(now.0);
+                j["age_s"] = json!(now.0.saturating_sub(queued) / 1000);
+            }
+        }
+    }
+}
+
+fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
+    let mut out = format!(
+        "  {}  {:?}  {}  {}  {}  {}{}",
         s.job,
         s.state,
         s.project.as_deref().unwrap_or("-"),
         s.label.as_deref().unwrap_or("-"),
         s.runner.as_deref().unwrap_or("-"),
+        format_ms(age_ms(s, now)),
         tail
-    )
+    );
+    let mut details = Vec::new();
+    if let Some(b) = &s.branch {
+        details.push(format!("branch {b}"));
+    }
+    if let Some(d) = &s.cwd {
+        details.push(format!("dir {d}"));
+    }
+    if let Some(n) = &s.note {
+        details.push(format!("note: {n}"));
+    }
+    if !details.is_empty() {
+        out.push_str(&format!("\n      {}", details.join("  ")));
+    }
+    out
 }
 
-fn print_text(views: &[(String, StatusView)]) {
+/// The text of `status` at `now`: per broker the pool load, then running and queued jobs, each
+/// with its age and, where known, branch, directory and note.
+pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
+    let mut out = Vec::new();
     for (broker, v) in views {
-        println!(
+        out.push(format!(
             "broker {broker}: memory {}/{} MB, cpu {}/{}",
             v.pool.used_mem_mb, v.pool.total_mem_mb, v.pool.used_cpu, v.pool.total_cpu
-        );
+        ));
         for r in &v.running {
             let step = r
                 .steps
@@ -83,7 +126,7 @@ fn print_text(views: &[(String, StatusView)]) {
                 .find(|s| s.started_at.is_some())
                 .map(|s| format!("  step {}", s.name))
                 .unwrap_or_default();
-            println!("{}", line(&r.summary, &step));
+            out.push(line(&r.summary, &step, now));
         }
         for q in &v.queue {
             let why = q
@@ -91,12 +134,13 @@ fn print_text(views: &[(String, StatusView)]) {
                 .as_deref()
                 .map(|w| format!("  #{} waits: {w}", q.position))
                 .unwrap_or_else(|| format!("  #{}", q.position));
-            println!("{}", line(&q.summary, &why));
+            out.push(line(&q.summary, &why, now));
         }
         if v.running.is_empty() && v.queue.is_empty() {
-            println!("  (no jobs)");
+            out.push("  (no jobs)".into());
         }
     }
+    out.join("\n")
 }
 
 /// The hub's known brokers.
@@ -205,15 +249,20 @@ pub async fn status(
         }
     }
     mask_status(&mut views, &cli_redactor(layout));
+    let now = super::timefmt::now();
     if json_out {
         let mut out = status_json(&views);
+        add_ages(&mut out, now);
         out["problems"] = json!(problems);
         println!(
             "{}",
             serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
         );
     } else {
-        print_text(&views);
+        let text = status_text(&views, now);
+        if !text.is_empty() {
+            println!("{text}");
+        }
         for p in &problems {
             eprintln!("{p}");
         }

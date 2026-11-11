@@ -127,6 +127,9 @@ fn status_masks_the_last_lines_of_running_jobs() {
         label: None,
         profile: None,
         source: None,
+        note: None,
+        branch: None,
+        cwd: None,
     };
     let view = StatusView {
         running: vec![RunningView {

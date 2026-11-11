@@ -101,6 +101,10 @@ async fn read_api_hides_others_orders_per_visibility() {
     assert_eq!(run.summary.label, None);
     assert_eq!(run.summary.profile, None);
     assert_eq!(run.summary.source, None);
+    assert_eq!(
+        (&run.summary.note, &run.summary.branch, &run.summary.cwd),
+        (&None, &None, &None)
+    );
     assert!(run.steps.is_empty() && run.last_lines.is_empty());
     assert_eq!(s.queue[0].wait_reason, None);
     let hist = history(
@@ -175,6 +179,14 @@ async fn own_runs_are_shown_in_full() {
             .await,
     );
     assert_eq!(s.running[0].summary.profile.as_deref(), Some("unit"));
+    assert_eq!(s.running[0].summary.note.as_deref(), Some("why"));
+    assert_eq!(s.running[0].summary.cwd.as_deref(), Some("/work/repo"));
+    assert_eq!(s.queue[0].summary.cwd.as_deref(), Some("/work/repo"));
+    let hist = history(
+        alex.read(ReadRequest::History(HistoryFilter::default()))
+            .await,
+    );
+    assert!(hist.iter().all(|j| j.note.as_deref() == Some("why")));
     assert_eq!(s.running[0].steps.len(), 1);
     assert_eq!(s.queue[0].position, 1);
     assert_eq!(s.queue[0].wait_reason.as_deref(), Some("раннер занят"));

@@ -218,6 +218,15 @@ pub struct JobSummary {
     /// peers.
     #[serde(default)]
     pub source: Option<WireSource>,
+    /// Note `--note`; hidden at `summary`. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Branch of the submitter; hidden at `summary`. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Working directory of the submitter; hidden at `summary`. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// A step of a run.

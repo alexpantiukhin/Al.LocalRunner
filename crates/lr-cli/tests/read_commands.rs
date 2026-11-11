@@ -29,6 +29,9 @@ fn summary(job: &str, queued: u64) -> JobSummary {
         label: Some("agent-1".into()),
         profile: Some("unit".into()),
         source: Some(WireSource::Session),
+        note: None,
+        branch: None,
+        cwd: None,
     }
 }
 
