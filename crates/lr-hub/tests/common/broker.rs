@@ -132,6 +132,10 @@ impl FakeBroker {
         broker
     }
 
+    pub fn report_zone(&self, zone: Option<Zone>) {
+        self.state.lock().unwrap().zone = zone;
+    }
+
     fn script(&self) -> Script {
         self.state.lock().unwrap().script.clone().unwrap()
     }
