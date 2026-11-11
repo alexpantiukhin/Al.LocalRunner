@@ -32,28 +32,30 @@ fn layout(dir: &TempDir) -> Layout {
     Layout::new(root, config)
 }
 
-async fn offered(layout: &Layout, expected: &BTreeSet<String>) -> BTreeSet<String> {
-    let mut last = BTreeSet::new();
+async fn online_r1(layout: &Layout) -> Option<BTreeSet<String>> {
+    let client = hub(layout).await.ok()?;
+    let brokers = known_brokers(&client).await.unwrap_or_default();
+    let mut found = None;
+    if let Some(b) = brokers.into_iter().find(|b| b.available) {
+        if let Ok(ReadReply::Runners { runners }) =
+            read(&client, &b.name, ReadRequest::Runners).await
+        {
+            found = runners
+                .into_iter()
+                .find(|r| r.online && r.name.ends_with("r1"))
+                .map(|r| r.caps.programs);
+        }
+    }
+    client.close().await;
+    found
+}
+
+async fn until_online(layout: &Layout, expected: Option<&BTreeSet<String>>) -> Option<BTreeSet<String>> {
+    let mut last = None;
     for _ in 0..150 {
-        if let Ok(client) = hub(layout).await {
-            let brokers = known_brokers(&client).await.unwrap_or_default();
-            if let Some(b) = brokers.into_iter().find(|b| b.available) {
-                if let Ok(ReadReply::Runners { runners }) =
-                    read(&client, &b.name, ReadRequest::Runners).await
-                {
-                    if let Some(r) = runners
-                        .into_iter()
-                        .find(|r| r.online && r.name.ends_with("r1"))
-                    {
-                        last = r.caps.programs.clone();
-                        if &last == expected {
-                            client.close().await;
-                            return last;
-                        }
-                    }
-                }
-            }
-            client.close().await;
+        last = online_r1(layout).await;
+        if last.as_ref() == expected {
+            return last;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -76,8 +78,13 @@ async fn programs_are_checked_again_on_every_start_of_the_runner() {
         .await
         .expect("runner starts");
     let only_git = BTreeSet::from(["git".to_string()]);
-    assert_eq!(offered(&layout, &only_git).await, only_git);
+    assert_eq!(until_online(&layout, Some(&only_git)).await, Some(only_git));
     runners.stop();
+    assert_eq!(
+        until_online(&layout, None).await,
+        None,
+        "the first runner process is gone"
+    );
 
     runner_toml(&layout, "git = { check = \"exit 7\" }\n");
     let runners = start_runners(&layout, Some("r1"), 1, None, false)
@@ -85,9 +92,9 @@ async fn programs_are_checked_again_on_every_start_of_the_runner() {
         .expect("runner starts again");
     let none = BTreeSet::new();
     assert_eq!(
-        offered(&layout, &none).await,
-        none,
-        "the failing check of the second start is applied"
+        until_online(&layout, Some(&none)).await,
+        Some(none),
+        "the second start is online and its failing check is applied"
     );
     runners.stop();
     hub_role.stop();

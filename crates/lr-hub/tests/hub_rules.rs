@@ -204,4 +204,13 @@ async fn jobs_without_active_also_lists_finished_results_kept_in_memory() {
     ];
     want.sort_by(|x, y| x.0.cmp(&y.0));
     assert_eq!(listed(cli.reply().await), want);
+    let bob = Cli::open(&rig.net, "bob").await;
+    for active in [true, false] {
+        bob.send(jobs(active)).await;
+        assert_eq!(
+            listed(bob.reply().await),
+            Vec::new(),
+            "another OS user with the same label sees none (active = {active})"
+        );
+    }
 }

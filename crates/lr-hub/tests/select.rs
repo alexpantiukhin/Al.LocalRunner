@@ -309,6 +309,7 @@ async fn returned_ordinary_order_goes_to_another_broker_at_seq_one() {
         .await;
     eventually("accepted by a", || a.orders().len() == 1).await;
     settle().await;
+    rig.step(7).await;
     a.returned(&job, ReasonCode::RunnerRemoved).await;
     eventually("replacement at b", || b.orders().len() == 1).await;
     assert_eq!(b.orders()[0].seq, 1);
@@ -317,6 +318,7 @@ async fn returned_ordinary_order_goes_to_another_broker_at_seq_one() {
         START,
         "age survives re-brokering"
     );
+    assert_ne!(b.orders()[0].spec.enqueued_at.0, START + 7_000);
     settle().await;
     b.started(&job).await;
     settle().await;
