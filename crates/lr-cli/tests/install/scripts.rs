@@ -183,7 +183,7 @@ fn powershells() -> Vec<&'static str> {
         .collect()
 }
 
-pub fn first_powershell() -> Option<&'static str> {
+pub fn first_powershell(test: &str) -> Option<&'static str> {
     let found = powershells();
     let pick = found
         .iter()
@@ -191,7 +191,7 @@ pub fn first_powershell() -> Option<&'static str> {
         .find(|e| *e == "pwsh")
         .or(found.first().copied());
     if pick.is_none() {
-        eprintln!("skipped: neither pwsh nor powershell is on PATH");
+        crate::skipped(test, "pwsh", "neither pwsh nor powershell is on PATH");
     }
     pick
 }
@@ -200,7 +200,11 @@ pub fn first_powershell() -> Option<&'static str> {
 fn powershell_installer_parses_without_errors() {
     let shells = powershells();
     if shells.is_empty() {
-        eprintln!("skipped: neither pwsh nor powershell is on PATH");
+        crate::skipped(
+            "powershell_installer_parses_without_errors",
+            "pwsh",
+            "neither pwsh nor powershell is on PATH",
+        );
         return;
     }
     let path = repo_root().join("install").join("install.ps1");

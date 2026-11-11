@@ -4,7 +4,7 @@ use crate::scripts_run::{script, sign, sums_line, text};
 use std::path::Path;
 use std::process::Command;
 
-fn powershell(exe: &str, body: &str) -> String {
+pub fn powershell(exe: &str, body: &str) -> String {
     let path = script("install.ps1")
         .display()
         .to_string()
@@ -24,13 +24,14 @@ fn powershell(exe: &str, body: &str) -> String {
         .to_string()
 }
 
-fn ps_quote(path: &Path) -> String {
+pub fn ps_quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
 #[test]
 fn powershell_installer_checks_sha256_before_anything_else() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) = first_powershell("powershell_installer_checks_sha256_before_anything_else")
+    else {
         return;
     };
     let tmp = TempDir::new("install-ps-hash");
@@ -63,7 +64,9 @@ fn powershell_installer_checks_sha256_before_anything_else() {
 
 #[test]
 fn powershell_installer_refuses_an_administrator_without_the_flag() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) =
+        first_powershell("powershell_installer_refuses_an_administrator_without_the_flag")
+    else {
         return;
     };
     let out = powershell(
@@ -85,7 +88,9 @@ fn powershell_installer_refuses_an_administrator_without_the_flag() {
 
 #[test]
 fn powershell_installer_verifies_the_signature_with_the_release_key() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) =
+        first_powershell("powershell_installer_verifies_the_signature_with_the_release_key")
+    else {
         return;
     };
     let tmp = TempDir::new("install-ps-sig");
@@ -100,8 +105,15 @@ fn powershell_installer_verifies_the_signature_with_the_release_key() {
     );
     let placeholder = powershell(exe, &check);
     assert!(placeholder.contains("release key"), "{placeholder}");
-    let Some(key) = sign(tmp.path(), &sums) else {
-        return;
+    let key = match sign(tmp.path(), &sums) {
+        Ok(key) => key,
+        Err(why) => {
+            return crate::skipped(
+                "powershell_installer_verifies_the_signature_with_the_release_key",
+                "ssh-keygen",
+                &why,
+            )
+        }
     };
     let with_key = format!("$LocalRunnerReleaseKey = '{key}'; {check}");
     assert_eq!(powershell(exe, &with_key), "ok");
@@ -130,7 +142,9 @@ fn fake_program(dir: &Path, name: &str, windows: &str, unix: &str) -> std::path:
 
 #[test]
 fn powershell_installer_checks_and_unpacks_private_copies_of_offline_files() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) =
+        first_powershell("powershell_installer_checks_and_unpacks_private_copies_of_offline_files")
+    else {
         return;
     };
     let tmp = TempDir::new("install-ps-copy");
@@ -162,7 +176,9 @@ fn powershell_installer_checks_and_unpacks_private_copies_of_offline_files() {
 
 #[test]
 fn powershell_installer_runs_doctor_after_install_and_keeps_the_installation() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) = first_powershell(
+        "powershell_installer_runs_doctor_after_install_and_keeps_the_installation",
+    ) else {
         return;
     };
     let tmp = TempDir::new("install-ps-doctor");
@@ -186,7 +202,9 @@ fn powershell_installer_runs_doctor_after_install_and_keeps_the_installation() {
 
 #[test]
 fn powershell_installer_reads_only_dashed_flags_and_exact_versions() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) =
+        first_powershell("powershell_installer_reads_only_dashed_flags_and_exact_versions")
+    else {
         return;
     };
     let bare = powershell(exe, "Read-InstallArgs @('dir', 'x') | Out-Null");
@@ -207,7 +225,9 @@ fn powershell_installer_reads_only_dashed_flags_and_exact_versions() {
 
 #[test]
 fn powershell_installer_explains_an_ssh_keygen_without_signatures() {
-    let Some(exe) = first_powershell() else {
+    let Some(exe) =
+        first_powershell("powershell_installer_explains_an_ssh_keygen_without_signatures")
+    else {
         return;
     };
     let tmp = TempDir::new("install-ps-oldssh");

@@ -16,15 +16,14 @@ pub fn text(out: &Output) -> String {
     )
 }
 
-pub fn sign(dir: &Path, file: &Path) -> Option<String> {
+pub fn sign(dir: &Path, file: &Path) -> Result<String, String> {
     let key = dir.join("release-key");
     let made = Command::new("ssh-keygen")
         .args(["-q", "-t", "ed25519", "-N", "", "-C", "test", "-f"])
         .arg(&key)
         .output();
     if !made.is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: ssh-keygen cannot create a key here");
-        return None;
+        return Err("ssh-keygen cannot create a key here".into());
     }
     let signed = Command::new("ssh-keygen")
         .args(["-Y", "sign", "-f"])
@@ -33,15 +32,12 @@ pub fn sign(dir: &Path, file: &Path) -> Option<String> {
         .arg(file)
         .output();
     if !signed.is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: ssh-keygen cannot sign (OpenSSH 8.0+ needed)");
-        return None;
+        return Err("ssh-keygen cannot sign (OpenSSH 8.0+ needed)".into());
     }
-    Some(
-        std::fs::read_to_string(key.with_extension("pub"))
-            .unwrap()
-            .trim()
-            .to_string(),
-    )
+    Ok(std::fs::read_to_string(key.with_extension("pub"))
+        .unwrap()
+        .trim()
+        .to_string())
 }
 
 pub fn sums_line(hash: &str, name: &str) -> String {
@@ -62,7 +58,7 @@ mod sh {
         root: PathBuf,
         archive: PathBuf,
         sums: PathBuf,
-        key: Option<String>,
+        key: Result<String, String>,
     }
 
     fn executable(path: &Path, body: &str) {
@@ -89,7 +85,7 @@ mod sh {
         executable(&root.join("stub/id"), &format!("#!/bin/sh\necho {uid}\n"));
         executable(
             &root.join("pkg/localrunner"),
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$LR_MARKER\"\nif [ \"$1\" = doctor ]; then exit 1; fi\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$LR_MARKER\"\nls -ld \"$(dirname \"$(dirname \"$0\")\")\" >> \"$LR_WORK_MODE\"\nif [ \"$1\" = doctor ]; then exit 1; fi\n",
         );
         let release = root.join("release");
         std::fs::create_dir_all(&release).unwrap();
@@ -121,6 +117,16 @@ mod sh {
     }
 
     impl Fixture {
+        fn signed(&self, test: &str) -> bool {
+            match &self.key {
+                Ok(_) => true,
+                Err(why) => {
+                    crate::skipped(test, "ssh-keygen", why);
+                    false
+                }
+            }
+        }
+
         fn marker(&self) -> PathBuf {
             self.root.join("marker")
         }
@@ -133,7 +139,8 @@ mod sh {
                 format!("{}:{path}", self.root.join("stub").display()),
             )
             .env("HOME", self.root.join("home"))
-            .env("LR_MARKER", self.marker());
+            .env("LR_MARKER", self.marker())
+            .env("LR_WORK_MODE", self.root.join("work-mode"));
             cmd
         }
 
@@ -203,7 +210,7 @@ mod sh {
     #[test]
     fn wrong_sha256_aborts_before_install() {
         let f = fixture("1000", true);
-        if f.key.is_none() {
+        if !f.signed("wrong_sha256_aborts_before_install") {
             return;
         }
         let dir = f.root.join("bin").display().to_string();
@@ -217,7 +224,7 @@ mod sh {
     #[test]
     fn tampered_checksums_fail_the_signature_check() {
         let f = fixture("1000", false);
-        if f.key.is_none() {
+        if !f.signed("tampered_checksums_fail_the_signature_check") {
             return;
         }
         let mut sums = std::fs::read_to_string(&f.sums).unwrap();
@@ -232,7 +239,7 @@ mod sh {
     #[test]
     fn an_archive_missing_from_the_checksums_is_refused() {
         let f = fixture("1000", false);
-        if f.key.is_none() {
+        if !f.signed("an_archive_missing_from_the_checksums_is_refused") {
             return;
         }
         let renamed = f
@@ -248,7 +255,7 @@ mod sh {
     #[test]
     fn a_verified_archive_runs_the_binary_install_and_a_rerun_does_the_same() {
         let f = fixture("1000", false);
-        if f.key.is_none() {
+        if !f.signed("a_verified_archive_runs_the_binary_install_and_a_rerun_does_the_same") {
             return;
         }
         let dir = f.root.join("bin").display().to_string();
@@ -266,7 +273,7 @@ mod sh {
     #[test]
     fn offline_files_are_checked_and_unpacked_as_private_copies() {
         let f = fixture("1000", false);
-        if f.key.is_none() {
+        if !f.signed("offline_files_are_checked_and_unpacked_as_private_copies") {
             return;
         }
         let real_tar = Command::new("sh")
@@ -296,17 +303,80 @@ mod sh {
                 f.archive.display()
             ),
         );
+        for net in ["curl", "wget"] {
+            executable(
+                &f.root.join("stub").join(net),
+                &format!("#!/bin/sh\necho NETWORK-{net} >> \"$LR_MARKER\"\nexit 1\n"),
+            );
+        }
         let out = f.run_with_key(&["--offline", &f.offline()]);
         assert!(out.status.success(), "{}", text(&out));
         let installed = f.installed().unwrap_or_default();
         assert!(!installed.contains("EVIL"), "the swapped archive ran");
+        assert!(
+            !installed.contains("NETWORK"),
+            "--offline went to the network: {installed}"
+        );
         assert!(installed.starts_with("install\n"), "{installed}");
+        let modes = std::fs::read_to_string(f.root.join("work-mode")).unwrap();
+        let modes: Vec<&str> = modes.lines().map(|l| &l[..10]).collect();
+        assert_eq!(
+            modes,
+            ["drwx------", "drwx------"],
+            "the copies live in a directory of the owner only"
+        );
+    }
+
+    fn target(os: &str, arch: &str) -> Output {
+        let tmp = TempDir::new("install-uname");
+        executable(
+            &tmp.path().join("uname"),
+            &format!("#!/bin/sh\ncase \"$1\" in -s) echo {os} ;; -m) echo {arch} ;; esac\n"),
+        );
+        let path = std::env::var("PATH").unwrap_or_default();
+        Command::new("sh")
+            .env("PATH", format!("{}:{path}", tmp.path().display()))
+            .env("LOCALRUNNER_INSTALL_SOURCED", "1")
+            .arg("-c")
+            .arg(". \"$0\" 2>/dev/null; detect_target")
+            .arg(script("install.sh"))
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn archive_name_follows_uname() {
+        for (os, arch, want) in [
+            ("Linux", "x86_64", "linux-x64"),
+            ("Linux", "amd64", "linux-x64"),
+            ("Linux", "aarch64", "linux-arm64"),
+            ("Darwin", "arm64", "macos-arm64"),
+            ("Darwin", "x86_64", "macos-x64"),
+        ] {
+            let out = target(os, arch);
+            assert!(out.status.success(), "{os} {arch}: {}", text(&out));
+            assert_eq!(String::from_utf8_lossy(&out.stdout), format!("{want}\n"));
+        }
+        let bsd = target("FreeBSD", "x86_64");
+        assert!(!bsd.status.success());
+        assert!(
+            text(&bsd).contains("unsupported OS FreeBSD"),
+            "{}",
+            text(&bsd)
+        );
+        let riscv = target("Linux", "riscv64");
+        assert!(!riscv.status.success());
+        assert!(
+            text(&riscv).contains("unsupported architecture riscv64"),
+            "{}",
+            text(&riscv)
+        );
     }
 
     #[test]
     fn an_ssh_keygen_without_signatures_gets_a_clear_error() {
         let f = fixture("1000", false);
-        if f.key.is_none() {
+        if !f.signed("an_ssh_keygen_without_signatures_gets_a_clear_error") {
             return;
         }
         executable(

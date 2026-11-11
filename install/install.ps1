@@ -68,6 +68,24 @@ function Test-Elevated {
     $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function New-PrivateDirectory {
+    param([string]$Path)
+    $dir = New-Item -ItemType Directory -Path $Path
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        $user = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        $rule = New-Object Security.AccessControl.FileSystemAccessRule($user, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $dir.FullName -AclObject $acl
+    } else {
+        & /bin/chmod 700 $dir.FullName
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Install "cannot close $($dir.FullName) to its owner"
+        }
+    }
+}
+
 function Get-ReleaseTarget {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
         Stop-Install 'this installer is for Windows; on Linux and macOS use install.sh'
@@ -180,8 +198,8 @@ function Install-LocalRunner {
         Stop-Install 'refusing to run as administrator: install as an ordinary user, or add --allow-elevated'
     }
     $work = Join-Path ([IO.Path]::GetTempPath()) ('al-localrunner-' + [guid]::NewGuid().ToString('N'))
-    New-Item -ItemType Directory -Path $work | Out-Null
     try {
+        New-PrivateDirectory $work
         if ($opts.Offline) {
             if (-not (Test-Path -LiteralPath $opts.Offline -PathType Leaf)) {
                 Stop-Install "$($opts.Offline) is not a file"
