@@ -177,10 +177,17 @@ impl Engine {
     /// the pass and the pass is planned again, so a warm instance elsewhere is reused instead
     /// of over-committing the pool.
     pub(crate) fn plan_pass(&self, now: Timestamp) -> Plan {
+        let held = self.plan_holding(now, self.service_mem_mb());
+        if !self.policy.file().services.evict_idle || held.assignments.is_empty() {
+            return held;
+        }
+        self.within_idle_free_plan(now, held)
+    }
+
+    pub(crate) fn plan_holding(&self, now: Timestamp, held_mb: u64) -> Plan {
         let entries = self.planned_queue();
         let running = self.planned_running();
         let inner = self.policy.policy();
-        let held_mb = self.service_mem_mb();
         let mut pool = inner.pool().clone();
         pool.mem_mb = pool.mem_mb.saturating_sub(held_mb);
         let used = running.iter().fold(0u64, |a, r| {

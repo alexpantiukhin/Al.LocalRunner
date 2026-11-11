@@ -25,6 +25,7 @@ mod retry;
 mod revoke;
 mod runners;
 mod same_machine;
+mod idle_free;
 mod service_budget;
 mod service_intake;
 mod services;
