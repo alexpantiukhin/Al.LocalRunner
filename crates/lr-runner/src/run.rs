@@ -8,7 +8,7 @@ use lr_abstractions::{
     CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, DEFAULT_CANCEL_GRACE,
 };
 use lr_core::{JobState, StepState};
-use lr_proto::WireCode;
+use lr_proto::{ReasonCode, WireCode};
 use std::path::{Path, PathBuf};
 
 struct Phase<'a> {
@@ -174,7 +174,10 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     shared.sweep().await;
     if let Err(detail) = shared.reserve_disk(spec).await {
         skip_steps(shared, &p.job, &spec.steps, 0).await;
-        return Final::failed(detail);
+        return Final {
+            reason: Some(ReasonCode::DiskInsufficient),
+            ..Final::failed(detail)
+        };
     }
     let mut env = p.env.clone();
     match caches

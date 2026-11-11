@@ -126,6 +126,9 @@ pub enum ReasonCode {
     RunnerRestarted,
     /// Cancelled by the user.
     CancelledByUser,
+    /// The runner had not enough free disk for `disk_mb` of the job, even after the cache
+    /// cleanup; the result is `failed`.
+    DiskInsufficient,
     /// Refused at intake, with the cause.
     Rejected(RejectReason),
     /// A code of a newer minor version that is not a rejection; kept as received.
@@ -134,7 +137,7 @@ pub enum ReasonCode {
 
 const REJECTED_PREFIX: &str = "rejected_";
 
-const PLAIN: [ReasonCode; 11] = [
+const PLAIN: [ReasonCode; 12] = [
     ReasonCode::RunnerStopped,
     ReasonCode::RunnerRemoved,
     ReasonCode::BrokerUnavailable,
@@ -146,10 +149,11 @@ const PLAIN: [ReasonCode; 11] = [
     ReasonCode::SecretMissing,
     ReasonCode::RunnerRestarted,
     ReasonCode::CancelledByUser,
+    ReasonCode::DiskInsufficient,
 ];
 
 impl ReasonCode {
-    /// Every known code: the eleven of spec 15 and one `rejected_*` per [`RejectReason`];
+    /// Every known code: the twelve of spec 15 and one `rejected_*` per [`RejectReason`];
     /// codes kept as `Other` are not listed.
     pub fn all() -> Vec<ReasonCode> {
         PLAIN
@@ -173,6 +177,7 @@ impl ReasonCode {
             ReasonCode::SecretMissing => "secret_missing",
             ReasonCode::RunnerRestarted => "runner_restarted",
             ReasonCode::CancelledByUser => "cancelled_by_user",
+            ReasonCode::DiskInsufficient => "disk_insufficient",
             ReasonCode::Rejected(r) => r.as_str(),
             ReasonCode::Other(code) => code.as_str(),
         }

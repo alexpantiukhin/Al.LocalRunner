@@ -34,7 +34,7 @@ async fn job_without_enough_free_disk_fails_before_running() {
     b.assign("job-1", 1, tree_job(500)).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.state, JobState::Failed);
-    assert_eq!(r.reason, None);
+    assert_eq!(r.reason, Some(lr_proto::ReasonCode::DiskInsufficient));
     let detail = r.detail.unwrap_or_default();
     assert!(
         detail.contains("needs 500 MB") && detail.contains("400 MB"),
