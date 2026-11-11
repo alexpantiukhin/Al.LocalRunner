@@ -127,3 +127,27 @@ fn snapshot_is_single_file() {
     assert!(with_logs.contains("tail secret line"));
     assert!(!with_logs.contains("</script><b>"));
 }
+
+#[test]
+fn job_card_shows_secret_names_without_values() {
+    let mut snapshot = common::snapshot();
+    snapshot.jobs[0].detail.secrets = vec!["registry_auth".into(), "signing".into()];
+    let html = render_snapshot(&snapshot, &[]);
+    assert!(
+        html.contains("\"secrets\":[\"registry_auth\",\"signing\"]"),
+        "the card data carries the names"
+    );
+    let script = include_str!("../src/page.js");
+    let card = &script[script.find("function fillCard(").unwrap()..];
+    let card = &card[..card.find("var dl").unwrap()];
+    assert!(
+        card.contains("[\"Secrets\", (d.secrets || []).join(\", \")]"),
+        "the card lists the names under Secrets"
+    );
+    let detail = serde_json::to_value(&snapshot.jobs[0].detail).unwrap();
+    assert_eq!(
+        detail["secrets"],
+        serde_json::json!(["registry_auth", "signing"]),
+        "the model has names only: there is no field a value could travel in"
+    );
+}
