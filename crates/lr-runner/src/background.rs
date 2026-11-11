@@ -1,15 +1,18 @@
 use crate::agent::{after, Shared, SWEEP_EVERY};
+use crate::service_stop::service_reaper;
 use lr_abstractions::metric::OUTBOX_SAMPLE_S;
 use lr_abstractions::{Level, OutboxKind, Stop};
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{JobResult, ReasonCode, RunnerToBroker};
+use std::sync::Arc;
 use std::time::Duration;
 
-pub(crate) async fn background<T>(shared: &Shared, next_sweep: &mut Timestamp) -> T {
+pub(crate) async fn background<T>(shared: &Arc<Shared>, next_sweep: &mut Timestamp) -> T {
     tokio::select! {
         never = sweeper(shared, next_sweep) => never,
         never = lost_killer(shared) => never,
         never = outbox_sampler(shared) => never,
+        never = service_reaper(shared) => never,
     }
 }
 
@@ -90,6 +93,7 @@ pub(crate) async fn recover(shared: &Shared) {
         ),
     }
     shared.release_disk().await;
+    shared.forget_undeclared_services().await;
     shared.services().kill_orphans().await;
     shared.forget_finished().await;
     shared.sweep().await;

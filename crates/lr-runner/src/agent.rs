@@ -3,6 +3,7 @@ use crate::cache::{CacheLayout, Caches};
 use crate::connect::{session, End};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
+use crate::service_book::Book;
 use crate::services::Services;
 use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
@@ -11,7 +12,7 @@ use lr_abstractions::{
     ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle,
 };
 use lr_core::{JobId, Timestamp};
-use lr_proto::{ProtocolError, ReasonCode, WireCapabilities};
+use lr_proto::{ProtocolError, ReasonCode, WireCapabilities, WireServiceStatus};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -115,6 +116,7 @@ pub(crate) struct State {
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
     pub(crate) next_outbox_sample: Timestamp,
+    pub(crate) services: Book,
 }
 
 pub(crate) struct Shared {
@@ -123,6 +125,7 @@ pub(crate) struct Shared {
     pub(crate) outbox: Outbox,
     pub(crate) wake: Arc<Notify>,
     pub(crate) status: Notify,
+    pub(crate) services_changed: Notify,
     pub(crate) sweep_lock: tokio::sync::Mutex<()>,
     pub(crate) state: Mutex<State>,
 }
@@ -170,6 +173,10 @@ impl Shared {
         let used = self.caches().used_mb().await;
         let mut caps = self.deps.settings.capabilities(used);
         caps.disk_mb = self.free_disk_mb().await;
+        for name in &self.state().services.unavailable {
+            caps.services
+                .insert(name.clone(), WireServiceStatus::Unavailable);
+        }
         caps
     }
 
@@ -268,6 +275,7 @@ impl RunnerAgent {
                 outbox,
                 wake,
                 status: Notify::new(),
+                services_changed: Notify::new(),
                 sweep_lock: tokio::sync::Mutex::new(()),
                 state: Mutex::new(State {
                     job: None,
@@ -277,6 +285,7 @@ impl RunnerAgent {
                     lost_since,
                     in_use: Vec::new(),
                     next_outbox_sample: Timestamp(0),
+                    services: Book::default(),
                 }),
             }),
             control_tx,

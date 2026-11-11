@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod svc;
 pub mod wrap;
 
 use lr_abstractions::fakes::{

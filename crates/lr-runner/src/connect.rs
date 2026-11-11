@@ -71,6 +71,13 @@ impl Session<'_> {
     }
 
     async fn flush(&mut self) -> bool {
+        let services = std::mem::take(&mut self.shared.state().services.dirty);
+        if services {
+            let report = self.shared.services().report(self.shared.now()).await;
+            if !self.send(&RunnerToBroker::ServicesReport(report)).await {
+                return false;
+            }
+        }
         for frame in self.replay.frames(&self.shared.outbox).await {
             if !send_within(self.shared, self.t, frame, self.limit).await {
                 return false;
@@ -138,6 +145,7 @@ impl Session<'_> {
             "authorization refused",
         );
         self.slot.wait().await;
+        self.shared.stop_all_services().await;
         if let Err(err) = self.shared.deps.store.clear_outbox().await {
             self.shared.diag.event(
                 Level::Error,
@@ -197,11 +205,7 @@ impl Session<'_> {
             }
             BrokerToRunner::Assign(a) => on_assign(self, a).await,
             BrokerToRunner::Cancel(c) => on_cancel(self, c).await,
-            BrokerToRunner::StopService(s) => {
-                self.shared.services().stop(&s.name).await;
-                let report = self.shared.services().report(self.shared.now()).await;
-                self.send(&RunnerToBroker::ServicesReport(report)).await;
-            }
+            BrokerToRunner::StopService(s) => self.shared.stop_service_detached(s.name),
             BrokerToRunner::SettingsUpdate(u) => {
                 self.shared.set_broker_lost_kill(u.broker_lost_kill_s);
             }
@@ -319,6 +323,8 @@ pub(crate) async fn session(
     let mut last_rx = shared.now();
     loop {
         if s.idle_and_stopping().await {
+            shared.stop_all_services().await;
+            s.flush().await;
             s.send(&RunnerToBroker::Bye(Bye {
                 reason: Some("runner stopped".into()),
             }))

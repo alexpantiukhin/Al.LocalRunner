@@ -247,22 +247,34 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
             &[("job", &job.0), ("error", &e)],
         );
     }
+    let mut held = Vec::new();
     let f = match step_secrets(shared, &a.spec).await {
         Err(f) => {
             skip_steps(shared, &job, &a.spec.steps, 0).await;
             f
         }
         Ok(secrets) => {
-            let env = job_env(shared, &job);
-            let prepared = Prepared {
-                job: job.clone(),
-                spec: &a.spec,
-                secrets,
-                env,
-            };
-            run_phases(shared, prepared, signal).await
+            let (acquired, ready) = shared.acquire_services(&a.spec, &signal).await;
+            held = acquired;
+            match ready {
+                Err(f) => {
+                    skip_steps(shared, &job, &a.spec.steps, 0).await;
+                    f
+                }
+                Ok(()) => {
+                    let env = job_env(shared, &job);
+                    let prepared = Prepared {
+                        job: job.clone(),
+                        spec: &a.spec,
+                        secrets,
+                        env,
+                    };
+                    run_phases(shared, prepared, signal).await
+                }
+            }
         }
     };
+    shared.release_services(&held).await;
     let reason = shared.state().job.as_ref().and_then(|c| c.reason.clone());
     let f = Final {
         reason: f.reason.or(if f.state == JobState::Cancelled {

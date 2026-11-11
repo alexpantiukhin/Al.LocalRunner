@@ -117,7 +117,7 @@ pub(crate) async fn step_secrets(
     Ok(out)
 }
 
-pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
+pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
     let s = &shared.deps.settings;
     let mut env = Vec::new();
     for (name, value) in [("PATH", &s.path), ("HOME", &s.home), ("TEMP", &s.temp)] {
@@ -125,6 +125,11 @@ pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
             env.push((name.to_string(), v.clone()));
         }
     }
+    env
+}
+
+pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
+    let mut env = base_env(shared);
     env.push(("LOCALRUNNER_JOB_ID".to_string(), job.0.clone()));
     env
 }

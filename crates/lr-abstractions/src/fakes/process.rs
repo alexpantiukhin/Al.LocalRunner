@@ -109,6 +109,7 @@ struct Calls {
     runs: Vec<JobSpec>,
     spawns: Vec<SpawnSpec>,
     kills: Vec<ProcessRef>,
+    refused: Vec<String>,
     next_pid: u32,
 }
 
@@ -141,6 +142,11 @@ impl FakeProcessRunner {
     /// Scripts the job `job`.
     pub fn script(&self, job: JobId, script: JobScript) {
         self.calls.lock().unwrap().scripts.insert(job, script);
+    }
+
+    /// Makes every later `spawn` of `command` fail, as a program that cannot be started.
+    pub fn refuse_spawn(&self, command: &str) {
+        self.calls.lock().unwrap().refused.push(command.to_string());
     }
 
     /// Every job spec passed to `run_job`, in call order.
@@ -308,6 +314,10 @@ impl ProcessRunner for FakeProcessRunner {
     async fn spawn(&self, spec: SpawnSpec) -> Result<ProcessRef, ProcessError> {
         let process = {
             let mut calls = self.calls.lock().unwrap();
+            if calls.refused.contains(&spec.command) {
+                calls.spawns.push(spec);
+                return Err(ProcessError::Spawn("program not found".to_string()));
+            }
             calls.next_pid += 1;
             calls.spawns.push(spec);
             ProcessRef {

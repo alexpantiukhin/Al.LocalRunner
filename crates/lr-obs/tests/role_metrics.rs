@@ -14,19 +14,10 @@ fn every_name_the_roles_use_is_in_the_catalog() {
     for name in ALL {
         assert!(CATALOG.iter().any(|d| d.name == *name), "{name}");
     }
-    let service = [
-        "service_up",
-        "service_starts_total",
-        "service_failures_total",
-    ];
     for def in CATALOG {
         let short = def.name.trim_start_matches(PREFIX);
         let by_roles = ALL.contains(&def.name) || short == "log_dropped_total";
-        assert!(
-            by_roles || service.contains(&short),
-            "{} has no writer",
-            def.name
-        );
+        assert!(by_roles, "{} has no writer", def.name);
     }
 }
 
@@ -65,6 +56,10 @@ fn updates_as_the_roles_send_them_are_all_accepted() {
     for reason in ["size", "age"] {
         m.add(CACHE_EVICTED_TOTAL, &[(RUNNER, "r1"), (REASON, reason)], 1);
     }
+    let service = [(RUNNER, "r1"), (SERVICE, "build-daemon")];
+    m.set(SERVICE_UP, &service, 1.0);
+    m.add(SERVICE_STARTS_TOTAL, &service, 1);
+    m.add(SERVICE_FAILURES_TOTAL, &service, 1);
     for role in ["hub", "broker", "runner"] {
         m.set(OUTBOX_PENDING, &[(ROLE, role)], 0.0);
         m.set(OUTBOX_OLDEST_AGE_SECONDS, &[(ROLE, role)], 0.0);

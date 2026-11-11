@@ -46,6 +46,14 @@ pub mod metric {
     pub const CACHE_USED_MB: &str = "localrunner_cache_used_mb";
     /// Cache entries removed, by `runner` and `reason` (`size`, `age`) (counter).
     pub const CACHE_EVICTED_TOTAL: &str = "localrunner_cache_evicted_total";
+    /// 1 while a runner service is ready, 0 once it is gone, by `runner` and `service`
+    /// (gauge).
+    pub const SERVICE_UP: &str = "localrunner_service_up";
+    /// Start attempts of a runner service, by `runner` and `service` (counter).
+    pub const SERVICE_STARTS_TOTAL: &str = "localrunner_service_starts_total";
+    /// Failures of a runner service (start, readiness, crash), by `runner` and `service`
+    /// (counter).
+    pub const SERVICE_FAILURES_TOTAL: &str = "localrunner_service_failures_total";
     /// Messages waiting in the outbox of a role, by `role` (gauge).
     pub const OUTBOX_PENDING: &str = "localrunner_outbox_pending";
     /// Age of the oldest waiting outbox message, by `role` (gauge, s).
@@ -66,6 +74,9 @@ pub mod metric {
         RUNNER_ONLINE,
         CACHE_USED_MB,
         CACHE_EVICTED_TOTAL,
+        SERVICE_UP,
+        SERVICE_STARTS_TOTAL,
+        SERVICE_FAILURES_TOTAL,
         OUTBOX_PENDING,
         OUTBOX_OLDEST_AGE_SECONDS,
         POLICY_RELOAD_TOTAL,
@@ -81,6 +92,8 @@ pub mod metric {
     pub const REASON: &str = "reason";
     /// Label: result of an order or a reload.
     pub const RESULT: &str = "result";
+    /// Label: service name, only names declared in `runner.toml`.
+    pub const SERVICE: &str = "service";
     /// Label: role of the process.
     pub const ROLE: &str = "role";
     /// Label: client label, kept only when `[metrics] client_label = true`.
