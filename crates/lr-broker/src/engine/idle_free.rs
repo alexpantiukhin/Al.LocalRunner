@@ -8,17 +8,12 @@ use lr_core::{JobId, Plan, Timestamp};
 use lr_proto::ServiceState;
 
 impl Engine {
-    /// Memory held by live services that are not idle.
+    /// Memory held by services that are starting or busy; a stopping service frees its memory.
     pub(crate) fn busy_service_mem_mb(&self) -> u64 {
         self.runners
             .values()
             .flat_map(|slot| slot.services.iter())
-            .filter(|s| {
-                matches!(
-                    s.state,
-                    ServiceState::Starting | ServiceState::Busy | ServiceState::Stopping
-                )
-            })
+            .filter(|s| matches!(s.state, ServiceState::Starting | ServiceState::Busy))
             .fold(0u64, |a, s| a.saturating_add(s.mem_mb))
     }
 

@@ -178,7 +178,9 @@ impl Engine {
     /// of over-committing the pool.
     pub(crate) fn plan_pass(&self, now: Timestamp) -> Plan {
         let held = self.plan_holding(now, self.service_mem_mb());
-        if !self.policy.file().services.evict_idle || held.assignments.is_empty() {
+        let head_on_memory = matches!(held.waiting.first(), Some((_, Wait::Memory { .. })));
+        if !self.policy.file().services.evict_idle || held.assignments.is_empty() || !head_on_memory
+        {
             return held;
         }
         self.within_idle_free_plan(now, held)
