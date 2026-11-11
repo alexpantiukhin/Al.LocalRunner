@@ -41,6 +41,12 @@ async fn finished(
         )
         .await
         .unwrap();
+    if end == JobState::Cancelled {
+        store
+            .transition(&key, Transition::to(JobState::Cancelling, at(times.2)))
+            .await
+            .unwrap();
+    }
     store
         .transition(&key, Transition::to(end, at(times.2)))
         .await
@@ -115,6 +121,23 @@ pub async fn stats_count_final_runs_with_median_and_p95(store: &dyn BrokerStore)
         ..StatsQuery::default()
     };
     assert_eq!(store.stats(&mine).await.unwrap().profiles[0].runs, 1);
+}
+
+/// Stats count timed out, cancelled and lost runs of a profile apart from passed and failed.
+pub async fn stats_count_timeouts_cancels_and_losses(store: &dyn BrokerStore) {
+    finished(store, "c1", "a", "check", (0, 10, 20), JobState::Passed).await;
+    finished(store, "c1", "b", "check", (0, 10, 70), JobState::Timeout).await;
+    finished(store, "c1", "c", "check", (0, 10, 30), JobState::Timeout).await;
+    finished(store, "c2", "d", "check", (0, 10, 15), JobState::Cancelled).await;
+    finished(store, "c2", "e", "check", (0, 10, 40), JobState::Lost).await;
+    let stats = store.stats(&StatsQuery::default()).await.unwrap();
+    let p = &stats.profiles[0];
+    assert_eq!(
+        (p.runs, p.passed, p.failed, p.timeouts, p.cancelled, p.lost),
+        (5, 1, 0, 2, 1, 1)
+    );
+    assert_eq!(stats.clients[0].busy_ms, 90_000);
+    assert_eq!(stats.clients[1].busy_ms, 35_000);
 }
 
 async fn with_log(store: &dyn BrokerStore, key: &JobKey, bytes: usize) {
