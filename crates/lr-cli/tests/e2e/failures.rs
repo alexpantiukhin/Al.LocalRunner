@@ -60,6 +60,7 @@ impl Drop for Release {
     }
 }
 
+// scenario: 16.21
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kill_runner_mid_job_marks_lost_after_deadline() {
     let dir = TempDir::new("e2e-lost");
@@ -133,6 +134,7 @@ async fn kill_runner_mid_job_marks_lost_after_deadline() {
     remove(dir).await;
 }
 
+// scenario: 16.20
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn broker_restart_keeps_queue() {
     let dir = TempDir::new("e2e-restart");
@@ -253,6 +255,7 @@ fn alive(pid: u32, start: u64) -> bool {
     OsProcessInspector.liveness(pid, start) == Liveness::Alive
 }
 
+// scenario: 16.21
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn timeout_kills_grandchildren() {
     let dir = TempDir::new("e2e-timeout");

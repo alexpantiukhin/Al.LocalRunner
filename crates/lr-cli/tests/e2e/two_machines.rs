@@ -38,6 +38,8 @@ fn file_url(path: &Path) -> String {
     }
 }
 
+// scenario: 16.2
+// scenario: 16.12
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn join_runner_by_code_then_job_runs_remote() {
     let dir = TempDir::new("e2e-two");

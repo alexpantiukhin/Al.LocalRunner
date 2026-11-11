@@ -63,6 +63,7 @@ fn service_toml(dir: &TempDir) -> String {
     )
 }
 
+// scenario: 16.15
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_per_job_service_tree_is_ready_for_the_job_and_gone_after_it() {
     let dir = TempDir::new("e2e-service");

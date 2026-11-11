@@ -19,6 +19,8 @@ fn echo_secret() -> String {
     }
 }
 
+// scenario: 16.1
+// scenario: 16.11
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn single_machine_submit_wait_passes_and_history_has_one_row() {
     let dir = TempDir::new("e2e-single");
