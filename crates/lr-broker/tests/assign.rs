@@ -384,3 +384,35 @@ async fn the_cache_share_is_taken_from_the_policy_at_assignment() {
     let a = back.assign().await;
     assert_eq!(a.spec.cache_client.as_deref(), Some(SHARED_CACHE_CLIENT));
 }
+
+#[tokio::test]
+async fn priority_and_runner_preference_are_independent() {
+    let h = Harness::start(
+        "[[rule]]\nname = \"ci-first\"\nwhen = { client_label = \"ci\" }\npriority = 100\n",
+    );
+    let mut near = h.local_runner("alex", "r-near", linux()).await;
+    let mut far = h.member_runner("r-far", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("fill-near", req(512, 1, 60))).await;
+    alex.accepted().await;
+    assert_eq!(near.assign().await.job, JobId("fill-near".into()));
+    near.send(&started("fill-near", 1)).await;
+    alex.send(&order("fill-far", req(512, 1, 60))).await;
+    alex.accepted().await;
+    assert_eq!(far.assign().await.job, JobId("fill-far".into()));
+    far.send(&started("fill-far", 1)).await;
+    alex.send(&order("low", req(512, 1, 60))).await;
+    assert!(alex.accepted().await.waiting.is_some());
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.21").await;
+    ci.send(&order("high", req(512, 1, 60))).await;
+    assert!(ci.accepted().await.waiting.is_some());
+    near.send(&result("fill-near", 2, JobState::Passed, 0))
+        .await;
+    assert_eq!(
+        near.assign().await.job,
+        JobId("high".into()),
+        "the free runner is the nearest one for alex, yet the higher priority goes first"
+    );
+    far.send(&result("fill-far", 2, JobState::Passed, 0)).await;
+    assert_eq!(far.assign().await.job, JobId("low".into()));
+}

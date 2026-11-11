@@ -1,9 +1,11 @@
 mod common;
 
+use common::faulty::FaultyStore;
 use common::harness::*;
 use lr_core::{JobId, StepSpec};
 use lr_proto::*;
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 const GUEST_NAMED: &str = "[[commands.client]]\nlabel = \"guest\"\nmode = \"named\"\n";
 
@@ -232,5 +234,58 @@ async fn names_split_between_runners_are_rejected_as_no_matching_runner() {
         r.detail.contains("команда build не описана"),
         "{}",
         r.detail
+    );
+}
+
+#[tokio::test]
+async fn a_resent_named_order_keeps_its_names_after_a_reload_to_any() {
+    let h = Harness::start(GUEST_NAMED);
+    let r = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
+    r.close().await;
+    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
+    guest.until_runner("r1", false).await;
+    FaultyStore::set(&h.faults.fail_accept_seq);
+    guest.send(&order_of("j1", &["build"])).await;
+    match guest.hub().await {
+        BrokerToHub::Error(e) => assert_eq!(e.code, ProtocolErrorCode::Unavailable),
+        other => panic!("expected an unavailable error, got {other:?}"),
+    }
+    FaultyStore::clear(&h.faults.fail_accept_seq);
+    h.handle
+        .reload_policy(&policy(""))
+        .await
+        .expect("reload applies");
+    guest.send(&order_of("j1", &["build"])).await;
+    guest.accepted().await;
+    let mut back = rejoin(&h, "r1", naming(&["build"])).await;
+    assert_named(&back.assign().await);
+}
+
+#[tokio::test]
+async fn the_restart_remark_ends_once_the_grace_period_after_a_restart_is_over() {
+    let h = Harness::start(GUEST_NAMED);
+    let r = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
+    r.close().await;
+    let h = h.restart().await;
+    let rule = "команда build не входит в названия раннеров: ярлыку guest разрешены только \
+                названия из списка раннера";
+    h.clock.advance(Duration::from_secs(3 * 60 - 1));
+    h.poke().await;
+    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
+    guest.send(&order_of("j1", &["build"])).await;
+    assert_eq!(
+        guest.rejected().await.detail,
+        format!("{rule} (раннеры ещё не вернулись после перезапуска брокера, повторите)")
+    );
+    h.clock.advance(Duration::from_secs(1));
+    h.poke().await;
+    let mut guest = h.dial(member_peer("pk-visitor", "10.0.0.22")).await;
+    guest.send(&hello("visitor", None)).await;
+    guest.welcome().await;
+    guest.send(&order_of("j2", &["build"])).await;
+    assert_eq!(
+        guest.rejected().await.detail,
+        format!("{rule} (раннеры этого брокера названий не сообщают)"),
+        "[grace] lost_min = 3 after the restart: a runner that never came back is not awaited"
     );
 }
