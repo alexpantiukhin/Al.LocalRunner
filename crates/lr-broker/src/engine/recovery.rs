@@ -74,6 +74,7 @@ impl Engine {
             cache_max_mb: Some(row.cache_max_mb),
             cache_used_mb: Some(row.cache_used_mb),
             service_mem_mb: Default::default(),
+            commands: Default::default(),
         }
     }
 

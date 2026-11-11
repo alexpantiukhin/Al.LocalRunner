@@ -150,12 +150,13 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     let spec = p.spec;
     let now = shared.now();
     let caches = shared.caches();
+    let cache_client = spec.cache_client.as_deref().unwrap_or(&spec.client);
     let keys: Vec<CacheKey> = spec
         .requirements
         .cache
         .iter()
         .map(|name| CacheKey {
-            client: spec.client.clone(),
+            client: cache_client.to_string(),
             project: spec.project.clone(),
             name: name.clone(),
         })
@@ -181,7 +182,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     }
     let mut env = p.env.clone();
     match caches
-        .open(&spec.client, &spec.project, &spec.requirements.cache, now)
+        .open(cache_client, &spec.project, &spec.requirements.cache, now)
         .await
     {
         Ok((_, cache_env)) => env.extend(cache_env),

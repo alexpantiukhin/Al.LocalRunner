@@ -118,7 +118,22 @@ pub struct AssignSpec {
     pub code: WireCode,
     /// Seconds after which the runner kills the job if the broker is unreachable.
     pub broker_lost_kill_s: Option<u64>,
+    /// Set for a client limited to named commands (`[commands] mode = "named"`, spec 3.5): the
+    /// command of every step is a name the runner resolves through its own `[commands]`, never
+    /// a command line to run. Absent from brokers of an earlier minor version.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub named_commands: bool,
+    /// Client part of the cache key when it is not `client`: [`SHARED_CACHE_CLIENT`] under
+    /// `[cache] share = "project"`, so the clients of one project share their named caches.
+    /// Absent: the cache belongs to `client` alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_client: Option<String>,
 }
+
+/// Client part of the cache key the broker sends under `[cache] share = "project"`: the same
+/// for every client, so the cache key is the project and the cache name. It is neither a
+/// public key (`ed25519:`) nor a local client key (`local:`).
+pub const SHARED_CACHE_CLIENT: &str = "shared:project";
 
 /// Broker's assignment of a job to a runner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

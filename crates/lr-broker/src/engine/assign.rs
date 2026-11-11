@@ -1,11 +1,13 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
 use super::{Engine, Job};
+use crate::policy::CacheShare;
 use lr_abstractions::{Applied, Frame, Inbound, Level, OutboxKind, StepUpdate, StoreError};
 use lr_core::{Assignment, JobId, JobState, RunningJob, Timestamp, Wait};
 use lr_proto::{
     receive, Ack, Assign, AssignSpec, BrokerToHub, BrokerToRunner, Chunk, JobResult, ProtocolError,
     ProtocolErrorCode, QueueEvent, ReasonCode, Received, RunnerToBroker, StepResult, StepView,
+    SHARED_CACHE_CLIENT,
 };
 use serde_json::Value;
 
@@ -79,6 +81,8 @@ impl Engine {
         let mut job = self.queue.remove(i);
         let seq = self.store.next_seq_to_runner(&job.key).await.unwrap_or(1);
         let spec = &job.spec;
+        let cache_client = (self.policy.file().cache.share == CacheShare::Project)
+            .then(|| SHARED_CACHE_CLIENT.to_string());
         self.send(
             conn,
             &BrokerToRunner::Assign(Assign {
@@ -99,6 +103,8 @@ impl Engine {
                         .collect(),
                     code: spec.code.clone(),
                     broker_lost_kill_s: Some(self.lost_kill_s()),
+                    named_commands: !job.entry.order.requirements.commands.is_empty(),
+                    cache_client,
                 }),
             }),
         );

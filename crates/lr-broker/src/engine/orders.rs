@@ -262,7 +262,8 @@ impl Engine {
         self.admit_fit(entry, spec)
     }
 
-    fn job_of(&mut self, client: &Client, key: &JobKey, spec: OrderSpec) -> Job {
+    fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
+        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec.steps);
         let mut requirements = spec.requirements.clone();
         if requirements.same_machine.is_some() {
             requirements.same_machine = Some(MachineRef(client.key.clone()));

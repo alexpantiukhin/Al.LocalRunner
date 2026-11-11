@@ -15,7 +15,7 @@ pub const WORKSPACE_CLIENT: &str = "";
 
 /// Where named caches live: `<state>/cache/<client>/<project>/<name>`, each part a safe
 /// directory name made unique by a hash, so two clients never share a directory unless the
-/// broker sends them the same client key (`[cache] share = "project"`).
+/// broker sends them the same cache client (`[cache] share = "project"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheLayout {
     root: PathBuf,

@@ -1,10 +1,12 @@
 use crate::agent::{Current, Shared};
 use crate::connect::Session;
-use crate::prepare::{job_env, step_secrets, Prepared};
+use crate::prepare::{job_env, resolve_commands, step_secrets, Prepared};
 use crate::run::run_phases;
 use lr_abstractions::{stop_signal, Level, Stop, StoreError};
 use lr_core::{JobId, JobState, StepState};
-use lr_proto::{Assign, JobResult, ReasonCode, RunnerCancel, RunnerToBroker, Started, StepResult};
+use lr_proto::{
+    Assign, JobResult, ReasonCode, RejectReason, RunnerCancel, RunnerToBroker, Started, StepResult,
+};
 use std::sync::Arc;
 
 pub(crate) struct Final {
@@ -87,17 +89,18 @@ pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
         .await;
 }
 
-async fn refuse(s: &Session<'_>, a: &Assign, detail: String) {
+async fn refuse(s: &Session<'_>, a: &Assign, f: Final) {
+    let why = f.detail.clone().unwrap_or_default();
     s.shared.diag.event(
         Level::Warn,
         "assignment refused",
-        &[("job", &a.job.0), ("why", &detail)],
+        &[("job", &a.job.0), ("why", &why)],
     );
     s.shared
         .outbox
         .push_once(
             &a.job,
-            &result_msg(&a.job, Final::failed(detail)),
+            &result_msg(&a.job, f),
             "job result not stored, dropped",
         )
         .await;
@@ -124,7 +127,7 @@ pub(crate) async fn skip_steps(
     }
 }
 
-pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
+pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
     let shared = s.shared;
     let was_known = match known(shared, &a.job).await {
         Ok(k) => k,
@@ -172,7 +175,14 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
             })
     };
     if let Some(detail) = refusal {
-        return refuse(s, &a, detail).await;
+        return refuse(s, &a, Final::failed(detail)).await;
+    }
+    if let Err(detail) = resolve_commands(&shared.deps.settings.commands, &mut a.spec) {
+        let f = Final {
+            reason: Some(ReasonCode::Rejected(RejectReason::CommandNotAllowed)),
+            ..Final::failed(detail)
+        };
+        return refuse(s, &a, f).await;
     }
     if let Err(e) = shared
         .deps
@@ -187,7 +197,7 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
             &[("job", &a.job.0), ("error", &e.to_string())],
         );
         skip_steps(shared, &a.job, &a.spec.steps, 0).await;
-        return refuse(s, &a, detail).await;
+        return refuse(s, &a, Final::failed(detail)).await;
     }
     let (handle, signal) = stop_signal();
     shared.state().job = Some(Current {

@@ -39,6 +39,11 @@ pub struct Requirements {
     pub cache: Vec<String>,
     /// Farthest allowed runner zone.
     pub max_zone: Option<Zone>,
+    /// Command names the runner must declare: the broker fills them from the steps of a client
+    /// limited to named commands (`[commands] mode = "named"`, spec 3.5) and empties them for any
+    /// other client; absent from senders of an earlier minor version.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub commands: BTreeSet<String>,
 }
 
 impl Requirements {
@@ -97,6 +102,7 @@ impl Requirements {
             secrets,
             cache: p.cache.clone(),
             max_zone: p.zone,
+            commands: BTreeSet::new(),
         })
     }
 }

@@ -47,6 +47,10 @@ pub struct WireCapabilities {
     /// starts (spec 3.11); absent from runners of an earlier minor version.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub service_mem_mb: BTreeMap<String, u64>,
+    /// Command names of `runner.toml` `[commands]`, for clients limited to named commands
+    /// (spec 3.5); absent from runners of an earlier minor version.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub commands: BTreeSet<String>,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -75,6 +79,7 @@ impl From<&Capabilities> for WireCapabilities {
             cache_max_mb: None,
             cache_used_mb: None,
             service_mem_mb: BTreeMap::new(),
+            commands: c.commands.clone(),
         }
     }
 }
@@ -108,6 +113,7 @@ impl WireCapabilities {
             accept: Accept {
                 min_mem_mb: self.accept_min_mem_mb,
             },
+            commands: self.commands,
         }
     }
 }

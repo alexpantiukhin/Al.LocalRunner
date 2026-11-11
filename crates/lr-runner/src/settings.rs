@@ -80,6 +80,9 @@ pub struct RunnerSettings {
     pub temp: Option<String>,
     /// `[service.*]`: declared services by name.
     pub services: BTreeMap<String, ServiceSpec>,
+    /// `[commands]`: command lines by name, the only ones run for a client limited to named
+    /// commands (`[commands] mode = "named"` of the broker, spec 3.5).
+    pub commands: BTreeMap<String, String>,
 }
 
 /// Why `runner.toml` was refused.
@@ -144,6 +147,8 @@ struct File {
     env: Env,
     #[serde(default)]
     service: BTreeMap<String, RawService>,
+    #[serde(default)]
+    commands: BTreeMap<String, String>,
 }
 
 fn retention(section: &str, f: RetentionFile) -> Result<Retention, SettingsError> {
@@ -181,6 +186,7 @@ impl RunnerSettings {
             home: None,
             temp: None,
             services: BTreeMap::new(),
+            commands: BTreeMap::new(),
         }
     }
 
@@ -204,6 +210,17 @@ impl RunnerSettings {
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
         s.services = services(f.service)?;
+        if let Some(name) = f
+            .commands
+            .iter()
+            .find(|(_, c)| c.trim().is_empty())
+            .map(|(n, _)| n)
+        {
+            return Err(SettingsError(format!(
+                "[commands] {name} has an empty command line"
+            )));
+        }
+        s.commands = f.commands;
         Ok(s)
     }
 
@@ -242,6 +259,7 @@ impl RunnerSettings {
                 .iter()
                 .map(|(n, s)| (n.clone(), s.memory_mb))
                 .collect(),
+            commands: self.commands.keys().cloned().collect(),
         }
     }
 }

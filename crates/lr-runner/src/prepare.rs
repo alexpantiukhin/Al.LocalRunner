@@ -25,6 +25,25 @@ impl Prepared<'_> {
     }
 }
 
+pub(crate) fn resolve_commands(
+    named: &BTreeMap<String, String>,
+    spec: &mut AssignSpec,
+) -> Result<(), String> {
+    if !spec.named_commands {
+        return Ok(());
+    }
+    for step in &mut spec.steps {
+        let Some(line) = named.get(&step.command) else {
+            return Err(format!(
+                "command {} is not named in runner.toml [commands]; only named commands run for this client",
+                step.command
+            ));
+        };
+        step.command = line.clone();
+    }
+    Ok(())
+}
+
 pub(crate) fn secret_var(name: &str) -> String {
     name.chars()
         .map(|c| {

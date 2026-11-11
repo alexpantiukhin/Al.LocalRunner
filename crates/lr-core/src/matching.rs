@@ -44,6 +44,8 @@ pub struct Capabilities {
     pub machine: Option<MachineRef>,
     /// Reserve rule of the owner.
     pub accept: Accept,
+    /// Command names the owner declared for clients limited to named commands.
+    pub commands: BTreeSet<String>,
 }
 
 /// One reason a runner does not suit an order.
@@ -111,6 +113,11 @@ pub enum MismatchReason {
         /// Farthest allowed zone.
         allowed: Zone,
     },
+    /// A command name of the order is not declared by the runner.
+    CommandMissing {
+        /// Command name.
+        name: String,
+    },
     /// The order is lighter than the owner's reserve.
     BelowAccept {
         /// Memory of the order.
@@ -144,6 +151,7 @@ impl fmt::Display for MismatchReason {
             Self::Zone { runner, allowed } => {
                 write!(f, "зона раннера {runner}, допустима не дальше {allowed}")
             }
+            Self::CommandMissing { name } => write!(f, "команда {name} не описана"),
             Self::BelowAccept { needed, min } => {
                 write!(f, "заказ на {needed} МБ легче допуска раннера {min} МБ")
             }
@@ -232,6 +240,11 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
                 name: service.clone(),
             }),
             Some(ServiceStatus::Available) => {}
+        }
+    }
+    for name in &req.commands {
+        if !caps.commands.contains(name) {
+            reasons.push(MismatchReason::CommandMissing { name: name.clone() });
         }
     }
     if let Some(allowed) = req.max_zone {
