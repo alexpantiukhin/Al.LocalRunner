@@ -1,6 +1,6 @@
 use crate::common::TempDir;
 use crate::repo_root;
-use crate::scripts::{first_powershell, KEY_PLACEHOLDER};
+use crate::scripts::first_powershell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -53,6 +53,7 @@ fn sums_line(hash: &str, name: &str) -> String {
 #[cfg(unix)]
 mod sh {
     use super::*;
+    use crate::scripts::KEY_PLACEHOLDER;
     use std::os::unix::fs::PermissionsExt;
 
     const ARCHIVE: &str = "al-localrunner-linux-x64.tar.gz";

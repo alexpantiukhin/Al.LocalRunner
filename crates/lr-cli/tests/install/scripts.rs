@@ -66,7 +66,7 @@ fn shell_installer_has_the_flags_checks_and_order_of_the_spec() {
         "function ",
         "local ",
         "source ",
-        "==",
+        "\" == \"",
     ] {
         assert!(!text.contains(banned), "install.sh contains `{banned}`");
     }

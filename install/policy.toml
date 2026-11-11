@@ -1,0 +1,9 @@
+# Broker policy in a container (spec 3.5, 10.4): the broker listens on every interface of the
+# container; compose.yaml publishes port 7443 on one host interface.
+[listen]
+address = "container"
+
+# The Compose network of compose.yaml: the runner container and connections through the
+# published port come from it.
+[networks]
+compose = ["172.30.57.0/24"]
