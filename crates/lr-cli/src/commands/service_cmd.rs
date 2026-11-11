@@ -15,8 +15,8 @@ fn apply(actions: &[Action], dry_run: bool) -> Result<(), String> {
     apply_all(system, actions)
 }
 
-fn needs_admin(what: &str, dry_run: bool) -> Result<(), String> {
-    if dry_run || crate::host::is_elevated() {
+fn needs_admin(what: &str, dry_run: bool, elevated: bool) -> Result<(), String> {
+    if dry_run || elevated {
         Ok(())
     } else {
         Err(format!(
@@ -44,7 +44,13 @@ pub fn install_service_plan(layout: &Layout) -> Result<Vec<Action>, String> {
 
 /// `broker install-service [--dry-run]`.
 pub fn install_service(layout: &Layout, dry_run: bool) -> Result<i32, String> {
-    needs_admin("broker install-service", dry_run)?;
+    install_service_with(layout, dry_run, crate::host::is_elevated())
+}
+
+/// `broker install-service` in a process whose rights are `elevated`: without them and without
+/// `--dry-run` it is refused before any change (spec 16.5).
+pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> Result<i32, String> {
+    needs_admin("broker install-service", dry_run, elevated)?;
     let plan = install_service_plan(layout)?;
     if dry_run {
         apply(&plan, true)?;
@@ -151,6 +157,19 @@ pub fn autostart(
     runner: Option<String>,
     dry_run: bool,
 ) -> Result<i32, String> {
+    autostart_with(layout, switch, role, runner, dry_run, crate::host::is_elevated())
+}
+
+/// `autostart` in a process whose rights are `elevated`: the broker service needs them unless
+/// `--dry-run` (spec 16.5).
+pub fn autostart_with(
+    layout: &Layout,
+    switch: Switch,
+    role: Option<RoleArg>,
+    runner: Option<String>,
+    dry_run: bool,
+    elevated: bool,
+) -> Result<i32, String> {
     let on = switch == Switch::On;
     if let Some(name) = runner {
         if role != Some(RoleArg::Runner) {
@@ -170,9 +189,9 @@ pub fn autostart(
     for role in chosen_roles(layout, role)? {
         if role == NodeRole::Broker {
             if on {
-                install_service(layout, dry_run)?;
+                install_service_with(layout, dry_run, elevated)?;
             } else {
-                needs_admin("autostart off broker", dry_run)?;
+                needs_admin("autostart off broker", dry_run, elevated)?;
                 apply(&uninstall_service_plan(), dry_run)?;
             }
             continue;
