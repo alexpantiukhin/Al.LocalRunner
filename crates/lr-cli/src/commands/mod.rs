@@ -7,6 +7,7 @@ pub mod history_cmd;
 pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
+pub mod logging_cmd;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
@@ -353,7 +354,7 @@ pub async fn run(cli: Cli) -> i32 {
         },
         Command::Logging {
             action: LoggingAction::Reload,
-        } => admin_cmd::simple(&layout, lr_proto::AdminRequest::LoggingReload).await,
+        } => logging_cmd::logging_reload(&layout).await,
         Command::Hub { action } => match action {
             HubAction::Run { background } => roles_cmd::hub_run(&layout, background).await,
             HubAction::Join {

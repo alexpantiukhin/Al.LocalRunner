@@ -39,6 +39,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
         },
         CliRequest::Orders,
         CliRequest::Shutdown,
+        CliRequest::LoggingReload,
     ]
 }
 
@@ -93,6 +94,7 @@ pub fn cli_replies() -> Vec<CliReply> {
             end: false,
         },
         CliReply::Stopping,
+        CliReply::Reloaded,
         CliReply::Error(protocol_error()),
     ]
 }
@@ -144,6 +146,7 @@ pub fn controls() -> Vec<RunnerControl> {
         RunnerControl::Down {
             mode: DownMode::Cancel,
         },
+        RunnerControl::LoggingReload,
     ]
 }
 

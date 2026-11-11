@@ -23,6 +23,10 @@ use tokio::sync::{mpsc, Notify};
 /// Name under which the broker of this machine (reached over local IPC) is listed.
 pub const LOCAL_BROKER: &str = "local";
 
+/// Rereads the diagnostics configuration of the hub (`logging reload`); `Err` says why the
+/// new configuration was refused.
+pub type ReloadLogging = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
 
@@ -64,6 +68,7 @@ pub(crate) struct Shared {
     pub(crate) log: Arc<dyn LogSink>,
     pub(crate) meter: Arc<dyn Meter>,
     pub(crate) name: String,
+    pub(crate) reload_logging: Option<ReloadLogging>,
     pub(crate) pending: Pending,
     next_req: AtomicU64,
     pub(crate) overflows: Overflows,
@@ -143,18 +148,31 @@ pub(crate) struct Engine {
 /// The hub role.
 pub struct Hub {
     deps: HubDeps,
+    reload_logging: Option<ReloadLogging>,
 }
 
 impl Hub {
     /// A hub over `deps`.
     pub fn new(deps: HubDeps) -> Hub {
-        Hub { deps }
+        Hub {
+            deps,
+            reload_logging: None,
+        }
+    }
+
+    /// The hub answers `logging reload` on its CLI channel with `reload`; without it the
+    /// command is refused.
+    pub fn with_logging_reload(mut self, reload: ReloadLogging) -> Hub {
+        self.reload_logging = Some(reload);
+        self
     }
 
     /// Serves until the IPC listener closes or its owner asks it to stop (`down`).
     pub async fn run(self) {
         let d = self.deps;
+        let reload_logging = self.reload_logging;
         let shared = Arc::new(Shared {
+            reload_logging,
             clock: d.clock.clone(),
             store: d.store,
             dialer: d.dialer,

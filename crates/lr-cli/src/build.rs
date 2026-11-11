@@ -76,6 +76,21 @@ pub fn logger(
     Ok(Arc::new(logger))
 }
 
+/// Rereads `path` (`logging.toml`; a missing file means the defaults) into `logger`; `Err`
+/// names why the file was refused, and the running configuration stays.
+pub fn reload_logging(path: &Path, logger: &Logger) -> Result<(), String> {
+    let text = read_optional(path)?;
+    LoggingConfig::load(text.as_deref())
+        .and_then(|c| logger.reload(&c))
+        .map_err(|e| e.to_string())
+}
+
+/// [`reload_logging`] of `logging.toml` of the installation, for a role's local channel.
+pub fn logging_reloader(layout: &Layout, logger: &Arc<Logger>) -> lr_hub::ReloadLogging {
+    let (path, logger) = (layout.config_file("logging.toml"), logger.clone());
+    Arc::new(move || reload_logging(&path, &logger))
+}
+
 fn ipc_dialer() -> Result<Arc<dyn Dialer>, String> {
     Ok(Arc::new(IpcDialer::new(
         crate::os_service::broker_servers()?
@@ -266,7 +281,8 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         meter: logger.metrics(),
         policy,
         name: crate::facts::host_name(),
-    });
+    })
+    .with_logging_reload(logging_reloader(layout, &logger));
     Ok(HubParts { hub, logger, ipc })
 }
 

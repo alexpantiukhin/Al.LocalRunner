@@ -1,21 +1,23 @@
-//! A runner's local control channel (spec 3.9): `down` reaches the runner here, never over the
-//! network.
+//! A runner's local control channel (spec 3.9): `down` and `logging reload` reach the runner
+//! here, never over the network.
 
 use crate::admin::open;
 use lr_abstractions::{Frame, Listener, Transport};
+use lr_hub::ReloadLogging;
 use lr_proto::{receive, ControlReply, DownMode, IpcChannel, PeerKind, Received, RunnerControl};
 use lr_runner::AgentControl;
 use std::sync::Arc;
 
-/// Serves the control channel of one runner on `listener` until it closes.
-pub async fn serve(listener: Arc<dyn Listener>, control: AgentControl) {
+/// Serves the control channel of one runner on `listener` until it closes; `reload` rereads
+/// the runner's `logging.toml`.
+pub async fn serve(listener: Arc<dyn Listener>, control: AgentControl, reload: ReloadLogging) {
     while let Ok(t) = listener.accept().await {
-        let control = control.clone();
-        tokio::spawn(async move { connection(Arc::from(t), control).await });
+        let (control, reload) = (control.clone(), reload.clone());
+        tokio::spawn(async move { connection(Arc::from(t), control, reload).await });
     }
 }
 
-async fn connection(t: Arc<dyn Transport>, control: AgentControl) {
+async fn connection(t: Arc<dyn Transport>, control: AgentControl, reload: ReloadLogging) {
     if !open(t.as_ref(), IpcChannel::RunnerControl).await {
         return;
     }
@@ -28,6 +30,10 @@ async fn connection(t: Arc<dyn Transport>, control: AgentControl) {
                 }
                 ControlReply::Ok
             }
+            Ok(Received::Message(RunnerControl::LoggingReload)) => match reload() {
+                Ok(()) => ControlReply::Ok,
+                Err(message) => ControlReply::Failed { message },
+            },
             Ok(Received::Ignored(kind)) => ControlReply::Failed {
                 message: format!("unknown control command `{kind}`"),
             },

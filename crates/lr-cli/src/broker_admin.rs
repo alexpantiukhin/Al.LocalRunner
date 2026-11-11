@@ -13,7 +13,7 @@ use lr_net::{
     BrokerIdentity, CodeRequest, IpcAccess, IpcListener, ListenAddr, Registry, TlsListener,
     DEFAULT_PORT,
 };
-use lr_obs::{Logger, LoggingConfig};
+use lr_obs::Logger;
 use lr_proto::{AdminReply, AdminRequest};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -217,16 +217,11 @@ impl BrokerAdmin {
     }
 
     fn logging_reload(&self) -> AdminReply {
-        let text = match std::fs::read_to_string(&self.logging_path) {
-            Ok(t) => Some(t),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return failed(format!("{}: {e}", self.logging_path.display())),
-        };
-        match LoggingConfig::load(text.as_deref()).and_then(|c| self.logger.reload(&c)) {
+        match crate::build::reload_logging(&self.logging_path, &self.logger) {
             Ok(()) => AdminReply::Ok {
                 warnings: Vec::new(),
             },
-            Err(e) => failed(e.to_string()),
+            Err(e) => failed(e),
         }
     }
 

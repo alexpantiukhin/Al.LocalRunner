@@ -183,6 +183,9 @@ pub enum CliRequest {
     /// `down`: stop the hub. Only its owner reaches the CLI channel; answered with
     /// [`CliReply::Stopping`] before the hub ends.
     Shutdown,
+    /// `logging reload`: reread the hub's `logging.toml`; answered with
+    /// [`CliReply::Reloaded`] or an error naming why the file was refused.
+    LoggingReload,
 }
 
 /// Messages from a hub to its CLI.
@@ -265,6 +268,8 @@ pub enum CliReply {
     },
     /// The hub stops (answer to [`CliRequest::Shutdown`]).
     Stopping,
+    /// The new `logging.toml` applies (answer to [`CliRequest::LoggingReload`]).
+    Reloaded,
     /// A refusal.
     Error(ProtocolError),
 }
@@ -361,6 +366,8 @@ pub enum RunnerControl {
         /// How.
         mode: DownMode,
     },
+    /// Reread the runner's `logging.toml`.
+    LoggingReload,
 }
 
 /// Answer of a runner's control channel.
@@ -380,7 +387,16 @@ message!(
     CliRequest,
     local: true,
     [
-        "submit", "done", "wait", "cancel", "read", "brokers", "jobs", "orders", "shutdown"
+        "submit",
+        "done",
+        "wait",
+        "cancel",
+        "read",
+        "brokers",
+        "jobs",
+        "orders",
+        "shutdown",
+        "logging_reload"
     ]
 );
 message!(
@@ -398,6 +414,7 @@ message!(
         "orders",
         "log_chunk",
         "stopping",
+        "reloaded",
         "error"
     ]
 );
@@ -421,7 +438,7 @@ message!(
     local: true,
     ["ok", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down"]);
+message!(RunnerControl, local: true, ["down", "logging_reload"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
 message!(ControlReply, local: true, ["ok", "failed"]);

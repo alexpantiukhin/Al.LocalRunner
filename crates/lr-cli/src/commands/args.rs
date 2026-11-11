@@ -40,7 +40,7 @@ pub enum PolicyAction {
 /// `logging ...`.
 #[derive(Subcommand, Debug)]
 pub enum LoggingAction {
-    /// Reread `logging.toml` of the broker.
+    /// Reread `logging.toml` in every running role (broker, hub, runners).
     Reload,
 }
 

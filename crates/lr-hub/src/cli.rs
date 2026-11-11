@@ -42,6 +42,7 @@ impl Engine {
             CliRequest::Jobs { label, active } => Some(self.jobs(&e.os_user, &label, active)),
             CliRequest::Orders => Some(self.orders(&e.os_user)),
             CliRequest::Shutdown => None,
+            CliRequest::LoggingReload => Some(self.reload_logging()),
         };
         if let Some(a) = answer {
             if reply.try_send(a).is_err() {
@@ -174,6 +175,23 @@ impl Engine {
         }
         self.start_selection(&job);
         None
+    }
+
+    fn reload_logging(&self) -> CliReply {
+        let Some(reload) = &self.s.reload_logging else {
+            return error(
+                ProtocolErrorCode::Unavailable,
+                "this hub cannot reload its logging configuration",
+            );
+        };
+        match reload() {
+            Ok(()) => {
+                self.s
+                    .diag(Level::Info, "logging configuration reloaded", &[]);
+                CliReply::Reloaded
+            }
+            Err(e) => error(ProtocolErrorCode::Malformed, e),
+        }
     }
 
     fn done(&mut self, conn: ConnId, job: &JobId) -> Option<CliReply> {
