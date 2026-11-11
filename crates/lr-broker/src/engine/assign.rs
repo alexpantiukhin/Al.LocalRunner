@@ -1,5 +1,6 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
+use super::services::HeldPool;
 use super::{Engine, Job};
 use lr_abstractions::{Applied, Frame, Inbound, Level, OutboxKind, StepUpdate, StoreError};
 use lr_core::{pick_next, Assignment, JobId, JobState, QueueState, RunningJob, Timestamp, Wait};
@@ -47,8 +48,11 @@ impl Engine {
         let entries: Vec<_> = self.queue.iter().map(|j| j.entry.clone()).collect();
         let runners = self.runner_views();
         let running = self.running_jobs();
+        let inner = self.policy.policy();
+        let mut pool = inner.pool().clone();
+        pool.mem_mb = pool.mem_mb.saturating_sub(self.service_mem_mb());
         let plan = pick_next(
-            self.policy.policy(),
+            &HeldPool { inner, pool },
             &self.site,
             &QueueState {
                 queue: &entries,

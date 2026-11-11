@@ -153,3 +153,48 @@ async fn idle_services_are_kept_when_eviction_is_off() {
     let mut warm = head_lacks_memory(&h).await;
     warm.quiet().await;
 }
+
+fn holding(state: ServiceState, mem_mb: u64) -> RunnerToBroker {
+    RunnerToBroker::ServicesReport(ServicesReport {
+        services: vec![ServiceReport {
+            name: "build-daemon".into(),
+            state,
+            mem_mb,
+            remaining_s: Some(600),
+        }],
+    })
+}
+
+#[tokio::test]
+async fn live_service_memory_stays_in_the_pool_budget_until_the_service_stops() {
+    let h = Harness::start("");
+    let mut warm = h.member_runner("r1", "10.0.0.7", with_service()).await;
+    warm.send(&holding(ServiceState::Idle, 10240)).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.sync().await;
+    hub.send(&order("j1", req(8192, 1, 60))).await;
+    hub.accepted().await;
+    match warm.runner().await {
+        BrokerToRunner::StopService(s) => assert_eq!(s.name, "build-daemon"),
+        other => panic!("expected stop_service before any assign, got {other:?}"),
+    }
+    warm.send(&RunnerToBroker::ServicesReport(ServicesReport {
+        services: Vec::new(),
+    }))
+    .await;
+    assert_eq!(warm.assign().await.job, JobId("j1".into()));
+}
+
+#[tokio::test]
+async fn a_busy_service_is_never_evicted_but_its_memory_is_held() {
+    let h = Harness::start("");
+    let mut warm = h.member_runner("r1", "10.0.0.7", with_service()).await;
+    warm.send(&holding(ServiceState::Busy, 10240)).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.sync().await;
+    hub.send(&order("j1", req(8192, 1, 60))).await;
+    hub.accepted().await;
+    warm.quiet().await;
+    warm.send(&holding(ServiceState::Stopped, 10240)).await;
+    assert_eq!(warm.assign().await.job, JobId("j1".into()));
+}

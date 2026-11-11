@@ -164,3 +164,31 @@ async fn drain_stops_warm_services_before_bye() {
     assert_eq!(rig.process.kills().len(), 1);
     assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
 }
+
+#[tokio::test]
+async fn metrics_of_a_service_no_longer_declared_are_forgotten_at_start() {
+    let rig = rig_with(idle_db());
+    let row = |name: &str| lr_abstractions::ServiceRow {
+        name: name.into(),
+        pid: 4242,
+        pid_start: Some(1),
+        state: ServiceState::Idle,
+        started_at: lr_core::Timestamp(START),
+        expires_at: lr_core::Timestamp(START + 60_000),
+        mem_mb: 1,
+    };
+    rig.store.upsert_service(row("old")).await.unwrap();
+    rig.store.upsert_service(row("db")).await.unwrap();
+    let (_c, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    let forgotten: Vec<String> = rig
+        .meter
+        .updates()
+        .into_iter()
+        .filter_map(|u| match u {
+            lr_abstractions::fakes::MeterUpdate::Forget(k, v) if k == "service" => Some(v),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(forgotten, ["old"]);
+}
