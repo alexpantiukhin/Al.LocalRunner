@@ -96,6 +96,11 @@ fn spec_example_policy_parses() {
     assert_eq!(f.limits.job_log_max_mb.get(), 256);
     assert_eq!(f.limits.outbox_max_mb.get(), 512);
     assert_eq!(f.limits.max_active_per_client.get(), 100);
+    assert_eq!(f.limits.api_requests_per_min.get(), 1200);
+    assert_eq!(
+        f.limits.timeout_above_max,
+        lr_broker::policy::TimeoutAboveMax::Reject
+    );
     assert_eq!(
         f.routing.runner_zone_order,
         [Zone::Local, Zone::Lan, Zone::Remote]

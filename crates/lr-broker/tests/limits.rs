@@ -299,11 +299,13 @@ async fn api_requests_over_the_rate_are_rejected_rate_limited() {
     let mut bob = h.local_hub("bob").await;
     let reply = bob.read(ReadRequest::Runners).await;
     assert!(matches!(reply, ReadReply::Runners { .. }), "{reply:?}");
-    for _ in 0..4 {
-        h.clock.advance(Duration::from_secs(15));
-        alex.send(&HubToBroker::Heartbeat).await;
-    }
-    let again = alex.read(ReadRequest::Runners).await;
+    let still = h.local_hub("alex").await.read(ReadRequest::Runners).await;
+    assert!(
+        rate_limited(&still),
+        "the limit is per client key: {still:?}"
+    );
+    h.clock.advance(Duration::from_secs(60));
+    let again = h.local_hub("alex").await.read(ReadRequest::Runners).await;
     assert!(matches!(again, ReadReply::Runners { .. }), "{again:?}");
 }
 

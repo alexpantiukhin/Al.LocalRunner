@@ -84,6 +84,7 @@ fn unknown_enum_values_refused() {
         ("cache", "share", "global"),
         ("visibility", "others_orders", "some"),
         ("commands", "default", "none"),
+        ("limits", "timeout_above_max", "cut"),
     ] {
         let e = err(&format!("[{table}]\n{key} = \"{value}\"\n"));
         assert_eq!(e.key.as_deref(), Some(key), "{e}");
@@ -104,6 +105,7 @@ fn zero_durations_and_sizes_refused() {
         ("limits", "job_log_max_mb"),
         ("limits", "outbox_max_mb"),
         ("limits", "max_active_per_client"),
+        ("limits", "api_requests_per_min"),
         ("history", "keep_days"),
         ("history", "logs_max_gb"),
         ("history", "rows_keep_days"),

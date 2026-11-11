@@ -61,9 +61,11 @@ exclusive_tags = ["android-emulator"] # теги, которые держит о
 
 [limits]
 max_job_timeout_s = 3600               # потолок таймаута заказа при приёме; по умолчанию потолка нет
+timeout_above_max = "reject"           # reject | trim: таймаут больше потолка — отказ или подрезка (3.10)
 job_log_max_mb    = 256                # лог одной джобы; сверх — обрезка с пометкой
 outbox_max_mb     = 512                # outbox брокера на получателя; сверх сбрасываются чанки вывода
 max_active_per_client = 100            # активных заказов на ключ клиента
+api_requests_per_min  = 1200           # заказов и запросов чтения на ключ клиента за любые 60 с
 
 [routing]
 runner_zone_order = ["local", "lan", "remote"]  # предпочтение между раннерами одного брокера
