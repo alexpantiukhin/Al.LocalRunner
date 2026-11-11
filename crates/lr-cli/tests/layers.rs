@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 const ALLOWED: &[(&str, &[&str])] = &[
@@ -196,4 +196,149 @@ fn core_crates_name_no_consumer_language_toolchain_or_test_framework() {
         found.is_empty(),
         "generic core names a consumer: {found:#?}"
     );
+}
+
+const HTTP_CLIENTS: &[&str] = &[
+    "reqwest",
+    "ureq",
+    "isahc",
+    "surf",
+    "curl",
+    "attohttpc",
+    "minreq",
+    "awc",
+    "ehttp",
+    "http-req",
+    "hyper-tls",
+    "hyper-rustls",
+    "hyper-openssl",
+    "opentelemetry-http",
+    "opentelemetry-otlp",
+];
+
+const CLIENT_FEATURES: &[(&str, &[&str])] = &[
+    ("hyper", &["client"]),
+    ("hyper-util", &["client", "client-legacy"]),
+];
+
+fn closure<'a>(nodes: &'a [Value], names: &BTreeMap<String, String>, root: &str) -> Vec<&'a Value> {
+    let by_id = |id: &str| nodes.iter().find(|n| n["id"] == id);
+    let start = nodes
+        .iter()
+        .find(|n| names.get(n["id"].as_str().unwrap()).map(String::as_str) == Some(root))
+        .unwrap_or_else(|| panic!("{root} is not resolved"));
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut out = Vec::new();
+    let mut todo = vec![start];
+    while let Some(n) = todo.pop() {
+        if !seen.insert(n["id"].as_str().unwrap().to_string()) {
+            continue;
+        }
+        out.push(n);
+        for d in n["deps"].as_array().unwrap() {
+            let normal = d["dep_kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|k| k["kind"].is_null());
+            if normal {
+                todo.extend(by_id(d["pkg"].as_str().unwrap()));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn nothing_leaves_the_machine_hub_cli_and_dashboard_carry_no_http_client() {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let out = Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--offline"])
+        .output()
+        .expect("cargo metadata must run");
+    assert!(out.status.success(), "cargo metadata failed");
+    let meta: Value = serde_json::from_slice(&out.stdout).expect("metadata is json");
+    let nodes = meta["resolve"]["nodes"].as_array().expect("resolve nodes");
+    let names: BTreeMap<String, String> = meta["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["id"].as_str().unwrap().into(),
+                p["name"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    let mut found = Vec::new();
+    for root in ["lr-hub", "lr-cli", "lr-dashboard"] {
+        let reached = closure(nodes, &names, root);
+        assert!(reached.len() > 3, "{root}");
+        for n in reached {
+            let name = names[n["id"].as_str().unwrap()].clone();
+            if HTTP_CLIENTS.contains(&name.as_str()) {
+                found.push(format!("{root}: {name}"));
+            }
+            let features: Vec<&str> = n["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap())
+                .collect();
+            for (krate, client) in CLIENT_FEATURES {
+                if name == *krate && client.iter().any(|c| features.contains(c)) {
+                    found.push(format!("{root}: {name} with a client feature {features:?}"));
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "an HTTP client: {found:#?}");
+}
+
+fn first_arguments<'a>(script: &'a str, call: &str) -> Vec<&'a str> {
+    script
+        .match_indices(call)
+        .filter(|(i, _)| {
+            !script[..*i]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                || call.starts_with('.')
+        })
+        .map(|(i, _)| {
+            let rest = script[i + call.len()..].trim_start();
+            let end = rest.find([',', ')']).unwrap_or(rest.len());
+            rest[..end].trim()
+        })
+        .collect()
+}
+
+fn same_origin(argument: &str) -> bool {
+    argument.starts_with("\"/") && !argument.starts_with("\"//")
+}
+
+#[test]
+fn nothing_leaves_the_machine_the_page_requests_only_its_own_origin() {
+    assert!(same_origin("\"/api/snapshot\""));
+    assert!(!same_origin("\"//evil.example/x\""));
+    assert!(!same_origin("\"https://evil.example/x\""));
+    let script = include_str!("../../lr-dashboard/src/page.js");
+    let fetched = first_arguments(script, "fetch(");
+    assert!(fetched.len() >= 3, "{fetched:?}");
+    let posted = first_arguments(script, "post(");
+    let streamed = first_arguments(script, "EventSource(");
+    assert!(!streamed.is_empty());
+    for a in fetched.iter().chain(&posted).chain(&streamed) {
+        assert!(
+            same_origin(a) || *a == "path",
+            "a request leaves the page's origin: {a}"
+        );
+    }
+    assert!(
+        posted.iter().filter(|a| **a != "path").count() >= 2,
+        "{posted:?}"
+    );
+    for banned in ["XMLHttpRequest", "sendBeacon", "WebSocket(", "import("] {
+        assert!(!script.contains(banned), "{banned}");
+    }
 }
