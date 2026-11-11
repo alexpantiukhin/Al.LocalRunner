@@ -438,3 +438,34 @@ fn autostart_on_linux_hints_at_enable_linger_and_nowhere_else() {
     assert_eq!(linger_hint(Os::Windows, true, false), None);
     assert_eq!(linger_hint(Os::MacOs, true, false), None);
 }
+
+#[test]
+fn a_runner_is_never_an_os_service_on_any_os() {
+    for os in ALL {
+        let service = format!("{:?}", install_service(&inputs(os)));
+        assert!(
+            !service.contains("runner run") && !service.contains("\"runner\""),
+            "{os:?}: the only OS service is the broker"
+        );
+        for entry in [Entry::Runner(None), Entry::Runner(Some("gpu".into()))] {
+            let plan = autostart_on(&autostart(os, entry));
+            for r in runs(&plan) {
+                let system_wide = r.starts_with("sc.exe")
+                    || r.contains("New-Service")
+                    || (r.starts_with("systemctl") && !r.starts_with("systemctl --user"))
+                    || r.contains("system/");
+                assert!(
+                    !system_wide,
+                    "{os:?}: a runner is started as a service: {r}"
+                );
+            }
+            for (path, _) in written(&plan) {
+                let p = path.to_string_lossy().replace('\\', "/");
+                assert!(
+                    p.starts_with("/home/alex/"),
+                    "{os:?}: the runner's entry is the user's own: {p}"
+                );
+            }
+        }
+    }
+}
