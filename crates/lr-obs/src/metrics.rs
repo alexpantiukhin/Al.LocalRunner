@@ -469,4 +469,15 @@ impl Meter for Metrics {
             series.retain(|labels, _| !labels.iter().any(|(k, v)| k == label && v == value));
         }
     }
+
+    fn forget_series(&self, labels: &[(&str, &str)]) {
+        let mut all = self.series.lock().unwrap_or_else(|e| e.into_inner());
+        for series in all.iter_mut() {
+            series.retain(|have, _| {
+                !labels
+                    .iter()
+                    .all(|(k, v)| have.iter().any(|(hk, hv)| hk == k && hv == v))
+            });
+        }
+    }
 }

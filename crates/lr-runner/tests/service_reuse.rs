@@ -3,7 +3,9 @@ mod common;
 use common::svc::*;
 use common::*;
 use lr_abstractions::fakes::{JobScript, StepScript};
-use lr_abstractions::metric::{SERVICE_FAILURES_TOTAL, SERVICE_STARTS_TOTAL, SERVICE_UP};
+use lr_abstractions::metric::{
+    RUNNER, SERVICE, SERVICE_FAILURES_TOTAL, SERVICE_STARTS_TOTAL, SERVICE_UP,
+};
 use lr_abstractions::{RunnerStore, ServiceState};
 use lr_core::JobState;
 use lr_proto::{BrokerToRunner, RunnerToBroker, StopService};
@@ -179,16 +181,27 @@ async fn metrics_of_a_service_no_longer_declared_are_forgotten_at_start() {
     };
     rig.store.upsert_service(row("old")).await.unwrap();
     rig.store.upsert_service(row("db")).await.unwrap();
+    let up = lr_abstractions::metric::SERVICE_UP;
+    let mine_old = [(RUNNER, "runner-a"), (SERVICE, "old")];
+    let other_old = [(RUNNER, "runner-b"), (SERVICE, "old")];
+    for labels in [&mine_old[..], &other_old[..], DB] {
+        lr_abstractions::Meter::set(rig.meter.as_ref(), up, labels, 1.0);
+    }
     let (_c, _h) = rig.start();
     let _b = Broker::accept(&rig).await;
-    let forgotten: Vec<String> = rig
-        .meter
-        .updates()
-        .into_iter()
-        .filter_map(|u| match u {
-            lr_abstractions::fakes::MeterUpdate::Forget(k, v) if k == "service" => Some(v),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(forgotten, ["old"]);
+    assert_eq!(
+        rig.meter.gauge(up, &mine_old),
+        None,
+        "this runner's series is gone"
+    );
+    assert_eq!(
+        rig.meter.gauge(up, &other_old),
+        Some(1.0),
+        "another runner keeps its own"
+    );
+    assert_eq!(
+        rig.meter.gauge(up, DB),
+        Some(1.0),
+        "a declared service keeps its series"
+    );
 }

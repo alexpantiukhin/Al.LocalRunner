@@ -108,6 +108,8 @@ pub enum MeterUpdate {
     Observe(String, Vec<(String, String)>, f64),
     /// Series with this label value forgotten.
     Forget(String, String),
+    /// Series carrying all these labels forgotten.
+    ForgetSeries(Vec<(String, String)>),
 }
 
 /// A meter in memory: keeps every update in arrival order, accepts any name.
@@ -140,6 +142,9 @@ impl MemoryMeter {
         for u in self.updates() {
             match &u {
                 MeterUpdate::Forget(k, v) if want.iter().any(|(wk, wv)| wk == k && wv == v) => {
+                    acc = reset();
+                }
+                MeterUpdate::ForgetSeries(pairs) if pairs.iter().all(|p| want.contains(p)) => {
                     acc = reset();
                 }
                 MeterUpdate::Add(n, l, _)
@@ -194,7 +199,7 @@ impl MemoryMeter {
                 MeterUpdate::Add(n, ..) | MeterUpdate::Set(n, ..) | MeterUpdate::Observe(n, ..) => {
                     Some(n)
                 }
-                MeterUpdate::Forget(..) => None,
+                MeterUpdate::Forget(..) | MeterUpdate::ForgetSeries(..) => None,
             })
             .collect();
         names.sort();
@@ -210,7 +215,7 @@ impl MemoryMeter {
                 MeterUpdate::Add(_, l, _)
                 | MeterUpdate::Set(_, l, _)
                 | MeterUpdate::Observe(_, l, _) => l,
-                MeterUpdate::Forget(..) => Vec::new(),
+                MeterUpdate::Forget(..) | MeterUpdate::ForgetSeries(..) => Vec::new(),
             })
             .collect()
     }
@@ -246,6 +251,11 @@ impl Meter for MemoryMeter {
 
     fn forget(&self, label: &str, value: &str) {
         let update = MeterUpdate::Forget(label.to_string(), value.to_string());
+        self.updates.lock().unwrap().push(update);
+    }
+
+    fn forget_series(&self, labels: &[(&str, &str)]) {
+        let update = MeterUpdate::ForgetSeries(owned(labels));
         self.updates.lock().unwrap().push(update);
     }
 }

@@ -19,6 +19,12 @@ pub trait Meter: Send + Sync {
     fn forget(&self, label: &str, value: &str) {
         let _ = (label, value);
     }
+
+    /// Forgets every series that carries all of `labels` (one service of one runner), so
+    /// the same name under another runner of the process keeps its series.
+    fn forget_series(&self, labels: &[(&str, &str)]) {
+        let _ = labels;
+    }
 }
 
 /// Names and label keys of the metrics the roles report (spec 12.2), shared by the roles and

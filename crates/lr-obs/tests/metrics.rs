@@ -400,6 +400,33 @@ fn snapshot_is_sorted_and_starts_at_creation_time() {
 }
 
 #[test]
+fn forgetting_a_series_keeps_the_same_name_of_another_runner() {
+    let m = metrics();
+    for runner in ["r1", "r2"] {
+        m.set(
+            "localrunner_service_up",
+            &[("runner", runner), ("service", "db")],
+            1.0,
+        );
+    }
+    m.set(
+        "localrunner_service_up",
+        &[("runner", "r1"), ("service", "web")],
+        1.0,
+    );
+    m.forget_series(&[("runner", "r1"), ("service", "db")]);
+    let left: Vec<Vec<(String, String)>> = m.snapshot().into_iter().map(|p| p.labels).collect();
+    let pair = |r: &str, s: &str| {
+        vec![
+            ("runner".to_string(), r.to_string()),
+            ("service".to_string(), s.to_string()),
+        ]
+    };
+    assert_eq!(left.len(), 2, "{left:?}");
+    assert!(left.contains(&pair("r2", "db")) && left.contains(&pair("r1", "web")));
+}
+
+#[test]
 fn forgetting_an_entity_removes_its_series() {
     let m = metrics();
     m.set("localrunner_runner_online", &[("runner", "r1")], 1.0);

@@ -145,7 +145,9 @@ impl Shared {
         };
         for row in rows {
             if self.service_spec(&row.name).is_none() {
-                self.deps.meter.forget(SERVICE, &row.name);
+                self.deps
+                    .meter
+                    .forget_series(&self.service_labels(&row.name));
             }
         }
     }
