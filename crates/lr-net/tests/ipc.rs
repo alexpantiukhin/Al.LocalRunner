@@ -244,6 +244,43 @@ async fn ipc_close_is_graceful() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn a_socket_path_near_the_limit_binds_and_one_over_it_is_refused_by_name() {
+    let dir = std::env::temp_dir().join(unique("lr-long"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = |len: usize| {
+        let base = dir.to_string_lossy().len() + 1;
+        assert!(len > base + 24, "temp dir too long for this test: {dir:?}");
+        dir.join(format!("{}.sock", "s".repeat(len - base - 5)))
+            .to_string_lossy()
+            .into_owned()
+    };
+    let near = at(100);
+    assert_eq!(near.len(), 100);
+    let listener = IpcListener::bind(&near, IpcAccess::OwnerOnly).await;
+    assert!(
+        listener.is_ok(),
+        "a 100-byte path binds: {:?}",
+        listener.as_ref().err()
+    );
+    let client = dialer().dial(&near, None).await;
+    assert!(client.is_ok(), "{:?}", client.as_ref().err());
+
+    let over = at(120);
+    let refused = IpcListener::bind(&over, IpcAccess::OwnerOnly)
+        .await
+        .err()
+        .expect("a 120-byte path is over the limit");
+    let text = refused.to_string();
+    assert!(
+        text.contains("120 bytes") && text.contains("limit"),
+        "{text}"
+    );
+    drop(listener);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn unix_socket_modes_follow_access() {
     use std::os::unix::fs::PermissionsExt;
     for (access, mode) in [

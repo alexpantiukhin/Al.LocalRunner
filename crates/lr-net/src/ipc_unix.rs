@@ -68,10 +68,27 @@ async fn clear_stale(path: &Path) -> Result<(), NetError> {
     Ok(())
 }
 
+const SUN_PATH: usize = if cfg!(target_os = "linux") { 108 } else { 104 };
+
+fn fits_socket(path: &Path) -> Result<(), NetError> {
+    let len = path.as_os_str().len();
+    if len >= SUN_PATH {
+        return Err(NetError::Io(format!(
+            "socket path {} is {len} bytes, the limit is {}: use a shorter state directory",
+            path.display(),
+            SUN_PATH - 1
+        )));
+    }
+    Ok(())
+}
+
 fn bind_private(path: &Path, access: &IpcAccess) -> Result<UnixListener, NetError> {
-    let mut staging = path.as_os_str().to_owned();
-    staging.push(format!(".bind-{}", std::process::id()));
-    let staging = PathBuf::from(staging);
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let staging = dir.join(format!(".b{}-{n}", std::process::id()));
+    fits_socket(path)?;
+    fits_socket(&staging.join("s"))?;
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::DirBuilder::new().mode(0o700).create(&staging)?;
     let inner = staging.join("s");
