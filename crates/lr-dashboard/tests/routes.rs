@@ -18,41 +18,142 @@ fn authorized(method: Method, uri: &str, cookie: &str, csrf: &str) -> Request<Bo
         .unwrap()
 }
 
+const READ: &[&str] = &[
+    "/",
+    "/app.js",
+    "/app.css",
+    "/snapshot.html",
+    "/api/snapshot",
+    "/api/log/{job}",
+    "/api/events",
+];
+const CANCEL: &[&str] = &["/api/cancel", "/api/cancel-many"];
+const METHODS: &[&str] = &[
+    "get", "post", "put", "delete", "patch", "head", "options", "trace", "connect", "any", "on",
+];
+
+fn sources(dir: &std::path::Path, out: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(std::fs::read_to_string(path).unwrap());
+        }
+    }
+}
+
+fn call_of(text: &str) -> &str {
+    let mut depth = 0;
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth == 0 => return &text[..i],
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    text
+}
+
+fn declared_routes(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for part in text.split(".route(").skip(1) {
+        let call = call_of(part);
+        let path = call.split('"').nth(1).expect("a literal path").to_string();
+        let handler = &call[call.find(',').expect("a handler")..];
+        let mut found = false;
+        for m in METHODS {
+            let pattern = format!("{m}(");
+            for (at, _) in handler.match_indices(&pattern) {
+                let before = handler[..at].chars().last();
+                if !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':') {
+                    out.push((m.to_string(), path.clone()));
+                    found = true;
+                }
+            }
+        }
+        assert!(found, "no method router in .route({call})");
+    }
+    out
+}
+
+#[test]
+fn the_router_declares_exactly_the_read_routes_and_cancel() {
+    let mut texts = Vec::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut texts,
+    );
+    let mut declared: Vec<(String, String)> =
+        texts.iter().flat_map(|t| declared_routes(t)).collect();
+    declared.sort();
+    let mut allowed: Vec<(String, String)> = READ
+        .iter()
+        .map(|p| ("get".to_string(), p.to_string()))
+        .chain(CANCEL.iter().map(|p| ("post".to_string(), p.to_string())))
+        .collect();
+    allowed.sort();
+    assert_eq!(declared, allowed);
+    for other in [
+        ".nest(",
+        ".nest_service(",
+        ".merge(",
+        ".route_service(",
+        ".fallback(",
+        ".fallback_service(",
+    ] {
+        assert!(
+            texts.iter().all(|t| !t.contains(other)),
+            "the router grows outside .route: {other}"
+        );
+    }
+    assert_eq!(
+        declared_routes(r#"x.route("/a", get(h).post(p)).route("/b", any(h))"#),
+        [
+            ("get".to_string(), "/a".to_string()),
+            ("post".to_string(), "/a".to_string()),
+            ("any".to_string(), "/b".to_string())
+        ]
+    );
+}
+
 #[tokio::test]
-async fn router_exposes_only_read_routes_and_cancel() {
+async fn router_answers_only_get_on_read_routes_and_post_on_cancel() {
     let source = common::source();
     let dash = dashboard(source.clone());
     let token = dash.launch_token().to_string();
     let router = dash.router(PORT);
     let (cookie, csrf) = login(&router, &token).await;
+    let all = [
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+        Method::OPTIONS,
+        Method::TRACE,
+    ];
     for uri in [
         "/api/submit",
-        "/api/run",
-        "/api/profile",
-        "/api/profiles",
-        "/api/config",
-        "/api/policy",
-        "/api/runner/start",
-        "/api/runner/stop",
-        "/api/runners",
-        "/api/up",
-        "/api/down",
+        "/api/cancel/j-run",
+        "/api/snapshot/x",
+        "/api",
     ] {
-        for method in [Method::POST, Method::PUT, Method::DELETE, Method::PATCH] {
+        for method in all.iter().chain([&Method::GET]) {
             let (status, _, _) =
                 send(&router, authorized(method.clone(), uri, &cookie, &csrf)).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
         }
     }
-    for uri in ["/api/snapshot", "/api/log/j-run", "/api/events", "/"] {
-        for method in [Method::POST, Method::PUT, Method::DELETE] {
+    for uri in READ.iter().map(|p| p.replace("{job}", "j-run")) {
+        for method in &all {
             let (status, _, _) =
-                send(&router, authorized(method.clone(), uri, &cookie, &csrf)).await;
+                send(&router, authorized(method.clone(), &uri, &cookie, &csrf)).await;
             assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
         }
     }
-    for uri in ["/api/cancel", "/api/cancel-many"] {
-        for method in [Method::PUT, Method::DELETE, Method::PATCH] {
+    for uri in CANCEL {
+        for method in all.iter().skip(1).chain([&Method::GET]) {
             let (status, _, _) =
                 send(&router, authorized(method.clone(), uri, &cookie, &csrf)).await;
             assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");

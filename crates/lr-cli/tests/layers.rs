@@ -81,6 +81,9 @@ const CORE: &[&str] = &[
 const CONSUMER_WORDS: &[&str] = &[
     "cargo",
     "rustc",
+    "typescript",
+    "csharp",
+    "deno",
     "npm",
     "yarn",
     "pnpm",
@@ -108,10 +111,46 @@ const CONSUMER_WORDS: &[&str] = &[
     "cmake",
 ];
 
+const AMBIGUOUS_WORDS: &[&str] = &["rust", "node", "go", "bun"];
+
 fn words(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_ascii_lowercase)
+}
+
+fn literals(line: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    let mut escaped = false;
+    let mut prev = ' ';
+    for c in line.chars() {
+        if !inside && c == '/' && prev == '/' {
+            break;
+        }
+        if inside {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                inside = false;
+                out.push(' ');
+            } else {
+                out.push(c);
+            }
+        } else if c == '"' && prev != '\'' {
+            inside = true;
+        }
+        prev = c;
+    }
+    out
+}
+
+fn consumer_word(line: &str) -> Option<String> {
+    words(line)
+        .find(|w| CONSUMER_WORDS.contains(&w.as_str()))
+        .or_else(|| words(&literals(line)).find(|w| AMBIGUOUS_WORDS.contains(&w.as_str())))
 }
 
 fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -127,7 +166,17 @@ fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
 
 #[test]
 fn core_crates_name_no_consumer_language_toolchain_or_test_framework() {
-    assert!(words("Runs `cargo-nextest`; npm.").any(|w| w == "cargo"));
+    assert_eq!(
+        consumer_word("Runs `cargo-nextest`; npm."),
+        Some("cargo".into())
+    );
+    assert_eq!(
+        consumer_word("let kind = \"go\"; // go on"),
+        Some("go".into())
+    );
+    assert_eq!(consumer_word("// go on with the next node"), None);
+    assert_eq!(consumer_word("fn node(&self) -> Category"), None);
+    assert_eq!(consumer_word("x == \"Node-18\" || y"), Some("node".into()));
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut found = Vec::new();
     for name in CORE {
@@ -137,7 +186,7 @@ fn core_crates_name_no_consumer_language_toolchain_or_test_framework() {
         for file in files {
             let text = std::fs::read_to_string(&file).unwrap();
             for (n, line) in text.lines().enumerate() {
-                if let Some(w) = words(line).find(|w| CONSUMER_WORDS.contains(&w.as_str())) {
+                if let Some(w) = consumer_word(line) {
                     found.push(format!("{}:{}: {w}", file.display(), n + 1));
                 }
             }
