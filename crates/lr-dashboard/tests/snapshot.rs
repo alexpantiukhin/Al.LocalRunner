@@ -74,7 +74,19 @@ fn csv_export_defuses_formulas() {
     {
         Ok(out) => out,
         Err(e) => {
-            eprintln!("node is not available, csvCell not executed: {e}");
+            let why = format!("node is not available ({e}), csvCell not executed");
+            let required = std::env::var("LOCALRUNNER_REQUIRE_TEST_TOOLS").unwrap_or_default();
+            assert!(
+                !required
+                    .split(',')
+                    .any(|t| t.trim() == "node" || t.trim() == "all"),
+                "LOCALRUNNER_REQUIRE_TEST_TOOLS={required} requires node, but {why}"
+            );
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "SKIPPED csv_export_defuses_formulas: {why}"
+            );
             return;
         }
     };
@@ -145,9 +157,35 @@ fn job_card_shows_secret_names_without_values() {
         "the card lists the names under Secrets"
     );
     let detail = serde_json::to_value(&snapshot.jobs[0].detail).unwrap();
+    let mut keys: Vec<&str> = detail
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
     assert_eq!(
-        detail["secrets"],
-        serde_json::json!(["registry_auth", "signing"]),
-        "the model has names only: there is no field a value could travel in"
+        keys,
+        [
+            "branch",
+            "cancelled_by",
+            "commit",
+            "cwd",
+            "github_run_url",
+            "note",
+            "os_user",
+            "secrets",
+            "source",
+            "steps",
+            "summary",
+            "wait_reason"
+        ],
+        "the card model has no field a secret value could travel in"
+    );
+    let mut with_value = detail.clone();
+    with_value["secrets"] = serde_json::json!([{"name": "registry_auth", "value": "hunter2"}]);
+    assert!(
+        serde_json::from_value::<lr_proto::JobDetail>(with_value).is_err(),
+        "a secret entry is a bare name: an entry with a value does not fit the model"
     );
 }
