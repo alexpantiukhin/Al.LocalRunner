@@ -75,6 +75,14 @@ pub fn open(path: &Path, schema: &Schema, create: bool) -> Result<Connection, St
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| fail(path, schema, format!("directory: {e}")))?;
     }
+    if create && !path.exists() {
+        match create_owner_only(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+                return Err(fail(path, schema, format!("cannot create: {e}")));
+            }
+            _ => {}
+        }
+    }
     let mut flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     if create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
