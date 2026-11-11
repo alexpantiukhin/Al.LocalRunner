@@ -182,6 +182,7 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
             reason: Some(ReasonCode::Rejected(RejectReason::CommandNotAllowed)),
             ..Final::failed(detail)
         };
+        skip_steps(shared, &a.job, &a.spec.steps, 0).await;
         return refuse(s, &a, f).await;
     }
     if let Err(e) = shared

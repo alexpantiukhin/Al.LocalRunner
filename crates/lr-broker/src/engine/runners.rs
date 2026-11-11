@@ -20,6 +20,7 @@ pub(crate) struct RunnerSlot {
     pub(crate) draining: bool,
     pub(crate) services: Vec<ServiceReport>,
     pub(crate) stopping: BTreeSet<String>,
+    pub(crate) restored: bool,
 }
 
 impl RunnerSlot {
@@ -35,6 +36,7 @@ impl RunnerSlot {
             draining: false,
             services: Vec::new(),
             stopping: BTreeSet::new(),
+            restored: true,
         }
     }
 
@@ -126,6 +128,7 @@ impl Engine {
                 draining: false,
                 services: Vec::new(),
                 stopping: BTreeSet::new(),
+                restored: false,
             },
         );
         if let Some(c) = self.conns.get_mut(&conn) {

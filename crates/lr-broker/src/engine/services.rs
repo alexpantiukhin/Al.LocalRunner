@@ -68,9 +68,7 @@ impl Engine {
     }
 
     pub(crate) fn evict_idle(&mut self, head: Option<&Wait>) {
-        if !self.policy.file().services.evict_idle
-            || !matches!(head, Some(Wait::Memory { .. } | Wait::Cpu { .. }))
-        {
+        if !self.policy.file().services.evict_idle || !matches!(head, Some(Wait::Memory { .. })) {
             return;
         }
         let mut orders = Vec::new();

@@ -4,6 +4,8 @@ use lr_core::{QueueEntry, StepSpec};
 use lr_proto::{OrderSpec, RejectReason};
 use std::collections::BTreeSet;
 
+const RESTARTED: &str = "раннеры ещё не вернулись после перезапуска брокера, повторите";
+
 impl Engine {
     pub(crate) fn allowed(
         &self,
@@ -69,11 +71,19 @@ impl Engine {
         else {
             return Ok(());
         };
-        let names = if known.is_empty() {
-            "раннеры этого брокера названий не сообщают".to_string()
-        } else {
-            let list: Vec<&str> = known.into_iter().collect();
-            format!("названия раннеров: {}", list.join(", "))
+        let restored = self.runners.values().any(|slot| slot.restored);
+        let names = match (known.is_empty(), restored) {
+            (true, true) => RESTARTED.to_string(),
+            (true, false) => "раннеры этого брокера названий не сообщают".to_string(),
+            (false, _) => {
+                let list: Vec<&str> = known.into_iter().collect();
+                let names = format!("названия раннеров: {}", list.join(", "));
+                if restored {
+                    format!("{names}; {RESTARTED}")
+                } else {
+                    names
+                }
+            }
         };
         Err((
             RejectReason::CommandNotAllowed,

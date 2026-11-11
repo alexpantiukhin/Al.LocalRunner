@@ -28,6 +28,23 @@ pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
             "share = \"project\": one client can plant an artifact into the build of another"
                 .into(),
         ));
+        let named = file.commands.default == CommandMode::Named
+            || file
+                .commands
+                .client
+                .iter()
+                .any(|c| c.mode == CommandMode::Named);
+        if named {
+            out.push(PolicyWarning::at(
+                "cache",
+                Some("share"),
+                None,
+                "share = \"project\" with a client limited to [commands] mode = \"named\": the \
+                 project is declared by the client, so a limited client can plant an artifact \
+                 into the shared cache of trusted builds"
+                    .into(),
+            ));
+        }
     }
     if file.limits.timeout_above_max == TimeoutAboveMax::Trim
         && file.limits.max_job_timeout_s.is_none()
