@@ -92,7 +92,21 @@ pub fn install(
     allow_elevated: bool,
     dry_run: bool,
 ) -> Result<i32, String> {
-    if crate::host::is_elevated() && !allow_elevated {
+    let elevated = crate::host::is_elevated();
+    install_with(layout, dir, role, allow_elevated, dry_run, elevated)
+}
+
+/// `install` in a process whose rights are `elevated`: as root or administrator it is refused
+/// unless `allow_elevated` (spec 10.1).
+pub fn install_with(
+    layout: &Layout,
+    dir: Option<PathBuf>,
+    role: RoleArg,
+    allow_elevated: bool,
+    dry_run: bool,
+    elevated: bool,
+) -> Result<i32, String> {
+    if elevated && !allow_elevated {
         return Err("install refuses to run as root or administrator; add --allow-elevated".into());
     }
     let dir = match dir {
