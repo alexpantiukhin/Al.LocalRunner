@@ -322,8 +322,7 @@ pub(crate) async fn session(
     let mut next_beat = after(shared.now(), heartbeat);
     let mut last_rx = shared.now();
     loop {
-        if s.idle_and_stopping().await {
-            shared.stop_all_services().await;
+        if s.idle_and_stopping().await && shared.services_down() {
             s.flush().await;
             s.send(&RunnerToBroker::Bye(Bye {
                 reason: Some("runner stopped".into()),

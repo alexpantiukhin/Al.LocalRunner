@@ -190,7 +190,7 @@ impl Shared {
             }
         }
         let cwd = self.service_dir(name);
-        if let Err(e) = self.deps.files.create_dir_all(&cwd).await {
+        if let Err(e) = self.fresh_dir(&cwd).await {
             let detail = format!("service {name} directory not created: {e}");
             self.failure(name, spec, detail.clone())?;
             return Err(service_failed(detail));
@@ -250,6 +250,13 @@ impl Shared {
                 Err(cancelled(name))
             }
         }
+    }
+
+    async fn fresh_dir(&self, dir: &std::path::Path) -> Result<(), lr_abstractions::FilesError> {
+        if self.deps.files.exists(dir).await? {
+            self.deps.files.remove_dir_all(dir).await?;
+        }
+        self.deps.files.create_dir_all(dir).await
     }
 
     async fn ready(&self, name: &str, spec: &ServiceSpec, stop: &StopSignal) -> Ready {

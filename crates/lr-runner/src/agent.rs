@@ -117,6 +117,7 @@ pub(crate) struct State {
     pub(crate) in_use: Vec<CacheKey>,
     pub(crate) next_outbox_sample: Timestamp,
     pub(crate) services: Book,
+    pub(crate) services_down: Option<bool>,
 }
 
 pub(crate) struct Shared {
@@ -286,6 +287,7 @@ impl RunnerAgent {
                     in_use: Vec::new(),
                     next_outbox_sample: Timestamp(0),
                     services: Book::default(),
+                    services_down: None,
                 }),
             }),
             control_tx,

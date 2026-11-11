@@ -4,6 +4,9 @@ use lr_abstractions::{stop_signal, Level, Liveness, ProcessRef};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Time a runner stop waits for its services beyond the longest `stop_timeout_s`.
+pub(crate) const STOP_MARGIN: Duration = Duration::from_secs(30);
+
 enum Claim {
     Mine(ProcessRef),
     Busy,
@@ -79,21 +82,79 @@ impl Shared {
             .event(Level::Info, "service stopped", &[("service", name)]);
     }
 
-    /// Stops every idle service and every service left in the registry (runner stop).
-    pub(crate) async fn stop_all_services(&self) {
+    async fn service_names(&self) -> Option<Vec<String>> {
         let mut names: Vec<String> = self.state().services.warm.keys().cloned().collect();
         match self.deps.store.services().await {
             Ok(rows) => names.extend(rows.into_iter().map(|r| r.name)),
-            Err(e) => self.diag.event(
-                Level::Error,
-                "service registry unreadable",
-                &[("error", &e.to_string())],
-            ),
+            Err(e) => {
+                self.diag.event(
+                    Level::Error,
+                    "service registry unreadable",
+                    &[("error", &e.to_string())],
+                );
+                return None;
+            }
         }
         names.sort();
         names.dedup();
-        for name in names {
-            self.stop_service(&name).await;
+        Some(names)
+    }
+
+    /// Stops every service, each in its own task, and waits until none is left, also those a
+    /// timer or the broker was stopping already, at most the longest `stop_timeout_s` plus
+    /// [`STOP_MARGIN`] (runner stop).
+    pub(crate) async fn stop_all_services(self: &Arc<Self>) {
+        let longest = self
+            .deps
+            .settings
+            .services
+            .values()
+            .map(|s| s.stop_timeout_s)
+            .max()
+            .unwrap_or(0);
+        let deadline = self
+            .now()
+            .plus_secs(longest)
+            .plus_secs(STOP_MARGIN.as_secs());
+        for name in self.service_names().await.unwrap_or_default() {
+            self.stop_service_detached(name);
+        }
+        loop {
+            let changed = self.services_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            match self.service_names().await {
+                Some(names) if names.is_empty() => return,
+                _ if self.now() >= deadline => {
+                    self.diag
+                        .event(Level::Warn, "services still stopping, runner stops", &[]);
+                    return;
+                }
+                _ => {}
+            }
+            tokio::select! {
+                _ = &mut changed => {}
+                _ = self.deps.clock.sleep_until(deadline) => {}
+            }
+        }
+    }
+
+    /// Whether every service is down for a runner stop; the first call starts stopping them
+    /// in the background, so the session keeps its heartbeats meanwhile.
+    pub(crate) fn services_down(self: &Arc<Self>) -> bool {
+        let phase = self.state().services_down;
+        match phase {
+            Some(done) => done,
+            None => {
+                self.state().services_down = Some(false);
+                let shared = self.clone();
+                tokio::spawn(async move {
+                    shared.stop_all_services().await;
+                    shared.state().services_down = Some(true);
+                    shared.wake.notify_one();
+                });
+                false
+            }
         }
     }
 
