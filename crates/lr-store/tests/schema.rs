@@ -364,6 +364,7 @@ fn a_failed_backup_stops_the_migration_with_a_clear_error() {
         msg.contains("backup") && msg.contains("t.db.bak-1"),
         "{msg}"
     );
+    assert!(!msg.contains("  "), "{msg}");
     assert_eq!(version_of(&path), 1);
     assert_eq!(columns(&path)["t"], vec!["a".to_string()]);
 }
@@ -381,4 +382,33 @@ fn the_backup_is_readable_by_the_owner_only() {
         .permissions()
         .mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+static V3: Schema = Schema {
+    name: "t.db",
+    application_id: 77,
+    version: 3,
+    create: "CREATE TABLE t (a INTEGER, b TEXT NOT NULL DEFAULT 'x', c TEXT);",
+    migrations: &[add_b, add_c],
+};
+
+fn add_c(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE t ADD COLUMN c TEXT;")
+}
+
+#[test]
+fn only_the_latest_backup_is_kept() {
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    schema::open(&path, &V1, true).unwrap();
+    drop(schema::open(&path, &V2, false).unwrap());
+    assert!(d.path().join("t.db.bak-1").is_file());
+    std::fs::write(d.path().join("t.db.bak-0"), b"older").unwrap();
+    std::fs::write(d.path().join("other.db.bak-1"), b"not ours").unwrap();
+    drop(schema::open(&path, &V3, false).unwrap());
+    assert!(d.path().join("t.db.bak-2").is_file());
+    assert_eq!(version_of(&d.path().join("t.db.bak-2")), 2);
+    assert!(!d.path().join("t.db.bak-1").exists());
+    assert!(!d.path().join("t.db.bak-0").exists());
+    assert!(d.path().join("other.db.bak-1").exists());
 }

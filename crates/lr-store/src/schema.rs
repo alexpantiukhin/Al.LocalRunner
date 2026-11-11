@@ -1,7 +1,8 @@
 //! Schema versions of the three databases and the opening procedure: WAL mode, foreign keys,
 //! a kind marker (`application_id`) and a version (`user_version`) that is checked, migrated
 //! step by step, or refused when newer than this build knows. Before a migration the file is
-//! copied to `<name>.bak-<old version>` (owner-only on Unix); a failed copy stops the migration.
+//! copied to `<name>.bak-<old version>` (owner-only on Unix) and only this latest copy is kept;
+//! a failed copy stops the migration.
 
 use lr_abstractions::StoreError;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
@@ -191,7 +192,8 @@ fn backup(conn: &Connection, path: &Path, from: u32, to: u32) -> Result<(), Prep
     let bak = backup_path(path, from);
     let refuse = |what: String| {
         Prepare::Store(format!(
-            "backup {} before migrating schema version {from} to {to} failed: {what};              the database is left at version {from}",
+            "backup {} before migrating schema version {from} to {to} failed: {what}; \
+             the database is left at version {from}",
             bak.display()
         ))
     };
@@ -208,7 +210,37 @@ fn backup(conn: &Connection, path: &Path, from: u32, to: u32) -> Result<(), Prep
         let _ = std::fs::remove_file(&bak);
         return Err(refuse(e.to_string()));
     }
+    drop_older_backups(path, &bak);
     Ok(())
+}
+
+fn drop_older_backups(path: &Path, keep: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    let prefix = format!("{}.bak-", name.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let other = entry.path();
+        let ours = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.strip_prefix(&prefix))
+            .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+        let plain = entry
+            .file_type()
+            .is_ok_and(|t| t.is_file() || t.is_symlink());
+        if ours && plain && other != keep {
+            let _ = std::fs::remove_file(&other);
+        }
+    }
 }
 
 #[cfg(unix)]
