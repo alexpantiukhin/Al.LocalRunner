@@ -43,7 +43,10 @@ pub fn cli_requests() -> Vec<CliRequest> {
 
 pub fn cli_replies() -> Vec<CliReply> {
     vec![
-        CliReply::Submitted { job: job(1) },
+        CliReply::Submitted {
+            job: job(1),
+            warnings: vec!["warning: uncommitted changes are ignored".into()],
+        },
         CliReply::Rejected {
             code: ReasonCode::Rejected(RejectReason::NoLocalBroker),
             detail: "no local broker".into(),

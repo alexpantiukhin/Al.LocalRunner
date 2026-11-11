@@ -156,6 +156,10 @@ pub enum CliReply {
     Submitted {
         /// The job.
         job: JobId,
+        /// Warnings for the submitter (uncommitted changes of a commit order); absent from
+        /// older hubs.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
     },
     /// The order was refused.
     Rejected {

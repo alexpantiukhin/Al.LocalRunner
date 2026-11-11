@@ -123,7 +123,12 @@ pub async fn submit(
         wait,
     });
     let job = match client.call::<_, CliReply>(&req).await? {
-        CliReply::Submitted { job } => job,
+        CliReply::Submitted { job, warnings } => {
+            for w in warnings {
+                eprintln!("{w}");
+            }
+            job
+        }
         CliReply::Rejected { code, detail } => {
             eprintln!("rejected ({code}): {detail}");
             return Ok(1);

@@ -48,10 +48,10 @@ pub fn layout(dir: &TempDir, name: &str, policy_extra: &str) -> Layout {
 /// The `runner.toml` of the test runners: jobs get the `PATH` of the test process through
 /// `[env] path`, the only source of `PATH` of a job.
 pub fn runner_toml() -> String {
-    let path = toml::Value::String(std::env::var("PATH").expect("the test process has PATH"));
     format!(
-        "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n\n[env]\npath = {path}\n\n\
-         [secret.{SECRET_NAME}]\nfrom = \"env:{SECRET_VAR}\"\n"
+        "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n\n{}\n\
+         [secret.{SECRET_NAME}]\nfrom = \"env:{SECRET_VAR}\"\n",
+        common::env_path_toml()
     )
 }
 
@@ -115,7 +115,7 @@ pub async fn submit(
         wait: true,
     });
     match client.call::<_, CliReply>(&req).await.expect("submit") {
-        CliReply::Submitted { job } => (client, job),
+        CliReply::Submitted { job, .. } => (client, job),
         other => panic!("submit answered {other:?}"),
     }
 }

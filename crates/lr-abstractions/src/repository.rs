@@ -37,4 +37,8 @@ pub trait Repository: Send + Sync {
 
     /// Address of the `origin` remote (`git remote get-url origin`), `None` without one.
     async fn origin_url(&self, root: &Path) -> Result<Option<String>, RepositoryError>;
+
+    /// Whether the work tree at `root` has changes `HEAD` does not hold: modified, staged or
+    /// new files.
+    async fn has_uncommitted(&self, root: &Path) -> Result<bool, RepositoryError>;
 }

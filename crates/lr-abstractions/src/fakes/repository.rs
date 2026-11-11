@@ -9,6 +9,7 @@ struct State {
     heads: BTreeMap<PathBuf, String>,
     origins: BTreeMap<PathBuf, String>,
     pushed: BTreeSet<String>,
+    uncommitted: BTreeSet<PathBuf>,
     files: BTreeMap<(String, String), Vec<u8>>,
     failing: Option<String>,
 }
@@ -50,6 +51,16 @@ impl MemoryRepository {
             .insert((commit.to_string(), path.to_string()), data.to_vec());
     }
 
+    /// The work tree at `root` has (`true`) or has no uncommitted changes.
+    pub fn set_uncommitted(&self, root: &Path, dirty: bool) {
+        let mut s = self.state.lock().unwrap();
+        if dirty {
+            s.uncommitted.insert(root.to_path_buf());
+        } else {
+            s.uncommitted.remove(root);
+        }
+    }
+
     /// Makes every later query fail with `reason`; `None` heals it.
     pub fn fail(&self, reason: Option<&str>) {
         self.state.lock().unwrap().failing = reason.map(str::to_string);
@@ -89,5 +100,9 @@ impl Repository for MemoryRepository {
 
     async fn origin_url(&self, root: &Path) -> Result<Option<String>, RepositoryError> {
         Ok(self.check()?.origins.get(root).cloned())
+    }
+
+    async fn has_uncommitted(&self, root: &Path) -> Result<bool, RepositoryError> {
+        Ok(self.check()?.uncommitted.contains(root))
     }
 }

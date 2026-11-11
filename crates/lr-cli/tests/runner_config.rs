@@ -1,3 +1,5 @@
+mod common;
+
 use lr_broker::policy::HostResources;
 use lr_cli::runner_config::{
     check_runner_name, elevation_allowed, instance_names, RunnerConfig, SecretFrom, MAX_COUNT,
@@ -8,11 +10,6 @@ const HOST: HostResources = HostResources {
     mem_mb: 32768,
     cpu: 12,
 };
-
-fn env_path_table() -> String {
-    let path = std::env::var("PATH").expect("the test process has PATH");
-    format!("[env]\npath = {}\n", toml::Value::String(path))
-}
 
 fn parse(text: &str, name: Option<&str>) -> RunnerConfig {
     RunnerConfig::parse(text, name, "host-pc", PathBuf::from("/state/r"), HOST).expect("parses")
@@ -90,7 +87,7 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
             .display()
             .to_string()
             .replace('\\', "\\\\"),
-        env_path_table()
+        common::env_path_toml()
     );
     let mut c = parse(&text, None);
     let problems = c.check_programs();

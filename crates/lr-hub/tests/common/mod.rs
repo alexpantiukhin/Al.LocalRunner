@@ -310,7 +310,7 @@ impl Cli {
     pub async fn submit(&self, req: SubmitRequest) -> JobId {
         self.send(CliRequest::Submit(req)).await;
         match self.reply().await {
-            CliReply::Submitted { job } => job,
+            CliReply::Submitted { job, .. } => job,
             other => panic!("expected submitted, got {other:?}"),
         }
     }

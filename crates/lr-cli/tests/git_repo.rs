@@ -100,3 +100,19 @@ async fn origin_url_drops_the_token() {
     let url = GitRepository.origin_url(dir.path()).await.unwrap();
     assert_eq!(url.as_deref(), Some("https://example.com/o/r.git"));
 }
+
+#[tokio::test]
+async fn uncommitted_changes_are_seen_tracked_or_new() {
+    let dir = TempDir::new("repo");
+    init_repo(dir.path());
+    std::fs::write(dir.path().join("a.txt"), "1\n").unwrap();
+    git(dir.path(), &["add", "."]);
+    git(dir.path(), &["commit", "-q", "-m", "a"]);
+    let repo = GitRepository;
+    assert!(!repo.has_uncommitted(dir.path()).await.unwrap());
+    std::fs::write(dir.path().join("a.txt"), "2\n").unwrap();
+    assert!(repo.has_uncommitted(dir.path()).await.unwrap());
+    git(dir.path(), &["checkout", "--", "a.txt"]);
+    std::fs::write(dir.path().join("new.txt"), "n\n").unwrap();
+    assert!(repo.has_uncommitted(dir.path()).await.unwrap());
+}

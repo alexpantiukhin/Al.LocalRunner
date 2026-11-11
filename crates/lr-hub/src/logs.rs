@@ -59,14 +59,10 @@ pub(crate) fn cancel_line(
 
 pub(crate) fn trimmed_line(asked: Option<u64>, to: u64) -> String {
     match asked {
-        Some(asked) => format!(
-            "=== timeout trimmed by the broker policy: {asked} s -> {to} s ===
-"
-        ),
-        None => format!(
-            "=== timeout trimmed by the broker policy to {to} s ===
-"
-        ),
+        Some(asked) => {
+            format!("=== timeout trimmed by the broker policy: {asked} s -> {to} s ===\n")
+        }
+        None => format!("=== timeout trimmed by the broker policy to {to} s ===\n"),
     }
 }
 

@@ -62,7 +62,7 @@ impl Engine {
                 return Some(CliReply::Rejected { code, detail })
             }
         };
-        let spec = built.spec;
+        let (spec, warnings) = (built.spec, built.warnings);
         if spec.requirements.same_machine.is_some() && !self.links.contains_key(LOCAL_BROKER) {
             return Some(CliReply::Rejected {
                 code: ReasonCode::Rejected(RejectReason::NoLocalBroker),
@@ -132,7 +132,10 @@ impl Engine {
                 format!("handle {} not written: {m}", handle.display()),
             ));
         }
-        let header = crate::logs::header(&job, &spec);
+        let mut header = crate::logs::header(&job, &spec);
+        for w in &warnings {
+            header.push_str(&format!("=== {w} ===\n"));
+        }
         let mut track = Track::new(order, Some(spec), Stage::Selecting);
         track.log = Some(log);
         if req.wait {
@@ -142,7 +145,10 @@ impl Engine {
         self.log_copy(&job, &header).await;
         self.submitted.entry(conn).or_default().insert(job.clone());
         if reply
-            .try_send(CliReply::Submitted { job: job.clone() })
+            .try_send(CliReply::Submitted {
+                job: job.clone(),
+                warnings,
+            })
             .is_err()
         {
             self.s

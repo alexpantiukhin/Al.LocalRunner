@@ -34,7 +34,10 @@ fn layout(dir: &TempDir) -> Layout {
     std::fs::create_dir_all(&runner).unwrap();
     std::fs::write(
         runner.join("runner.toml"),
-        "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n",
+        format!(
+            "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n{}",
+            common::env_path_toml()
+        ),
     )
     .unwrap();
     Layout::new(root, config)
@@ -78,7 +81,7 @@ async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
         wait: true,
     });
     let job = match client.call::<_, CliReply>(&submit).await.expect("submit") {
-        CliReply::Submitted { job } => job,
+        CliReply::Submitted { job, .. } => job,
         other => panic!("submit answered {other:?}"),
     };
     let mut output = String::new();

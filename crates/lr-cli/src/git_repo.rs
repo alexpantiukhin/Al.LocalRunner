@@ -195,4 +195,13 @@ impl Repository for GitRepository {
             .then(|| without_credentials(&text(&out.stdout)))
             .filter(|u| !u.is_empty()))
     }
+
+    async fn has_uncommitted(&self, root: &Path) -> Result<bool, RepositoryError> {
+        let root = check_root(root)?;
+        let out = git(root, vec!["status".into(), "--porcelain".into()]).await?;
+        if !out.ok {
+            return Err(bad(format!("git status: {}", out.stderr)));
+        }
+        Ok(!text(&out.stdout).is_empty())
+    }
 }

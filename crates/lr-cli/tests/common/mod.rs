@@ -7,6 +7,13 @@ const NULL_DEVICE: &str = "NUL";
 #[cfg(not(windows))]
 const NULL_DEVICE: &str = "/dev/null";
 
+/// `[env] path` of a test `runner.toml`: jobs get the `PATH` of the test process, since
+/// `[env] path` is the only source of `PATH` of a job.
+pub fn env_path_toml() -> String {
+    let path = std::env::var("PATH").expect("the test process has PATH");
+    format!("[env]\npath = {}\n", toml::Value::String(path))
+}
+
 pub struct TempDir(PathBuf);
 
 impl TempDir {

@@ -56,8 +56,7 @@ async fn timeout_trimmed_by_the_broker_policy_is_told_in_the_log_copy() {
     local.send(accepted).await;
     settle().await;
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
-    let line = "=== timeout trimmed by the broker policy: 600 s -> 300 s ===
-";
+    let line = "=== timeout trimmed by the broker policy: 600 s -> 300 s ===\n";
     assert_eq!(log.matches(line).count(), 1, "{log}");
 }
 
@@ -124,6 +123,37 @@ async fn platform_order_reads_profile_from_commit_with_repo_url_and_branch() {
     );
     assert_eq!(spec.requirements.platform.as_deref(), Some("linux"));
     assert_eq!(spec.requirements.same_machine, None);
+}
+
+#[tokio::test]
+async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
+    let mut rig = Rig::new();
+    rig.repo.set_uncommitted(&repo_root(), true);
+    rig.join("lan1").await;
+    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    eventually("connected", || lan.resumed()).await;
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
+        .await;
+    let (job, warnings) = match cli.reply().await {
+        CliReply::Submitted { job, warnings } => (job, warnings),
+        other => panic!("{other:?}"),
+    };
+    let warning = format!(
+        "warning: uncommitted changes are ignored: the runner checks out the pushed commit {COMMIT}"
+    );
+    assert_eq!(warnings, vec![warning.clone()]);
+    eventually("order sent", || lan.orders().len() == 1).await;
+    let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
+    assert!(log.contains(&format!("=== {warning} ===\n")), "{log}");
+    rig.repo.set_uncommitted(&repo_root(), false);
+    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
+        .await;
+    match cli.reply().await {
+        CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[tokio::test]
