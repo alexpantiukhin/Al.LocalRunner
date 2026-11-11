@@ -14,6 +14,7 @@ mod hello;
 mod inspect;
 mod local;
 mod lost;
+mod metrics;
 mod orders;
 mod read;
 mod recovery;
@@ -31,7 +32,7 @@ pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 use crate::policy::{ActivePolicy, ListenValue};
 use conn::{Command, ConnId, Outlet, COMMAND_QUEUE};
 use lr_abstractions::{
-    BrokerStore, Clock, JobKey, Level, Listener, LogSink, Peer, Record, SecretSource,
+    BrokerStore, Clock, JobKey, Level, Listener, LogSink, Meter, Peer, Record, SecretSource,
     TransportError,
 };
 use lr_core::{Endpoint, JobId, QueueEntry, ServeLog, Site, Timestamp};
@@ -80,6 +81,8 @@ pub struct BrokerDeps {
     pub secrets: Arc<dyn SecretSource>,
     /// The policy applied at start, from [`ActivePolicy::start`].
     pub policy: ActivePolicy,
+    /// Metrics of spec 12.2.
+    pub meter: Arc<dyn Meter>,
 }
 
 /// The broker role: accepts connections, queues orders and gives them to runners.
@@ -115,6 +118,8 @@ impl Broker {
                 site,
                 local: Arc::new(ExactLocalUsers::default()),
                 log: Arc::new(NoLog),
+                meter: deps.meter,
+                gauges: metrics::Gauges::default(),
                 bus: broadcast::channel(1024).0,
                 conns: HashMap::new(),
                 hubs: HashMap::new(),
@@ -174,6 +179,8 @@ impl Broker {
             mut rx,
         } = self;
         engine.recover().await;
+        engine.report();
+        engine.sample_outbox().await;
         let clock = engine.clock.clone();
         let log = engine.log.clone();
         let ticks = tx.clone();
@@ -287,6 +294,8 @@ pub(crate) struct Engine {
     pub(crate) site: Site,
     pub(crate) local: Arc<dyn LocalAdmission>,
     pub(crate) log: Arc<dyn LogSink>,
+    pub(crate) meter: Arc<dyn Meter>,
+    pub(crate) gauges: metrics::Gauges,
     pub(crate) bus: broadcast::Sender<BusEvent>,
     pub(crate) conns: HashMap<ConnId, Conn>,
     pub(crate) hubs: HashMap<String, ConnId>,
@@ -314,7 +323,11 @@ impl Engine {
     async fn handle(&mut self, cmd: Command) {
         self.expire().await;
         match cmd {
-            Command::Tick => self.forget_clients(),
+            Command::Tick => {
+                self.forget_clients();
+                self.report();
+                self.sample_outbox().await;
+            }
             Command::Opened { conn, peer, outlet } => {
                 self.conns.insert(
                     conn,

@@ -2,7 +2,8 @@ use super::faulty::FaultyStore;
 use super::listeners::{Stall, StallListener};
 pub use super::msgs::*;
 use lr_abstractions::fakes::{
-    FakeListener, FakeNetwork, ManualClock, MemoryBrokerStore, MemoryLogSink, MemorySecrets,
+    FakeListener, FakeNetwork, ManualClock, MemoryBrokerStore, MemoryLogSink, MemoryMeter,
+    MemorySecrets,
 };
 use lr_abstractions::{
     BrokerStore, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
@@ -39,6 +40,7 @@ pub struct Harness {
     pub store: Arc<MemoryBrokerStore>,
     pub faults: Arc<FaultyStore>,
     pub log: Arc<MemoryLogSink>,
+    pub meter: Arc<MemoryMeter>,
     pub net: FakeNetwork,
     pub events: broadcast::Receiver<BusEvent>,
     pub handle: BrokerHandle,
@@ -126,6 +128,7 @@ impl Harness {
         let faults = Arc::new(FaultyStore::new(store.clone()));
         prepare(&faults);
         let log = Arc::new(MemoryLogSink::new());
+        let meter = Arc::new(MemoryMeter::new());
         let (active, _) =
             ActivePolicy::start(&policy(extra), HOST_RES, false).expect("policy loads");
         let broker = Broker::new(BrokerDeps {
@@ -134,6 +137,7 @@ impl Harness {
             listener: wrap(listener),
             secrets: Arc::new(MemorySecrets::new()),
             policy: active,
+            meter: meter.clone(),
         })
         .with_local_admission(Arc::new(ExactLocalUsers::with_owners(
             owners.iter().map(|s| s.to_string()),
@@ -147,6 +151,7 @@ impl Harness {
             store,
             faults,
             log,
+            meter,
             net,
             events,
             handle,

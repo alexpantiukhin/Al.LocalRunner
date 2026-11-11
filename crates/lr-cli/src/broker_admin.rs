@@ -5,7 +5,8 @@
 use crate::admin::AdminApi;
 use crate::net::MergedListener;
 use async_trait::async_trait;
-use lr_abstractions::{Clock, Listener, MachineKind, Peer};
+use lr_abstractions::metric::{POLICY_RELOAD_TOTAL, RESULT};
+use lr_abstractions::{Clock, Listener, MachineKind, Meter, Peer};
 use lr_broker::policy::{check, load, HostResources, ListenValue, LocalUserEntry};
 use lr_broker::BrokerHandle;
 use lr_net::{
@@ -175,7 +176,11 @@ impl BrokerAdmin {
         let _in_order = self.reloads.lock().await;
         let text = match read(&self.policy_path) {
             Ok(t) => t,
-            Err(e) => return failed(e),
+            Err(e) => {
+                let labels = [(RESULT, "error")];
+                self.logger.metrics().add(POLICY_RELOAD_TOTAL, &labels, 1);
+                return failed(e);
+            }
         };
         match self.handle.reload_policy(&text).await {
             Err(e) => failed(e.to_string()),

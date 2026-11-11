@@ -5,8 +5,8 @@ use crate::reaper::{Reaper, Watched};
 use crate::select::Decision;
 use crate::track::{Finished, Link, Stage, Track};
 use lr_abstractions::{
-    Clock, Dialer, Files, Frame, HubStore, Level, Listener, LogSink, OutboxKind, ProcessInspector,
-    Record, Repository, Role,
+    Clock, Dialer, Files, Frame, HubStore, Level, Listener, LogSink, Meter, OutboxKind,
+    ProcessInspector, Record, Repository, Role,
 };
 use lr_core::{JobId, Timestamp, Zone};
 use lr_proto::{
@@ -46,6 +46,8 @@ pub struct HubDeps {
     pub repository: Arc<dyn Repository>,
     /// Diagnostic events.
     pub log: Arc<dyn LogSink>,
+    /// Metrics of spec 12.2.
+    pub meter: Arc<dyn Meter>,
     /// `hub-policy.toml`.
     pub policy: HubPolicy,
     /// Name of this hub in `hello`.
@@ -60,6 +62,7 @@ pub(crate) struct Shared {
     pub(crate) files: Arc<dyn Files>,
     pub(crate) repository: Arc<dyn Repository>,
     pub(crate) log: Arc<dyn LogSink>,
+    pub(crate) meter: Arc<dyn Meter>,
     pub(crate) name: String,
     pub(crate) pending: Pending,
     next_req: AtomicU64,
@@ -132,6 +135,7 @@ pub(crate) struct Engine {
     pub(crate) ids: JobIds,
     pub(crate) reaper: Reaper,
     pub(crate) tx: mpsc::Sender<Event>,
+    pub(crate) next_outbox_sample: Timestamp,
 }
 
 /// The hub role.
@@ -156,6 +160,7 @@ impl Hub {
             files: d.files,
             repository: d.repository,
             log: d.log,
+            meter: d.meter,
             name: d.name,
             pending: Pending::default(),
             next_req: AtomicU64::new(0),
@@ -171,9 +176,11 @@ impl Hub {
             ids: JobIds::default(),
             reaper: Reaper::new(d.clock.now()),
             tx: tx.clone(),
+            next_outbox_sample: d.clock.now(),
         };
         let targets = engine.targets(d.local_broker).await;
         engine.restore().await;
+        engine.sample_outbox().await;
         for t in targets {
             engine.links.entry(t.name.clone()).or_default();
             client::spawn(t, shared.clone(), tx.clone());
@@ -366,6 +373,7 @@ impl Engine {
     async fn on_tick(&mut self) {
         self.reap().await;
         self.expire().await;
+        self.sample_outbox().await;
         let now = self.now();
         let due: Vec<JobId> = self
             .tracks

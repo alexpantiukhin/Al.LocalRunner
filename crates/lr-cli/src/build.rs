@@ -180,6 +180,7 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         listener: merged,
         secrets: Arc::new(ConfigSecrets::default()),
         policy,
+        meter: logger.metrics(),
     })
     .with_local_admission(Arc::new(
         NetAdmission::new(vec![owner]).with_admins(Arc::new(lr_net::is_machine_admin)),
@@ -259,6 +260,7 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         files: Arc::new(StdFiles),
         repository: Arc::new(GitRepository),
         log: logger.clone(),
+        meter: logger.metrics(),
         policy,
         name: crate::facts::host_name(),
     });
@@ -363,6 +365,7 @@ pub async fn runner(
         secrets: Arc::new(secrets),
         files: Arc::new(StdFiles),
         log: logger.clone(),
+        meter: logger.metrics(),
         settings: cfg.settings,
     });
     Ok(RunnerParts {

@@ -5,7 +5,7 @@ pub mod broker;
 use broker::{FakeBroker, Script};
 use lr_abstractions::fakes::{
     FakeListener, FakeNetwork, FakeProcessInspector, ManualClock, MemoryFiles, MemoryHubStore,
-    MemoryLogSink, MemoryRepository,
+    MemoryLogSink, MemoryMeter, MemoryRepository,
 };
 use lr_abstractions::{
     BrokerLink, Clock, Dialer, Frame, HubStore, Peer, PeerAccess, ProcessRef, Transport,
@@ -120,6 +120,7 @@ pub struct Rig {
     pub files: MemoryFiles,
     pub repo: MemoryRepository,
     pub log: Arc<MemoryLogSink>,
+    pub meter: Arc<MemoryMeter>,
     pub policy: HubPolicy,
     pub local: bool,
     pub hub_clock: Option<ManualClock>,
@@ -154,6 +155,7 @@ impl Rig {
             files,
             repo,
             log: Arc::new(MemoryLogSink::new()),
+            meter: Arc::new(MemoryMeter::new()),
             policy: HubPolicy::default(),
             local: false,
             hub_clock: None,
@@ -200,6 +202,7 @@ impl Rig {
             files: Arc::new(self.files.clone()),
             repository: Arc::new(self.repo.clone()),
             log: self.log.clone(),
+            meter: self.meter.clone(),
             policy: self.policy.clone(),
             name: "laptop".into(),
         }

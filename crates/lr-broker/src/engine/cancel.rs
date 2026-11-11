@@ -211,7 +211,7 @@ impl Engine {
                 self.waits.remove(&job.key);
                 if applied == Applied::Changed {
                     self.finish(
-                        &job.key,
+                        &job,
                         JobState::Cancelled,
                         None,
                         Some(cancel.code),

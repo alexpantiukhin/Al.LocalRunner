@@ -9,6 +9,7 @@ mod cache;
 mod connect;
 mod diag;
 mod job;
+mod metrics;
 mod outbox;
 mod output;
 mod prepare;

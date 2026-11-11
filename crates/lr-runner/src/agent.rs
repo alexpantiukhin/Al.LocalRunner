@@ -7,8 +7,8 @@ use crate::services::Services;
 use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
 use lr_abstractions::{
-    CacheKey, Clock, Dialer, Files, Level, LogSink, ProcessInspector, ProcessRunner, RunnerStore,
-    SecretSource, Stop, StopHandle,
+    CacheKey, Clock, Dialer, Files, Level, LogSink, Meter, ProcessInspector, ProcessRunner,
+    RunnerStore, SecretSource, Stop, StopHandle,
 };
 use lr_core::{JobId, Timestamp};
 use lr_proto::{ProtocolError, ReasonCode, WireCapabilities};
@@ -58,6 +58,8 @@ pub struct RunnerDeps {
     pub files: Arc<dyn Files>,
     /// Diagnostic events.
     pub log: Arc<dyn LogSink>,
+    /// Metrics of spec 12.2.
+    pub meter: Arc<dyn Meter>,
     /// Settings of this runner.
     pub settings: RunnerSettings,
 }
@@ -108,6 +110,7 @@ pub(crate) struct State {
     pub(crate) caps_dirty: bool,
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
+    pub(crate) next_outbox_sample: Timestamp,
 }
 
 pub(crate) struct Shared {
@@ -142,6 +145,8 @@ impl Shared {
             store: self.deps.store.as_ref(),
             files: self.deps.files.as_ref(),
             diag: &self.diag,
+            meter: self.deps.meter.as_ref(),
+            runner: &self.deps.settings.name,
             layout: CacheLayout::new(self.deps.settings.state_dir.clone()),
             cache: self.deps.settings.cache,
             workspace: self.deps.settings.workspace,
@@ -265,6 +270,7 @@ impl RunnerAgent {
                     caps_dirty: false,
                     lost_since,
                     in_use: Vec::new(),
+                    next_outbox_sample: Timestamp(0),
                 }),
             }),
             control_tx,

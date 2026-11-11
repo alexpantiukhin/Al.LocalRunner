@@ -147,6 +147,12 @@ impl Logger {
         })
     }
 
+    /// The metric registry this logger's OTLP sink publishes; the assembly passes it to the
+    /// role as its [`Meter`].
+    pub fn metrics(&self) -> Arc<Metrics> {
+        self.env.metrics.clone()
+    }
+
     /// The redactor, to register secret values ([`Redactor::protect`]).
     pub fn redactor(&self) -> Arc<Redactor> {
         self.redactor.clone()

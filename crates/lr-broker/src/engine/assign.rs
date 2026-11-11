@@ -1,7 +1,7 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
-use super::Engine;
-use lr_abstractions::{Applied, Frame, Inbound, JobKey, Level, OutboxKind, StepUpdate, StoreError};
+use super::{Engine, Job};
+use lr_abstractions::{Applied, Frame, Inbound, Level, OutboxKind, StepUpdate, StoreError};
 use lr_core::{pick_next, Assignment, JobId, JobState, QueueState, RunningJob, Timestamp, Wait};
 use lr_proto::{
     receive, Ack, Assign, AssignSpec, BrokerToHub, BrokerToRunner, Chunk, JobResult, ProtocolError,
@@ -67,9 +67,11 @@ impl Engine {
             })
             .collect();
         self.evict_idle(plan.waiting.first().map(|(_, w)| w));
+        self.note_waits(&plan.waiting);
         for a in plan.assignments {
             self.assign(a, now).await;
         }
+        self.report();
     }
 
     async fn assign(&mut self, a: Assignment, now: Timestamp) {
@@ -113,6 +115,7 @@ impl Engine {
                 }),
             }),
         );
+        self.observe_wait(&job, now);
         let group = self.policy.policy().group_of(&job.entry.client);
         self.served.record(&group, now);
         job.runner = Some(a.runner);
@@ -145,12 +148,14 @@ impl Engine {
 
     pub(crate) async fn finish(
         &mut self,
-        key: &JobKey,
+        job: &Job,
         state: JobState,
         exit_code: Option<i32>,
         reason: Option<ReasonCode>,
         detail: Option<String>,
     ) {
+        self.count_end(job, state);
+        let key = &job.key;
         let msg = BrokerToHub::JobResult(JobResult {
             job: key.job.clone(),
             seq: 0,

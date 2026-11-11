@@ -1,4 +1,5 @@
 use crate::agent::{after, Shared, SWEEP_EVERY};
+use lr_abstractions::metric::OUTBOX_SAMPLE_S;
 use lr_abstractions::{Level, OutboxKind, Stop};
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{JobResult, ReasonCode, RunnerToBroker};
@@ -8,6 +9,7 @@ pub(crate) async fn background<T>(shared: &Shared, next_sweep: &mut Timestamp) -
     tokio::select! {
         never = sweeper(shared, next_sweep) => never,
         never = lost_killer(shared) => never,
+        never = outbox_sampler(shared) => never,
     }
 }
 
@@ -16,6 +18,15 @@ async fn sweeper<T>(shared: &Shared, next: &mut Timestamp) -> T {
         shared.deps.clock.sleep_until(*next).await;
         *next = after(*next, SWEEP_EVERY);
         shared.sweep().await;
+    }
+}
+
+async fn outbox_sampler<T>(shared: &Shared) -> T {
+    loop {
+        let at = shared.state().next_outbox_sample;
+        shared.deps.clock.sleep_until(at).await;
+        shared.state().next_outbox_sample = shared.now().plus_secs(OUTBOX_SAMPLE_S);
+        shared.sample_outbox().await;
     }
 }
 

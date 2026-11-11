@@ -308,6 +308,7 @@ impl Engine {
         }
         let job = self.job_of(client, &key, *o.spec.clone());
         if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
+            self.count_rejected(&job);
             return self.send(
                 conn,
                 &BrokerToHub::Rejected(Rejected {

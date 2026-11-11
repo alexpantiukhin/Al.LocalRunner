@@ -83,3 +83,50 @@ async fn failed_listen_keeps_no_listener_and_can_be_retried() {
     assert_eq!(broker.network_addresses().len(), 2);
     broker.stop();
 }
+
+fn reloads(broker: &lr_cli::roles::Running, result: &str) -> u64 {
+    broker.metrics()[0]
+        .snapshot()
+        .into_iter()
+        .filter(|p| p.name == "localrunner_policy_reload_total")
+        .filter(|p| p.labels == [("result".to_string(), result.to_string())])
+        .map(|p| match p.value {
+            lr_obs::metrics::Value::Counter(n) => n,
+            other => panic!("{other:?}"),
+        })
+        .sum()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_broker_reports_its_metrics_into_the_logger_registry() {
+    let dir = TempDir::new("metrics");
+    let layout = layout(&dir, "[]");
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let ok = admin(&layout, AdminRequest::PolicyReload).await;
+    assert!(matches!(ok, AdminReply::Ok { .. }), "{ok:?}");
+    let policy = layout.config_file("policy.toml");
+    std::fs::write(&policy, "[grace]\nlost_min = 0\n").unwrap();
+    let invalid = admin(&layout, AdminRequest::PolicyReload).await;
+    assert!(matches!(invalid, AdminReply::Failed { .. }), "{invalid:?}");
+    std::fs::remove_file(&policy).unwrap();
+    std::fs::create_dir(&policy).unwrap();
+    let unreadable = admin(&layout, AdminRequest::PolicyReload).await;
+    assert!(
+        matches!(unreadable, AdminReply::Failed { .. }),
+        "{unreadable:?}"
+    );
+    assert_eq!(reloads(&broker, "ok"), 1);
+    assert_eq!(reloads(&broker, "error"), 2);
+    let names: Vec<&str> = broker.metrics()[0]
+        .snapshot()
+        .iter()
+        .map(|p| p.name)
+        .collect();
+    assert!(
+        names.contains(&"localrunner_saturation_wait_seconds"),
+        "{names:?}"
+    );
+    assert!(names.contains(&"localrunner_outbox_pending"), "{names:?}");
+    assert_eq!(broker.metrics()[0].rejected(), 0);
+    broker.stop();
+}

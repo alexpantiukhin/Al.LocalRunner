@@ -7,7 +7,7 @@ use crate::runner_config::{instance_names, RunnerConfig};
 use crate::{admin, build, control};
 use lr_abstractions::Listener;
 use lr_net::IpcListener;
-use lr_obs::Logger;
+use lr_obs::{Logger, Metrics};
 use lr_runner::AgentExit;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -31,6 +31,11 @@ impl Running {
     /// The broker's bound network addresses, empty while it does not listen.
     pub fn network_addresses(&self) -> Vec<SocketAddr> {
         self.tls.as_ref().map(|t| t.bound()).unwrap_or_default()
+    }
+
+    /// The metric registries of the started roles, one per logger.
+    pub fn metrics(&self) -> Vec<Arc<Metrics>> {
+        self.loggers.iter().map(|l| l.metrics()).collect()
     }
 
     /// Waits until the role ends on its own (a runner after `down`, a refused key, a hub or

@@ -4,7 +4,7 @@ pub mod wrap;
 
 use lr_abstractions::fakes::{
     FakeListener, FakeNetwork, FakeProcessRunner, JobScript, ManualClock, MemoryFiles,
-    MemoryLogSink, MemoryRunnerStore, MemorySecrets,
+    MemoryLogSink, MemoryMeter, MemoryRunnerStore, MemorySecrets,
 };
 use lr_abstractions::{
     Clock, Frame, Listener, Peer, PeerAccess, ProcessInspector, RunnerStore, Transport,
@@ -39,6 +39,7 @@ pub struct Rig {
     pub files: MemoryFiles,
     pub secrets: Arc<MemorySecrets>,
     pub log: Arc<MemoryLogSink>,
+    pub meter: Arc<MemoryMeter>,
     pub settings: RunnerSettings,
     pub gate: Gate,
     pub reads: Arc<AtomicUsize>,
@@ -72,6 +73,7 @@ impl Rig {
             files: MemoryFiles::new(),
             secrets: Arc::new(MemorySecrets::new()),
             log: Arc::new(MemoryLogSink::new()),
+            meter: Arc::new(MemoryMeter::new()),
             settings,
             gate: Gate::default(),
             reads: Arc::new(AtomicUsize::new(0)),
@@ -110,6 +112,7 @@ impl Rig {
             secrets: self.secrets.clone(),
             files: Arc::new(self.files.clone()),
             log: self.log.clone(),
+            meter: self.meter.clone(),
             settings: self.settings.clone(),
         }
     }

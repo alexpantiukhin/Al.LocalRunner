@@ -357,7 +357,8 @@ fn metrics_stay_in_memory_without_an_enabled_receiver() {
 #[test]
 fn client_label_setting_reaches_the_metrics() {
     let b = Bench::new();
-    let _logger = b.logger("[metrics]\nclient_label = true\n");
+    let logger = b.logger("[metrics]\nclient_label = true\n");
+    assert!(std::sync::Arc::ptr_eq(&logger.metrics(), &b.metrics));
     b.metrics.add(
         "localrunner_orders_total",
         &[("result", "passed"), ("platform", "p"), ("client", "ci")],

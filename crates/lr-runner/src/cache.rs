@@ -1,7 +1,8 @@
 use crate::diag::Diag;
 use crate::settings::Retention;
 use crate::source::dir_name;
-use lr_abstractions::{CacheEntry, CacheKey, Files, Level, RunnerStore, StoreError};
+use lr_abstractions::metric::{CACHE_EVICTED_TOTAL, CACHE_USED_MB, REASON, RUNNER};
+use lr_abstractions::{CacheEntry, CacheKey, Files, Level, Meter, RunnerStore, StoreError};
 use lr_core::{cache_env_var, Timestamp};
 use std::path::{Path, PathBuf};
 
@@ -37,6 +38,21 @@ impl CacheLayout {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Eviction {
+    Age,
+    Size,
+}
+
+impl Eviction {
+    fn label(self) -> &'static str {
+        match self {
+            Eviction::Age => "age",
+            Eviction::Size => "size",
+        }
+    }
+}
+
 /// Entries to remove (spec 3.10): first those unused for longer than `retention_days`, then,
 /// while the rest is above `max_size_gb`, the least recently used (`lru`). Entries in `in_use`
 /// are never removed.
@@ -46,6 +62,18 @@ pub fn plan_sweep(
     limits: &Retention,
     in_use: &[CacheKey],
 ) -> Vec<CacheKey> {
+    plan_evictions(entries, now, limits, in_use)
+        .into_iter()
+        .map(|(key, _)| key)
+        .collect()
+}
+
+fn plan_evictions(
+    entries: &[CacheEntry],
+    now: Timestamp,
+    limits: &Retention,
+    in_use: &[CacheKey],
+) -> Vec<(CacheKey, Eviction)> {
     let mut doomed = Vec::new();
     let mut kept: Vec<&CacheEntry> = Vec::new();
     for e in entries {
@@ -53,7 +81,7 @@ pub fn plan_sweep(
             .retention_days
             .is_some_and(|d| now.millis_since(e.last_used) > d.saturating_mul(DAY_MS));
         if stale && !in_use.contains(&e.key) {
-            doomed.push(e.key.clone());
+            doomed.push((e.key.clone(), Eviction::Age));
         } else {
             kept.push(e);
         }
@@ -67,7 +95,7 @@ pub fn plan_sweep(
             }
             if !in_use.contains(&e.key) {
                 total = total.saturating_sub(e.bytes);
-                doomed.push(e.key.clone());
+                doomed.push((e.key.clone(), Eviction::Size));
             }
         }
     }
@@ -82,6 +110,8 @@ pub(crate) struct Caches<'a> {
     pub(crate) store: &'a dyn RunnerStore,
     pub(crate) files: &'a dyn Files,
     pub(crate) diag: &'a Diag,
+    pub(crate) meter: &'a dyn Meter,
+    pub(crate) runner: &'a str,
     pub(crate) layout: CacheLayout,
     pub(crate) cache: Retention,
     pub(crate) workspace: Retention,
@@ -100,9 +130,17 @@ impl Caches<'_> {
         };
         let (ws, caches): (Vec<CacheEntry>, Vec<CacheEntry>) =
             entries.into_iter().partition(is_workspace);
-        let mut doomed = plan_sweep(&caches, now, &self.cache, in_use);
-        doomed.extend(plan_sweep(&ws, now, &self.workspace, in_use));
-        for key in doomed {
+        let mut doomed: Vec<(CacheKey, Option<Eviction>)> =
+            plan_evictions(&caches, now, &self.cache, in_use)
+                .into_iter()
+                .map(|(k, why)| (k, Some(why)))
+                .collect();
+        doomed.extend(
+            plan_sweep(&ws, now, &self.workspace, in_use)
+                .into_iter()
+                .map(|k| (k, None)),
+        );
+        for (key, why) in doomed {
             let Some(e) = caches.iter().chain(ws.iter()).find(|e| e.key == key) else {
                 continue;
             };
@@ -119,7 +157,12 @@ impl Caches<'_> {
             }
             self.diag
                 .event(Level::Info, "cache entry removed", &[("path", &e.path)]);
+            if let Some(why) = why {
+                let labels = [(RUNNER, self.runner), (REASON, why.label())];
+                self.meter.add(CACHE_EVICTED_TOTAL, &labels, 1);
+            }
         }
+        self.used_mb().await;
     }
 
     pub(crate) async fn touch(&self, key: CacheKey, path: &Path, now: Timestamp) {
@@ -174,13 +217,16 @@ impl Caches<'_> {
 
     pub(crate) async fn used_mb(&self) -> Option<u64> {
         match self.store.cache_entries().await {
-            Ok(entries) => Some(
-                entries
+            Ok(entries) => {
+                let mb = entries
                     .iter()
                     .filter(|e| !is_workspace(e))
                     .fold(0u64, |t, e| t.saturating_add(e.bytes))
-                    / MB,
-            ),
+                    / MB;
+                self.meter
+                    .set(CACHE_USED_MB, &[(RUNNER, self.runner)], mb as f64);
+                Some(mb)
+            }
             Err(e) => {
                 self.store_err("cache index unreadable", &e);
                 None

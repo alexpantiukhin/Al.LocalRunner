@@ -157,7 +157,7 @@ impl Engine {
         }
         match self.store.transition(&job.key, t).await {
             Ok(Applied::Changed) => {
-                self.finish(&job.key, r.state, r.exit_code, reason, r.detail.clone())
+                self.finish(&job, r.state, r.exit_code, reason, r.detail.clone())
                     .await
             }
             Ok(Applied::Ignored) => {}

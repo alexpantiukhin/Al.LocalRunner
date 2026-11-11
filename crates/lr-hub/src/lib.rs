@@ -11,6 +11,7 @@ mod handles;
 mod inbound;
 mod ipc_server;
 mod logs;
+mod metrics;
 mod orders;
 mod outbox;
 pub mod policy;

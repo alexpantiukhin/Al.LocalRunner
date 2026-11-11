@@ -55,6 +55,7 @@ impl Engine {
         match cmd {
             AdminCommand::Reload { text, reply } => {
                 let result = self.policy.reload(&text);
+                self.count_reload(result.is_ok());
                 if let Ok(applied) = &result {
                     if let Some(update) = &applied.settings_update {
                         let conns: Vec<_> = self.runners.values().filter_map(|r| r.conn).collect();
@@ -106,6 +107,7 @@ impl Engine {
                 }
                 for r in &removed {
                     self.runners.remove(r);
+                    self.forget_runner(r);
                 }
                 let _ = reply.send(());
                 self.plan().await;
