@@ -4,8 +4,8 @@ use super::hello::peer_kind;
 use super::{Client, Engine, Job};
 use crate::policy::TimeoutAboveMax;
 use lr_abstractions::{
-    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRow, JobSpecRow, Level, OrderRow,
-    SourceKind, StepRow, StoreError,
+    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level,
+    OrderRow, SourceKind, StepRow, StoreError,
 };
 use lr_core::{
     ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject, Requirements,
@@ -338,7 +338,7 @@ impl Engine {
         match self.store.job(&key).await {
             Ok(Some(rec)) => {
                 return self
-                    .repeated_order(conn, client, &key, rec.job.state, o, trimmed)
+                    .repeated_order(conn, client, &key, rec, o, trimmed)
                     .await
             }
             Ok(None) => {}
@@ -386,7 +386,7 @@ impl Engine {
         conn: ConnId,
         client: &Client,
         key: &JobKey,
-        state: JobState,
+        rec: JobRecord,
         o: Order,
         trimmed: Option<u64>,
     ) {
@@ -409,9 +409,11 @@ impl Engine {
                 return self.unavailable(conn, key, "record the order seq", &e);
             }
         }
-        if state == JobState::Queued && self.find(key).is_none() {
-            let job = self.job_of(client, key, *o.spec.clone());
-            self.enqueue(job).await;
+        if rec.job.state == JobState::Queued && self.find(key).is_none() {
+            if let Some(mut job) = self.stored_job(&rec) {
+                job.entry.client.endpoint = client.endpoint.clone();
+                self.enqueue(job).await;
+            }
         }
         self.send(conn, &self.accepted(key, &o, trimmed));
     }

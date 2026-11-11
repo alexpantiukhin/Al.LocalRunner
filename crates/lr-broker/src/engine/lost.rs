@@ -37,7 +37,13 @@ impl Engine {
             let job = self.active.remove(i);
             self.lose(job, now, ReasonCode::RunnerLost).await;
         }
-        if self.restored && now >= self.booted_at.plus_secs(grace_s) {
+        let past_grace = now >= self.booted_at.plus_secs(grace_s);
+        if past_grace {
+            for slot in self.runners.values_mut() {
+                slot.restored = false;
+            }
+        }
+        if self.restored && past_grace {
             self.restored = false;
             self.return_stranded().await;
             changed = true;

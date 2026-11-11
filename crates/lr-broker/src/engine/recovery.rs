@@ -148,12 +148,31 @@ impl Engine {
     }
 
     async fn restore(&mut self, rec: JobRecord) {
+        let Some(mut job) = self.stored_job(&rec) else {
+            return;
+        };
+        let cancelled = rec.job.state == JobState::Cancelling || rec.job.cancel_reason.is_some();
+        if cancelled {
+            job.cancel = Some(stored_cancel(&rec));
+        }
+        if job.started_at.is_some() {
+            return self.active.push(job);
+        }
+        match (job.runner.is_some(), job.cancel.take()) {
+            (_, Some(cancel)) => self.cancel_waiting(job, cancel).await,
+            (true, None) => self.requeue_or_retry(job).await,
+            (false, None) => self.queue.push(job),
+        }
+    }
+
+    pub(crate) fn stored_job(&mut self, rec: &JobRecord) -> Option<Job> {
         let Ok(spec) = serde_json::from_str::<OrderSpec>(&rec.spec.resolved_json) else {
-            return self.diag(
+            self.diag(
                 Level::Error,
                 "stored order spec is unreadable, the run is left as it is",
                 &[("client", &rec.job.key.client), ("job", &rec.job.key.job.0)],
             );
+            return None;
         };
         let key = rec.job.key.clone();
         let mut requirements = spec.requirements.clone();
@@ -177,7 +196,7 @@ impl Engine {
             },
             accepted_at: now,
         };
-        let mut job = Job {
+        Some(Job {
             key: key.clone(),
             internal: entry.order.job.clone(),
             entry,
@@ -189,19 +208,7 @@ impl Engine {
             start_unsaved: false,
             queued_since: now,
             platform_label: None,
-        };
-        let cancelled = rec.job.state == JobState::Cancelling || rec.job.cancel_reason.is_some();
-        if cancelled {
-            job.cancel = Some(stored_cancel(&rec));
-        }
-        if job.started_at.is_some() {
-            return self.active.push(job);
-        }
-        match (job.runner.is_some(), job.cancel.take()) {
-            (_, Some(cancel)) => self.cancel_waiting(job, cancel).await,
-            (true, None) => self.requeue_or_retry(job).await,
-            (false, None) => self.queue.push(job),
-        }
+        })
     }
 
     pub(crate) fn refresh_client(&mut self, client: &Client) {
