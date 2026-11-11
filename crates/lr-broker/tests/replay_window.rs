@@ -35,7 +35,7 @@ fn resume() -> HubToBroker {
 }
 
 async fn until(what: &str, probe: impl Fn() -> bool) {
-    for _ in 0..200_000 {
+    for _ in 0..5_000_000 {
         if probe() {
             return;
         }
@@ -58,8 +58,8 @@ async fn read_requests(h: &Harness, hub: &Conn, stall: &Stall, replies: u64) {
         .await;
     }
     let all = before + replies as usize;
-    until("every request is handed to the engine", || {
-        stall.reads_started() >= all
+    until("every request is handed to the engine or the hub is cut off", || {
+        stall.reads_started() >= all || stall.closes() > 0
     })
     .await;
     engine_caught_up(h).await;

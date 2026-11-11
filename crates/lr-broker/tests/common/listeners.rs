@@ -82,9 +82,8 @@ impl Transport for StallTransport {
                 Err(_) => std::future::pending::<()>().await,
             }
         }
-        let sent = self.inner.send(frame).await;
         self.stall.sent.fetch_add(1, Ordering::SeqCst);
-        sent
+        self.inner.send(frame).await
     }
 
     async fn recv(&self) -> Result<Frame, TransportError> {
