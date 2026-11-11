@@ -275,6 +275,29 @@ async fn runner_code_refuses_a_hub() {
 }
 
 #[tokio::test]
+async fn hub_code_refuses_a_runner() {
+    let b = broker().await;
+    let code = b.issue(MachineKind::Hub, 1).await;
+    let k = key();
+    let mut req = join_request(&code, "r1", &k);
+    req.kind = MachineKind::Runner;
+    let err = b
+        .registry
+        .redeem(req, &k.public_key(), at_min(1))
+        .await
+        .unwrap_err();
+    assert_eq!(err, RegistryError::Store(StoreError::CodeKindMismatch));
+    let mut as_hub = join_request(&code, "laptop", &k);
+    as_hub.kind = MachineKind::Hub;
+    let row = b
+        .registry
+        .redeem(as_hub, &k.public_key(), at_min(1))
+        .await
+        .expect("the refused attempt did not spend the code");
+    assert_eq!((row.name.as_str(), row.kind), ("laptop", MachineKind::Hub));
+}
+
+#[tokio::test]
 async fn joining_with_the_broker_machine_id_refused() {
     let b = broker().await;
     let code = b.issue(MachineKind::Runner, 1).await;
