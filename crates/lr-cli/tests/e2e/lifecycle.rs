@@ -295,3 +295,69 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
 
     remove(dir).await;
 }
+
+struct DownOnDrop(Layout);
+
+impl Drop for DownOnDrop {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new(env!("CARGO_BIN_EXE_localrunner"))
+            .args(["down", "--cancel", "--state-dir"])
+            .arg(&self.0.root)
+            .arg("--config-dir")
+            .arg(&self.0.config)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn up_all_without_init_starts_the_hub_once_the_broker_answers() {
+    let dir = TempDir::new("e2e-upall");
+    let fresh = layout(&dir, "fresh", "");
+    add_runner(&fresh, "r1");
+    assert!(!fresh.root.join("broker.db").exists());
+    assert!(!fresh.root.join("roles").exists());
+    let down_after = DownOnDrop(fresh.clone());
+    let up = tokio::process::Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["up", "all", "--state-dir"])
+        .arg(&fresh.root)
+        .arg("--config-dir")
+        .arg(&fresh.config)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("the binary runs");
+    let up = tokio::time::timeout(ENDS, up.wait_with_output())
+        .await
+        .expect("up returns")
+        .expect("up output");
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "{}\n{}",
+        String::from_utf8_lossy(&up.stdout),
+        String::from_utf8_lossy(&up.stderr)
+    );
+    runner_online(&fresh, "r1").await;
+    let listed = brokers(&fresh).await;
+    assert!(
+        listed.iter().any(|b| b.name == "local"),
+        "the hub started after the broker answered lists it: {listed:?}"
+    );
+
+    let repo = repo(
+        &dir,
+        &echo_profile("here", "on-this-machine", 60, "mem_mb = 256\n"),
+    );
+    let (client, job) = submit(&fresh, &repo, "here", None).await;
+    let ended = until_exit(client, &job, ENDS).await;
+    assert_eq!(ended.state, JobState::Passed, "{ended:?}");
+    assert!(ended.output.contains("on-this-machine"), "{}", ended.output);
+
+    drop(down_after);
+    remove(dir).await;
+}

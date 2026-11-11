@@ -160,6 +160,19 @@ fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     Ok(cmd.spawn()?.id())
 }
 
+async fn broker_ready(layout: &Layout) -> bool {
+    let start = tokio::time::Instant::now();
+    loop {
+        if broker_answers(layout).await {
+            return true;
+        }
+        if start.elapsed() >= STARTED_WITHIN {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
 fn missing(plan: &[Vec<String>], now: &RunningRoles) -> Vec<String> {
     let mut out = Vec::new();
     for argv in plan {
@@ -197,7 +210,9 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
     }
 }
 
-/// `up [role]`.
+/// `up [role]`. When it starts both the broker and the hub, the hub starts only once the broker
+/// answers, so the hub lists it as `local`; a broker silent for longer is an error and the hub
+/// is left down.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
@@ -229,9 +244,25 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
     #[cfg(windows)]
     keep_std_handles_from_children();
+    let starts_broker = plan.iter().any(|argv| argv[0] == "broker");
+    let mut started = Vec::new();
     for argv in &plan {
+        if argv[0] == "hub" && starts_broker && !broker_ready(layout).await {
+            eprintln!(
+                "hub: not started: the broker does not answer within {} s, and a hub started \
+                 before it would not list it as `local`; see logs/ in {} and run \
+                 `localrunner up hub` once the broker answers",
+                STARTED_WITHIN.as_secs(),
+                layout.root.display()
+            );
+            code = 1;
+            continue;
+        }
         match spawn(&exe, argv) {
-            Ok(pid) => println!("{}: started (pid {pid})", argv[..2].join(" ")),
+            Ok(pid) => {
+                println!("{}: started (pid {pid})", argv[..2].join(" "));
+                started.push(argv.clone());
+            }
             Err(e) => {
                 eprintln!("{}: {e}", argv[..2].join(" "));
                 code = 1;
@@ -240,7 +271,7 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     }
     let start = tokio::time::Instant::now();
     let late = loop {
-        let late = missing(&plan, &running_roles(layout).await);
+        let late = missing(&started, &running_roles(layout).await);
         if late.is_empty() || start.elapsed() >= STARTED_WITHIN {
             break late;
         }
