@@ -52,13 +52,13 @@ fn writable(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn basics(layout: &Layout, out: &mut Vec<Check>) {
+fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     out.push(check(
         "os",
         Status::Ok,
         format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
     ));
-    out.push(if crate::host::is_elevated() {
+    out.push(if elevated {
         check(
             "privileges",
             Status::Warn,
@@ -214,8 +214,13 @@ async fn brokers(layout: &Layout, out: &mut Vec<Check>) {
 
 /// Runs every check of this node.
 pub async fn checks(layout: &Layout) -> Vec<Check> {
+    checks_with(layout, crate::host::is_elevated()).await
+}
+
+/// Runs every check of this node for a process whose rights are `elevated`.
+pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     let mut out = Vec::new();
-    basics(layout, &mut out);
+    basics(layout, elevated, &mut out);
     policy(layout, &mut out);
     runners(layout, &mut out);
     brokers(layout, &mut out).await;
