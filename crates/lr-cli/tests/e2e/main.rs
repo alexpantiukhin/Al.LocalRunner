@@ -2,6 +2,7 @@
 mod common;
 mod failures;
 mod helper;
+mod services;
 mod single_machine;
 mod support;
 mod two_machines;
