@@ -364,3 +364,23 @@ async fn ci_order_takes_the_pool_budget_once() {
     );
     r3.quiet().await;
 }
+
+#[tokio::test]
+async fn the_cache_share_is_taken_from_the_policy_at_assignment() {
+    let h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    r.close().await;
+    let mut laptop = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    laptop.until_runner("r1", false).await;
+    laptop.send(&order("j1", req(512, 1, 60))).await;
+    laptop.accepted().await;
+    h.handle
+        .reload_policy(&policy("[cache]\nshare = \"project\"\n"))
+        .await
+        .expect("reload applies");
+    let mut back = h.dial(member_peer("pk-r1", "10.0.0.7")).await;
+    back.send(&hello("r1", Some(linux()))).await;
+    back.welcome().await;
+    let a = back.assign().await;
+    assert_eq!(a.spec.cache_client.as_deref(), Some(SHARED_CACHE_CLIENT));
+}

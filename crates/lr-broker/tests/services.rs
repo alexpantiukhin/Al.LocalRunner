@@ -270,3 +270,20 @@ async fn reserve_rules_count_the_memory_of_live_services() {
     r2.quiet().await;
     warm.quiet().await;
 }
+
+#[tokio::test]
+async fn idle_service_is_kept_when_the_head_lacks_only_cpu() {
+    let h = Harness::start("");
+    let mut busy = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("cpu-heavy", req(512, 7, 60))).await;
+    hub.accepted().await;
+    busy.assign().await;
+    let mut warm = h.member_runner("r2", "10.0.0.8", with_service()).await;
+    warm.send(&report(ServiceState::Idle)).await;
+    hub.sync().await;
+    hub.send(&order("next", req(512, 4, 60))).await;
+    let next = hub.accepted().await;
+    assert!(next.waiting.is_some());
+    warm.quiet().await;
+}

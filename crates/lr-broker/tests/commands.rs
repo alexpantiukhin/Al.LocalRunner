@@ -150,3 +150,87 @@ async fn a_key_entry_limits_only_that_client() {
     r.send(&result("j1", 2, lr_core::JobState::Passed, 0)).await;
     assert!(!r.assign().await.spec.named_commands);
 }
+
+async fn rejoin(h: &Harness, name: &str, caps: WireCapabilities) -> Conn {
+    let mut c = h.dial(member_peer(&format!("pk-{name}"), "10.0.0.7")).await;
+    c.send(&hello(name, Some(caps))).await;
+    c.welcome().await;
+    c
+}
+
+async fn named_order_waiting_for_an_offline_runner(h: &Harness) {
+    let r = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
+    r.close().await;
+    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
+    guest.until_runner("r1", false).await;
+    guest.send(&order_of("j1", &["build"])).await;
+    guest.accepted().await;
+}
+
+fn assert_named(a: &Assign) {
+    assert!(a.spec.named_commands);
+    assert_eq!(a.spec.requirements.commands, names(&["build"]));
+    assert_eq!(a.spec.steps[0].command, "build");
+}
+
+#[tokio::test]
+async fn an_accepted_named_order_stays_named_after_a_restart_and_a_reload_to_any() {
+    let h = Harness::start(GUEST_NAMED);
+    named_order_waiting_for_an_offline_runner(&h).await;
+    let h = h.restart().await;
+    h.handle
+        .reload_policy(&policy(""))
+        .await
+        .expect("reload applies");
+    let mut back = rejoin(&h, "r1", naming(&["build"])).await;
+    assert_named(&back.assign().await);
+}
+
+#[tokio::test]
+async fn policy_reload_does_not_revisit_an_accepted_named_order() {
+    let h = Harness::start(GUEST_NAMED);
+    named_order_waiting_for_an_offline_runner(&h).await;
+    h.handle
+        .reload_policy(&policy(""))
+        .await
+        .expect("reload applies");
+    let mut back = rejoin(&h, "r1", naming(&["build"])).await;
+    assert_named(&back.assign().await);
+}
+
+#[tokio::test]
+async fn after_a_restart_a_named_order_is_told_the_runners_have_not_returned() {
+    let h = Harness::start(GUEST_NAMED);
+    let r = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
+    r.close().await;
+    let h = h.restart().await;
+    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
+    guest.send(&order_of("j1", &["build"])).await;
+    let r = guest.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_command_not_allowed");
+    assert_eq!(
+        r.detail,
+        "команда build не входит в названия раннеров: ярлыку guest разрешены только названия \
+         из списка раннера (раннеры ещё не вернулись после перезапуска брокера, повторите)"
+    );
+    let _back = rejoin(&h, "r1", naming(&["build"])).await;
+    guest.send(&order_of("j2", &["build"])).await;
+    guest.accepted().await;
+}
+
+#[tokio::test]
+async fn names_split_between_runners_are_rejected_as_no_matching_runner() {
+    let h = Harness::start(GUEST_NAMED);
+    let _r1 = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", naming(&["test"])).await;
+    let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
+    guest.send(&order_of("j1", &["build", "test"])).await;
+    let r = guest.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_no_matching_runner");
+    assert!(r.detail.contains("команда test не описана"), "{}", r.detail);
+    assert!(
+        r.detail.contains("команда build не описана"),
+        "{}",
+        r.detail
+    );
+}

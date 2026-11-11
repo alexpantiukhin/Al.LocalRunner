@@ -149,6 +149,23 @@ fn shared_project_cache_warned() {
 }
 
 #[test]
+fn shared_project_cache_with_a_named_client_is_warned_apart() {
+    let share = "[cache]\nshare = \"project\"\n";
+    let guest = "[[commands.client]]\nlabel = \"guest\"\nmode = \"named\"\n";
+    assert!(!has(&warnings(share), "mode = \"named\""));
+    assert!(!has(&warnings(guest), "share = \"project\""));
+    let ws = warnings(&format!("{share}{guest}"));
+    let w = ws
+        .iter()
+        .find(|w| w.message.contains("mode = \"named\""))
+        .expect("named client warning");
+    assert_eq!(w.table.as_deref(), Some("cache"));
+    assert!(w.message.contains("declared"), "{w:?}");
+    let all = warnings(&format!("{share}[commands]\ndefault = \"named\"\n"));
+    assert!(has(&all, "limited to [commands]"), "{all:?}");
+}
+
+#[test]
 fn full_visibility_warned() {
     let ws = warnings("[visibility]\nothers_orders = \"full\"\n");
     assert!(

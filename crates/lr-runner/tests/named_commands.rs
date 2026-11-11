@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use lr_core::JobState;
-use lr_proto::{ReasonCode, RejectReason};
+use lr_core::{JobState, StepState};
+use lr_proto::{ReasonCode, RejectReason, RunnerToBroker};
 use lr_runner::RunnerSettings;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -67,7 +67,16 @@ async fn a_name_the_runner_does_not_declare_is_refused_without_running_anything(
     );
     spec.named_commands = true;
     b.assign("job-1", 1, spec).await;
-    let r = result_of(&b.until_result().await);
+    let msgs = b.until_result().await;
+    let skipped: Vec<(u32, StepState)> = msgs
+        .iter()
+        .filter_map(|m| match m {
+            RunnerToBroker::StepResult(s) => Some((s.ord, s.state)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(skipped, [(0, StepState::Skipped), (1, StepState::Skipped)]);
+    let r = result_of(&msgs);
     assert_eq!(r.state, JobState::Failed);
     assert_eq!(
         r.reason,
