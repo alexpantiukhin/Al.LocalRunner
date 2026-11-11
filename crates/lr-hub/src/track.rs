@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 
+/// A CLI connection following a job; `hangup` closes the connection.
+pub(crate) type Watcher = (ConnId, mpsc::Sender<CliReply>, Arc<Notify>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stage {
     Selecting,
@@ -30,7 +33,7 @@ pub(crate) struct Track {
     pub(crate) excluded: BTreeSet<String>,
     pub(crate) last_rejection: Option<(ReasonCode, String)>,
     pub(crate) gen: u64,
-    pub(crate) watchers: Vec<(ConnId, mpsc::Sender<CliReply>)>,
+    pub(crate) watchers: Vec<Watcher>,
     pub(crate) log: Option<PathBuf>,
     pub(crate) wait_reason: Option<String>,
     pub(crate) runner: Option<String>,

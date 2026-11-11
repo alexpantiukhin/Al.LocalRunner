@@ -100,6 +100,7 @@ pub(crate) struct CliEvent {
     pub(crate) os_user: String,
     pub(crate) req: CliRequest,
     pub(crate) reply: mpsc::Sender<CliReply>,
+    pub(crate) hangup: Arc<Notify>,
 }
 
 pub(crate) enum BrokerEvent {
@@ -361,7 +362,7 @@ impl Engine {
             Event::CliClosed(conn) => {
                 self.submitted.remove(&conn);
                 for t in self.tracks.values_mut() {
-                    t.watchers.retain(|(c, _)| *c != conn);
+                    t.watchers.retain(|(c, _, _)| *c != conn);
                 }
             }
             Event::Broker(name, ev) => self.on_broker(&name, ev).await,
@@ -452,9 +453,13 @@ impl Engine {
             return;
         };
         let before = track.watchers.len();
-        track
-            .watchers
-            .retain(|(_, tx)| tx.try_send(reply.clone()).is_ok());
+        track.watchers.retain(|(_, tx, hangup)| {
+            let kept = tx.try_send(reply.clone()).is_ok();
+            if !kept {
+                hangup.notify_one();
+            }
+            kept
+        });
         if track.watchers.len() < before {
             self.s.overflow(
                 Overflow::Watcher,

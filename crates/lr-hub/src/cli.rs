@@ -10,8 +10,9 @@ use lr_proto::{
     BrokerStatus, CancelRequest, CancelTarget, CliRead, CliReply, CliRequest, HubToBroker,
     ProtocolErrorCode, ReadCall, ReadRequest, ReasonCode, RejectReason, SubmitRequest,
 };
+use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 pub(crate) struct CancelBy<'a> {
     pub(crate) by: &'a Identity,
@@ -29,9 +30,12 @@ impl Engine {
     pub(crate) async fn on_cli(&mut self, e: CliEvent) {
         let reply = e.reply.clone();
         let answer = match e.req {
-            CliRequest::Submit(req) => self.submit(e.conn, &e.os_user, req, &e.reply).await,
+            CliRequest::Submit(req) => {
+                self.submit(e.conn, &e.os_user, req, &e.reply, &e.hangup)
+                    .await
+            }
             CliRequest::Done { job } => self.done(e.conn, &job),
-            CliRequest::Wait { job } => self.wait(e.conn, &job, &e.reply),
+            CliRequest::Wait { job } => self.wait(e.conn, &job, &e.reply, &e.hangup),
             CliRequest::Cancel(req) => Some(self.cancel(&e.os_user, req).await),
             CliRequest::Read(r) => self.read(r, &e.reply),
             CliRequest::Brokers => Some(self.brokers().await),
@@ -56,6 +60,7 @@ impl Engine {
         os_user: &str,
         mut req: SubmitRequest,
         reply: &mpsc::Sender<CliReply>,
+        hangup: &Arc<Notify>,
     ) -> Option<CliReply> {
         req.identity.os_user = os_user.to_string();
         let now = self.now();
@@ -151,7 +156,7 @@ impl Engine {
         let mut track = Track::new(order, Some(spec), Stage::Selecting);
         track.log = Some(log);
         if req.wait {
-            track.watchers.push((conn, reply.clone()));
+            track.watchers.push((conn, reply.clone(), hangup.clone()));
         }
         self.tracks.insert(job.clone(), track);
         self.log_copy(&job, &header).await;
@@ -186,9 +191,10 @@ impl Engine {
         conn: ConnId,
         job: &JobId,
         reply: &mpsc::Sender<CliReply>,
+        hangup: &Arc<Notify>,
     ) -> Option<CliReply> {
         if let Some(t) = self.tracks.get_mut(job) {
-            t.watchers.push((conn, reply.clone()));
+            t.watchers.push((conn, reply.clone(), hangup.clone()));
             return None;
         }
         if let Some((_, f)) = self.recent.iter().find(|(j, _)| j == job) {

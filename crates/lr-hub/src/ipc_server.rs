@@ -9,7 +9,7 @@ use lr_proto::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 const OPEN_WITHIN: Duration = Duration::from_secs(30);
 
@@ -111,6 +111,8 @@ async fn connection(
     let (tx, mut rx) = mpsc::channel::<CliReply>(REPLY_QUEUE);
     let (wt, ws) = (t.clone(), shared.clone());
     let (gone_tx, mut gone) = oneshot::channel::<()>();
+    let hangup = Arc::new(Notify::new());
+    let hung = hangup.clone();
     tokio::spawn(async move {
         loop {
             let reply = tokio::select! {
@@ -119,6 +121,7 @@ async fn connection(
                     None => break,
                 },
                 _ = &mut gone => break,
+                _ = hung.notified() => break,
             };
             let Ok(frame) = Frame::json(&reply) else {
                 continue;
@@ -153,6 +156,7 @@ async fn connection(
             os_user: os_user.clone(),
             req,
             reply: tx.clone(),
+            hangup: hangup.clone(),
         };
         if events.send(Event::Cli(Box::new(event))).await.is_err() {
             break;
