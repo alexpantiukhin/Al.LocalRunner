@@ -299,3 +299,86 @@ fn a_missing_migration_step_is_an_error_not_a_silent_skip() {
     assert!(msg.contains("no migration from version 2"), "{msg}");
     assert_eq!(version_of(&path), 1);
 }
+
+fn row_count(path: &Path) -> i64 {
+    Connection::open(path)
+        .unwrap()
+        .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_migration_is_preceded_by_a_backup_named_after_the_old_version() {
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    schema::open(&path, &V1, true)
+        .unwrap()
+        .execute("INSERT INTO t (a) VALUES (7)", [])
+        .unwrap();
+    drop(schema::open(&path, &V2, false).unwrap());
+    let bak = d.path().join("t.db.bak-1");
+    assert!(bak.is_file(), "backup {} is missing", bak.display());
+    assert_eq!(version_of(&bak), 1);
+    assert_eq!(row_count(&bak), 1);
+    assert_eq!(columns(&bak)["t"], vec!["a".to_string()]);
+    assert_eq!(version_of(&path), 2);
+}
+
+#[test]
+fn no_backup_is_made_when_nothing_is_migrated() {
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    drop(schema::open(&path, &V2, true).unwrap());
+    drop(schema::open(&path, &V2, false).unwrap());
+    let names: Vec<String> = std::fs::read_dir(d.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".bak"))
+        .collect();
+    assert!(names.is_empty(), "{names:?}");
+}
+
+#[test]
+fn a_leftover_backup_of_the_same_version_is_replaced() {
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    schema::open(&path, &V1, true)
+        .unwrap()
+        .execute("INSERT INTO t (a) VALUES (1), (2)", [])
+        .unwrap();
+    std::fs::write(d.path().join("t.db.bak-1"), b"stale").unwrap();
+    drop(schema::open(&path, &V2, false).unwrap());
+    assert_eq!(row_count(&d.path().join("t.db.bak-1")), 2);
+}
+
+#[test]
+fn a_failed_backup_stops_the_migration_with_a_clear_error() {
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    schema::open(&path, &V1, true).unwrap();
+    let blocker = d.path().join("t.db.bak-1");
+    std::fs::create_dir(&blocker).unwrap();
+    std::fs::write(blocker.join("x"), b"x").unwrap();
+    let msg = io_message(schema::open(&path, &V2, false));
+    assert!(
+        msg.contains("backup") && msg.contains("t.db.bak-1"),
+        "{msg}"
+    );
+    assert_eq!(version_of(&path), 1);
+    assert_eq!(columns(&path)["t"], vec!["a".to_string()]);
+}
+
+#[cfg(unix)]
+#[test]
+fn the_backup_is_readable_by_the_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = common::dir();
+    let path = d.path().join("t.db");
+    schema::open(&path, &V1, true).unwrap();
+    drop(schema::open(&path, &V2, false).unwrap());
+    let mode = std::fs::metadata(d.path().join("t.db.bak-1"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+}

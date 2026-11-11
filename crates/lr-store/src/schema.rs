@@ -1,10 +1,11 @@
 //! Schema versions of the three databases and the opening procedure: WAL mode, foreign keys,
 //! a kind marker (`application_id`) and a version (`user_version`) that is checked, migrated
-//! step by step, or refused when newer than this build knows.
+//! step by step, or refused when newer than this build knows. Before a migration the file is
+//! copied to `<name>.bak-<old version>` (owner-only on Unix); a failed copy stops the migration.
 
 use lr_abstractions::StoreError;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One step from schema version `n` to `n + 1`, run inside the opening transaction.
 pub type Migration = fn(&Transaction<'_>) -> rusqlite::Result<()>;
@@ -79,7 +80,7 @@ pub fn open(path: &Path, schema: &Schema, create: bool) -> Result<Connection, St
     }
     let mut conn = Connection::open_with_flags(path, flags)
         .map_err(|e| fail(path, schema, format!("cannot open: {e}")))?;
-    prepare(&mut conn, schema, create).map_err(|e| match e {
+    prepare(&mut conn, path, schema, create).map_err(|e| match e {
         Prepare::Store(msg) => fail(path, schema, msg),
         Prepare::Sql(e) => fail(
             path,
@@ -101,7 +102,12 @@ impl From<rusqlite::Error> for Prepare {
     }
 }
 
-fn prepare(conn: &mut Connection, schema: &Schema, create: bool) -> Result<(), Prepare> {
+fn prepare(
+    conn: &mut Connection,
+    path: &Path,
+    schema: &Schema,
+    create: bool,
+) -> Result<(), Prepare> {
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let application_id: i32 = conn.query_row("PRAGMA application_id", [], |r| r.get(0))?;
     let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -145,7 +151,7 @@ fn prepare(conn: &mut Connection, schema: &Schema, create: bool) -> Result<(), P
         stamp(&tx, schema, schema.version)?;
         tx.commit()?;
     } else if version < schema.version {
-        migrate(conn, schema, version)?;
+        migrate(conn, path, schema, version)?;
     }
     Ok(())
 }
@@ -155,16 +161,72 @@ fn stamp(tx: &Transaction<'_>, schema: &Schema, version: u32) -> rusqlite::Resul
     tx.pragma_update(None, "user_version", version)
 }
 
-fn migrate(conn: &mut Connection, schema: &Schema, from: u32) -> Result<(), Prepare> {
+fn migrate(conn: &mut Connection, path: &Path, schema: &Schema, from: u32) -> Result<(), Prepare> {
+    let steps = (from..schema.version)
+        .map(|step| {
+            schema
+                .migrations
+                .get(step as usize - 1)
+                .ok_or_else(|| Prepare::Store(format!("no migration from version {step}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    backup(conn, path, from, schema.version)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for step in from..schema.version {
-        let migration = schema
-            .migrations
-            .get(step as usize - 1)
-            .ok_or_else(|| Prepare::Store(format!("no migration from version {step}")))?;
+    for migration in steps {
         migration(&tx)?;
     }
     stamp(&tx, schema, schema.version)?;
     tx.commit()?;
     Ok(())
+}
+
+/// Path of the copy made before migrating the file at `path` from schema version `from`.
+pub fn backup_path(path: &Path, from: u32) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".bak-{from}"));
+    path.with_file_name(name)
+}
+
+fn backup(conn: &Connection, path: &Path, from: u32, to: u32) -> Result<(), Prepare> {
+    let bak = backup_path(path, from);
+    let refuse = |what: String| {
+        Prepare::Store(format!(
+            "backup {} before migrating schema version {from} to {to} failed: {what};              the database is left at version {from}",
+            bak.display()
+        ))
+    };
+    let target = bak
+        .to_str()
+        .ok_or_else(|| refuse("the path is not valid UTF-8".into()))?
+        .to_string();
+    match std::fs::remove_file(&bak) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(refuse(e.to_string())),
+        _ => {}
+    }
+    create_owner_only(&bak).map_err(|e| refuse(e.to_string()))?;
+    if let Err(e) = conn.execute("VACUUM INTO ?1", [&target]) {
+        let _ = std::fs::remove_file(&bak);
+        return Err(refuse(e.to_string()));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn create_owner_only(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map(drop)
+}
+
+#[cfg(not(unix))]
+fn create_owner_only(path: &Path) -> std::io::Result<()> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map(drop)
 }
