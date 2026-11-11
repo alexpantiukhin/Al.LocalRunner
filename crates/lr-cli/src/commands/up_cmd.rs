@@ -160,13 +160,13 @@ fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     Ok(cmd.spawn()?.id())
 }
 
-async fn broker_ready(layout: &Layout) -> bool {
+async fn broker_ready(layout: &Layout, within: Duration) -> bool {
     let start = tokio::time::Instant::now();
     loop {
         if broker_answers(layout).await {
             return true;
         }
-        if start.elapsed() >= STARTED_WITHIN {
+        if start.elapsed() >= within {
             return false;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -210,10 +210,32 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
     }
 }
 
-/// `up [role]`. When it starts both the broker and the hub, the hub starts only once the broker
-/// answers, so the hub lists it as `local`; a broker silent for longer is an error and the hub
-/// is left down.
+/// How `up` starts a role: the command line without the binary; the pid on success.
+pub type Spawn<'a> = &'a (dyn Fn(&[String]) -> std::io::Result<u32> + Sync);
+
+/// `up [role]`: [`up_with`] that starts the roles as background processes of this binary and
+/// waits for them at most 15 s.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
+    let start = |argv: &[String]| -> std::io::Result<u32> {
+        let exe = std::env::current_exe()
+            .map_err(|e| std::io::Error::new(e.kind(), format!("cannot find this binary: {e}")))?;
+        #[cfg(windows)]
+        keep_std_handles_from_children();
+        spawn(&exe, argv)
+    };
+    up_with(layout, role, STARTED_WITHIN, &start).await
+}
+
+/// `up [role]` that starts each role through `start` and waits for it at most `within`. When it
+/// starts both the broker and the hub, the hub starts only once the broker answers, so the hub
+/// lists it as `local`; a broker silent for `within` is an error, the hub is left down and the
+/// started roles are not waited for again.
+pub async fn up_with(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    within: Duration,
+    start: Spawn<'_>,
+) -> Result<i32, String> {
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
@@ -241,24 +263,23 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     if plan.is_empty() {
         return Ok(code);
     }
-    let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-    #[cfg(windows)]
-    keep_std_handles_from_children();
     let starts_broker = plan.iter().any(|argv| argv[0] == "broker");
     let mut started = Vec::new();
+    let mut waited = false;
     for argv in &plan {
-        if argv[0] == "hub" && starts_broker && !broker_ready(layout).await {
+        if argv[0] == "hub" && starts_broker && !broker_ready(layout, within).await {
+            waited = true;
             eprintln!(
                 "hub: not started: the broker does not answer within {} s, and a hub started \
                  before it would not list it as `local`; see logs/ in {} and run \
                  `localrunner up hub` once the broker answers",
-                STARTED_WITHIN.as_secs(),
+                within.as_secs(),
                 layout.root.display()
             );
             code = 1;
             continue;
         }
-        match spawn(&exe, argv) {
+        match start(argv) {
             Ok(pid) => {
                 println!("{}: started (pid {pid})", argv[..2].join(" "));
                 started.push(argv.clone());
@@ -269,10 +290,10 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
             }
         }
     }
-    let start = tokio::time::Instant::now();
+    let since = tokio::time::Instant::now();
     let late = loop {
         let late = missing(&started, &running_roles(layout).await);
-        if late.is_empty() || start.elapsed() >= STARTED_WITHIN {
+        if waited || late.is_empty() || since.elapsed() >= within {
             break late;
         }
         tokio::time::sleep(Duration::from_millis(300)).await;
