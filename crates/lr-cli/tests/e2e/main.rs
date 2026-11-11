@@ -3,10 +3,12 @@ mod cancel;
 mod ci;
 #[path = "../common/mod.rs"]
 mod common;
+mod dashboard;
 mod dashboard_events;
 mod failures;
 mod helper;
 mod kit;
+mod lifecycle;
 mod moved_broker;
 mod queue;
 mod selection;
