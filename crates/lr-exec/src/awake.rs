@@ -9,14 +9,14 @@ use std::sync::Mutex;
 /// What actually keeps one OS awake; `start` is called only when not running, `stop` only
 /// when running.
 pub trait Inhibitor: Send {
-    /// Starts keeping the machine awake.
-    fn start(&mut self);
+    /// Starts keeping the machine awake; the error says why it could not.
+    fn start(&mut self) -> Result<(), String>;
     /// Lets it sleep again.
     fn stop(&mut self);
 }
 
 /// [`KeepAwake`] over an [`Inhibitor`]: repeated holds are one hold, a release without a hold
-/// does nothing.
+/// does nothing, a failed start leaves it not held.
 pub struct Holder<I: Inhibitor> {
     state: Mutex<(I, bool)>,
 }
@@ -31,12 +31,13 @@ impl<I: Inhibitor> Holder<I> {
 }
 
 impl<I: Inhibitor> KeepAwake for Holder<I> {
-    fn hold(&self) {
+    fn hold(&self) -> Result<(), String> {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if !s.1 {
-            s.0.start();
+            s.0.start()?;
             s.1 = true;
         }
+        Ok(())
     }
 
     fn release(&self) {
@@ -68,42 +69,46 @@ mod os {
     use std::sync::mpsc::{channel, Sender};
     use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS};
 
-    #[derive(Default)]
     pub struct Os {
         thread: Option<Sender<bool>>,
     }
 
+    pub fn new() -> Os {
+        Os { thread: None }
+    }
+
     impl Os {
-        fn send(&mut self, on: bool) {
+        fn send(&mut self, on: bool) -> Result<(), String> {
             if self.thread.is_none() {
                 let (tx, rx) = channel::<bool>();
-                let spawned =
-                    std::thread::Builder::new()
-                        .name("keep-awake".into())
-                        .spawn(move || {
-                            while let Ok(on) = rx.recv() {
-                                let flags = if on { HOLD_FLAGS } else { ES_CONTINUOUS };
-                                unsafe { SetThreadExecutionState(flags) };
-                            }
-                            unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
-                        });
-                if spawned.is_ok() {
-                    self.thread = Some(tx);
-                }
+                std::thread::Builder::new()
+                    .name("keep-awake".into())
+                    .spawn(move || {
+                        while let Ok(on) = rx.recv() {
+                            let flags = if on { HOLD_FLAGS } else { ES_CONTINUOUS };
+                            unsafe { SetThreadExecutionState(flags) };
+                        }
+                        unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
+                    })
+                    .map_err(|e| format!("keep-awake thread not started: {e}"))?;
+                self.thread = Some(tx);
             }
-            if let Some(tx) = &self.thread {
-                let _ = tx.send(on);
+            let sent = self.thread.as_ref().is_some_and(|tx| tx.send(on).is_ok());
+            if !sent {
+                self.thread = None;
+                return Err("keep-awake thread is gone".into());
             }
+            Ok(())
         }
     }
 
     impl Inhibitor for Os {
-        fn start(&mut self) {
-            self.send(true);
+        fn start(&mut self) -> Result<(), String> {
+            self.send(true)
         }
 
         fn stop(&mut self) {
-            self.send(false);
+            let _ = self.send(false);
         }
     }
 }
@@ -113,21 +118,26 @@ mod os {
     use super::{caffeinate_command, Inhibitor};
     use std::process::{Child, Command, Stdio};
 
-    #[derive(Default)]
     pub struct Os {
         child: Option<Child>,
     }
 
+    pub fn new() -> Os {
+        Os { child: None }
+    }
+
     impl Inhibitor for Os {
-        fn start(&mut self) {
+        fn start(&mut self) -> Result<(), String> {
             let (program, args) = caffeinate_command(std::process::id());
-            self.child = Command::new(program)
+            let child = Command::new(program)
                 .args(args)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()
-                .ok();
+                .map_err(|e| format!("{program} not started: {e}"))?;
+            self.child = Some(child);
+            Ok(())
         }
 
         fn stop(&mut self) {
@@ -149,11 +159,16 @@ mod os {
 mod os {
     use super::Inhibitor;
 
-    #[derive(Default)]
     pub struct Os;
 
+    pub fn new() -> Os {
+        Os
+    }
+
     impl Inhibitor for Os {
-        fn start(&mut self) {}
+        fn start(&mut self) -> Result<(), String> {
+            Ok(())
+        }
 
         fn stop(&mut self) {}
     }
@@ -164,5 +179,5 @@ pub type SystemKeepAwake = Holder<os::Os>;
 
 /// A [`SystemKeepAwake`] that is not held.
 pub fn system_keep_awake() -> SystemKeepAwake {
-    Holder::new(os::Os::default())
+    Holder::new(os::new())
 }

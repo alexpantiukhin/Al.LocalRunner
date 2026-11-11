@@ -240,7 +240,13 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
         seq: 0,
     });
     shared.outbox.push_until_stored(&job, &started).await;
-    shared.deps.awake.hold();
+    if let Err(e) = shared.deps.awake.hold() {
+        shared.diag.event(
+            Level::Warn,
+            "keep-awake not held",
+            &[("job", &job.0), ("error", &e)],
+        );
+    }
     let f = match step_secrets(shared, &a.spec).await {
         Err(f) => {
             skip_steps(shared, &job, &a.spec.steps, 0).await;

@@ -39,6 +39,7 @@ impl DiskSpace for FakeDiskSpace {
 
 #[derive(Default)]
 struct Awake {
+    failing: Option<String>,
     held: bool,
     holds: usize,
     releases: usize,
@@ -56,6 +57,11 @@ impl FakeKeepAwake {
         FakeKeepAwake::default()
     }
 
+    /// Makes later holds fail with `reason`; `None` heals it.
+    pub fn fail(&self, reason: Option<&str>) {
+        self.state.lock().unwrap().failing = reason.map(str::to_string);
+    }
+
     /// Whether the machine is kept awake now.
     pub fn held(&self) -> bool {
         self.state.lock().unwrap().held
@@ -69,12 +75,16 @@ impl FakeKeepAwake {
 }
 
 impl KeepAwake for FakeKeepAwake {
-    fn hold(&self) {
+    fn hold(&self) -> Result<(), String> {
         let mut s = self.state.lock().unwrap();
+        if let Some(reason) = &s.failing {
+            return Err(reason.clone());
+        }
         if !s.held {
             s.held = true;
             s.holds += 1;
         }
+        Ok(())
     }
 
     fn release(&self) {

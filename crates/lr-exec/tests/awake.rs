@@ -6,8 +6,13 @@ use std::sync::{Arc, Mutex};
 struct Recording(Arc<Mutex<Vec<&'static str>>>);
 
 impl Inhibitor for Recording {
-    fn start(&mut self) {
-        self.0.lock().unwrap().push("start");
+    fn start(&mut self) -> Result<(), String> {
+        let mut calls = self.0.lock().unwrap();
+        calls.push("start");
+        if calls.len() == 1 {
+            return Err("refused".into());
+        }
+        Ok(())
     }
 
     fn stop(&mut self) {
@@ -16,16 +21,20 @@ impl Inhibitor for Recording {
 }
 
 #[test]
-fn repeated_holds_are_one_hold_and_a_release_without_a_hold_does_nothing() {
+fn repeated_holds_are_one_hold_and_a_failed_start_is_not_held() {
     let calls = Recording::default();
     let holder = Holder::new(calls.clone());
+    assert_eq!(holder.hold(), Err("refused".to_string()));
     holder.release();
-    holder.hold();
-    holder.hold();
+    holder.hold().unwrap();
+    holder.hold().unwrap();
     holder.release();
     holder.release();
-    holder.hold();
-    assert_eq!(*calls.0.lock().unwrap(), vec!["start", "stop", "start"]);
+    holder.hold().unwrap();
+    assert_eq!(
+        *calls.0.lock().unwrap(),
+        vec!["start", "start", "stop", "start"]
+    );
 }
 
 #[test]

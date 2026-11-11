@@ -137,3 +137,20 @@ async fn unmeasured_volume_falls_back_to_the_disk_found_at_start() {
     let b = Broker::accept(&rig).await;
     assert_eq!(b.hello.capabilities.clone().unwrap().disk_mb, 42);
 }
+
+#[tokio::test]
+async fn job_runs_when_the_machine_cannot_be_kept_awake_and_says_so() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.awake.fail(Some("caffeinate missing"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign("job-1", 1, tree_job(0)).await;
+    assert_eq!(result_of(&b.until_result().await).state, JobState::Passed);
+    let warned = rig.log.records().into_iter().any(|r| {
+        r.level == lr_abstractions::Level::Warn
+            && r.message == "keep-awake not held"
+            && r.fields.iter().any(|(_, v)| v == "caffeinate missing")
+    });
+    assert!(warned, "{}", rig.logs_text());
+}

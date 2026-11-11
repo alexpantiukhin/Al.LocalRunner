@@ -14,8 +14,9 @@ pub trait DiskSpace: Send + Sync {
 /// Keeps the machine from going to sleep while held. Holding twice is one hold; releasing
 /// when not held does nothing. Ending the process ends the hold.
 pub trait KeepAwake: Send + Sync {
-    /// Starts keeping the machine awake.
-    fn hold(&self);
+    /// Starts keeping the machine awake; the error says why the OS did not take the hold, and
+    /// the machine is then not held.
+    fn hold(&self) -> Result<(), String>;
 
     /// Lets the machine sleep again.
     fn release(&self);
