@@ -83,6 +83,17 @@ fn result_msg(job: &JobId, f: Final) -> RunnerToBroker {
 }
 
 pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
+    let state = format!("{:?}", f.state).to_lowercase();
+    let reason = f
+        .reason
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    shared.diag.event(
+        Level::Info,
+        "job finished",
+        &[("job", &job.0), ("state", &state), ("reason", &reason)],
+    );
     shared
         .outbox
         .push_until_stored(job, &result_msg(job, f))
@@ -144,6 +155,11 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
         Seq::New => {}
         Seq::Repeat | Seq::Dropped => return,
     }
+    shared.diag.event(
+        Level::Info,
+        "job received",
+        &[("job", &a.job.0), ("client", &a.spec.client)],
+    );
     if was_known {
         s.ack(&a.job, a.seq).await;
         shared.diag.event(
