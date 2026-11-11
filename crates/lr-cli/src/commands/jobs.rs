@@ -121,7 +121,7 @@ pub async fn submit(
 ) -> Result<i32, String> {
     let identity = identity(&args.label, args.note.as_deref())?;
     let client = hub(layout).await?;
-    let req = CliRequest::Submit(SubmitRequest {
+    let req = SubmitRequest {
         identity,
         profile: args.profile,
         platform: args.platform,
@@ -130,7 +130,27 @@ pub async fn submit(
         cpu: args.cpu,
         detach: args.detach,
         wait,
-    });
+    };
+    let mut stdout = std::io::stdout();
+    submit_on(client, req, json, &cli_redactor(layout), &mut |text| {
+        let _ = stdout.write_all(text.as_bytes());
+        let _ = stdout.flush();
+    })
+    .await
+}
+
+/// Places `req` through the open CLI channel `client`. Without `wait` it says `done` on the
+/// same channel right after the JobId comes, so the hub never waits for this process, and
+/// hands the JobId line to `out`; with `wait` it hands over the job's output instead.
+pub async fn submit_on(
+    client: IpcClient,
+    req: SubmitRequest,
+    json: bool,
+    redactor: &Arc<Redactor>,
+    out: &mut dyn FnMut(&str),
+) -> Result<i32, String> {
+    let wait = req.wait;
+    let req = CliRequest::Submit(req);
     let job = match client.call::<_, CliReply>(&req).await? {
         CliReply::Submitted { job, warnings } => {
             print_warnings(&warnings, &mut std::io::stderr());
@@ -145,15 +165,15 @@ pub async fn submit(
     if !wait {
         client.send(&CliRequest::Done { job: job.clone() }).await?;
         if json {
-            println!("{}", serde_json::json!({ "job": job }));
+            out(&format!("{}\n", serde_json::json!({ "job": job })));
         } else {
-            println!("{job}");
+            out(&format!("{job}\n"));
         }
         client.close().await;
         return Ok(0);
     }
     eprintln!("job {job}");
-    follow_to_stdout(layout, &client, &job).await
+    follow(&client, &job, redactor, out).await
 }
 
 /// `wait <job>`.
