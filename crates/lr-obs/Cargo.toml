@@ -24,3 +24,4 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Securit
 lr-abstractions = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "crypto"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
