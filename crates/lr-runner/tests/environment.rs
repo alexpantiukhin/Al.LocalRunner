@@ -352,3 +352,47 @@ async fn runner_without_env_path_refuses_the_job_instead_of_running_it_without_p
     );
     assert!(rig.process.runs().is_empty());
 }
+
+#[tokio::test]
+async fn workspace_mirrors_are_evicted_down_to_max_size_gb() {
+    let mut rig = Rig::new();
+    rig.settings.workspace = Retention {
+        max_size_gb: Some(1),
+        retention_days: None,
+    };
+    let mirror = |name: &str, last_used: u64| CacheEntry {
+        key: CacheKey {
+            client: lr_runner::WORKSPACE_CLIENT.into(),
+            project: "acme/app".into(),
+            name: name.into(),
+        },
+        path: format!("/ws/{name}"),
+        bytes: 700 * 1024 * 1024,
+        last_used: Timestamp(last_used),
+    };
+    let older = mirror("older", START - 2 * DAY);
+    let newer = mirror("newer", START - DAY);
+    let cache = entry("big-cache", 5 * GB, START - 3 * DAY);
+    for e in [&older, &newer, &cache] {
+        rig.files.put(&Path::new(&e.path).join("f"), b"x");
+        rig.store.upsert_cache(e.clone()).await.unwrap();
+    }
+    let (_c, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    rig.settle().await;
+    let left: BTreeSet<String> = rig
+        .store
+        .cache_entries()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.key.name)
+        .collect();
+    assert_eq!(
+        left,
+        BTreeSet::from(["newer".to_string(), "big-cache".to_string()]),
+        "1400 MB of mirrors exceed 1 GB: the least recently used goes; [cache] has no limit here"
+    );
+    assert!(!rig.files.is_dir(Path::new(&older.path)));
+    assert!(rig.files.is_dir(Path::new(&newer.path)));
+}

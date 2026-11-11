@@ -295,6 +295,13 @@ impl FakeNetwork {
         }
     }
 
+    /// Every address some listener has bound, sorted.
+    pub fn listening(&self) -> Vec<String> {
+        let mut bound: Vec<String> = self.net.lock().unwrap().listeners.keys().cloned().collect();
+        bound.sort();
+        bound
+    }
+
     /// Fault handles of every connection dialed to `address` and not cut, oldest first.
     pub fn connections(&self, address: &str) -> Vec<FakeConnection> {
         self.net

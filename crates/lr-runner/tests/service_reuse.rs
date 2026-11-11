@@ -205,3 +205,61 @@ async fn metrics_of_a_service_no_longer_declared_are_forgotten_at_start() {
         "a declared service keeps its series"
     );
 }
+
+fn parsed_db(section: &str) -> lr_runner::ServiceSpec {
+    let text = format!(
+        "name = \"r\"\n[service.db]\nstart = \"db-start\"\nready_check = \"db-ready\"\n\
+         stop = \"db-stop\"\nlifetime = \"idle\"\nidle_timeout_s = 100\nmax_lifetime_s = 1000\n\
+         {section}"
+    );
+    lr_runner::RunnerSettings::from_toml(&text, std::path::PathBuf::from("/state"))
+        .unwrap()
+        .services["db"]
+        .clone()
+}
+
+#[tokio::test]
+async fn any_reuse_serves_another_client_and_project() {
+    let rig = rig_with(parsed_db("reuse = \"any\"\n"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    run(&rig, &b, "job-1", needs_db("client-1", "acme/app")).await;
+    let msgs = run(&rig, &b, "job-2", needs_db("client-2", "acme/other")).await;
+    assert_eq!(result_of(&msgs).state, JobState::Passed);
+    assert_eq!(
+        rig.process.spawns().len(),
+        1,
+        "one warm instance serves a different client of a different project"
+    );
+    assert!(rig.process.kills().is_empty());
+    assert_eq!(rig.meter.counter(SERVICE_STARTS_TOTAL, DB), 1);
+}
+
+#[tokio::test]
+async fn a_service_with_a_secret_set_to_any_is_not_reused_by_another_client() {
+    let rig = rig_with(parsed_db(
+        "reuse = \"any\"\nsecrets = [\"registry_auth\"]\n",
+    ));
+    rig.secrets.insert("registry_auth", "s3cr3t");
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    run(&rig, &b, "job-1", needs_db("client-1", "acme/app")).await;
+    let msgs = run(&rig, &b, "job-2", needs_db("client-2", "acme/app")).await;
+    assert_eq!(result_of(&msgs).state, JobState::Passed);
+    assert_eq!(
+        rig.process.spawns().len(),
+        2,
+        "client-2 gets its own instance"
+    );
+    assert_eq!(
+        rig.process.kills().len(),
+        1,
+        "client-1's warm instance was stopped"
+    );
+    run(&rig, &b, "job-3", needs_db("client-2", "acme/app")).await;
+    assert_eq!(
+        rig.process.spawns().len(),
+        2,
+        "the same client still reuses it"
+    );
+}

@@ -256,3 +256,40 @@ fn lost_kill_defaults_to_three_minutes_and_only_shortens() {
     s.broker_lost_kill_s = Some(900);
     assert_eq!(s.lost_kill_s(Some(300)), 300);
 }
+
+#[tokio::test]
+async fn bye_is_sent_when_the_broker_comes_back() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(10 * SEC, 0)]));
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    rig.net.set_reachable(BROKER, false);
+    rig.net.cut(BROKER);
+    c.drain().await;
+    rig.advance(10 * SEC).await;
+    rig.advance(SEC).await;
+    assert!(
+        rig.pending()
+            .await
+            .iter()
+            .any(|e| e.kind == lr_abstractions::OutboxKind::JobResult),
+        "the job finished while the broker was away"
+    );
+    assert!(!h.is_finished(), "no Bye has been sent, the agent waits");
+    rig.net.set_reachable(BROKER, true);
+    rig.advance(10 * SEC).await;
+    let back = Broker::accept(&rig).await;
+    let r = result_of(&back.until_result().await);
+    assert_eq!(r.state, JobState::Passed);
+    let bye = back.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
+    assert!(matches!(bye, RunnerToBroker::Bye(_)));
+    assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
+}

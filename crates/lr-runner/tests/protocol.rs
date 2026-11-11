@@ -164,3 +164,33 @@ async fn mirror_is_indexed_and_expires_with_workspace_retention() {
         .collect();
     assert!(left.iter().all(|k| k.client != WORKSPACE_CLIENT));
 }
+
+#[tokio::test]
+async fn runner_never_listens() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script(
+        "job-1",
+        lr_abstractions::fakes::JobScript::new(vec![lr_abstractions::fakes::StepScript::new(
+            SEC, 0,
+        )]),
+    );
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("build", "make", 60)], 60),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    rig.advance(SEC).await;
+    let msgs = b.until_result().await;
+    assert_eq!(result_of(&msgs).state, lr_core::JobState::Passed);
+    assert_eq!(
+        rig.net.listening(),
+        vec![BROKER.to_string()],
+        "the only bound address is the broker's: the runner dials out and opens no port"
+    );
+    assert_eq!(rig.net.connections(BROKER).len(), 1);
+}
