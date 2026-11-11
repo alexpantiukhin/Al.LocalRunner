@@ -3,6 +3,7 @@ mod common;
 use common::TempDir;
 use lr_abstractions::fakes::{channel_pair, ManualClock};
 use lr_abstractions::{DataError, Frame, Peer, PeerAccess, Transport};
+use lr_cli::commands::snapshot_cmd::{log_targets, readable_logs, SNAPSHOT_LOG_LINES};
 use lr_cli::dashboard::{build_snapshot, keep_last_known, log_copy};
 use lr_cli::ipc_client::IpcClient;
 use lr_core::{Endpoint, JobId, JobState, Timestamp, Zone};
@@ -151,6 +152,23 @@ fn hub(
         },
         CliRequest::Read(r) => {
             let name = r.broker.clone().unwrap();
+            if let ReadRequest::Log { job, .. } = &r.request {
+                if job.0 == format!("run-{name}") {
+                    return CliReply::LogChunk {
+                        broker: name.clone(),
+                        text: format!("{name} step\napi_token=hunter2hunter2\n"),
+                        end: true,
+                    };
+                }
+                if job.0 == format!("done-{name}") {
+                    return CliReply::Read {
+                        broker: name,
+                        reply: ReadReply::Denied {
+                            reason: "not yours".into(),
+                        },
+                    };
+                }
+            }
             let reply = match &r.request {
                 ReadRequest::Status(_) => ReadReply::Status(status(&name)),
                 ReadRequest::History(_) => ReadReply::History {
@@ -280,6 +298,49 @@ async fn snapshot_collects_queue_runners_and_history_from_every_broker() {
         [Some(100), Some(100)],
         "up to 100 finished per broker"
     );
+}
+
+#[tokio::test]
+async fn with_logs_a_snapshot_embeds_the_last_500_lines_it_may_read_masked() {
+    let (client, seen) = fake_hub(hub(&["home"], &[], Vec::new())).await;
+    let redactor = Arc::new(Redactor::new(&[]));
+    let snap = build_snapshot(&client, &StatusFilter::default(), true, &redactor)
+        .await
+        .unwrap();
+    let mut targets = log_targets(&snap);
+    targets.sort();
+    let home = |j: &str| ("home".to_string(), JobId(j.into()));
+    assert_eq!(
+        targets,
+        [home("done-home"), home("run-home")],
+        "running and finished jobs only, not the queue"
+    );
+    let logs = readable_logs(&client, &targets, &redactor).await;
+    assert_eq!(
+        logs,
+        [(
+            JobId("run-home".into()),
+            "home step\napi_token=***\n".to_string()
+        )],
+        "a refused log is left out, the rest is masked"
+    );
+    let tails: Vec<Option<u64>> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|r| match r {
+            CliRequest::Read(r) => match &r.request {
+                ReadRequest::Log { tail, follow, .. } => {
+                    assert!(!follow);
+                    Some(*tail)
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    assert_eq!(tails, [Some(SNAPSHOT_LOG_LINES); 2]);
+    assert_eq!(SNAPSHOT_LOG_LINES, 500);
 }
 
 #[tokio::test]
