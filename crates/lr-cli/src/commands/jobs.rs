@@ -10,7 +10,7 @@ use lr_core::{Identity, JobId, JobState};
 use lr_obs::Redactor;
 use lr_proto::{CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, SubmitRequest};
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -170,8 +170,25 @@ struct HandleLabel {
     submitted_at: u64,
 }
 
+const HANDLE_MAX_BYTES: u64 = 64 * 1024;
+
+fn read_handle(path: &Path) -> Option<Vec<u8>> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.file_type().is_file() || meta.len() > HANDLE_MAX_BYTES {
+        return None;
+    }
+    let mut text = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(HANDLE_MAX_BYTES + 1)
+        .read_to_end(&mut text)
+        .ok()?;
+    (text.len() as u64 <= HANDLE_MAX_BYTES).then_some(text)
+}
+
 /// The label of the handle in `<dir>/temp/runner/` with the latest submission time: the
-/// default of `jobs --mine` without `--as` (spec 7.3).
+/// default of `jobs --mine` without `--as` (spec 7.3). Only regular files of at most 64 KiB
+/// count; links and other kinds of files are skipped.
 pub fn label_from_last_handle(dir: &Path) -> Result<String, String> {
     let runner = dir.join("temp").join("runner");
     let missing = || {
@@ -186,8 +203,7 @@ pub fn label_from_last_handle(dir: &Path) -> Result<String, String> {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .filter_map(|p| {
-            let text = std::fs::read(&p).ok()?;
-            let h: HandleLabel = serde_json::from_slice(&text).ok()?;
+            let h: HandleLabel = serde_json::from_slice(&read_handle(&p)?).ok()?;
             Some((h.submitted_at, p, h.label))
         })
         .max()

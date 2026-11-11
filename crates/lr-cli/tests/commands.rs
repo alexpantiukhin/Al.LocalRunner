@@ -311,3 +311,24 @@ fn jobs_mine_without_as_is_not_a_usage_error() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("no handle"), "{err}");
 }
+
+#[test]
+fn jobs_label_ignores_oversized_and_non_regular_handles() {
+    use lr_cli::commands::jobs::label_from_last_handle;
+    let d = common::TempDir::new("jobs");
+    write_handle(d.path(), "j-1", "agent-a", 100);
+    let big = serde_json::json!({
+        "job": "j-9", "label": "huge", "profile": "unit", "submitted_at": 900,
+        "detached": false, "pad": "x".repeat(70 * 1024)
+    });
+    std::fs::write(d.path().join("temp/runner/j-9.json"), big.to_string()).unwrap();
+    std::fs::create_dir(d.path().join("temp/runner/j-8.json")).unwrap();
+    #[cfg(unix)]
+    {
+        let target = d.path().join("elsewhere.json");
+        let body = serde_json::json!({"label": "linked", "submitted_at": 800});
+        std::fs::write(&target, body.to_string()).unwrap();
+        std::os::unix::fs::symlink(&target, d.path().join("temp/runner/j-7.json")).unwrap();
+    }
+    assert_eq!(label_from_last_handle(d.path()).unwrap(), "agent-a");
+}
