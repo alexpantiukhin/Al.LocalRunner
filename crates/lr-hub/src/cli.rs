@@ -422,6 +422,6 @@ impl Engine {
         orders.sort_by(|a, b| {
             (a.summary.queued_at, &a.summary.job).cmp(&(b.summary.queued_at, &b.summary.job))
         });
-        CliReply::Orders { orders }
+        CliReply::orders_within_frame(orders)
     }
 }

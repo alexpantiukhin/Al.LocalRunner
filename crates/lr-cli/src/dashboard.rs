@@ -204,7 +204,7 @@ pub async fn build_snapshot(
 pub async fn hub_orders(client: &IpcClient) -> Vec<HubOrder> {
     let call = client.call::<_, CliReply>(&CliRequest::Orders);
     match tokio::time::timeout(ORDERS_WAIT, call).await {
-        Ok(Ok(CliReply::Orders { orders })) => orders,
+        Ok(Ok(CliReply::Orders { orders, .. })) => orders,
         _ => Vec::new(),
     }
 }

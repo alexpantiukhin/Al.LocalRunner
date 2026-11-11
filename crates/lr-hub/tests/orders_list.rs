@@ -8,7 +8,7 @@ use lr_proto::{CliReply, CliRequest, HubOrder};
 async fn orders(cli: &Cli) -> Vec<HubOrder> {
     cli.send(CliRequest::Orders).await;
     match cli.reply().await {
-        CliReply::Orders { orders } => orders,
+        CliReply::Orders { orders, .. } => orders,
         other => panic!("expected orders, got {other:?}"),
     }
 }

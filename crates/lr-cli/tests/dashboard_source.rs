@@ -144,6 +144,7 @@ fn hub(
         },
         CliRequest::Orders => CliReply::Orders {
             orders: orders.clone(),
+            truncated: false,
         },
         CliRequest::Read(r) => {
             let name = r.broker.clone().unwrap();

@@ -126,6 +126,27 @@ pub struct HubOrder {
     pub log: Option<String>,
 }
 
+impl CliReply {
+    /// [`CliReply::Orders`] with the oldest of `orders` that fit one frame of
+    /// [`lr_core::MAX_FRAME_BYTES`] with room to spare; `truncated` when some were left out.
+    pub fn orders_within_frame(orders: Vec<HubOrder>) -> CliReply {
+        let budget = lr_core::MAX_FRAME_BYTES / 2;
+        let mut used = 0;
+        let total = orders.len();
+        let kept: Vec<HubOrder> = orders
+            .into_iter()
+            .take_while(|o| {
+                used += serde_json::to_vec(o).map_or(usize::MAX / 2, |b| b.len() + 1);
+                used <= budget
+            })
+            .collect();
+        CliReply::Orders {
+            truncated: kept.len() < total,
+            orders: kept,
+        }
+    }
+}
+
 /// Messages from the CLI to its hub over local IPC.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -228,6 +249,9 @@ pub enum CliReply {
     Orders {
         /// The orders, oldest first.
         orders: Vec<HubOrder>,
+        /// Newer orders were left out so the answer fits one frame.
+        #[serde(default)]
+        truncated: bool,
     },
     /// A piece of the log a `log` read asked for, relayed from the broker in order; `end`
     /// closes the stream. A refusal comes as [`CliReply::Read`] instead.

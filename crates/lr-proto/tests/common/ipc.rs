@@ -85,6 +85,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 summary: summary(),
                 log: Some("/w/temp/runner/j1.log".into()),
             }],
+            truncated: true,
         },
         CliReply::LogChunk {
             broker: "local".into(),
