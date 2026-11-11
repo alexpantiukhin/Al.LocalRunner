@@ -263,11 +263,11 @@ pub async fn up_with(
     if plan.is_empty() {
         return Ok(code);
     }
-    let starts_broker = plan.iter().any(|argv| argv[0] == "broker");
     let mut started = Vec::new();
     let mut waited = false;
     for argv in &plan {
-        if argv[0] == "hub" && starts_broker && !broker_ready(layout, within).await {
+        let broker_started = started.iter().any(|a: &Vec<String>| a[0] == "broker");
+        if argv[0] == "hub" && broker_started && !broker_ready(layout, within).await {
             waited = true;
             eprintln!(
                 "hub: not started: the broker does not answer within {} s, and a hub started \

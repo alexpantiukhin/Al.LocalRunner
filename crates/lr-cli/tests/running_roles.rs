@@ -91,10 +91,22 @@ async fn up_timed(
     role: RoleArg,
     within: Duration,
 ) -> (i32, Duration, Vec<String>) {
+    up_failing(layout, role, within, "").await
+}
+
+async fn up_failing(
+    layout: &Layout,
+    role: RoleArg,
+    within: Duration,
+    fails: &str,
+) -> (i32, Duration, Vec<String>) {
     let started = std::sync::Mutex::new(Vec::new());
     let spawn = |argv: &[String]| -> std::io::Result<u32> {
         started.lock().unwrap().push(argv[..2].join(" "));
-        Ok(4242)
+        match argv[0] == fails {
+            true => Err(std::io::Error::other("cannot start")),
+            false => Ok(4242),
+        }
     };
     let t0 = tokio::time::Instant::now();
     let code = up_with(layout, Some(role), within, &spawn).await.unwrap();
@@ -131,4 +143,18 @@ async fn up_reports_a_silent_role_after_its_limit_and_not_before() {
     assert_eq!(code, 1);
     assert!(took >= within, "not before the limit: {took:?}");
     assert!(took < within + Duration::from_secs(1), "{took:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn up_does_not_wait_for_a_broker_it_failed_to_start() {
+    let dir = TempDir::new("up-broker-failed");
+    let layout = layout(&dir);
+    let within = Duration::from_secs(6);
+    let (code, took, tried) = up_failing(&layout, RoleArg::All, within, "broker").await;
+    assert_eq!(code, 1);
+    assert_eq!(tried, vec!["broker run", "hub run", "runner run"]);
+    assert!(
+        took >= within && took < within + Duration::from_secs(1),
+        "{took:?}"
+    );
 }
