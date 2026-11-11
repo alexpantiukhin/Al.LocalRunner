@@ -5,10 +5,11 @@
 use super::runners::RunnerSlot;
 use super::Engine;
 use lr_core::{
-    ClientView, Order, Policy, PoolLimits, QueueEntry, Reject, Requirements, RunningJob, ServeLog,
-    Timestamp, Wait, Zone,
+    pick_next, ClientView, JobId, Order, Plan, Policy, PoolLimits, QueueEntry, QueueState, Reject,
+    Requirements, RunningJob, ServeLog, Timestamp, Wait, Zone,
 };
 use lr_proto::ServiceState;
+use std::collections::BTreeSet;
 
 /// The policy with the memory of live runner services taken out of its pool, so the planner
 /// never gives that memory to an order while the service lives. Reserve rules see it too.
@@ -74,13 +75,14 @@ fn offers_all(slot: &RunnerSlot, req: &Requirements) -> bool {
 }
 
 /// Memory the services of `req` would add on `slot`: the declared `memory_mb` of each
-/// service the runner does not already report live (a live one is held already, and a warm
-/// one that may not be reused is stopped before a fresh one starts).
-fn to_start_mb(slot: &RunnerSlot, req: &Requirements) -> u64 {
+/// requested service, once per name. With `warm` a service the runner reports live adds
+/// nothing: it is held already (a live one that may not be reused is stopped before a fresh
+/// one starts).
+pub(crate) fn service_cost_mb(slot: &RunnerSlot, req: &Requirements, warm: bool) -> u64 {
     let mut seen: Vec<&String> = Vec::new();
     let mut mb = 0u64;
     for service in &req.services {
-        if seen.contains(&service) || has_live(slot, service) {
+        if seen.contains(&service) || (warm && has_live(slot, service)) {
             continue;
         }
         seen.push(service);
@@ -90,7 +92,26 @@ fn to_start_mb(slot: &RunnerSlot, req: &Requirements) -> u64 {
     mb
 }
 
-fn with_extra(mut entry: QueueEntry, mb: u64) -> QueueEntry {
+/// The memory an order adds for its services (spec 3.11): the cheapest of `slots` that offer
+/// every requested service, 0 when none does. Intake passes every registered runner and cold
+/// costs; the planner passes the runners that take work and counts warm instances as reused.
+pub(crate) fn cheapest_service_mb<'a>(
+    slots: impl IntoIterator<Item = &'a RunnerSlot>,
+    req: &Requirements,
+    warm: bool,
+) -> u64 {
+    if req.services.is_empty() {
+        return 0;
+    }
+    slots
+        .into_iter()
+        .filter(|s| offers_all(s, req))
+        .map(|s| service_cost_mb(s, req, warm))
+        .min()
+        .unwrap_or(0)
+}
+
+pub(crate) fn with_extra(mut entry: QueueEntry, mb: u64) -> QueueEntry {
     let mem = &mut entry.order.requirements.mem_mb;
     *mem = mem.saturating_add(mb);
     entry
@@ -121,26 +142,18 @@ impl Engine {
     pub(crate) fn pending_service_mb(&self, runner: &str, req: &Requirements) -> u64 {
         self.runners
             .get(runner)
-            .map_or(0, |slot| to_start_mb(slot, req))
+            .map_or(0, |slot| service_cost_mb(slot, req, true))
     }
 
     /// The queue as the planner sees it: an order that needs services asks for their memory
-    /// as well, the most any connected runner offering them would start.
+    /// as well, on the cheapest runner that takes work (see [`cheapest_service_mb`]).
     pub(crate) fn planned_queue(&self) -> Vec<QueueEntry> {
+        let taking: Vec<&RunnerSlot> = self.runners.values().filter(|s| s.takes_work()).collect();
         self.queue
             .iter()
             .map(|j| {
                 let req = &j.entry.order.requirements;
-                if req.services.is_empty() {
-                    return j.entry.clone();
-                }
-                let extra = self
-                    .runners
-                    .values()
-                    .filter(|s| s.conn.is_some() && offers_all(s, req))
-                    .map(|s| to_start_mb(s, req))
-                    .max()
-                    .unwrap_or(0);
+                let extra = cheapest_service_mb(taking.iter().copied(), req, true);
                 with_extra(j.entry.clone(), extra)
             })
             .collect()
@@ -156,5 +169,85 @@ impl Engine {
                 r
             })
             .collect()
+    }
+
+    /// One planning pass (spec 6) with the memory of services (spec 3.11). An order is
+    /// planned with its cheapest service memory; when the pass puts it on a runner where its
+    /// services cost more than the pool or that runner has left, that runner is left out of
+    /// the pass and the pass is planned again, so a warm instance elsewhere is reused instead
+    /// of over-committing the pool.
+    pub(crate) fn plan_pass(&self, now: Timestamp) -> Plan {
+        let entries = self.planned_queue();
+        let running = self.planned_running();
+        let inner = self.policy.policy();
+        let held_mb = self.service_mem_mb();
+        let mut pool = inner.pool().clone();
+        pool.mem_mb = pool.mem_mb.saturating_sub(held_mb);
+        let used = running.iter().fold(0u64, |a, r| {
+            a.saturating_add(r.entry.order.requirements.mem_mb)
+        });
+        let free_mb = pool.mem_mb.saturating_sub(used);
+        let policy = HeldPool {
+            inner,
+            pool,
+            held_mb,
+        };
+        let mut excluded: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let mut runners = self.runner_views();
+            for view in &mut runners {
+                if excluded.contains(&view.name) {
+                    view.online = false;
+                }
+            }
+            let state = QueueState {
+                queue: &entries,
+                runners: &runners,
+                running: &running,
+                served: &self.served,
+            };
+            let plan = pick_next(&policy, &self.site, &state, now);
+            match self.costlier_runner(&plan, &entries, free_mb) {
+                Some(name) if !excluded.contains(&name) => {
+                    excluded.insert(name);
+                }
+                _ => return plan,
+            }
+        }
+    }
+
+    fn costlier_runner(&self, plan: &Plan, entries: &[QueueEntry], free_mb: u64) -> Option<String> {
+        let planned = |job: &JobId| entries.iter().find(|e| &e.order.job == job);
+        let mut free = plan
+            .assignments
+            .iter()
+            .filter_map(|a| planned(&a.job))
+            .fold(free_mb, |f, e| {
+                f.saturating_sub(e.order.requirements.mem_mb)
+            });
+        for a in &plan.assignments {
+            let Some(entry) = planned(&a.job) else {
+                continue;
+            };
+            let Some(job) = self.queue.iter().find(|j| j.internal == a.job) else {
+                continue;
+            };
+            let req = &job.entry.order.requirements;
+            let planned_extra = entry.order.requirements.mem_mb.saturating_sub(req.mem_mb);
+            let actual = self.pending_service_mb(&a.runner, req);
+            if actual <= planned_extra {
+                continue;
+            }
+            let more = actual - planned_extra;
+            let fits_runner = self
+                .runners
+                .get(&a.runner)
+                .is_some_and(|s| req.mem_mb.saturating_add(actual) <= s.caps.mem_mb);
+            if more > free || !fits_runner {
+                return Some(a.runner.clone());
+            }
+            free -= more;
+        }
+        None
     }
 }

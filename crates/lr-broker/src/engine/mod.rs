@@ -25,6 +25,7 @@ mod revoke;
 mod runners;
 mod same_machine;
 mod service_budget;
+mod service_intake;
 mod services;
 mod start;
 mod wire;

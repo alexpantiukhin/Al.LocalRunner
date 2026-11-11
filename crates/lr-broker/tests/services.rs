@@ -208,16 +208,18 @@ fn declares_service(mem_mb: u64) -> WireCapabilities {
 #[tokio::test]
 async fn an_order_with_a_service_waits_when_the_pool_fits_only_the_job() {
     let h = Harness::start("");
+    let mut busy = h.member_runner("r2", "10.0.0.8", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("plain", req(4000, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(busy.assign().await.job, JobId("plain".into()));
     let mut r = h
         .member_runner("r1", "10.0.0.7", declares_service(4096))
         .await;
-    let mut hub = h.local_hub("alex").await;
-    hub.send(&order("big", needs_service(14000))).await;
+    hub.sync().await;
+    hub.send(&order("svc", needs_service(10000))).await;
     hub.accepted().await;
     r.quiet().await;
-    hub.send(&order("fits", needs_service(12000))).await;
-    hub.accepted().await;
-    assert_eq!(r.assign().await.job, JobId("fits".into()));
 }
 
 #[tokio::test]

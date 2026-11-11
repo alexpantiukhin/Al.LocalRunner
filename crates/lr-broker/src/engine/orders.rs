@@ -8,8 +8,8 @@ use lr_abstractions::{
     SourceKind, StepRow, StoreError,
 };
 use lr_core::{
-    check_runners, ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject,
-    Requirements, Source, StepState,
+    ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject, Requirements,
+    Source, StepState,
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
@@ -17,7 +17,7 @@ use lr_proto::{
     ResourceOverride, Resume, WireCode,
 };
 
-fn reject_reason(r: &Reject) -> RejectReason {
+pub(super) fn reject_reason(r: &Reject) -> RejectReason {
     match r {
         Reject::PoolMemory { .. } => RejectReason::PoolMemory,
         Reject::PoolCpu { .. } => RejectReason::PoolCpu,
@@ -29,7 +29,7 @@ fn reject_reason(r: &Reject) -> RejectReason {
     }
 }
 
-fn overridden(
+pub(super) fn overridden(
     r: &Reject,
     over: &ResourceOverride,
     req: &Requirements,
@@ -55,6 +55,9 @@ fn overridden(
             "--cpu {} больше пула: максимум в пуле {} CPU",
             req.cpu, pool.cpu
         ));
+    }
+    if parts.is_empty() {
+        return None;
     }
     Some((RejectReason::OverrideAbovePool, parts.join("; ")))
 }
@@ -256,18 +259,7 @@ impl Engine {
             ));
         }
         self.allowed(entry, spec)?;
-        let fail = |r: Reject| (reject_reason(&r), r.to_string());
-        let policy = self.policy.policy();
-        policy.admit(&entry.order, &entry.client).map_err(|r| {
-            overridden(
-                &r,
-                &spec.overrides,
-                &entry.order.requirements,
-                policy.pool(),
-            )
-            .unwrap_or_else(|| fail(r))
-        })?;
-        check_runners(entry, &self.runner_views(), &self.site).map_err(fail)
+        self.admit_fit(entry, spec)
     }
 
     fn job_of(&mut self, client: &Client, key: &JobKey, spec: OrderSpec) -> Job {

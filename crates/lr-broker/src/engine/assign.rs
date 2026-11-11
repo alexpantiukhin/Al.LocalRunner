@@ -1,9 +1,8 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
-use super::service_budget::HeldPool;
 use super::{Engine, Job};
 use lr_abstractions::{Applied, Frame, Inbound, Level, OutboxKind, StepUpdate, StoreError};
-use lr_core::{pick_next, Assignment, JobId, JobState, QueueState, RunningJob, Timestamp, Wait};
+use lr_core::{Assignment, JobId, JobState, RunningJob, Timestamp, Wait};
 use lr_proto::{
     receive, Ack, Assign, AssignSpec, BrokerToHub, BrokerToRunner, Chunk, JobResult, ProtocolError,
     ProtocolErrorCode, QueueEvent, ReasonCode, Received, RunnerToBroker, StepResult, StepView,
@@ -45,28 +44,7 @@ impl Engine {
 
     pub(crate) async fn plan(&mut self) {
         let now = self.now();
-        let entries = self.planned_queue();
-        let runners = self.runner_views();
-        let running = self.planned_running();
-        let inner = self.policy.policy();
-        let held_mb = self.service_mem_mb();
-        let mut pool = inner.pool().clone();
-        pool.mem_mb = pool.mem_mb.saturating_sub(held_mb);
-        let plan = pick_next(
-            &HeldPool {
-                inner,
-                pool,
-                held_mb,
-            },
-            &self.site,
-            &QueueState {
-                queue: &entries,
-                runners: &runners,
-                running: &running,
-                served: &self.served,
-            },
-            now,
-        );
+        let plan = self.plan_pass(now);
         self.waits = plan
             .waiting
             .iter()
