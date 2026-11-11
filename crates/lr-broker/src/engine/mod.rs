@@ -18,6 +18,7 @@ mod metrics;
 mod orders;
 mod read;
 mod recovery;
+mod retention;
 mod retry;
 mod revoke;
 mod runners;
@@ -141,6 +142,7 @@ impl Broker {
                 retry_round: false,
                 unsaved_starts: false,
                 revoked: HashSet::new(),
+                retention: retention::Retention::default(),
             },
             listener: deps.listener,
             tx,
@@ -320,6 +322,7 @@ pub(crate) struct Engine {
     pub(crate) retry_round: bool,
     pub(crate) unsaved_starts: bool,
     pub(crate) revoked: HashSet<String>,
+    retention: retention::Retention,
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -327,6 +330,7 @@ const MIB: u64 = 1024 * 1024;
 impl Engine {
     async fn handle(&mut self, cmd: Command) {
         self.expire().await;
+        self.retain();
         match cmd {
             Command::Tick => {
                 self.forget_clients();
