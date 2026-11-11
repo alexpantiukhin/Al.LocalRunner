@@ -89,6 +89,12 @@ async fn hub_and_runners_join_with_codes_and_keep_the_pinned_broker() {
         assert!(broker_file.contains("fingerprint"), "{broker_file}");
         let own = std::fs::read_to_string(dir.join("runner.toml")).unwrap();
         assert!(own.contains("linux-x64") && own.contains("gpu"), "{own}");
+        let parsed: toml::Value = toml::from_str(&own).unwrap();
+        assert_eq!(
+            parsed["env"]["path"].as_str(),
+            std::env::var("PATH").ok().as_deref(),
+            "runner join writes [env] path from the shell PATH"
+        );
     }
     assert_eq!(
         admin(&layout, AdminRequest::RunnerList).await,
