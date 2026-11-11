@@ -87,7 +87,9 @@ fn tags_of(file: &Path, text: &str, errors: &mut Vec<String>) -> BTreeMap<String
 }
 
 fn e2e_tags(errors: &mut Vec<String>) -> BTreeMap<String, Vec<String>> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("e2e");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("e2e");
     let mut all: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();

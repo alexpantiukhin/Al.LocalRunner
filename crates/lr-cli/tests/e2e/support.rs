@@ -5,7 +5,7 @@ use lr_cli::commands::read_cmd::fetch_runners;
 use lr_cli::commands::view::{known_brokers, read};
 use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
-use lr_core::{JobId, JobState};
+use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
     CliReply, CliRequest, HistoryFilter, JobSummary, ReadReply, ReadRequest, ReasonCode,
     RunnerInfo, StatusFilter, StatusView, SubmitRequest,
@@ -95,7 +95,7 @@ where
 }
 
 /// Submits `profile` from `repo` through the hub of `layout`; the channel stays open to follow
-/// the job when `wait`.
+/// the job.
 pub async fn submit(
     layout: &Layout,
     repo: &Path,
@@ -103,6 +103,17 @@ pub async fn submit(
     platform: Option<&str>,
 ) -> (IpcClient, JobId) {
     let identity = common::session(LABEL, None, repo).expect("identity");
+    submit_as(layout, identity, profile, platform, false).await
+}
+
+/// Submits `profile` with `identity` through the hub of `layout`, detached when `detach`.
+pub async fn submit_as(
+    layout: &Layout,
+    identity: Identity,
+    profile: &str,
+    platform: Option<&str>,
+    detach: bool,
+) -> (IpcClient, JobId) {
     let client = hub(layout).await.expect("hub channel");
     let req = CliRequest::Submit(SubmitRequest {
         identity,
@@ -111,7 +122,7 @@ pub async fn submit(
         timeout_s: None,
         mem_mb: None,
         cpu: None,
-        detach: false,
+        detach,
         wait: true,
     });
     match client.call::<_, CliReply>(&req).await.expect("submit") {
@@ -129,8 +140,15 @@ pub struct Ended {
     pub output: String,
 }
 
-/// Reads the job's output from the hub until it ends, at most `limit`.
-pub async fn until_exit(client: IpcClient, job: &JobId, limit: Duration) -> Ended {
+/// How a followed job came out: it ended, or the hub refused it after `Submitted`.
+#[derive(Debug)]
+pub enum Outcome {
+    Ended(Ended),
+    Rejected(ReasonCode, String),
+}
+
+/// Reads the job's output from the hub until it ends or is refused, at most `limit`.
+pub async fn until_end(client: IpcClient, job: &JobId, limit: Duration) -> Outcome {
     let mut output = String::new();
     let ended = tokio::time::timeout(limit, async {
         loop {
@@ -141,23 +159,46 @@ pub async fn until_exit(client: IpcClient, job: &JobId, limit: Duration) -> Ende
                     state,
                     exit_code,
                     reason,
-                } if &j == job => return (state, exit_code, reason),
-                CliReply::Rejected { code, detail } => panic!("rejected {code}: {detail}"),
+                } if &j == job => return Ok((state, exit_code, reason)),
+                CliReply::Rejected { code, detail } => return Err((code, detail)),
                 CliReply::Error(e) => panic!("hub error {e:?}"),
                 _ => {}
             }
         }
     })
     .await;
-    let Ok((state, exit_code, reason)) = ended else {
+    let Ok(ended) = ended else {
         panic!("job {job} did not end within {limit:?}; output so far: {output}");
     };
     client.close().await;
-    Ended {
-        state,
-        exit_code,
-        reason,
-        output,
+    match ended {
+        Ok((state, exit_code, reason)) => Outcome::Ended(Ended {
+            state,
+            exit_code,
+            reason,
+            output,
+        }),
+        Err((code, detail)) => Outcome::Rejected(code, detail),
+    }
+}
+
+/// Reads the job's output from the hub until it ends, at most `limit`.
+pub async fn until_exit(client: IpcClient, job: &JobId, limit: Duration) -> Ended {
+    match until_end(client, job, limit).await {
+        Outcome::Ended(e) => e,
+        Outcome::Rejected(code, detail) => panic!("rejected {code}: {detail}"),
+    }
+}
+
+/// The refusal of a followed job, at most `limit`.
+pub async fn until_rejected(
+    client: IpcClient,
+    job: &JobId,
+    limit: Duration,
+) -> (ReasonCode, String) {
+    match until_end(client, job, limit).await {
+        Outcome::Rejected(code, detail) => (code, detail),
+        Outcome::Ended(e) => panic!("job {job} ran instead of being refused: {e:?}"),
     }
 }
 
@@ -212,15 +253,34 @@ pub async fn status(layout: &Layout) -> Option<StatusView> {
 
 /// Own runs of all brokers of the hub of `layout`.
 pub async fn history(layout: &Layout) -> Vec<JobSummary> {
-    let client = hub(layout).await.expect("hub channel");
-    let mine = HistoryFilter {
-        mine: true,
+    history_of(layout, true).await
+}
+
+/// Runs of every client all brokers of the hub of `layout` show to it.
+pub async fn all_history(layout: &Layout) -> Vec<JobSummary> {
+    history_of(layout, false).await
+}
+
+async fn history_of(layout: &Layout, mine: bool) -> Vec<JobSummary> {
+    let rows = try_history(layout, mine).await;
+    rows.unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// Runs the brokers of the hub of `layout` show (own ones when `mine`), or why some broker
+/// could not answer.
+pub async fn try_history(layout: &Layout, mine: bool) -> Result<Vec<JobSummary>, String> {
+    let client = hub(layout).await?;
+    let filter = HistoryFilter {
+        mine,
         ..HistoryFilter::default()
     };
-    let (per, problems) = fetch_history(&client, None, &mine).await.expect("history");
+    let fetched = fetch_history(&client, None, &filter).await;
     client.close().await;
-    assert!(problems.is_empty(), "{problems:?}");
-    per.into_iter().flat_map(|(_, jobs)| jobs).collect()
+    let (per, problems) = fetched?;
+    if !problems.is_empty() {
+        return Err(format!("{problems:?}"));
+    }
+    Ok(per.into_iter().flat_map(|(_, jobs)| jobs).collect())
 }
 
 /// Waits until the helper of `role` has written its pid under `pids`.

@@ -37,7 +37,7 @@ async fn hub_code(layout: &Layout) -> (String, String) {
     }
 }
 
-async fn http(addr: &str, path: &str) -> String {
+pub async fn http(addr: &str, path: &str) -> String {
     let mut s = TcpStream::connect(addr).await.expect("dashboard listens");
     let head = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     s.write_all(head.as_bytes()).await.unwrap();
@@ -48,13 +48,15 @@ async fn http(addr: &str, path: &str) -> String {
 
 /// A dashboard over the hub of a layout and one SSE connection of a session to it, whose
 /// `update` events are collected as they arrive.
-struct Watched {
-    running: RunningDashboard,
+pub struct Watched {
+    pub running: RunningDashboard,
     events: Arc<Mutex<Vec<Value>>>,
+    pub addr: String,
+    pub cookie: String,
 }
 
 impl Watched {
-    async fn open(layout: &Layout) -> Watched {
+    pub async fn open(layout: &Layout) -> Watched {
         let source = Arc::new(HubSource::new(layout.clone()));
         let user = lr_net::current_os_user().unwrap();
         let running = Dashboard::new(source, DashboardOptions { user })
@@ -109,7 +111,12 @@ impl Watched {
                 }
             }
         });
-        Watched { running, events }
+        Watched {
+            running,
+            events,
+            addr: addr.to_string(),
+            cookie,
+        }
     }
 
     fn about(&self, job: &JobId) -> Vec<Value> {
@@ -125,7 +132,7 @@ impl Watched {
             .collect()
     }
 
-    async fn until(&self, what: &str, f: impl Fn(&Value) -> bool) -> Value {
+    pub async fn until(&self, what: &str, f: impl Fn(&Value) -> bool) -> Value {
         eventually(what, Duration::from_secs(60), || {
             let found = self.events.lock().unwrap().iter().find(|e| f(e)).cloned();
             async move { found }
@@ -134,7 +141,7 @@ impl Watched {
     }
 }
 
-fn queued_of(job: &JobId) -> impl Fn(&Value) -> bool + '_ {
+pub fn queued_of(job: &JobId) -> impl Fn(&Value) -> bool + '_ {
     move |e| e["event"]["type"] == "job_queued" && e["event"]["job"]["job"] == job.0.as_str()
 }
 

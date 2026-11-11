@@ -5,6 +5,8 @@ const MODE: &str = "LR_E2E_MODE";
 const ROLE: &str = "LR_E2E_ROLE";
 const PIDS: &str = "LR_E2E_PIDS";
 const GATE: &str = "LR_E2E_GATE";
+const EXEC: &str = "LR_E2E_EXEC";
+const SEPARATOR: char = '\u{1f}';
 const TEST_NAME: &str = "helper_process";
 const LONGEST: Duration = Duration::from_secs(120);
 
@@ -107,11 +109,85 @@ pub fn run_if_requested() {
     let role = std::env::var(ROLE).unwrap();
     let pids = PathBuf::from(std::env::var(PIDS).unwrap());
     let gate = PathBuf::from(std::env::var(GATE).unwrap());
+    if mode == "exec" {
+        run_step(&pids);
+    }
     if mode == "tree" {
         spawn_grandchild(&pids, &gate);
     }
     announce(&pids, &role);
     wait_gate(&gate);
     println!("{role}-done");
+    std::process::exit(0);
+}
+
+/// A process that waits until `gate` exists (at most two minutes), with its pid under `pids`.
+pub fn spawn_waiting(pids: &Path, gate: &Path) -> std::process::Child {
+    std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST_NAME, "--nocapture", "--quiet"])
+        .env(MODE, "wait")
+        .env(ROLE, "child")
+        .env(PIDS, pids)
+        .env(GATE, gate)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap()
+}
+
+/// A process standing for a CI step: it runs `program` with `args` in `cwd` (with the
+/// environment `envs` added), records its own pid as `step` and the program's as `run` under
+/// `pids`, and ends with the program.
+pub fn spawn_step(
+    pids: &Path,
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    envs: &[(&str, &str)],
+) -> std::process::Child {
+    let line = std::iter::once(program.display().to_string())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>()
+        .join(&SEPARATOR.to_string());
+    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--exact", TEST_NAME, "--nocapture", "--quiet"])
+        .env(MODE, "exec")
+        .env(ROLE, "step")
+        .env(PIDS, pids)
+        .env(GATE, pids)
+        .env(EXEC, line)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    cmd.spawn().unwrap()
+}
+
+fn run_step(pids: &Path) {
+    let line = std::env::var(EXEC).unwrap();
+    let mut words = line.split(SEPARATOR);
+    let program = words.next().unwrap().to_string();
+    let mut child = std::process::Command::new(program)
+        .args(words)
+        .env_remove(MODE)
+        .env_remove(ROLE)
+        .env_remove(PIDS)
+        .env_remove(GATE)
+        .env_remove(EXEC)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut tmp = pid_file(pids, "run").into_os_string();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, child.id().to_string()).unwrap();
+    std::fs::rename(&tmp, pid_file(pids, "run")).unwrap();
+    announce(pids, "step");
+    let _ = child.wait();
     std::process::exit(0);
 }
