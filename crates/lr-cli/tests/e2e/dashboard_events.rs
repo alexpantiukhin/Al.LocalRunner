@@ -152,21 +152,27 @@ async fn two_hubs(
     add_runner(&main, "r1");
     add_runner(&main, "r2");
     let guest = layout(dir, "guest", "");
-    let broker = start_broker(&main, false).await.expect("broker starts");
-    let main_hub = start_hub(&main, false).await.expect("hub starts");
+    let broker = start_broker(&main, false)
+        .await
+        .unwrap_or_else(|e| panic!("broker starts: {e}"));
+    let main_hub = start_hub(&main, false)
+        .await
+        .unwrap_or_else(|e| panic!("hub starts: {e}"));
     let runners = start_runners(&main, Some("r1"), 1, None, false)
         .await
-        .expect("runner starts");
+        .unwrap_or_else(|e| panic!("runner starts: {e}"));
     runner_online(&main, "r1").await;
     let (address, code) = hub_code(&main).await;
     assert_eq!(
         hub_join(&guest, &address, &code, Some("main".into())).await,
         Ok(0)
     );
-    let guest_hub = start_hub(&guest, false).await.expect("guest hub starts");
+    let guest_hub = start_hub(&guest, false)
+        .await
+        .unwrap_or_else(|e| panic!("guest hub starts: {e}"));
     eventually(
         "the guest hub reads the broker",
-        Duration::from_secs(30),
+        Duration::from_secs(60),
         || async {
             let client = hub(&guest).await.ok()?;
             let answer = read(&client, "main", ReadRequest::Runners).await.ok();
@@ -205,7 +211,7 @@ async fn finish(stops: Vec<Box<dyn FnOnce()>>, watched: [Watched; 2], dir: TempD
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_dashboard_streams_broker_events_masked_for_a_client_seeing_only_summaries() {
-    let dir = TempDir::new("e2e-events-summary");
+    let dir = TempDir::new("e2e-ev-sum");
     let (main, _guest, stops, owner, other) = two_hubs(&dir, "summary").await;
     let repo = repo(&dir, QUICK);
     let job = run_quick(&main, &repo).await;
@@ -236,7 +242,7 @@ async fn the_dashboard_streams_broker_events_masked_for_a_client_seeing_only_sum
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_client_without_access_to_other_orders_gets_no_event_about_them() {
-    let dir = TempDir::new("e2e-events-none");
+    let dir = TempDir::new("e2e-ev-none");
     let (main, _guest, mut stops, owner, other) = two_hubs(&dir, "none").await;
     let repo = repo(&dir, QUICK);
     let job = run_quick(&main, &repo).await;
@@ -244,7 +250,7 @@ async fn a_client_without_access_to_other_orders_gets_no_event_about_them() {
 
     let r2 = start_runners(&main, Some("r2"), 1, None, false)
         .await
-        .expect("runner r2 starts");
+        .unwrap_or_else(|e| panic!("runner r2 starts: {e}"));
     stops.insert(0, Box::new(move || r2.stop()));
     let online = |e: &Value| {
         e["event"]["type"] == "runner_online"

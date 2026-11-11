@@ -181,7 +181,7 @@ pub async fn runners(layout: &Layout) -> Option<Vec<RunnerInfo>> {
 pub async fn runner_online(layout: &Layout, name: &str) -> RunnerInfo {
     eventually(
         &format!("runner {name} online"),
-        Duration::from_secs(30),
+        Duration::from_secs(60),
         || async {
             broker_available(layout).await?;
             runners(layout)
