@@ -65,21 +65,34 @@ async fn a_store_failure_while_taking_a_cancel_answers_unavailable_and_a_retry_w
 
 #[tokio::test]
 async fn a_waiting_order_skips_an_offline_runner_for_another_suitable_one() {
-    let h = Harness::start("");
-    let r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let h = Harness::start("[[rule]]\nname = \"one-at-a-time\"\nquota = { max_mem_mb = 600 }\n");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;
-    r1.close().await;
     let mut hub = h.local_hub("alex").await;
-    hub.until_runner("r1", false).await;
     hub.send(&order("j1", req(512, 1, 60))).await;
     hub.accepted().await;
-    assert_eq!(r2.assign().await.job, JobId("j1".into()));
+    let first_on_r1 = tokio::select! {
+        a = r1.assign() => { assert_eq!(a.job, JobId("j1".into())); true }
+        a = r2.assign() => { assert_eq!(a.job, JobId("j1".into())); false }
+    };
+    let (mut busy, free, free_name) = if first_on_r1 {
+        (r1, r2, "r2")
+    } else {
+        (r2, r1, "r1")
+    };
     hub.send(&order("j2", req(512, 1, 60))).await;
-    hub.accepted().await;
-    r2.send(&started("j1", 1)).await;
-    r2.send(&result("j1", 2, JobState::Passed, 0)).await;
-    r2.acked(2).await;
-    assert_eq!(r2.assign().await.job, JobId("j2".into()));
+    let waiting = hub.accepted().await.waiting.expect("j2 waits by the quota");
+    assert!(waiting.contains("one-at-a-time"), "{waiting}");
+    free.close().await;
+    hub.until_runner(free_name, false).await;
+    busy.send(&started("j1", 1)).await;
+    busy.send(&result("j1", 2, JobState::Passed, 0)).await;
+    busy.acked(2).await;
+    assert_eq!(
+        busy.assign().await.job,
+        JobId("j2".into()),
+        "the runner that was free when j2 queued went offline, so j2 goes to the other one"
+    );
 }
 
 #[tokio::test]
