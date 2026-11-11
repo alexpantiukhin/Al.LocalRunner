@@ -249,3 +249,17 @@ fn submit_and_run_accept_mem_and_cpu() {
         assert!(err.contains(args[0]), "{err}");
     }
 }
+
+#[test]
+fn submit_warnings_go_to_the_error_stream_one_per_line() {
+    let mut err = Vec::new();
+    let warnings = vec![
+        "warning: uncommitted changes are ignored: the runner checks out the pushed commit abc1234"
+            .to_string(),
+    ];
+    lr_cli::commands::jobs::print_warnings(&warnings, &mut err);
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        format!("{}\n", warnings[0])
+    );
+}

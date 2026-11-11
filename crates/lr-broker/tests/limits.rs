@@ -346,3 +346,39 @@ async fn timeout_above_the_broker_maximum_is_trimmed_when_the_policy_says_trim()
     hub.send(&order("j2", req(512, 1, 300))).await;
     assert_eq!(hub.accepted().await.timeout_trimmed_to, None);
 }
+
+#[tokio::test]
+async fn a_resent_order_is_answered_as_before_when_the_rate_is_used_up() {
+    let h = Harness::start("[limits]\napi_requests_per_min = 2\n");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    alex.read(ReadRequest::Runners).await;
+    assert!(rate_limited(&alex.read(ReadRequest::Runners).await));
+    let mut again = h.local_hub("alex").await;
+    again.send(&order("j1", req(512, 1, 60))).await;
+    let a = again.accepted().await;
+    assert_eq!((a.job.0.as_str(), a.order_seq), ("j1", 1));
+    again.send(&order("j2", req(512, 1, 60))).await;
+    assert_eq!(
+        again.rejected().await.code,
+        ReasonCode::Rejected(RejectReason::RateLimited)
+    );
+}
+
+#[tokio::test]
+async fn a_refused_request_does_not_count_against_the_rate() {
+    let h = Harness::start("[limits]\napi_requests_per_min = 2\n");
+    let read = || async { h.local_hub("alex").await.read(ReadRequest::Runners).await };
+    assert!(!rate_limited(&read().await));
+    h.clock.advance(Duration::from_secs(30));
+    assert!(!rate_limited(&read().await));
+    assert!(rate_limited(&read().await));
+    h.clock.advance(Duration::from_secs(30));
+    assert!(
+        !rate_limited(&read().await),
+        "the refused request was counted"
+    );
+    assert!(rate_limited(&read().await));
+}

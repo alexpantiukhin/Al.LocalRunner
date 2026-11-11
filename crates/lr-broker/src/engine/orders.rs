@@ -192,7 +192,6 @@ impl Engine {
 
     fn counted(msg: &HubToBroker) -> bool {
         match msg {
-            HubToBroker::Order(_) => true,
             HubToBroker::Read(call) => !matches!(
                 call.request,
                 ReadRequest::Unsubscribe { .. } | ReadRequest::Unfollow { .. }
@@ -351,6 +350,9 @@ impl Engine {
             }
             Ok(None) => {}
             Err(e) => return self.unavailable(conn, &key, "read the order", &e),
+        }
+        if let Some(detail) = self.rate_limited(&client.key) {
+            return self.refuse_rate(conn, HubToBroker::Order(o), detail);
         }
         if o.seq != 1 {
             return self.error(

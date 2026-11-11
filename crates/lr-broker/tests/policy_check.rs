@@ -201,3 +201,20 @@ fn first_matching_command_client_decides() {
 fn default_file_has_no_warnings() {
     assert!(check(&ok(""), &HOST).is_empty());
 }
+
+#[test]
+fn trim_without_a_timeout_maximum_warned() {
+    let ws = warnings("[limits]\ntimeout_above_max = \"trim\"\n");
+    assert!(
+        ws.iter()
+            .any(|w| w.key.as_deref() == Some("timeout_above_max")),
+        "{ws:?}"
+    );
+    let with_max = warnings("[limits]\nmax_job_timeout_s = 600\ntimeout_above_max = \"trim\"\n");
+    assert!(
+        !with_max
+            .iter()
+            .any(|w| w.key.as_deref() == Some("timeout_above_max")),
+        "{with_max:?}"
+    );
+}

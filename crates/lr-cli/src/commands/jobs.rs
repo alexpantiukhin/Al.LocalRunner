@@ -103,6 +103,14 @@ async fn follow_to_stdout(layout: &Layout, client: &IpcClient, job: &JobId) -> R
     .await
 }
 
+/// Writes the hub's warnings about a placed order to `err` (stderr), one per line, so the
+/// JobId on stdout stays alone.
+pub fn print_warnings(warnings: &[String], err: &mut impl Write) {
+    for w in warnings {
+        let _ = writeln!(err, "{w}");
+    }
+}
+
 /// `submit` (and `run` = `submit --wait`).
 pub async fn submit(
     layout: &Layout,
@@ -124,9 +132,7 @@ pub async fn submit(
     });
     let job = match client.call::<_, CliReply>(&req).await? {
         CliReply::Submitted { job, warnings } => {
-            for w in warnings {
-                eprintln!("{w}");
-            }
+            print_warnings(&warnings, &mut std::io::stderr());
             job
         }
         CliReply::Rejected { code, detail } => {

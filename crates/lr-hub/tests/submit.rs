@@ -157,6 +157,29 @@ async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
 }
 
 #[tokio::test]
+async fn a_failed_uncommitted_check_is_logged_and_does_not_block_the_order() {
+    let mut rig = Rig::new();
+    rig.repo.fail_uncommitted(Some("git status: broken index"));
+    rig.join("lan1").await;
+    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    eventually("connected", || lan.resumed()).await;
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
+        .await;
+    match cli.reply().await {
+        CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
+        other => panic!("{other:?}"),
+    }
+    eventually("order sent", || lan.orders().len() == 1).await;
+    let logs = rig.log_text();
+    assert!(
+        logs.contains("uncommitted changes not checked") && logs.contains("broken index"),
+        "{logs}"
+    );
+}
+
+#[tokio::test]
 async fn single_platform_of_profile_is_used_without_platform_flag() {
     let mut rig = Rig::new();
     rig.join("lan1").await;

@@ -1,7 +1,7 @@
 use super::error::PolicyWarning;
 use super::file::{HostResources, PolicyFile};
 use super::rules::{display_name, has_action, RuleEntry};
-use super::sections::{AllowEntry, CacheShare, CommandMode, OthersOrders};
+use super::sections::{AllowEntry, CacheShare, CommandMode, OthersOrders, TimeoutAboveMax};
 use ipnet::IpNet;
 use lr_core::{Condition, Rule};
 
@@ -26,6 +26,17 @@ pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
             Some("share"),
             None,
             "share = \"project\": one client can plant an artifact into the build of another"
+                .into(),
+        ));
+    }
+    if file.limits.timeout_above_max == TimeoutAboveMax::Trim
+        && file.limits.max_job_timeout_s.is_none()
+    {
+        out.push(PolicyWarning::at(
+            "limits",
+            Some("timeout_above_max"),
+            None,
+            "timeout_above_max = \"trim\" without max_job_timeout_s: there is no maximum to trim to"
                 .into(),
         ));
     }

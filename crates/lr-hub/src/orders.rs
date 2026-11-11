@@ -25,6 +25,13 @@ fn invalid(text: impl Into<String>) -> Refusal {
 pub(crate) struct Built {
     pub(crate) spec: OrderSpec,
     pub(crate) warnings: Vec<String>,
+    pub(crate) dirty_check_failed: Option<String>,
+}
+
+#[derive(Default)]
+struct Notes {
+    warnings: Vec<String>,
+    dirty_check_failed: Option<String>,
 }
 
 pub(crate) fn local_machine(os_user: &str) -> MachineRef {
@@ -90,7 +97,7 @@ async fn committed(
     repo: &dyn Repository,
     root: &Path,
     name: &str,
-    warnings: &mut Vec<String>,
+    notes: &mut Notes,
 ) -> Result<(String, Profile, Option<String>), Refusal> {
     let repo_err = |e: lr_abstractions::RepositoryError| invalid(e.to_string());
     let sha = repo
@@ -104,8 +111,10 @@ async fn committed(
             format!("HEAD {sha} не запушен: закоммитьте и запушьте ветку (MR не нужен)"),
         ));
     }
-    if repo.has_uncommitted(root).await.unwrap_or(false) {
-        warnings.push(uncommitted_warning(&sha));
+    match repo.has_uncommitted(root).await {
+        Ok(true) => notes.warnings.push(uncommitted_warning(&sha)),
+        Ok(false) => {}
+        Err(e) => notes.dirty_check_failed = Some(e.to_string()),
     }
     let origin = format!("{PROFILES_PATH} of commit {sha}");
     let bytes = repo
@@ -183,7 +192,7 @@ pub(crate) async fn build(
         .ok_or_else(|| invalid(format!("{origin} does not exist")))?;
     let tree_profile = pick(parse(&bytes, &origin)?, req.profile.as_deref(), &origin)?;
     let platform = platform_of(&tree_profile, req.platform.as_deref())?;
-    let mut warnings = Vec::new();
+    let mut notes = Notes::default();
     let (profile, code) = match &platform {
         None => (
             tree_profile,
@@ -193,7 +202,7 @@ pub(crate) async fn build(
         ),
         Some(_) => {
             let (sha, profile, repo_url) =
-                committed(repo, &root, &tree_profile.name, &mut warnings).await?;
+                committed(repo, &root, &tree_profile.name, &mut notes).await?;
             (
                 profile,
                 WireCode::Commit {
@@ -230,7 +239,11 @@ pub(crate) async fn build(
     if Frame::json(&probe).map_or(true, |f| f.len() > MAX_FRAME_BYTES / 2) {
         return Err(invalid("the order is too large for one protocol frame"));
     }
-    Ok(Built { spec, warnings })
+    Ok(Built {
+        spec,
+        warnings: notes.warnings,
+        dirty_check_failed: notes.dirty_check_failed,
+    })
 }
 
 pub(crate) fn order_payload(job: &JobId, spec: &OrderSpec) -> HubToBroker {

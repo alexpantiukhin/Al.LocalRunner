@@ -63,6 +63,13 @@ impl Engine {
             }
         };
         let (spec, warnings) = (built.spec, built.warnings);
+        if let Some(e) = &built.dirty_check_failed {
+            self.s.diag(
+                Level::Warn,
+                "uncommitted changes not checked; the order goes without the warning",
+                &[("error", e)],
+            );
+        }
         if spec.requirements.same_machine.is_some() && !self.links.contains_key(LOCAL_BROKER) {
             return Some(CliReply::Rejected {
                 code: ReasonCode::Rejected(RejectReason::NoLocalBroker),

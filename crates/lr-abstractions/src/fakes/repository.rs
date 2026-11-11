@@ -10,6 +10,7 @@ struct State {
     origins: BTreeMap<PathBuf, String>,
     pushed: BTreeSet<String>,
     uncommitted: BTreeSet<PathBuf>,
+    uncommitted_error: Option<String>,
     files: BTreeMap<(String, String), Vec<u8>>,
     failing: Option<String>,
 }
@@ -61,6 +62,11 @@ impl MemoryRepository {
         }
     }
 
+    /// Makes the uncommitted-changes query alone fail with `reason`; `None` heals it.
+    pub fn fail_uncommitted(&self, reason: Option<&str>) {
+        self.state.lock().unwrap().uncommitted_error = reason.map(str::to_string);
+    }
+
     /// Makes every later query fail with `reason`; `None` heals it.
     pub fn fail(&self, reason: Option<&str>) {
         self.state.lock().unwrap().failing = reason.map(str::to_string);
@@ -103,6 +109,10 @@ impl Repository for MemoryRepository {
     }
 
     async fn has_uncommitted(&self, root: &Path) -> Result<bool, RepositoryError> {
-        Ok(self.check()?.uncommitted.contains(root))
+        let s = self.check()?;
+        match &s.uncommitted_error {
+            Some(r) => Err(RepositoryError(r.clone())),
+            None => Ok(s.uncommitted.contains(root)),
+        }
     }
 }
