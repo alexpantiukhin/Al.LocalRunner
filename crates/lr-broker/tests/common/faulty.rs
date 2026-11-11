@@ -26,6 +26,7 @@ pub struct FaultyStore {
     pub prune_release: Notify,
     pub prunes: Mutex<Vec<PruneLimits>>,
     pub expires: Mutex<Vec<Timestamp>>,
+    pub pending: Mutex<Vec<OutboxEntry>>,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
 }
@@ -47,6 +48,7 @@ impl FaultyStore {
             prune_release: Notify::new(),
             prunes: Mutex::new(Vec::new()),
             expires: Mutex::new(Vec::new()),
+            pending: Mutex::new(Vec::new()),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
         }
@@ -220,6 +222,10 @@ impl BrokerStore for FaultyStore {
             .await
     }
     async fn pending_results(&self, client: &str) -> Result<Vec<OutboxEntry>, StoreError> {
+        let staged = self.pending.lock().unwrap().clone();
+        if !staged.is_empty() {
+            return Ok(staged);
+        }
         self.inner.pending_results(client).await
     }
     async fn ack_results(&self, client: &str, job: &JobId, seq: u64) -> Result<usize, StoreError> {
