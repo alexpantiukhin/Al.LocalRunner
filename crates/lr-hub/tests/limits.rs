@@ -327,3 +327,27 @@ async fn wait_on_a_job_beyond_the_last_1024_results_is_an_error() {
         .await;
     assert!(matches!(watcher.reply().await, CliReply::Error(_)));
 }
+
+#[tokio::test]
+async fn a_successful_connection_to_a_broker_is_logged_with_its_name_only() {
+    let mut rig = Rig::new();
+    rig.join("lan-a").await;
+    let a = rig.broker(
+        "lan-a",
+        lr_core::Zone::Lan,
+        Script::linux(lr_core::Zone::Lan),
+    );
+    rig.start();
+    eventually("hub said hello", || a.hellos() == 1).await;
+    eventually("connection logged", || {
+        !records(&rig, "broker connected").is_empty()
+    })
+    .await;
+    let connected = records(&rig, "broker connected");
+    assert_eq!(connected.len(), 1, "{}", rig.log_text());
+    assert_eq!(connected[0].level, Level::Info);
+    assert_eq!(
+        connected[0].fields,
+        vec![("broker".to_string(), "lan-a".to_string())]
+    );
+}

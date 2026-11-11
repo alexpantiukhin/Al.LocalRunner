@@ -182,6 +182,7 @@ async fn session(
             return false;
         }
     };
+    shared.diag(Level::Info, "broker connected", &[("broker", &target.name)]);
     let (out_tx, out_rx) = mpsc::channel(OUT_FRAMES);
     if let Some(f) = crate::bus::subscription(shared) {
         let _ = out_tx.try_send(f);

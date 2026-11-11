@@ -113,3 +113,31 @@ async fn job_output_and_commands_never_reach_a_record() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_successful_connection_to_the_broker_is_logged_without_secrets() {
+    let rig = Rig::new();
+    let (_c, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    let mut connected = Vec::new();
+    for _ in 0..200 {
+        connected = rig
+            .log
+            .records()
+            .into_iter()
+            .filter(|r| r.message == "broker connected")
+            .collect();
+        if !connected.is_empty() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(connected.len(), 1, "{}", rig.logs_text());
+    assert_eq!(connected[0].level, Level::Info);
+    assert_eq!(
+        connected[0].fields,
+        vec![("broker".to_string(), BROKER.to_string())]
+    );
+    let text = format!("{:?}", connected[0].fields);
+    assert!(!text.contains(FINGERPRINT) && !text.contains("runner-key"));
+}

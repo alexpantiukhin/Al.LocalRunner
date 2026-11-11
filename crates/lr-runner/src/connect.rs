@@ -241,6 +241,11 @@ async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
         Ok(Received::Message(BrokerToRunner::Welcome(w))) => {
             s.set_broker_lost_kill(w.broker_lost_kill_s);
             s.set_lost(None);
+            s.diag.event(
+                Level::Info,
+                "broker connected",
+                &[("broker", &s.deps.broker.address)],
+            );
             Ok(Duration::from_secs(w.heartbeat_s.clamp(1, MAX_HEARTBEAT_S)))
         }
         Ok(Received::Message(BrokerToRunner::Error(e))) if e.code.kills_running_jobs() => {
