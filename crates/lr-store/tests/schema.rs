@@ -412,3 +412,32 @@ fn only_the_latest_backup_is_kept() {
     assert!(!d.path().join("t.db.bak-0").exists());
     assert!(d.path().join("other.db.bak-1").exists());
 }
+
+struct CwdFiles(String);
+
+impl Drop for CwdFiles {
+    fn drop(&mut self) {
+        for suffix in ["", "-wal", "-shm", ".bak-1", ".bak-2"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", self.0));
+        }
+    }
+}
+
+#[test]
+fn backup_survives_when_the_database_path_is_a_bare_file_name() {
+    let name = format!(
+        "schema-bare-{}-{}.db",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let _cleanup = CwdFiles(name.clone());
+    let path = Path::new(&name);
+    schema::open(path, &V1, true).unwrap();
+    drop(schema::open(path, &V2, false).unwrap());
+    let bak = format!("{name}.bak-1");
+    assert!(Path::new(&bak).is_file(), "the fresh backup {bak} is kept");
+    assert_eq!(version_of(Path::new(&bak)), 1);
+}

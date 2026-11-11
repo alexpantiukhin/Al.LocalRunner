@@ -223,22 +223,28 @@ fn drop_older_backups(path: &Path, keep: &Path) {
     } else {
         dir
     };
-    let prefix = format!("{}.bak-", name.to_string_lossy());
+    let Some(name) = name.to_str() else {
+        return;
+    };
+    let prefix = format!("{name}.bak-");
+    let kept = keep.file_name();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
-        let other = entry.path();
-        let ours = entry
-            .file_name()
+        let file_name = entry.file_name();
+        if Some(file_name.as_os_str()) == kept {
+            continue;
+        }
+        let ours = file_name
             .to_str()
             .and_then(|n| n.strip_prefix(&prefix))
             .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
         let plain = entry
             .file_type()
             .is_ok_and(|t| t.is_file() || t.is_symlink());
-        if ours && plain && other != keep {
-            let _ = std::fs::remove_file(&other);
+        if ours && plain {
+            let _ = std::fs::remove_file(dir.join(&file_name));
         }
     }
 }
