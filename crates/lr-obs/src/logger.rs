@@ -153,6 +153,15 @@ impl Logger {
         self.env.metrics.clone()
     }
 
+    /// The kinds of the sinks the current configuration delivers to.
+    pub fn sink_kinds(&self) -> Vec<crate::queue::SinkKind> {
+        self.pipeline()
+            .sinks
+            .iter()
+            .map(|s| s.queue.kind())
+            .collect()
+    }
+
     /// The redactor, to register secret values ([`Redactor::protect`]).
     pub fn redactor(&self) -> Arc<Redactor> {
         self.redactor.clone()

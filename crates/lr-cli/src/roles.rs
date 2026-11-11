@@ -38,6 +38,11 @@ impl Running {
         self.loggers.iter().map(|l| l.metrics()).collect()
     }
 
+    /// The kinds of the log sinks of the started roles.
+    pub fn sink_kinds(&self) -> Vec<lr_obs::queue::SinkKind> {
+        self.loggers.iter().flat_map(|l| l.sink_kinds()).collect()
+    }
+
     /// Waits until the role ends on its own (a runner after `down`, a refused key, a hub or
     /// broker told to stop by `down`).
     pub async fn wait(mut self) -> Vec<AgentExit> {

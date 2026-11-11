@@ -186,3 +186,31 @@ async fn hub_on_a_machine_without_a_broker_lists_no_local_broker() {
     assert!(brokers.is_empty(), "{brokers:?}");
     hub_role.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn roles_without_logging_toml_have_no_network_log_receiver() {
+    use lr_obs::queue::SinkKind;
+    let dir = TempDir::new("nosink");
+    let layout = layout(&dir);
+    assert!(!layout.config_file("logging.toml").exists());
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let hub_role = start_hub(&layout, false).await.expect("hub starts");
+    let runners = start_runners(&layout, Some("r1"), 1, None, false)
+        .await
+        .expect("runner starts");
+    for (name, role) in [
+        ("broker", &broker),
+        ("hub", &hub_role),
+        ("runner", &runners),
+    ] {
+        let kinds = role.sink_kinds();
+        assert!(!kinds.is_empty(), "{name} logs somewhere");
+        assert!(
+            !kinds.contains(&SinkKind::Otlp),
+            "{name} has no network receiver by default: {kinds:?}"
+        );
+    }
+    runners.stop();
+    hub_role.stop();
+    broker.stop();
+}
