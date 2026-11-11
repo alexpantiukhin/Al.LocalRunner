@@ -157,3 +157,32 @@ async fn returned_order_with_no_broker_left_in_its_zone_is_rejected_not_sent_far
     assert_eq!(a.orders().len(), 1);
     assert!(rig.active(&job).await.is_none());
 }
+
+#[tokio::test]
+async fn every_choice_queries_the_brokers_afresh() {
+    let mut rig = Rig::new();
+    rig.policy.brokers.order = vec!["lan-a".into(), "lan-b".into()];
+    rig.join("lan-a").await;
+    rig.join("lan-b").await;
+    let a = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
+    let b = rig.broker("lan-b", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    connected(&[&a, &b]).await;
+    let cli = rig.cli().await;
+    cli.submit(submit("remote", Some("linux"))).await;
+    eventually("first order at lan-a", || a.orders().len() == 1).await;
+    assert_eq!(a.queries(), 1);
+    a.set(|s| s.runners[0].online = false);
+    cli.submit(submit("remote", Some("linux"))).await;
+    eventually("second order at lan-b", || b.orders().len() == 1).await;
+    assert_eq!(
+        a.queries(),
+        2,
+        "the second choice asked lan-a again instead of reusing its first answer"
+    );
+    assert_eq!(
+        a.orders().len(),
+        1,
+        "lan-a's runner went offline in between"
+    );
+}
