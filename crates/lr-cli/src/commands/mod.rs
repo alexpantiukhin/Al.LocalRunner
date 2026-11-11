@@ -104,9 +104,9 @@ pub enum Command {
     },
     /// Own jobs (label `--as` and OS user).
     Jobs {
-        /// Submitter label.
-        #[arg(long = "as", value_name = "LABEL", required = true)]
-        label: String,
+        /// Submitter label; without it, the label of the last handle in `temp/runner/`.
+        #[arg(long = "as", value_name = "LABEL")]
+        label: Option<String>,
         /// Own jobs (the only mode).
         #[arg(long)]
         mine: bool,
@@ -314,7 +314,7 @@ pub async fn run(cli: Cli) -> i32 {
             active,
             json,
             ..
-        } => jobs::jobs(&layout, &label, active, json).await,
+        } => jobs::jobs(&layout, label, active, json).await,
         Command::Cancel {
             job,
             label,

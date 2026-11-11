@@ -11,6 +11,7 @@ use lr_obs::Redactor;
 use lr_proto::{CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, SubmitRequest};
 use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 
 /// Opens the CLI channel of the current OS user's hub.
@@ -163,13 +164,54 @@ pub async fn wait(layout: &Layout, job: &str) -> Result<i32, String> {
     follow_to_stdout(layout, &client, &job).await
 }
 
-/// `jobs --mine [--active]`.
-pub async fn jobs(layout: &Layout, label: &str, active: bool, json: bool) -> Result<i32, String> {
-    let client = hub(layout).await?;
-    let req = CliRequest::Jobs {
-        label: label.to_string(),
-        active,
+#[derive(serde::Deserialize)]
+struct HandleLabel {
+    label: String,
+    submitted_at: u64,
+}
+
+/// The label of the handle in `<dir>/temp/runner/` with the latest submission time: the
+/// default of `jobs --mine` without `--as` (spec 7.3).
+pub fn label_from_last_handle(dir: &Path) -> Result<String, String> {
+    let runner = dir.join("temp").join("runner");
+    let missing = || {
+        format!(
+            "no --as and no handle in {} to take the label from; pass --as LABEL",
+            runner.display()
+        )
     };
+    let entries = std::fs::read_dir(&runner).map_err(|_| missing())?;
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .filter_map(|p| {
+            let text = std::fs::read(&p).ok()?;
+            let h: HandleLabel = serde_json::from_slice(&text).ok()?;
+            Some((h.submitted_at, p, h.label))
+        })
+        .max()
+        .map(|(_, _, label)| label)
+        .ok_or_else(missing)
+}
+
+/// `jobs --mine [--active]`; without `label`, the label of the last handle in the current
+/// directory.
+pub async fn jobs(
+    layout: &Layout,
+    label: Option<String>,
+    active: bool,
+    json: bool,
+) -> Result<i32, String> {
+    let label = match label {
+        Some(l) => l,
+        None => {
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            label_from_last_handle(&cwd)?
+        }
+    };
+    let client = hub(layout).await?;
+    let req = CliRequest::Jobs { label, active };
     let jobs = match client.call::<_, CliReply>(&req).await? {
         CliReply::Jobs { jobs } => jobs,
         other => return Err(unexpected(&other)),

@@ -1,3 +1,5 @@
+mod common;
+
 use async_trait::async_trait;
 use lr_abstractions::fakes::{FakeNetwork, ManualClock};
 use lr_abstractions::{Dialer, Frame, Peer, PeerAccess};
@@ -262,4 +264,50 @@ fn submit_warnings_go_to_the_error_stream_one_per_line() {
         String::from_utf8(err).unwrap(),
         format!("{}\n", warnings[0])
     );
+}
+
+fn write_handle(dir: &std::path::Path, job: &str, label: &str, at: u64) {
+    let runner = dir.join("temp").join("runner");
+    std::fs::create_dir_all(&runner).unwrap();
+    let body = serde_json::json!({
+        "job": job, "label": label, "profile": "unit", "submitted_at": at, "detached": false
+    });
+    std::fs::write(runner.join(format!("{job}.json")), body.to_string()).unwrap();
+}
+
+#[test]
+fn jobs_label_comes_from_the_last_handle_in_the_directory() {
+    use lr_cli::commands::jobs::label_from_last_handle;
+    let d = common::TempDir::new("jobs");
+    write_handle(d.path(), "j-1", "agent-a", 100);
+    write_handle(d.path(), "j-3", "agent-c", 300);
+    write_handle(d.path(), "j-2", "agent-b", 200);
+    std::fs::write(d.path().join("temp/runner/j-3.log"), "log").unwrap();
+    std::fs::write(d.path().join("temp/runner/queue.json"), "{not a handle").unwrap();
+    assert_eq!(label_from_last_handle(d.path()).unwrap(), "agent-c");
+}
+
+#[test]
+fn jobs_without_as_and_without_a_handle_names_the_flag() {
+    use lr_cli::commands::jobs::label_from_last_handle;
+    let d = common::TempDir::new("jobs");
+    let e = label_from_last_handle(d.path()).unwrap_err();
+    assert!(e.contains("--as") && e.contains("temp"), "{e}");
+}
+
+#[test]
+fn jobs_mine_without_as_is_not_a_usage_error() {
+    let d = common::TempDir::new("jobs");
+    let out = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["jobs", "--mine"])
+        .current_dir(d.path())
+        .env(
+            "LOCALRUNNER_STATE_DIR",
+            std::env::temp_dir().join("lr-cli-no-state"),
+        )
+        .output()
+        .expect("the binary runs");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no handle"), "{err}");
 }
