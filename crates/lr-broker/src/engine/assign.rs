@@ -57,6 +57,7 @@ impl Engine {
             .collect();
         self.evict_idle(plan.waiting.first().map(|(_, w)| w));
         self.note_waits(&plan.waiting);
+        self.note_rules(&plan.waiting);
         for a in plan.assignments {
             self.assign(a, now).await;
         }
@@ -109,6 +110,7 @@ impl Engine {
             }),
         );
         job.platform_label = Some(self.platform_label(&job));
+        self.note_assigned(&job, &a.runner);
         self.observe_wait(&job, now);
         let group = self.policy.policy().group_of(&job.entry.client);
         self.served.record(&group, now);

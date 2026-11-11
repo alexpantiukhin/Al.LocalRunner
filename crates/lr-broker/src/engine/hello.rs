@@ -142,6 +142,7 @@ impl Engine {
                 return self.refuse(conn, e.code, e.message);
             }
             self.welcome(conn, &peer.endpoint, &hello);
+            self.note_connected(conn);
             self.resend_cancels(&name).await;
             self.plan().await;
             return;
@@ -173,5 +174,6 @@ impl Engine {
             c.role = Role::Hub(client);
         }
         self.welcome(conn, &peer.endpoint, &hello);
+        self.note_connected(conn);
     }
 }

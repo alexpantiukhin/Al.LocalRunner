@@ -62,11 +62,31 @@ impl Engine {
         let pass = Pass::begin(&self.retention.busy);
         tokio::spawn(async move {
             let _pass = pass;
-            if let Err(e) = store.expire_results(expire_before).await {
-                let msg = "storage failed: expired results were not removed";
-                warn(log.as_ref(), now, msg, ("error", &e.to_string()));
+            let expired = match store.expire_results(expire_before).await {
+                Ok(n) => n,
+                Err(e) => {
+                    let msg = "storage failed: expired results were not removed";
+                    warn(log.as_ref(), now, msg, ("error", &e.to_string()));
+                    0
+                }
+            };
+            let pruned = store.prune(limits).await;
+            if let Ok(r) = &pruned {
+                log.write(
+                    &Record::new(
+                        now,
+                        Level::Info,
+                        Role::Broker,
+                        "engine",
+                        "storage cleaned up",
+                    )
+                    .field("results_expired", &expired.to_string())
+                    .field("logs_removed", &r.logs_removed.to_string())
+                    .field("rows_removed", &r.rows_removed.to_string())
+                    .field("bytes_freed", &r.bytes_freed.to_string()),
+                );
             }
-            match store.prune(limits).await {
+            match pruned {
                 Err(e) => warn(
                     log.as_ref(),
                     now,

@@ -109,6 +109,7 @@ impl Engine {
     }
 
     pub(crate) fn refuse(&self, conn: ConnId, code: ProtocolErrorCode, message: String) {
+        self.note_refused(conn, code);
         self.error(conn, code, message);
         self.close(conn);
     }

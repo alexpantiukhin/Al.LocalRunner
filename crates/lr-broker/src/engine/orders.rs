@@ -214,6 +214,11 @@ impl Engine {
 
     fn refuse_rate(&mut self, conn: ConnId, msg: HubToBroker, detail: String) {
         let code = ReasonCode::Rejected(RejectReason::RateLimited);
+        self.diag(
+            Level::Info,
+            "request refused",
+            &[("conn", &conn.to_string()), ("reason", &code.to_string())],
+        );
         let reply = match msg {
             HubToBroker::Order(o) => BrokerToHub::Rejected(Rejected {
                 job: o.job,
@@ -369,6 +374,7 @@ impl Engine {
         let job = self.job_of(client, &key, *o.spec.clone());
         if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
             self.count_rejected(&job);
+            self.note_rejected(&job, &reason);
             return self.send(conn, &rejected(&o, reason, detail));
         }
         let intake = intake(&key, client, &job.spec, &job.entry);
@@ -378,6 +384,7 @@ impl Engine {
         if let Err(e) = self.store.accept_seq(&key, Inbound::Hub, o.seq).await {
             return self.unavailable(conn, &key, "record the order seq", &e);
         }
+        self.note_accepted(&job);
         self.enqueue(job).await;
         self.send(conn, &self.accepted(&key, &o, trimmed));
     }
@@ -421,6 +428,7 @@ impl Engine {
                     let job = self.job_of(client, key, *o.spec.clone());
                     if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
                         self.count_rejected(&job);
+                        self.note_rejected(&job, &reason);
                         let mut end = Transition::to(JobState::Cancelled, self.now());
                         end.cancel_reason = Some(ReasonCode::Rejected(reason.clone()).to_string());
                         if let Err(e) = self.store.transition(key, end).await {

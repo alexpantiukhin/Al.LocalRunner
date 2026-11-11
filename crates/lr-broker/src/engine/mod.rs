@@ -12,6 +12,7 @@ mod events;
 mod follow;
 mod hello;
 mod inspect;
+mod journal;
 mod local;
 mod lost;
 mod metrics;
@@ -134,6 +135,7 @@ impl Broker {
                 active: Vec::new(),
                 served: ServeLog::default(),
                 waits: HashMap::new(),
+                held_by: HashMap::new(),
                 slow_peers: AtomicU64::new(0),
                 next_id: 0,
                 next_sub: 0,
@@ -315,6 +317,7 @@ pub(crate) struct Engine {
     pub(crate) active: Vec<Job>,
     pub(crate) served: ServeLog,
     pub(crate) waits: HashMap<JobKey, String>,
+    pub(crate) held_by: HashMap<JobKey, String>,
     pub(crate) slow_peers: AtomicU64,
     next_id: u64,
     next_sub: u64,
@@ -377,6 +380,7 @@ impl Engine {
             return;
         };
         self.follows.retain(|f| f.conn != conn);
+        self.note_closed(conn, &c.role);
         match c.role {
             Role::Hub(client) => {
                 if self.hubs.get(&client.key) == Some(&conn) {
