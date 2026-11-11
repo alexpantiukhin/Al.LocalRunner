@@ -226,10 +226,11 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     up_with(layout, role, STARTED_WITHIN, &start).await
 }
 
-/// `up [role]` that starts each role through `start` and waits for it at most `within`. When it
-/// starts both the broker and the hub, the hub starts only once the broker answers, so the hub
-/// lists it as `local`; a broker silent for `within` is an error, the hub is left down and the
-/// started roles are not waited for again.
+/// `up [role]` that starts each role through `start` and waits for it at most `within`. When
+/// its plan has both the broker and the hub, the hub starts only once the broker answers, so
+/// the hub lists it as `local`. A broker that could not be started, or that is silent for
+/// `within`, is an error and the hub is left down; after a silent broker the started roles are
+/// not waited for again, and a broker that was not started is not waited for at all.
 pub async fn up_with(
     layout: &Layout,
     role: Option<RoleArg>,
@@ -263,21 +264,28 @@ pub async fn up_with(
     if plan.is_empty() {
         return Ok(code);
     }
+    let planned_broker = plan.iter().any(|argv| argv[0] == "broker");
     let mut started = Vec::new();
     let mut waited = false;
     for argv in &plan {
-        let broker_started = started.iter().any(|a: &Vec<String>| a[0] == "broker");
-        if argv[0] == "hub" && broker_started && !broker_ready(layout, within).await {
-            waited = true;
-            eprintln!(
-                "hub: not started: the broker does not answer within {} s, and a hub started \
-                 before it would not list it as `local`; see logs/ in {} and run \
-                 `localrunner up hub` once the broker answers",
-                within.as_secs(),
-                layout.root.display()
-            );
-            code = 1;
-            continue;
+        if argv[0] == "hub" && planned_broker {
+            let broker_started = started.iter().any(|a: &Vec<String>| a[0] == "broker");
+            let ready = broker_started && broker_ready(layout, within).await;
+            if !ready {
+                waited |= broker_started;
+                let why = match broker_started {
+                    true => format!("the broker does not answer within {} s", within.as_secs()),
+                    false => "the broker was not started".to_string(),
+                };
+                eprintln!(
+                    "hub: not started: {why}, and a hub started before it would not list it \
+                     as `local`; see logs/ in {} and run `localrunner up hub` once the broker \
+                     answers",
+                    layout.root.display()
+                );
+                code = 1;
+                continue;
+            }
         }
         match start(argv) {
             Ok(pid) => {
