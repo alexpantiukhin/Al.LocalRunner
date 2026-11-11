@@ -109,12 +109,25 @@ pub fn install_with(
     if elevated && !allow_elevated {
         return Err("install refuses to run as root or administrator; add --allow-elevated".into());
     }
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    install_from(layout, dir, role, dry_run, exe, system(dry_run))
+}
+
+/// `install` of the binary `exe` whose plan is applied by `apply` (the user's `PATH` among
+/// it); then `init` of `role`.
+pub fn install_from(
+    layout: &Layout,
+    dir: Option<PathBuf>,
+    role: RoleArg,
+    dry_run: bool,
+    exe: PathBuf,
+    apply: &dyn System,
+) -> Result<i32, String> {
     let dir = match dir {
         Some(d) => d,
         None => default_bin_dir()?,
     };
-    let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-    apply_all(system(dry_run), &install_plan(exe, dir.clone()))?;
+    apply_all(apply, &install_plan(exe, dir.clone()))?;
     if dry_run {
         println!("init --role {role:?} in {}", layout.root.display());
         return Ok(0);
