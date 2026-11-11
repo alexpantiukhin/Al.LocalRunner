@@ -87,6 +87,7 @@ pub fn caps() -> WireCapabilities {
         accept_min_mem_mb: Some(8192),
         cache_max_mb: Some(40_000),
         cache_used_mb: Some(1200),
+        service_mem_mb: Default::default(),
     }
 }
 

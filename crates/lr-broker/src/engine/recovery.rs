@@ -73,6 +73,7 @@ impl Engine {
             accept_min_mem_mb: row.accept_min_mem_mb,
             cache_max_mb: Some(row.cache_max_mb),
             cache_used_mb: Some(row.cache_used_mb),
+            service_mem_mb: Default::default(),
         }
     }
 

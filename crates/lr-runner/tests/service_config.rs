@@ -124,6 +124,7 @@ fn declared_services_are_offered_as_available() {
         caps.services.get("build-daemon"),
         Some(&WireServiceStatus::Available)
     );
+    assert_eq!(caps.service_mem_mb.get("build-daemon"), Some(&2048));
     let none = RunnerSettings::from_toml("name = \"r\"\n", PathBuf::from("/s")).unwrap();
     assert!(none.capabilities(None).services.is_empty());
 }

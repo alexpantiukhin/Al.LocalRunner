@@ -481,3 +481,16 @@ fn resource_override_fields_are_optional_for_older_senders() {
     assert_eq!(v["overrides"], json!({ "mem_mb": 6144 }));
     assert_eq!(serde_json::from_value::<OrderSpec>(v).unwrap(), spec);
 }
+
+#[test]
+fn service_memory_in_capabilities_is_optional_both_ways() {
+    let v = serde_json::to_value(caps()).unwrap();
+    assert!(v.get("service_mem_mb").is_none(), "empty map not sent");
+    let old: WireCapabilities = serde_json::from_value(v.clone()).unwrap();
+    assert!(old.service_mem_mb.is_empty());
+    let mut new = caps();
+    new.service_mem_mb.insert("db".into(), 2048);
+    let back: WireCapabilities =
+        serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
+    assert_eq!(back.service_mem_mb["db"], 2048);
+}

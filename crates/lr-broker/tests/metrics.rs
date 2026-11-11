@@ -335,3 +335,24 @@ async fn timeout_and_lost_results_are_counted_with_their_duration() {
     eventually("lost counted", || m.counter(ORDERS_TOTAL, &lost) == 1).await;
     assert_eq!(m.observed(JOB_DURATION_SECONDS, &lost), vec![3.0]);
 }
+
+#[tokio::test]
+async fn pool_memory_used_counts_the_live_services_of_a_runner() {
+    let h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    r.send(&RunnerToBroker::ServicesReport(ServicesReport {
+        services: vec![ServiceReport {
+            name: "db".into(),
+            state: ServiceState::Idle,
+            mem_mb: 2048,
+            remaining_s: Some(60),
+        }],
+    }))
+    .await;
+    let m = h.meter.clone();
+    let load = [(metric::POOL, POOL_VALUE), (RUNNER, "r1")];
+    eventually("service memory reported", || {
+        m.gauge(POOL_MEMORY_USED_MB, &load) == Some(2048.0)
+    })
+    .await;
+}

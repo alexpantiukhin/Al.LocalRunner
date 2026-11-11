@@ -302,6 +302,7 @@ fn stats_and_runners_print_per_broker() {
             accept_min_mem_mb: None,
             cache_max_mb: None,
             cache_used_mb: None,
+            service_mem_mb: Default::default(),
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 1024,

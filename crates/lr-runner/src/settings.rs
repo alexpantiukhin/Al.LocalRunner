@@ -237,6 +237,11 @@ impl RunnerSettings {
                 .max_size_gb
                 .map(|gb| gb.saturating_mul(MB_PER_GB)),
             cache_used_mb,
+            service_mem_mb: self
+                .services
+                .iter()
+                .map(|(n, s)| (n.clone(), s.memory_mb))
+                .collect(),
         }
     }
 }

@@ -1,63 +1,12 @@
 use super::runners::row_of;
 use super::Engine;
 use lr_abstractions::{Level, RunnerState};
-use lr_core::{
-    ClientView, Order, Policy, PoolLimits, QueueEntry, Reject, ServeLog, Timestamp, Wait, Zone,
-};
+use lr_core::{Wait, Zone};
 use lr_proto::{
     BrokerToRunner, QueueEvent, ServiceState, ServicesReport, StopService, WireCapabilities,
 };
 
-/// The policy with the memory of live runner services taken out of its pool, so the planner
-/// never gives that memory to an order while the service lives (spec 3.11).
-pub(crate) struct HeldPool<'a> {
-    pub(crate) inner: &'a dyn Policy,
-    pub(crate) pool: PoolLimits,
-}
-
-impl Policy for HeldPool<'_> {
-    fn order(&self, queue: &[QueueEntry], served: &ServeLog, now: Timestamp) -> Vec<usize> {
-        self.inner.order(queue, served, now)
-    }
-
-    fn admit(&self, order: &Order, client: &ClientView) -> Result<(), Reject> {
-        self.inner.admit(order, client)
-    }
-
-    fn gate(&self, entry: &QueueEntry, running: &[&QueueEntry]) -> Result<(), Wait> {
-        self.inner.gate(entry, running)
-    }
-
-    fn pool(&self) -> &PoolLimits {
-        &self.pool
-    }
-
-    fn runner_zone_order(&self) -> &[Zone] {
-        self.inner.runner_zone_order()
-    }
-
-    fn group_of(&self, client: &ClientView) -> String {
-        self.inner.group_of(client)
-    }
-}
-
-fn live(state: ServiceState) -> bool {
-    matches!(
-        state,
-        ServiceState::Starting | ServiceState::Idle | ServiceState::Busy | ServiceState::Stopping
-    )
-}
-
 impl Engine {
-    /// Memory held by the live services the runners report, busy or idle.
-    pub(crate) fn service_mem_mb(&self) -> u64 {
-        self.runners
-            .values()
-            .flat_map(|slot| slot.services.iter())
-            .filter(|s| live(s.state))
-            .fold(0u64, |a, s| a.saturating_add(s.mem_mb))
-    }
-
     pub(crate) async fn capabilities_update(&mut self, name: &str, mut wire: WireCapabilities) {
         let now = self.now();
         let Some(slot) = self.runners.get_mut(name) else {

@@ -198,3 +198,73 @@ async fn a_busy_service_is_never_evicted_but_its_memory_is_held() {
     warm.send(&holding(ServiceState::Stopped, 10240)).await;
     assert_eq!(warm.assign().await.job, JobId("j1".into()));
 }
+
+fn declares_service(mem_mb: u64) -> WireCapabilities {
+    let mut c = with_service();
+    c.service_mem_mb.insert("build-daemon".into(), mem_mb);
+    c
+}
+
+#[tokio::test]
+async fn an_order_with_a_service_waits_when_the_pool_fits_only_the_job() {
+    let h = Harness::start("");
+    let mut r = h
+        .member_runner("r1", "10.0.0.7", declares_service(4096))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("big", needs_service(14000))).await;
+    hub.accepted().await;
+    r.quiet().await;
+    hub.send(&order("fits", needs_service(12000))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job, JobId("fits".into()));
+}
+
+#[tokio::test]
+async fn a_warm_service_on_the_runner_is_not_reserved_twice() {
+    let h = Harness::start("");
+    let mut r = h
+        .member_runner("r1", "10.0.0.7", declares_service(4096))
+        .await;
+    r.send(&holding(ServiceState::Idle, 4096)).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.sync().await;
+    hub.send(&order("j1", needs_service(12000))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job, JobId("j1".into()));
+}
+
+#[tokio::test]
+async fn an_assigned_service_holds_its_memory_before_the_runner_reports_it() {
+    let h = Harness::start("");
+    let mut r1 = h
+        .member_runner("r1", "10.0.0.7", declares_service(4096))
+        .await;
+    let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("with-service", needs_service(8000))).await;
+    hub.accepted().await;
+    assert_eq!(r1.assign().await.job, JobId("with-service".into()));
+    hub.send(&order("plain", req(6000, 1, 60))).await;
+    hub.accepted().await;
+    r2.quiet().await;
+}
+
+#[tokio::test]
+async fn reserve_rules_count_the_memory_of_live_services() {
+    let h = Harness::start(
+        "[[rule]]\nname = \"ci-reserve\"\nwhen = { client_label = \"ci\" }\n\
+         reserve = { mem_mb = 8192 }\n",
+    );
+    let mut warm = h
+        .member_runner("r1", "10.0.0.7", declares_service(4096))
+        .await;
+    warm.send(&holding(ServiceState::Busy, 4096)).await;
+    let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.sync().await;
+    hub.send(&order("j1", req(6000, 1, 60))).await;
+    hub.accepted().await;
+    r2.quiet().await;
+    warm.quiet().await;
+}

@@ -43,6 +43,10 @@ pub struct WireCapabilities {
     pub cache_max_mb: Option<u64>,
     /// Cache fill in MB.
     pub cache_used_mb: Option<u64>,
+    /// `memory_mb` of each declared service, so the broker reserves it before the service
+    /// starts (spec 3.11); absent from runners of an earlier minor version.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub service_mem_mb: BTreeMap<String, u64>,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -70,6 +74,7 @@ impl From<&Capabilities> for WireCapabilities {
             accept_min_mem_mb: c.accept.min_mem_mb,
             cache_max_mb: None,
             cache_used_mb: None,
+            service_mem_mb: BTreeMap::new(),
         }
     }
 }

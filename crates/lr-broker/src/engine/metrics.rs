@@ -158,9 +158,12 @@ impl Engine {
             {
                 let req = &job.entry.order.requirements;
                 jobs += 1;
-                mem = mem.saturating_add(req.mem_mb);
+                mem = mem
+                    .saturating_add(req.mem_mb)
+                    .saturating_add(self.pending_service_mb(name, req));
                 cpu = cpu.saturating_add(u64::from(req.cpu));
             }
+            mem = mem.saturating_add(self.runner_service_mem_mb(name));
             let labels = [(POOL, POOL_VALUE), (RUNNER, name.as_str())];
             self.meter.set(RUNNING_JOBS, &labels, jobs as f64);
             self.meter.set(POOL_MEMORY_USED_MB, &labels, mem as f64);
