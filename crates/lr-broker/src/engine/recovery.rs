@@ -160,6 +160,8 @@ impl Engine {
             started_at: rec.job.started_at,
             cancel: None,
             start_unsaved: false,
+            queued_since: now,
+            platform_label: None,
         };
         let cancelled = rec.job.state == JobState::Cancelling || rec.job.cancel_reason.is_some();
         if cancelled {

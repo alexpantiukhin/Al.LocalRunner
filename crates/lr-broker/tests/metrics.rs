@@ -231,3 +231,107 @@ async fn cancel_of_a_waiting_order_counts_without_a_duration() {
     assert!(m.observed(JOB_DURATION_SECONDS, &cancelled).is_empty());
     eventually("queue empty", || m.gauge(QUEUE_LENGTH, LINUX) == Some(0.0)).await;
 }
+
+async fn started_notice(hub: &mut Conn) {
+    loop {
+        if let BrokerToHub::Started(_) = hub.hub().await {
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn waits_count_on_the_broker_clock_whatever_the_hub_clock_says() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j0", req(512, 1, 600))).await;
+    hub.accepted().await;
+    r.assign().await;
+    hub.send(&order_at("late", req(512, 1, 600), START - 3_600_000))
+        .await;
+    hub.accepted().await;
+    hub.send(&order_at("early", req(512, 1, 600), START + 3_600_000))
+        .await;
+    hub.accepted().await;
+    tick_by(&h, 5).await;
+    let m = h.meter.clone();
+    let busy = [(REASON, "runner_busy")];
+    eventually("saturation from acceptance", || {
+        m.gauge(SATURATION_WAIT_SECONDS, &busy) == Some(5.0)
+    })
+    .await;
+    r.send(&result("j0", 1, JobState::Passed, 0)).await;
+    r.assign().await;
+    assert_eq!(m.observed(QUEUE_WAIT_SECONDS, LINUX), vec![0.0, 5.0]);
+}
+
+#[tokio::test]
+async fn a_requeued_order_waits_from_its_return_to_the_queue() {
+    let h = Harness::start("");
+    let a = h.member_runner("rA", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 600))).await;
+    hub.accepted().await;
+    let m = h.meter.clone();
+    eventually("first assignment", || {
+        m.observed(QUEUE_WAIT_SECONDS, LINUX).len() == 1
+    })
+    .await;
+    h.clock.advance(Duration::from_secs(4));
+    a.close().await;
+    eventually("requeued", || m.gauge(QUEUE_LENGTH, LINUX) == Some(1.0)).await;
+    h.clock.advance(Duration::from_secs(6));
+    let mut b = h.member_runner("rB", "10.0.0.8", linux()).await;
+    b.assign().await;
+    assert_eq!(m.observed(QUEUE_WAIT_SECONDS, LINUX), vec![0.0, 6.0]);
+}
+
+#[tokio::test]
+async fn same_machine_orders_given_back_count_as_cancelled() {
+    let h = Harness::start("");
+    let mut r = h.local_runner("alex", "lr", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("s1", same_machine_req())).await;
+    hub.accepted().await;
+    r.assign().await;
+    hub.send(&order("s2", same_machine_req())).await;
+    hub.accepted().await;
+    r.close().await;
+    let m = h.meter.clone();
+    let cancelled = [(RESULT, "cancelled"), (PLATFORM, SAME_MACHINE)];
+    eventually("both given back", || {
+        m.counter(ORDERS_TOTAL, &cancelled) == 2
+    })
+    .await;
+    assert!(m.observed(JOB_DURATION_SECONDS, &cancelled).is_empty());
+    assert_clean(&m, &["s1", "s2", "alex", "local:alex"]);
+}
+
+#[tokio::test]
+async fn timeout_and_lost_results_are_counted_with_their_duration() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 600))).await;
+    hub.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    started_notice(&mut hub).await;
+    h.clock.advance(Duration::from_secs(2));
+    r.send(&result("j1", 2, JobState::Timeout, -1)).await;
+    let m = h.meter.clone();
+    let timeout = [(RESULT, "timeout"), (PLATFORM, "linux")];
+    eventually("timeout counted", || m.counter(ORDERS_TOTAL, &timeout) == 1).await;
+    assert_eq!(m.observed(JOB_DURATION_SECONDS, &timeout), vec![2.0]);
+    hub.send(&order("j2", req(512, 1, 600))).await;
+    hub.accepted().await;
+    r.assign().await;
+    r.send(&started("j2", 1)).await;
+    started_notice(&mut hub).await;
+    h.clock.advance(Duration::from_secs(3));
+    h.handle.revoked("r1").await;
+    let lost = [(RESULT, "lost"), (PLATFORM, "linux")];
+    eventually("lost counted", || m.counter(ORDERS_TOTAL, &lost) == 1).await;
+    assert_eq!(m.observed(JOB_DURATION_SECONDS, &lost), vec![3.0]);
+}

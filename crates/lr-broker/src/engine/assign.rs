@@ -115,6 +115,7 @@ impl Engine {
                 }),
             }),
         );
+        job.platform_label = Some(self.platform_label(&job));
         self.observe_wait(&job, now);
         let group = self.policy.policy().group_of(&job.entry.client);
         self.served.record(&group, now);

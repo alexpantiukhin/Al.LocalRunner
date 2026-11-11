@@ -5,7 +5,7 @@ use super::{Engine, Job};
 use lr_abstractions::metric::*;
 use lr_abstractions::Level;
 use lr_core::{JobId, JobState, Timestamp, Wait};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Saturation reasons of `saturation_wait_seconds`, always all reported.
 pub(crate) const SATURATION_REASONS: [&str; 5] = ["runner_busy", "memory", "cpu", "tag", "rule"];
@@ -59,8 +59,14 @@ impl Engine {
             .collect()
     }
 
-    fn platform_label(&self, job: &Job) -> String {
+    pub(crate) fn platform_label(&self, job: &Job) -> String {
         label_of(job, &self.known_platforms())
+    }
+
+    fn fixed_platform(&self, job: &Job) -> String {
+        job.platform_label
+            .clone()
+            .unwrap_or_else(|| self.platform_label(job))
     }
 
     fn with_client<'a>(
@@ -87,7 +93,7 @@ impl Engine {
         let Some(result) = result_of(state) else {
             return;
         };
-        let platform = self.platform_label(job);
+        let platform = self.fixed_platform(job);
         let labels = Self::with_client(job, vec![(RESULT, result), (PLATFORM, &platform)]);
         self.meter.add(ORDERS_TOTAL, &labels, 1);
         if let Some(started) = job.started_at {
@@ -98,23 +104,27 @@ impl Engine {
 
     /// An order leaves the queue for a runner: `queue_wait_seconds`.
     pub(crate) fn observe_wait(&self, job: &Job, now: Timestamp) {
-        let platform = self.platform_label(job);
+        let platform = self.fixed_platform(job);
         let labels = Self::with_client(job, vec![(PLATFORM, &platform)]);
-        let waited = seconds(now.millis_since(job.spec.enqueued_at));
+        let waited = seconds(now.millis_since(job.queued_since));
         self.meter.observe(QUEUE_WAIT_SECONDS, &labels, waited);
     }
 
     /// Remembers since when the longest-waiting order of each saturation reason waits.
     pub(crate) fn note_waits(&mut self, waiting: &[(JobId, Wait)]) {
+        let queued: HashMap<&JobId, Timestamp> = self
+            .queue
+            .iter()
+            .map(|j| (&j.internal, j.queued_since))
+            .collect();
         let mut since: BTreeMap<&'static str, Timestamp> = BTreeMap::new();
         for (id, wait) in waiting {
             let Some(reason) = saturation_reason(wait) else {
                 continue;
             };
-            let Some(job) = self.queue.iter().find(|j| &j.internal == id) else {
+            let Some(&at) = queued.get(id) else {
                 continue;
             };
-            let at = job.spec.enqueued_at;
             since
                 .entry(reason)
                 .and_modify(|t| *t = (*t).min(at))
@@ -201,5 +211,79 @@ impl Engine {
     pub(crate) fn count_reload(&self, ok: bool) {
         let result = if ok { "ok" } else { "error" };
         self.meter.add(POLICY_RELOAD_TOTAL, &[(RESULT, result)], 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saturation_reasons_follow_the_wait() {
+        let id = JobId("#1".into());
+        let cases = [
+            (Wait::RunnerBusy, Some("runner_busy")),
+            (Wait::Memory { needed: 2, free: 1 }, Some("memory")),
+            (Wait::Cpu { needed: 2, free: 1 }, Some("cpu")),
+            (
+                Wait::Exclusive {
+                    tag: "gpu".into(),
+                    holder: id.clone(),
+                },
+                Some("tag"),
+            ),
+            (
+                Wait::Reserved {
+                    rule: "ci".into(),
+                    cpu: 1,
+                    pool_cpu: 8,
+                    mem_mb: 0,
+                    pool_mem_mb: 0,
+                },
+                Some("rule"),
+            ),
+            (
+                Wait::Quota {
+                    rule: "ci".into(),
+                    running: 1,
+                    max_running: Some(1),
+                    mem_mb: 0,
+                    max_mem_mb: None,
+                },
+                Some("rule"),
+            ),
+            (Wait::RunnerOffline, None),
+            (Wait::NoRunner, None),
+            (
+                Wait::HeadReserved {
+                    head: id,
+                    at: Timestamp(0),
+                },
+                None,
+            ),
+        ];
+        for (wait, want) in cases {
+            assert_eq!(saturation_reason(&wait), want, "{wait:?}");
+            if let Some(r) = want {
+                assert!(SATURATION_REASONS.contains(&r));
+            }
+        }
+    }
+
+    #[test]
+    fn only_final_states_have_a_result() {
+        let finals = [
+            (JobState::Passed, "passed"),
+            (JobState::Failed, "failed"),
+            (JobState::Timeout, "timeout"),
+            (JobState::Cancelled, "cancelled"),
+            (JobState::Lost, "lost"),
+        ];
+        for (state, want) in finals {
+            assert_eq!(result_of(state), Some(want));
+        }
+        for state in [JobState::Queued, JobState::Running, JobState::Cancelling] {
+            assert_eq!(result_of(state), None);
+        }
     }
 }

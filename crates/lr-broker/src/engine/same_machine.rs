@@ -57,6 +57,7 @@ impl Engine {
             }
         }
         self.waits.remove(&job.key);
+        self.count_end(&job, JobState::Cancelled);
         let msg = BrokerToHub::Returned(Returned {
             job: job.key.job.clone(),
             seq: 0,

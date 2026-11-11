@@ -263,6 +263,8 @@ impl Engine {
             started_at: None,
             cancel: None,
             start_unsaved: false,
+            queued_since: self.now(),
+            platform_label: None,
         }
     }
 
