@@ -27,7 +27,7 @@ fn ask(root: &Path, yes: bool, terminal: bool, typed: &str) -> (Result<bool, Str
 fn elsewhere(dir: &TempDir) -> Protected {
     let away = dir.path().join("away");
     Protected {
-        home: Some(away.join("home")),
+        homes: vec![away.join("home")],
         bins: vec![away.join("bin")],
         cwd: Some(away.join("cwd")),
     }
@@ -108,7 +108,7 @@ fn purge_refuses_roots_home_binaries_the_current_directory_and_foreign_directori
         refused(&fs_root, "it is the root of a file system")
     );
     let home = Protected {
-        home: Some(root.clone()),
+        homes: vec![root.clone()],
         ..elsewhere(&dir)
     };
     assert_eq!(
@@ -120,7 +120,7 @@ fn purge_refuses_roots_home_binaries_the_current_directory_and_foreign_directori
     );
     let user = root.join("alex");
     let above_home = Protected {
-        home: Some(user.clone()),
+        homes: vec![user.clone()],
         ..elsewhere(&dir)
     };
     assert_eq!(

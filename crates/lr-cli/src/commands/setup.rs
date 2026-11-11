@@ -9,6 +9,7 @@ use crate::os_service::{
     apply_all, original_user, service_installed, Action, DryRun, Os, OsSystem, System,
 };
 use crate::paths::Layout;
+use crate::purge::{purge_target, Protected};
 use std::io::{BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
@@ -180,6 +181,40 @@ pub fn uninstall_plan(
     Ok(out)
 }
 
+/// Applies an `uninstall` plan with `system`; the state directory of a `RemoveDirAll` is checked
+/// again by [`purge_target`] right before it goes, so a directory that changed since the
+/// confirmation stays. Returns the exit code (1 when a step failed or was refused) and whether
+/// the state directory was deleted.
+pub fn apply_uninstall(plan: &[Action], system: &dyn System, protected: &Protected) -> (i32, bool) {
+    let mut code = 0;
+    let mut purged = false;
+    for a in plan {
+        if let Action::RemoveDirAll(root) = a {
+            match purge_target(root, protected) {
+                Ok(again) if &again == root => {}
+                Ok(again) => {
+                    eprintln!("{a}: the state directory is now {}", again.display());
+                    code = 1;
+                    continue;
+                }
+                Err(why) => {
+                    eprintln!("{why}");
+                    code = 1;
+                    continue;
+                }
+            }
+        }
+        match system.apply(a) {
+            Ok(()) => purged |= matches!(a, Action::RemoveDirAll(_)),
+            Err(e) => {
+                eprintln!("{a}: {e}");
+                code = 1;
+            }
+        }
+    }
+    (code, purged)
+}
+
 /// Whether `uninstall` goes on after `down` answered `stopped`: only when every role stopped
 /// (or did not run), so the binary is never removed under a running hub, broker or runner.
 pub fn uninstall_may_go_on(stopped: Result<i32, String>) -> Result<(), String> {
@@ -206,11 +241,9 @@ pub async fn uninstall(
         Some(d) => d,
         None => default_bin_dir()?,
     };
+    let protected = Protected::of_process(&dir);
     let target = if purge {
-        Some(crate::purge::purge_target(
-            &layout.root,
-            &crate::purge::Protected::of_process(&dir),
-        )?)
+        Some(purge_target(&layout.root, &protected)?)
     } else {
         None
     };
@@ -238,16 +271,8 @@ pub async fn uninstall(
         println!("deleting the state directory {}", t.display());
     }
     let plan = uninstall_plan(layout, dir, with_service, target.clone())?;
-    let mut purged = false;
-    for a in &plan {
-        match system(dry_run).apply(a) {
-            Ok(()) => purged |= matches!(a, Action::RemoveDirAll(_)),
-            Err(e) => {
-                eprintln!("{a}: {e}");
-                code = 1;
-            }
-        }
-    }
+    let (failed, purged) = apply_uninstall(&plan, system(dry_run), &protected);
+    code = code.max(failed);
     if !dry_run {
         match target.filter(|_| purged) {
             Some(t) => println!("uninstalled; deleted {}", t.display()),
