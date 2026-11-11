@@ -250,8 +250,17 @@ pub struct HubParts {
     pub ipc: Arc<IpcListener>,
 }
 
+/// Whether this machine has a broker of its own for the hub to list as `local`: the broker
+/// role written by `init`, the state of a broker that has run here, or the broker service.
+pub fn local_broker_configured(layout: &Layout) -> bool {
+    crate::init::roles(layout).contains(&crate::init::NodeRole::Broker)
+        || layout.root.join("broker.db").exists()
+        || layout.broker_is_service()
+}
+
 /// Builds the hub of the current OS user: `hub.db`, its CLI IPC, the broker of this machine
-/// over IPC and joined brokers over TLS, the real git, files and process inspector.
+/// over IPC when it has one ([`local_broker_configured`]) and joined brokers over TLS, the
+/// real git, files and process inspector.
 pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> {
     crate::init::ensure_state_dir(&layout.root)?;
     layout.prepare_ipc().map_err(|e| e.to_string())?;
@@ -273,7 +282,7 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         store,
         ipc: ipc.clone(),
         dialer: dialer(&layout.root.join(KEY_FILE))?,
-        local_broker: Some(layout.broker_ipc()),
+        local_broker: local_broker_configured(layout).then(|| layout.broker_ipc()),
         inspector: Arc::new(OsProcessInspector),
         files: Arc::new(StdFiles),
         repository: Arc::new(GitRepository),
