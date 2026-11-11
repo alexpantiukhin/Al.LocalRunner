@@ -3,7 +3,7 @@ use crate::helper::{helper_command, Mode};
 use crate::kit::*;
 use crate::support::*;
 use lr_cli::commands::down_cmd::down;
-use lr_cli::commands::setup::uninstall_with;
+use lr_cli::commands::setup::{uninstall_with, ServiceRights, UninstallFlags};
 use lr_cli::os_service::{Action, System};
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners, Running};
@@ -256,12 +256,18 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
         let _ = hub.wait().await;
         let _ = broker.wait().await;
     });
+    let no_service = ServiceRights {
+        installed: false,
+        elevated: false,
+    };
+    let keep = UninstallFlags {
+        dir: Some(bin.clone()),
+        ..UninstallFlags::default()
+    };
     let code = uninstall_with(
         &main,
-        false,
-        false,
-        Some(bin.clone()),
-        false,
+        keep,
+        no_service,
         down(&main, Vec::new(), true),
         &kept,
     )
@@ -289,7 +295,13 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
         purge: true,
         ..Recorder::default()
     };
-    let code = uninstall_with(&main, true, true, Some(bin), false, async { Ok(0) }, &purge).await;
+    let flags = UninstallFlags {
+        purge: true,
+        yes: true,
+        dir: Some(bin),
+        dry_run: false,
+    };
+    let code = uninstall_with(&main, flags, no_service, async { Ok(0) }, &purge).await;
     assert_eq!(code, Ok(0));
     assert!(!main.root.exists(), "--purge --yes deletes the state");
 

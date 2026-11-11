@@ -265,20 +265,65 @@ pub async fn uninstall(
     dry_run: bool,
 ) -> Result<i32, String> {
     let stop = super::down_cmd::down(layout, Vec::new(), true);
-    uninstall_with(layout, purge, yes, dir, dry_run, stop, system(dry_run)).await
+    let installed = service_installed(Os::current());
+    let rights = ServiceRights {
+        installed,
+        elevated: installed && !dry_run && crate::host::is_elevated(),
+    };
+    let flags = UninstallFlags {
+        purge,
+        yes,
+        dir,
+        dry_run,
+    };
+    uninstall_with(layout, flags, rights, stop, system(dry_run)).await
+}
+
+/// The flags of `uninstall`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UninstallFlags {
+    /// `--purge`: also delete the state directory once confirmed.
+    pub purge: bool,
+    /// `--yes`: confirm `--purge` without asking.
+    pub yes: bool,
+    /// `--dir`: the directory of the binary; the default one when absent.
+    pub dir: Option<PathBuf>,
+    /// `--dry-run`: print the plan, change nothing.
+    pub dry_run: bool,
+}
+
+/// The broker service of this machine as `uninstall` finds it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ServiceRights {
+    /// The broker is installed as an OS service.
+    pub installed: bool,
+    /// This process runs with administrator rights.
+    pub elevated: bool,
+}
+
+/// What `uninstall` says when the broker service stays because it runs without administrator
+/// rights.
+pub fn service_stays_hint() -> &'static str {
+    "the broker service stays: run `localrunner autostart off broker` as administrator"
 }
 
 /// `uninstall` whose roles are stopped by `stop` (the `down --cancel` of every role) and whose
-/// plan is applied by `apply`; nothing is applied unless `stop` says every role stopped.
+/// plan is applied by `apply`; nothing is applied unless `stop` says every role stopped. An
+/// installed broker service goes only when `rights` say administrator, else it stays with
+/// [`service_stays_hint`] and exit code 1.
 pub async fn uninstall_with(
     layout: &Layout,
-    purge: bool,
-    yes: bool,
-    dir: Option<PathBuf>,
-    dry_run: bool,
+    flags: UninstallFlags,
+    rights: ServiceRights,
     stop: impl std::future::Future<Output = Result<i32, String>>,
     apply: &dyn System,
 ) -> Result<i32, String> {
+    let UninstallFlags {
+        purge,
+        yes,
+        dir,
+        dry_run,
+    } = flags;
     let dir = match dir {
         Some(d) => d,
         None => default_bin_dir()?,
@@ -297,12 +342,9 @@ pub async fn uninstall_with(
             return Ok(1);
         }
     }
-    let service = service_installed(Os::current());
-    let with_service = service && (dry_run || crate::host::is_elevated());
-    if service && !with_service {
-        eprintln!(
-            "the broker service stays: run `localrunner autostart off broker` as administrator"
-        );
+    let with_service = rights.installed && (dry_run || rights.elevated);
+    if rights.installed && !with_service {
+        eprintln!("{}", service_stays_hint());
         code = 1;
     }
     let target = match target {
