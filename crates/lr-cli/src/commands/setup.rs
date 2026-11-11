@@ -251,6 +251,21 @@ pub async fn uninstall(
     dir: Option<PathBuf>,
     dry_run: bool,
 ) -> Result<i32, String> {
+    let stop = super::down_cmd::down(layout, Vec::new(), true);
+    uninstall_with(layout, purge, yes, dir, dry_run, stop, system(dry_run)).await
+}
+
+/// `uninstall` whose roles are stopped by `stop` (the `down --cancel` of every role) and whose
+/// plan is applied by `apply`; nothing is applied unless `stop` says every role stopped.
+pub async fn uninstall_with(
+    layout: &Layout,
+    purge: bool,
+    yes: bool,
+    dir: Option<PathBuf>,
+    dry_run: bool,
+    stop: impl std::future::Future<Output = Result<i32, String>>,
+    apply: &dyn System,
+) -> Result<i32, String> {
     let dir = match dir {
         Some(d) => d,
         None => default_bin_dir()?,
@@ -263,7 +278,7 @@ pub async fn uninstall(
     };
     let mut code = 0;
     if !dry_run {
-        let stopped = super::down_cmd::down(layout, Vec::new(), true).await;
+        let stopped = stop.await;
         if let Err(why) = uninstall_may_go_on(stopped) {
             eprintln!("{why}");
             return Ok(1);
@@ -285,7 +300,7 @@ pub async fn uninstall(
         println!("deleting the state directory {}", t.display());
     }
     let plan = uninstall_plan(layout, dir, with_service, target.clone())?;
-    let (failed, purged) = apply_uninstall(&plan, system(dry_run), &protected);
+    let (failed, purged) = apply_uninstall(&plan, apply, &protected);
     code = code.max(failed);
     if !dry_run {
         match target.filter(|_| purged) {
