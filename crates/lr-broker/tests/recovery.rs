@@ -222,3 +222,20 @@ async fn drain_finishes_running_and_refuses_new() {
         .unwrap();
     assert_eq!(rows[0].state, lr_abstractions::RunnerState::Draining);
 }
+
+#[tokio::test]
+async fn after_a_restart_runner_silence_counts_from_its_first_heartbeat() {
+    let h = Harness::start(GRACE);
+    let _before = h.member_runner("r1", "10.0.0.7", linux()).await;
+    h.clock.advance(Duration::from_secs(40));
+    let h = h.restart().await;
+    let mut r = rejoin(&h, "r1").await;
+    h.clock.advance(Duration::from_secs(10));
+    r.send(&RunnerToBroker::Heartbeat).await;
+    h.local_hub("alex").await.until_runner("r1", true).await;
+    h.clock.advance(Duration::from_millis(45_000 - 1));
+    h.local_hub("alex").await.until_runner("r1", true).await;
+    h.clock.advance(Duration::from_millis(1));
+    h.local_hub("alex").await.until_runner("r1", false).await;
+    assert!(r.closed().await);
+}
