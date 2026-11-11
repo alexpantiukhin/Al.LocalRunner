@@ -3,9 +3,11 @@
 //! them, chooses brokers by `hub-policy.toml`, copies job logs into the submitter's
 //! directory and cancels the orders of dead submitters. It executes no job.
 
+mod bus;
 mod cli;
 mod client;
 mod decide;
+mod deps;
 mod engine;
 mod handles;
 mod inbound;
@@ -21,7 +23,8 @@ mod relay;
 pub mod select;
 mod track;
 
-pub use engine::{Hub, HubDeps, ReloadLogging, LOCAL_BROKER};
+pub use deps::HubDeps;
+pub use engine::{Hub, ReloadLogging, LOCAL_BROKER};
 pub use policy::{
     parse_hub_policy, BrokerStrategy, BrokersPolicy, HubPolicy, HubPolicyError, OnExpire,
     OutboxPolicy, ZoneQuery,

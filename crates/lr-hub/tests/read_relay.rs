@@ -5,7 +5,7 @@ use common::*;
 use lr_core::JobId;
 use lr_proto::{
     BrokerToHub, CliRead, CliReply, CliRequest, HubToBroker, LogChunk, ProtocolErrorCode,
-    ReadAnswer, ReadReply, ReadRequest,
+    ReadAnswer, ReadReply, ReadRequest, Topic,
 };
 
 fn log(follow: bool) -> CliRequest {
@@ -33,11 +33,15 @@ async fn started(rig: &mut Rig) -> (FakeBroker, tokio::task::JoinHandle<()>) {
     (local, hub)
 }
 
+fn hubs_own_subscription(r: &ReadRequest) -> bool {
+    matches!(r, ReadRequest::Subscribe { topics } if topics == &[Topic::Queue, Topic::Runners])
+}
+
 fn reads(b: &FakeBroker) -> Vec<(u64, ReadRequest)> {
     b.received()
         .into_iter()
         .filter_map(|m| match m {
-            HubToBroker::Read(c) => Some((c.req, c.request)),
+            HubToBroker::Read(c) if !hubs_own_subscription(&c.request) => Some((c.req, c.request)),
             _ => None,
         })
         .collect()

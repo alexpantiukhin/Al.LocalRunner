@@ -43,6 +43,10 @@ impl Engine {
             CliRequest::Orders => Some(self.orders(&e.os_user)),
             CliRequest::Shutdown => None,
             CliRequest::LoggingReload => Some(self.reload_logging()),
+            CliRequest::Events => {
+                crate::bus::watch(&self.s, e.reply.clone());
+                None
+            }
         };
         if let Some(a) = answer {
             if reply.try_send(a).is_err() {

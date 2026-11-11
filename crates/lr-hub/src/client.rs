@@ -183,6 +183,9 @@ async fn session(
         }
     };
     let (out_tx, out_rx) = mpsc::channel(OUT_FRAMES);
+    if let Some(f) = crate::bus::subscription(shared) {
+        let _ = out_tx.try_send(f);
+    }
     let kill = Arc::new(Notify::new());
     let connected = BrokerEvent::Connected {
         zone,
@@ -272,10 +275,8 @@ async fn reader(target: &Target, shared: &Shared, events: &mpsc::Sender<Event>, 
                 let req = l.req;
                 shared.pending.feed(req, BrokerToHub::LogChunk(l));
             }
-            BrokerToHub::Heartbeat
-            | BrokerToHub::Event(_)
-            | BrokerToHub::Welcome(_)
-            | BrokerToHub::Joined(_) => {}
+            BrokerToHub::Event(e) => crate::bus::publish(shared, &target.name, e.event),
+            BrokerToHub::Heartbeat | BrokerToHub::Welcome(_) | BrokerToHub::Joined(_) => {}
             other => {
                 let event =
                     Event::Broker(target.name.clone(), BrokerEvent::Message(Box::new(other)));

@@ -1,5 +1,6 @@
 use crate::api::{JobSummary, ReadReply, ReadRequest};
 use crate::common::ProtocolError;
+use crate::dashboard::DashboardEvent;
 use crate::frame::message;
 use crate::reason::ReasonCode;
 use crate::version::Version;
@@ -186,6 +187,10 @@ pub enum CliRequest {
     /// `logging reload`: reread the hub's `logging.toml`; answered with
     /// [`CliReply::Reloaded`] or an error naming why the file was refused.
     LoggingReload,
+    /// The dashboard's live stream: the hub answers [`CliReply::Watching`], then relays every
+    /// event of its brokers' subscriptions as [`CliReply::Event`] until the connection closes.
+    /// Each broker has already masked the events by its visibility policy for this hub's key.
+    Events,
 }
 
 /// Messages from a hub to its CLI.
@@ -270,6 +275,12 @@ pub enum CliReply {
     Stopping,
     /// The new `logging.toml` applies (answer to [`CliRequest::LoggingReload`]).
     Reloaded,
+    /// The event stream is open (answer to [`CliRequest::Events`]).
+    Watching,
+    /// An event of a broker as that broker masked it for this hub's key;
+    /// [`crate::QueueEvent::Unknown`] from broker `hub` says events were lost on the way, so the
+    /// reader rereads the state.
+    Event(DashboardEvent),
     /// A refusal.
     Error(ProtocolError),
 }
@@ -396,7 +407,8 @@ message!(
         "jobs",
         "orders",
         "shutdown",
-        "logging_reload"
+        "logging_reload",
+        "events"
     ]
 );
 message!(
@@ -415,6 +427,8 @@ message!(
         "log_chunk",
         "stopping",
         "reloaded",
+        "watching",
+        "event",
         "error"
     ]
 );

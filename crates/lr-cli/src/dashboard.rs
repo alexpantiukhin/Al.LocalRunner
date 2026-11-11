@@ -20,8 +20,12 @@ use lr_proto::{
 use std::sync::Arc;
 use std::time::Duration;
 
-/// How often the page is told to refresh: the hub relays no broker events to the CLI yet.
+/// How often the page is told to refresh when the hub does not relay its brokers' events (a
+/// hub older than [`CliRequest::Events`]).
 pub const REFRESH: Duration = Duration::from_secs(2);
+
+/// How long the dashboard waits for the hub to open its event stream.
+pub const EVENTS_WAIT: Duration = Duration::from_secs(5);
 
 /// The dashboard's data from the hub of this OS user.
 pub struct HubSource {
@@ -111,6 +115,40 @@ impl EventStream<DashboardEvent> for Ticks {
             broker: "hub".into(),
             event: QueueEvent::Unknown,
         })
+    }
+}
+
+struct HubEvents(IpcClient);
+
+#[async_trait]
+impl EventStream<DashboardEvent> for HubEvents {
+    async fn next(&mut self) -> Option<DashboardEvent> {
+        loop {
+            match self.0.recv::<CliReply>().await.ok()? {
+                CliReply::Event(e) => return Some(e),
+                CliReply::Error(_) => return None,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// The live events of the hub of `layout` (spec 9.3): its brokers' queue and runner events,
+/// each masked by its broker for this hub's key. A hub that does not open the stream within
+/// [`EVENTS_WAIT`] (one older than [`CliRequest::Events`] ignores it) gives refresh ticks
+/// every [`REFRESH`] instead.
+pub async fn hub_events(
+    layout: &Layout,
+) -> Result<Box<dyn EventStream<DashboardEvent>>, DataError> {
+    let client = hub(layout).await.map_err(unavailable)?;
+    let opened = tokio::time::timeout(EVENTS_WAIT, client.call::<_, CliReply>(&CliRequest::Events));
+    match opened.await {
+        Ok(Ok(CliReply::Watching)) => Ok(Box::new(HubEvents(client))),
+        Ok(Err(e)) => Err(unavailable(e)),
+        _ => {
+            client.close().await;
+            Ok(Box::new(Ticks))
+        }
     }
 }
 
@@ -370,7 +408,7 @@ impl DataSource for HubSource {
     }
 
     async fn subscribe(&self) -> Result<Box<dyn EventStream<DashboardEvent>>, DataError> {
-        Ok(Box::new(Ticks))
+        hub_events(&self.layout).await
     }
 
     async fn log(&self, job: &JobId) -> Result<Vec<u8>, DataError> {

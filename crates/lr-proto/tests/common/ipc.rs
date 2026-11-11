@@ -40,6 +40,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
         CliRequest::Orders,
         CliRequest::Shutdown,
         CliRequest::LoggingReload,
+        CliRequest::Events,
     ]
 }
 
@@ -95,6 +96,14 @@ pub fn cli_replies() -> Vec<CliReply> {
         },
         CliReply::Stopping,
         CliReply::Reloaded,
+        CliReply::Watching,
+        CliReply::Event(DashboardEvent {
+            broker: "local".into(),
+            event: QueueEvent::JobStarted {
+                job: lr_core::JobId("j-1".into()),
+                runner: "r1".into(),
+            },
+        }),
         CliReply::Error(protocol_error()),
     ]
 }

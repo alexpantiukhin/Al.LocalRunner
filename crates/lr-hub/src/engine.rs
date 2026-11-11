@@ -1,4 +1,5 @@
 use crate::client::{self, Pending, Target};
+use crate::deps::HubDeps;
 use crate::limits::{Overflow, Overflows};
 use crate::orders::JobIds;
 use crate::policy::HubPolicy;
@@ -6,19 +7,19 @@ use crate::reaper::{Reaper, Watched};
 use crate::select::Decision;
 use crate::track::{Finished, Link, Stage, Track};
 use lr_abstractions::{
-    Clock, Dialer, Files, Frame, HubStore, Level, Listener, LogSink, Meter, OutboxKind,
-    ProcessInspector, Record, Repository, Role,
+    Clock, Dialer, Files, Frame, HubStore, Level, LogSink, Meter, OutboxKind, ProcessInspector,
+    Record, Repository, Role,
 };
 use lr_core::{JobId, Timestamp, Zone};
 use lr_proto::{
-    BrokerToHub, CliReply, CliRequest, HubToBroker, OrderSpec, ProtocolError, ProtocolErrorCode,
-    ReasonCode, RejectReason,
+    BrokerToHub, CliReply, CliRequest, DashboardEvent, HubToBroker, OrderSpec, ProtocolError,
+    ProtocolErrorCode, ReasonCode, RejectReason,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, Notify};
 
 /// Name under which the broker of this machine (reached over local IPC) is listed.
 pub const LOCAL_BROKER: &str = "local";
@@ -29,34 +30,6 @@ pub type ReloadLogging = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
-
-/// What the hub is built from; only `lr-cli` knows the implementations behind them.
-pub struct HubDeps {
-    /// Time source.
-    pub clock: Arc<dyn Clock>,
-    /// `hub.db` and the log copies.
-    pub store: Arc<dyn HubStore>,
-    /// Local IPC of the CLI.
-    pub ipc: Arc<dyn Listener>,
-    /// Connections to brokers: TLS to the joined ones, local IPC to the local one.
-    pub dialer: Arc<dyn Dialer>,
-    /// IPC address of the broker of this machine, listed as [`LOCAL_BROKER`].
-    pub local_broker: Option<String>,
-    /// Liveness of submitter processes (reaper).
-    pub inspector: Arc<dyn ProcessInspector>,
-    /// Profile files of work trees and job handles.
-    pub files: Arc<dyn Files>,
-    /// Commits, push state and committed profiles.
-    pub repository: Arc<dyn Repository>,
-    /// Diagnostic events.
-    pub log: Arc<dyn LogSink>,
-    /// Metrics of spec 12.2.
-    pub meter: Arc<dyn Meter>,
-    /// `hub-policy.toml`.
-    pub policy: HubPolicy,
-    /// Name of this hub in `hello`.
-    pub name: String,
-}
 
 pub(crate) struct Shared {
     pub(crate) clock: Arc<dyn Clock>,
@@ -70,6 +43,7 @@ pub(crate) struct Shared {
     pub(crate) name: String,
     pub(crate) reload_logging: Option<ReloadLogging>,
     pub(crate) pending: Pending,
+    pub(crate) bus: broadcast::Sender<DashboardEvent>,
     next_req: AtomicU64,
     pub(crate) overflows: Overflows,
 }
@@ -183,6 +157,7 @@ impl Hub {
             meter: d.meter,
             name: d.name,
             pending: Pending::default(),
+            bus: crate::bus::new_bus(),
             next_req: AtomicU64::new(0),
             overflows: Overflows::default(),
         });
