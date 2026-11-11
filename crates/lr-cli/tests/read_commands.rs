@@ -191,6 +191,16 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     let lines = history_lines(&rows);
     assert_eq!(lines.len(), 4, "a header and one line per run: {lines:?}");
     assert!(
+        lines[0].contains("PROFILE	PROJECT	SOURCE	LABEL	"),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        lines[1].contains("	owner/repo	session	agent-1	"),
+        "{}",
+        lines[1]
+    );
+    assert!(
         lines[1].contains("j3") && lines[1].contains("owner/repo") && lines[1].contains("local")
     );
     assert!(

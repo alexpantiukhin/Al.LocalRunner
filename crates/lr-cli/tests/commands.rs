@@ -411,3 +411,15 @@ fn down_without_flags_drains() {
     assert_eq!(mode(&["--cancel"]), DownMode::Cancel);
     assert!(Cli::try_parse_from(["localrunner", "down", "--drain", "--cancel"]).is_err());
 }
+
+#[test]
+fn jobs_mine_prints_project_source_and_label_together() {
+    use lr_cli::commands::jobs::mine_line;
+    assert_eq!(
+        mine_line(&summary("j1", JobState::Running)),
+        "j1\tRunning\tunit\towner/repo\tsession\tagent-1"
+    );
+    let mut bare = summary("j2", JobState::Queued);
+    (bare.project, bare.source, bare.label) = (None, None, None);
+    assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-");
+}

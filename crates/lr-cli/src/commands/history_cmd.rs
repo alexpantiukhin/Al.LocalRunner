@@ -70,17 +70,19 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tLABEL\tCLIENT\tRUNNER\tBROKER".into(),
+        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tBROKER"
+            .into(),
     ];
     for (b, s) in rows {
         out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
             s.job,
             state_name(s.state),
             format_time(s.queued_at),
             span(s.started_at, s.finished_at),
             dash(&s.profile),
             dash(&s.project),
+            source_name(s.source),
             dash(&s.label),
             s.client_label,
             dash(&s.runner),

@@ -259,16 +259,24 @@ pub async fn jobs(
         );
     } else {
         for j in &jobs {
-            println!(
-                "{}\t{:?}\t{}\t{}",
-                j.job,
-                j.state,
-                j.profile.as_deref().unwrap_or("-"),
-                j.project.as_deref().unwrap_or("-")
-            );
+            println!("{}", mine_line(j));
         }
     }
     Ok(0)
+}
+
+/// One line of `jobs --mine`: job, state, profile, then project, source and label together
+/// (spec 7.2); an unknown value is `-`.
+pub fn mine_line(j: &lr_proto::JobSummary) -> String {
+    format!(
+        "{}\t{:?}\t{}\t{}\t{}\t{}",
+        j.job,
+        j.state,
+        j.profile.as_deref().unwrap_or("-"),
+        j.project.as_deref().unwrap_or("-"),
+        super::view::source_name(j.source),
+        j.label.as_deref().unwrap_or("-")
+    )
 }
 
 /// `cancel <job>` or `cancel --mine`.
