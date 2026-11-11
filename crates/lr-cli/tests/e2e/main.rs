@@ -6,6 +6,8 @@ mod failures;
 mod helper;
 mod kit;
 mod moved_broker;
+mod queue;
+mod selection;
 mod services;
 mod single_machine;
 mod support;
