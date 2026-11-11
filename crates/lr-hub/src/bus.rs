@@ -38,6 +38,12 @@ pub(crate) fn publish(shared: &Shared, broker: &str, event: QueueEvent) {
     });
 }
 
+/// Tells the watching connections to reread the state of broker `broker`: its connection
+/// came or went, so events it sent meanwhile may be missing.
+pub(crate) fn reread(shared: &Shared, broker: &str) {
+    publish(shared, broker, QueueEvent::Unknown);
+}
+
 /// Answers [`CliReply::Watching`] on `reply`, then relays the bus there until the connection
 /// closes; events the connection could not take in time come as one `Unknown` event of the
 /// hub, so the reader rereads the state.

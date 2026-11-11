@@ -190,6 +190,8 @@ pub enum CliRequest {
     /// The dashboard's live stream: the hub answers [`CliReply::Watching`], then relays every
     /// event of its brokers' subscriptions as [`CliReply::Event`] until the connection closes.
     /// Each broker has already masked the events by its visibility policy for this hub's key.
+    /// Repeated on the same connection it is answered [`CliReply::Watching`] again and opens
+    /// no second stream.
     Events,
 }
 
@@ -277,9 +279,10 @@ pub enum CliReply {
     Reloaded,
     /// The event stream is open (answer to [`CliRequest::Events`]).
     Watching,
-    /// An event of a broker as that broker masked it for this hub's key;
-    /// [`crate::QueueEvent::Unknown`] from broker `hub` says events were lost on the way, so the
-    /// reader rereads the state.
+    /// An event of a broker as that broker masked it for this hub's key. An event
+    /// [`crate::QueueEvent::Unknown`] says events may be missing, so the reader rereads the
+    /// state: from a broker when its connection came or went, from broker `hub` when this
+    /// connection fell behind.
     Event(DashboardEvent),
     /// A refusal.
     Error(ProtocolError),

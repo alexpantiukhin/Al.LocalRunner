@@ -113,6 +113,7 @@ pub(crate) struct Engine {
     pub(crate) tracks: BTreeMap<JobId, Track>,
     pub(crate) recent: VecDeque<(JobId, Finished)>,
     pub(crate) submitted: BTreeMap<ConnId, BTreeSet<JobId>>,
+    pub(crate) watching: BTreeSet<ConnId>,
     pub(crate) ids: JobIds,
     pub(crate) reaper: Reaper,
     pub(crate) tx: mpsc::Sender<Event>,
@@ -169,6 +170,7 @@ impl Hub {
             tracks: BTreeMap::new(),
             recent: VecDeque::new(),
             submitted: BTreeMap::new(),
+            watching: BTreeSet::new(),
             ids: JobIds::default(),
             reaper: Reaper::new(d.clock.now()),
             tx: tx.clone(),
@@ -354,6 +356,7 @@ impl Engine {
             Event::Cli(e) => self.on_cli(*e).await,
             Event::CliClosed(conn) => {
                 self.submitted.remove(&conn);
+                self.watching.remove(&conn);
                 for t in self.tracks.values_mut() {
                     t.watchers.retain(|(c, _, _)| *c != conn);
                 }

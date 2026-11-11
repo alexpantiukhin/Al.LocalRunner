@@ -91,3 +91,87 @@ async fn the_hub_subscribes_to_its_brokers_and_relays_their_events_to_a_watching
         "a connection that did not ask for events gets none"
     );
 }
+
+fn reread_of(broker: &str) -> CliReply {
+    CliReply::Event(DashboardEvent {
+        broker: broker.into(),
+        event: QueueEvent::Unknown,
+    })
+}
+
+#[tokio::test]
+async fn a_lost_and_regained_broker_connection_tells_the_watchers_to_reread() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    let _hub = rig.start();
+    eventually("hub connects", || local.hellos() == 1).await;
+    settle().await;
+    let watcher = rig.cli().await;
+    watcher.send(CliRequest::Events).await;
+    assert_eq!(watcher.reply().await, CliReply::Watching);
+
+    local.disconnect().await;
+    assert_eq!(
+        watcher.reply().await,
+        reread_of("local"),
+        "the connection went: what the broker sent meanwhile is lost"
+    );
+    settle().await;
+    rig.step(1).await;
+    eventually("redialed", || local.hellos() == 2).await;
+    assert_eq!(
+        watcher.reply().await,
+        reread_of("local"),
+        "the connection is back: reread the broker's state"
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_events_request_opens_no_second_stream() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    let _hub = rig.start();
+    eventually("hub connects", || local.hellos() == 1).await;
+    settle().await;
+    let watcher = rig.cli().await;
+    watcher.send(CliRequest::Events).await;
+    assert_eq!(watcher.reply().await, CliReply::Watching);
+    watcher.send(CliRequest::Events).await;
+    assert_eq!(watcher.reply().await, CliReply::Watching);
+    settle().await;
+
+    local
+        .send(BrokerToHub::Event(EventMsg {
+            sub: 1,
+            event: started_event(),
+        }))
+        .await;
+    local
+        .send(BrokerToHub::Event(EventMsg {
+            sub: 1,
+            event: queued("j-next"),
+        }))
+        .await;
+    assert!(
+        matches!(watcher.reply().await, CliReply::Event(e) if e.event == started_event()),
+        "the event comes once"
+    );
+    assert!(
+        matches!(watcher.reply().await, CliReply::Event(e) if e.event == queued("j-next")),
+        "the next one follows it, not a copy of the first"
+    );
+    settle().await;
+    watcher.send(CliRequest::Brokers).await;
+    let next = watcher.reply().await;
+    assert!(
+        matches!(next, CliReply::Brokers { .. }),
+        "no copy of the stream is queued: {next:?}"
+    );
+}
+
+fn started_event() -> QueueEvent {
+    QueueEvent::JobStarted {
+        job: JobId("j-once".into()),
+        runner: "r1".into(),
+    }
+}

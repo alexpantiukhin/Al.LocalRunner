@@ -88,6 +88,7 @@ impl Engine {
                 for job in waiting {
                     self.start_selection(&job);
                 }
+                crate::bus::reread(&self.s, name);
             }
             BrokerEvent::Disconnected => {
                 if let Some(link) = self.links.get_mut(name) {
@@ -95,6 +96,7 @@ impl Engine {
                     link.kill = None;
                     link.sent.clear();
                 }
+                crate::bus::reread(&self.s, name);
             }
             BrokerEvent::Refused(e) => {
                 if let Some(link) = self.links.get_mut(name) {

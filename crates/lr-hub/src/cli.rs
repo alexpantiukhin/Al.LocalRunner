@@ -43,6 +43,7 @@ impl Engine {
             CliRequest::Orders => Some(self.orders(&e.os_user)),
             CliRequest::Shutdown => None,
             CliRequest::LoggingReload => Some(self.reload_logging()),
+            CliRequest::Events if !self.watching.insert(e.conn) => Some(CliReply::Watching),
             CliRequest::Events => {
                 crate::bus::watch(&self.s, e.reply.clone());
                 None
