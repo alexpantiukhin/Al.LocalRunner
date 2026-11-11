@@ -81,8 +81,8 @@ fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
 impl RunnerConfig {
     /// Reads `text`. The name is `name` when given (`--name`), else `name` of the file, else
     /// `default_name` (the host name). Without `mem_mb` or `cpu` the runner offers all of
-    /// `host`: one runner runs one job at a time and gives it everything it declares. Without
-    /// `[env] path` jobs get the `PATH` of the runner process, where `[programs]` are looked up.
+    /// `host`: one runner runs one job at a time and gives it everything it declares. `PATH`
+    /// of jobs comes only from `[env] path`; the `PATH` of the runner process is not inherited.
     pub fn parse(
         text: &str,
         name: Option<&str>,
@@ -111,9 +111,6 @@ impl RunnerConfig {
         let mut settings = RunnerSettings::from_toml(&text, state_dir)?;
         settings.mem_mb = mem_mb;
         settings.cpu = u32::try_from(cpu).unwrap_or(u32::MAX);
-        if settings.path.is_none() {
-            settings.path = std::env::var("PATH").ok();
-        }
         let secrets = extra
             .secret
             .iter()
@@ -127,19 +124,14 @@ impl RunnerConfig {
         })
     }
 
-    /// Runs the `[programs]` lookups and checks and keeps only the programs that passed;
-    /// returns one line per program that failed.
+    /// Runs the `[programs]` lookups and checks in the `PATH` jobs get (`[env] path`) and keeps
+    /// only the programs that passed; returns one line per program that failed.
     pub fn check_programs(&mut self) -> Vec<String> {
-        let search = self
-            .settings
-            .path
-            .clone()
-            .or_else(|| std::env::var("PATH").ok())
-            .unwrap_or_default();
+        let search = self.settings.path.clone();
         let mut problems = Vec::new();
         self.settings.programs.clear();
         for (name, spec) in &self.programs {
-            match check_program(name, spec, &search) {
+            match check_program(name, spec, search.as_deref()) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
@@ -234,11 +226,14 @@ pub fn find_in_path(name: &str, search: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-fn check_program(name: &str, spec: &ProgramSpec, search: &str) -> Result<(), String> {
-    match &spec.path {
-        Some(p) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
-        Some(_) => {}
-        None => {
+fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result<(), String> {
+    match (&spec.path, search) {
+        (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
+        (Some(_), _) => {}
+        (None, None) => {
+            return Err("not looked up: runner.toml has no [env] path, the PATH of jobs".into())
+        }
+        (None, Some(search)) => {
             find_in_path(name, search).ok_or_else(|| "not found in PATH".to_string())?;
         }
     }
@@ -259,7 +254,7 @@ fn check_program(name: &str, spec: &ProgramSpec, search: &str) -> Result<(), Str
         c.arg("-c").arg(check);
         c
     };
-    cmd.env("PATH", search)
+    cmd.env("PATH", search.unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

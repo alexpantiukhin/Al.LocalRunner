@@ -298,3 +298,25 @@ async fn idle_runner_sweeps_the_cache_every_hour() {
     assert!(rig.store.cache_entries().await.unwrap().is_empty());
     drop(b);
 }
+
+#[tokio::test]
+async fn runner_without_env_path_refuses_the_job_instead_of_running_it_without_path() {
+    let mut rig = Rig::new();
+    rig.settings.path = None;
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    let r = result_of(&b.until_result().await);
+    assert_eq!(r.state, JobState::Failed);
+    assert_eq!(
+        r.detail.as_deref(),
+        Some("runner.toml has no [env] path, so the job would get no PATH; set [env] path (spec 13.4)")
+    );
+    assert!(rig.process.runs().is_empty());
+}

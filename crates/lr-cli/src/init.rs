@@ -87,7 +87,10 @@ pub const RUNNER_TEMPLATE: &str =
 # cpu = 8                        # default: all cores of the host\n\
 # allow_elevated = false         # running as root or administrator needs true\n\
 \n\
-# [programs]\n\
+# [env]                          # PATH of every job; without it jobs are refused\n\
+# path = \"/usr/local/bin:/usr/bin:/bin\"\n\
+\n\
+# [programs]                     # looked up in [env] path\n\
 # git = {}\n\
 \n\
 # [limits]\n\

@@ -164,6 +164,12 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, a: Assign) {
             .max_job_timeout_s
             .filter(|ceiling| t > *ceiling)
             .map(|ceiling| format!("job timeout {t} s is above the runner ceiling {ceiling} s"))
+            .or_else(|| {
+                shared.deps.settings.path.is_none().then(|| {
+                    "runner.toml has no [env] path, so the job would get no PATH; set [env] path (spec 13.4)"
+                        .to_string()
+                })
+            })
     };
     if let Some(detail) = refusal {
         return refuse(s, &a, detail).await;

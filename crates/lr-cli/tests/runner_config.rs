@@ -9,6 +9,11 @@ const HOST: HostResources = HostResources {
     cpu: 12,
 };
 
+fn env_path_table() -> String {
+    let path = std::env::var("PATH").expect("the test process has PATH");
+    format!("[env]\npath = {}\n", toml::Value::String(path))
+}
+
 fn parse(text: &str, name: Option<&str>) -> RunnerConfig {
     RunnerConfig::parse(text, name, "host-pc", PathBuf::from("/state/r"), HOST).expect("parses")
 }
@@ -79,12 +84,13 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
     let text = format!(
         "[programs]\ngit = {{ check = \"{git_check}\" }}\n\
          surely-missing-program-xyz = {{}}\n\
-         failing = {{ path = \"{}\", check = \"exit 3\" }}\n",
+         failing = {{ path = \"{}\", check = \"exit 3\" }}\n{}",
         std::env::current_exe()
             .unwrap()
             .display()
             .to_string()
-            .replace('\\', "\\\\")
+            .replace('\\', "\\\\"),
+        env_path_table()
     );
     let mut c = parse(&text, None);
     let problems = c.check_programs();
@@ -141,10 +147,13 @@ fn elevated_start_needs_allow_elevated() {
 }
 
 #[test]
-fn jobs_get_the_runner_path_unless_env_path_is_set() {
-    let inherited = std::env::var("PATH").ok();
-    assert!(inherited.is_some());
-    assert_eq!(parse("", None).settings.path, inherited);
+fn without_env_path_jobs_get_no_path_and_programs_are_not_looked_up_in_the_runner_path() {
+    let mut c = parse("[programs]\ngit = {}\n", None);
+    assert_eq!(c.settings.path, None);
+    let problems = c.check_programs();
+    assert!(!c.settings.programs.contains("git"), "{problems:?}");
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("[env] path"), "{problems:?}");
     let set = parse("[env]\npath = \"/opt/tools/bin\"\n", None);
     assert_eq!(set.settings.path.as_deref(), Some("/opt/tools/bin"));
 }
