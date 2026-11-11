@@ -3,11 +3,11 @@ mod common;
 use common::broker::{OnOrder, Script};
 use common::*;
 use lr_abstractions::{Frame, OutboxKind};
-use lr_core::JobId;
+use lr_core::{JobId, JobState};
 use lr_hub::OnExpire;
 use lr_proto::{
-    BrokerToHub, CancelRequest, CancelTarget, Chunk, CliReply, CliRequest, HubToBroker, ReasonCode,
-    RejectReason, ResumePoint,
+    BrokerToHub, CancelRequest, CancelTarget, Chunk, CliReply, CliRequest, HubToBroker, JobResult,
+    ReasonCode, RejectReason, ResumePoint,
 };
 use std::time::Duration;
 
@@ -245,6 +245,59 @@ async fn resume_reports_last_seq_per_job_after_reconnect() {
             last_seq: 1
         }]
     );
+}
+
+#[tokio::test]
+async fn hub_absent_cancel_after_resume_is_shown_and_not_resent() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    let cli = rig.cli().await;
+    let mut req = submit("unit", None);
+    req.wait = true;
+    let job = cli.submit(req).await;
+    eventually("accepted", || local.orders().len() == 1).await;
+    settle().await;
+    local.disconnect().await;
+    rig.step(2).await;
+    eventually("reconnected", || local.hellos() == 2).await;
+    settle().await;
+
+    let seq = local.next_seq(&job);
+    local
+        .send(BrokerToHub::JobResult(JobResult {
+            job: job.clone(),
+            seq,
+            state: JobState::Cancelled,
+            exit_code: None,
+            reason: Some(ReasonCode::HubAbsent),
+            detail: None,
+        }))
+        .await;
+
+    assert_eq!(
+        cli.reply().await,
+        CliReply::Exit {
+            job: job.clone(),
+            state: JobState::Cancelled,
+            exit_code: None,
+            reason: Some(ReasonCode::HubAbsent),
+        }
+    );
+    settle().await;
+    assert!(rig.active(&job).await.is_none());
+    let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
+    assert!(log.contains("cancelled, hub_absent"), "{log}");
+    local.disconnect().await;
+    rig.step(10).await;
+    eventually("reconnected again", || local.hellos() == 3).await;
+    settle().await;
+    assert_eq!(
+        local.orders().len(),
+        1,
+        "the cancelled order is not sent again"
+    );
+    assert!(rig.pending().await.is_empty());
 }
 
 #[tokio::test]
