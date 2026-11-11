@@ -3,11 +3,11 @@
 //! Without names every role of this installation that runs stops; runners told to drain finish
 //! their job before the broker goes, so the result still reaches it. Ctrl+C ends only that
 //! wait: the draining runners and the broker keep running. With `--cancel` the wait is at
-//! most 30 s. A broker run by the OS service manager answers that it stays, and nothing waits
-//! for the runners before it.
+//! most 30 s, also before a broker run by the OS service manager, which answers that it stays.
 
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use async_trait::async_trait;
 use lr_proto::{AdminReply, AdminRequest, CliReply, CliRequest, ControlReply, DownMode};
 use lr_proto::{IpcChannel, RunnerControl};
 use std::future::Future;
@@ -219,17 +219,81 @@ pub fn down_mode(cancel: bool) -> DownMode {
     }
 }
 
+/// How `down` reaches the roles of an installation.
+#[async_trait]
+pub trait Roles: Send + Sync {
+    /// Tells runner `name` to stop in `mode`; `false` when it does not run.
+    async fn stop_runner(&self, name: &str, mode: DownMode) -> Result<bool, String>;
+    /// Whether runner `name` still answers on its control channel.
+    async fn runner_answers(&self, name: &str) -> bool;
+    /// Stops the hub; `false` when it does not run.
+    async fn stop_hub(&self) -> Result<bool, String>;
+    /// Stops the broker as [`stop_broker`] does.
+    async fn stop_broker(&self) -> Result<Option<Vec<String>>, String>;
+    /// Whether the broker runs under the OS service manager.
+    fn broker_is_service(&self) -> bool;
+}
+
+/// The roles of `layout` of OS principal `principal`, over their local channels.
+pub struct IpcRoles<'a> {
+    /// The installation.
+    pub layout: &'a Layout,
+    /// The OS principal the runner and hub channels are named after.
+    pub principal: String,
+}
+
+#[async_trait]
+impl Roles for IpcRoles<'_> {
+    async fn stop_runner(&self, name: &str, mode: DownMode) -> Result<bool, String> {
+        runner(self.layout, &self.principal, name, mode).await
+    }
+
+    async fn runner_answers(&self, name: &str) -> bool {
+        let address = self.layout.runner_ipc(&self.principal, name);
+        answers(&address, IpcChannel::RunnerControl).await
+    }
+
+    async fn stop_hub(&self) -> Result<bool, String> {
+        hub(self.layout, &self.principal).await
+    }
+
+    async fn stop_broker(&self) -> Result<Option<Vec<String>>, String> {
+        stop_broker(self.layout).await
+    }
+
+    fn broker_is_service(&self) -> bool {
+        self.layout.broker_is_service()
+    }
+}
+
 /// `down [names] [--drain | --cancel]`; the exit code is 1 when a named role does not run, a
 /// role refused to stop or the wait for draining runners was interrupted.
 pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i32, String> {
+    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
+    let roles = IpcRoles { layout, principal };
+    down_with(layout, names, cancel, &roles, ctrl_c()).await
+}
+
+/// `down` of the roles `roles` reaches; `interrupt` (Ctrl+C) ends the wait for the runners.
+/// Before the broker stops, the runners told to stop are waited for: when they drain (so their
+/// results still reach the broker) and after `--cancel` at most 30 s, also when the broker is
+/// an OS service that stays (spec 10.5). A runner still answering ends `down` with code 1 and
+/// leaves the broker running.
+pub async fn down_with(
+    layout: &Layout,
+    names: Vec<String>,
+    cancel: bool,
+    roles: &dyn Roles,
+    interrupt: impl Future<Output = ()>,
+) -> Result<i32, String> {
     let explicit = !names.is_empty();
     let targets = down_targets(layout, &names);
     if targets.is_empty() {
         return Err("nothing to stop".into());
     }
-    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let mode = down_mode(cancel);
-    let service = targets.contains(&Target::Broker) && layout.broker_is_service();
+    let service = targets.contains(&Target::Broker) && roles.broker_is_service();
+    let mut interrupt = Some(interrupt);
     let mut code = 0;
     let not_running = |what: &str, code: &mut i32| {
         if explicit {
@@ -242,7 +306,7 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
     let mut stopping = Vec::new();
     for t in &targets {
         match t {
-            Target::Runner(name) => match runner(layout, &principal, name, mode).await {
+            Target::Runner(name) => match roles.stop_runner(name, mode).await {
                 Ok(true) => {
                     println!("{name}: stopping ({mode:?})");
                     stopping.push(name.clone());
@@ -253,7 +317,7 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                     code = 1;
                 }
             },
-            Target::Hub => match hub(layout, &principal).await {
+            Target::Hub => match roles.stop_hub().await {
                 Ok(true) => println!("hub: stopped"),
                 Ok(false) => not_running("hub", &mut code),
                 Err(e) => {
@@ -262,26 +326,28 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                 }
             },
             Target::Broker => {
-                if !service && !stopping.is_empty() {
+                if !stopping.is_empty() && (cancel || !service) {
                     eprintln!(
                         "waiting for {} to {} before the broker stops (Ctrl+C stops waiting)",
                         stopping.join(", "),
                         if cancel { "exit" } else { "finish" }
                     );
-                    let addresses: Vec<String> = stopping
-                        .iter()
-                        .map(|n| layout.runner_ipc(&principal, n))
-                        .collect();
-                    let addresses = &addresses;
+                    let names = &stopping;
                     let any_answers = move || async move {
-                        for a in addresses {
-                            if answers(a, IpcChannel::RunnerControl).await {
+                        for n in names {
+                            if roles.runner_answers(n).await {
                                 return true;
                             }
                         }
                         false
                     };
-                    let waited = wait_for_runners(any_answers, cancel, ctrl_c()).await;
+                    let waited = match interrupt.take() {
+                        Some(i) => wait_for_runners(any_answers, cancel, i).await,
+                        None => {
+                            let never = std::future::pending::<()>();
+                            wait_for_runners(any_answers, cancel, never).await
+                        }
+                    };
                     if waited != Waited::Gone {
                         let why = match waited {
                             Waited::TimedOut => format!(
@@ -299,7 +365,7 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
                         return Ok(1);
                     }
                 }
-                match stop_broker(layout).await {
+                match roles.stop_broker().await {
                     Ok(Some(warnings)) if warnings.is_empty() => println!("broker: stopped"),
                     Ok(Some(warnings)) => {
                         for w in warnings {
