@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use lr_abstractions::{CacheKey, Frame, Listener, RunnerStore};
+use lr_abstractions::{CacheKey, Clock, Frame, Listener, RunnerStore, DEFAULT_CANCEL_GRACE};
 use lr_core::{JobId, Timestamp};
 use lr_proto::{
     decode, BrokerToRunner, ProtocolError, ProtocolErrorCode, Resume, ResumePoint, RunnerToBroker,
@@ -230,6 +230,17 @@ async fn a_revoked_key_refused_at_the_handshake_kills_the_job_and_stops() {
     assert!(h.is_finished(), "the agent stops on the refusal");
     let exit = h.await.unwrap();
     assert!(matches!(exit, AgentExit::Refused(ref e) if e.code == ProtocolErrorCode::KeyRevoked));
+    assert_eq!(rig.process.runs().len(), 1);
+    assert!(
+        rig.logs_text().contains("job killed"),
+        "{}",
+        rig.logs_text()
+    );
+    let waited = Duration::from_millis(rig.clock.now().0 - START);
+    assert!(
+        waited < DEFAULT_CANCEL_GRACE,
+        "a job that ignores the soft stop is killed without the grace: {waited:?}"
+    );
     assert!(rig.pending().await.is_empty(), "outbox dropped");
 }
 
