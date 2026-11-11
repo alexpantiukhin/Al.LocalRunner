@@ -95,6 +95,17 @@ fn free_bytes(_: &Path) -> Option<u64> {
     None
 }
 
+/// The Windows verdict of [`is_elevated`]: `token` is the elevation flag of the process
+/// token and `principal` the SID of the process user, each `None` when it could not be read.
+/// Anything that cannot be determined counts as elevated (spec 3.12: the guarantee fails
+/// closed), and `SYSTEM` (`S-1-5-18`) is elevated whatever its token says.
+pub fn elevated_from(token: Option<bool>, principal: Option<&str>) -> bool {
+    match (token, principal) {
+        (Some(elevated), Some(sid)) => elevated || sid == "S-1-5-18",
+        _ => true,
+    }
+}
+
 /// Whether this process runs as root, an elevated administrator or `SYSTEM` (spec 3.12).
 /// When the token cannot be read the answer is `true`: the guarantee fails closed.
 #[cfg(windows)]
@@ -106,7 +117,7 @@ pub fn is_elevated() -> bool {
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     let mut token: HANDLE = std::ptr::null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return true;
+        return elevated_from(None, None);
     }
     let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
     let mut len = 0u32;
@@ -120,8 +131,9 @@ pub fn is_elevated() -> bool {
         )
     };
     unsafe { CloseHandle(token) };
-    let system = lr_net::current_os_principal().map_or(true, |sid| sid == "S-1-5-18");
-    system || ok == 0 || elevation.TokenIsElevated != 0
+    let flag = (ok != 0).then_some(elevation.TokenIsElevated != 0);
+    let principal = lr_net::current_os_principal().ok();
+    elevated_from(flag, principal.as_deref())
 }
 
 /// Whether this process runs as root, an elevated administrator or `SYSTEM` (spec 3.12).
@@ -133,7 +145,7 @@ pub fn is_elevated() -> bool {
 /// Whether this process runs as root, an elevated administrator or `SYSTEM` (spec 3.12).
 #[cfg(not(any(windows, unix)))]
 pub fn is_elevated() -> bool {
-    false
+    elevated_from(None, None)
 }
 
 /// Whether the process runs inside a container (Docker, Podman), where alone

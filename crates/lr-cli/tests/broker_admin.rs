@@ -130,3 +130,36 @@ async fn the_broker_reports_its_metrics_into_the_logger_registry() {
     assert_eq!(broker.metrics()[0].rejected(), 0);
     broker.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn broker_add_prints_the_address_given_or_the_first_listen_address() {
+    let dir = TempDir::new("add-address");
+    let held = [
+        std::net::TcpListener::bind("127.0.0.1:0").unwrap(),
+        std::net::TcpListener::bind("127.0.0.1:0").unwrap(),
+    ];
+    let [first, second] = held.map(|l| l.local_addr().unwrap().port());
+    let listen = format!("[\"127.0.0.1:{first}\", \"127.0.0.1:{second}\"]");
+    let layout = layout(&dir, &listen);
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let address = |r: AdminReply| match r {
+        AdminReply::JoinCode { address, .. } => address,
+        other => panic!("broker add answered {other:?}"),
+    };
+    assert_eq!(
+        address(admin(&layout, add("one")).await),
+        format!("127.0.0.1:{first}"),
+        "the first [listen] address"
+    );
+    let given = AdminRequest::BrokerAdd {
+        name: Some("two".into()),
+        label: None,
+        runners: None,
+        address: Some("pool.example.org:7443".into()),
+    };
+    assert_eq!(
+        address(admin(&layout, given).await),
+        "pool.example.org:7443"
+    );
+    broker.stop();
+}

@@ -1,9 +1,12 @@
 mod common;
 
 use lr_broker::policy::HostResources;
+use lr_cli::commands::join_cmd::with_flags;
+use lr_cli::host::elevated_from;
 use lr_cli::runner_config::{
     check_runner_name, elevation_allowed, instance_names, RunnerConfig, SecretFrom, MAX_COUNT,
 };
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 const HOST: HostResources = HostResources {
@@ -177,4 +180,68 @@ fn runner_without_env_path_does_not_start() {
     }
     let set = parse("[env]\npath = \"/opt/tools/bin\"\n", None);
     assert_eq!(set.settings.path.as_deref(), Some("/opt/tools/bin"));
+}
+
+#[test]
+fn platforms_and_tags_flags_override_the_file() {
+    let file =
+        "name = \"box\"\nplatforms = [\"linux\"]\ntags = [\"gpu\"]\n\n[env]\npath = \"/opt/bin\"\n";
+    let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let text = with_flags(file.into(), &list(&["windows", "android"]), &list(&["emu"])).unwrap();
+    let c = parse(&text, None);
+    let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+    assert_eq!(c.settings.platforms, set(&["android", "windows"]));
+    assert_eq!(c.settings.tags, set(&["emu"]));
+    assert_eq!(c.settings.name, "box");
+    assert_eq!(c.settings.path.as_deref(), Some("/opt/bin"));
+    let only_tags = parse(
+        &with_flags(file.into(), &[], &list(&["emu"])).unwrap(),
+        None,
+    );
+    assert_eq!(
+        only_tags.settings.platforms,
+        set(&["linux"]),
+        "no --platforms keeps the file's"
+    );
+    let untouched = parse(&with_flags(file.into(), &[], &[]).unwrap(), None);
+    assert_eq!(
+        (untouched.settings.platforms, untouched.settings.tags),
+        (set(&["linux"]), set(&["gpu"]))
+    );
+}
+
+#[test]
+fn undetermined_rights_count_as_elevated() {
+    assert!(
+        elevated_from(None, Some("S-1-5-21-1-2-3-1001")),
+        "token unreadable"
+    );
+    assert!(elevated_from(Some(false), None), "user unreadable");
+    assert!(elevated_from(None, None));
+    assert!(elevated_from(Some(false), Some("S-1-5-18")), "SYSTEM");
+    assert!(elevated_from(Some(true), Some("S-1-5-21-1-2-3-1001")));
+    assert!(!elevated_from(Some(false), Some("S-1-5-21-1-2-3-1001")));
+    let refused = elevation_allowed(elevated_from(None, None), false).unwrap_err();
+    assert!(refused.contains("allow_elevated"), "{refused}");
+}
+
+#[test]
+fn programs_are_looked_up_in_env_path_not_in_the_process_path() {
+    assert!(
+        lr_cli::runner_config::find_in_path("git", &std::env::var("PATH").unwrap()).is_some(),
+        "the test process finds git on its own PATH"
+    );
+    let dir = common::TempDir::new("env-path-only");
+    let text = format!(
+        "[programs]\ngit = {{}}\n\n[env]\npath = {}\n",
+        toml::Value::String(dir.path().display().to_string())
+    );
+    let mut c = parse(&text, None);
+    let problems = c.check_programs();
+    assert!(
+        !c.settings.programs.contains("git"),
+        "git is not in [env] path, so jobs could not run it"
+    );
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].starts_with("program git:"), "{problems:?}");
 }

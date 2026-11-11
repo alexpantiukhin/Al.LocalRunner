@@ -168,6 +168,16 @@ async fn ctrl_c() {
     }
 }
 
+/// What runners are told: `--cancel` cancels the current job, otherwise (`--drain` or no
+/// flag) they finish it.
+pub fn down_mode(cancel: bool) -> DownMode {
+    if cancel {
+        DownMode::Cancel
+    } else {
+        DownMode::Drain
+    }
+}
+
 /// `down [names] [--drain | --cancel]`; the exit code is 1 when a named role does not run, a
 /// role refused to stop or the wait for draining runners was interrupted.
 pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i32, String> {
@@ -177,11 +187,7 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
         return Err("nothing to stop".into());
     }
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
-    let mode = if cancel {
-        DownMode::Cancel
-    } else {
-        DownMode::Drain
-    };
+    let mode = down_mode(cancel);
     let service = targets.contains(&Target::Broker) && layout.broker_is_service();
     let mut code = 0;
     let not_running = |what: &str, code: &mut i32| {

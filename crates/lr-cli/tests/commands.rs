@@ -332,3 +332,24 @@ fn jobs_label_ignores_oversized_and_non_regular_handles() {
     }
     assert_eq!(label_from_last_handle(d.path()).unwrap(), "agent-a");
 }
+
+#[test]
+fn down_without_flags_drains() {
+    use clap::Parser;
+    use lr_cli::commands::down_cmd::down_mode;
+    use lr_cli::commands::{Cli, Command};
+    use lr_proto::DownMode;
+    let mode = |args: &[&str]| {
+        let mut argv = vec!["localrunner", "down"];
+        argv.extend_from_slice(args);
+        match Cli::try_parse_from(argv).unwrap().command {
+            Command::Down { cancel, .. } => down_mode(cancel),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(mode(&[]), DownMode::Drain);
+    assert_eq!(mode(&["r1"]), DownMode::Drain);
+    assert_eq!(mode(&["--drain"]), DownMode::Drain);
+    assert_eq!(mode(&["--cancel"]), DownMode::Cancel);
+    assert!(Cli::try_parse_from(["localrunner", "down", "--drain", "--cancel"]).is_err());
+}

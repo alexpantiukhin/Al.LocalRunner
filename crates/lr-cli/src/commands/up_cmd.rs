@@ -123,6 +123,22 @@ pub fn up_plan(layout: &Layout, roles: &[NodeRole], running: &RunningRoles) -> V
     out
 }
 
+#[cfg(windows)]
+fn keep_std_handles_from_children() {
+    use windows_sys::Win32::Foundation::{
+        SetHandleInformation, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    for id in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        let handle = unsafe { GetStdHandle(id) };
+        if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+            unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
+}
+
 fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
@@ -204,6 +220,8 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
         return Ok(code);
     }
     let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+    #[cfg(windows)]
+    keep_std_handles_from_children();
     for argv in &plan {
         match spawn(&exe, argv) {
             Ok(pid) => println!("{}: started (pid {pid})", argv[..2].join(" ")),

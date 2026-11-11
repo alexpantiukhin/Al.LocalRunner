@@ -160,17 +160,23 @@ fn template(layout: &Layout, j: &RunnerJoin) -> Result<String, String> {
         }
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
-    if j.platforms.is_empty() && j.tags.is_empty() {
+    with_flags(text, &j.platforms, &j.tags)
+}
+
+/// The `runner.toml` text with `--platforms` and `--tags` replacing the template's lists;
+/// an empty flag keeps the template's value and every other key stays.
+pub fn with_flags(text: String, platforms: &[String], tags: &[String]) -> Result<String, String> {
+    if platforms.is_empty() && tags.is_empty() {
         return Ok(text);
     }
     let mut table: toml::Table = toml::from_str(&text).map_err(|e| e.message().to_string())?;
     let list =
         |v: &[String]| toml::Value::Array(v.iter().cloned().map(toml::Value::String).collect());
-    if !j.platforms.is_empty() {
-        table.insert("platforms".into(), list(&j.platforms));
+    if !platforms.is_empty() {
+        table.insert("platforms".into(), list(platforms));
     }
-    if !j.tags.is_empty() {
-        table.insert("tags".into(), list(&j.tags));
+    if !tags.is_empty() {
+        table.insert("tags".into(), list(tags));
     }
     toml::to_string(&table).map_err(|e| e.to_string())
 }
