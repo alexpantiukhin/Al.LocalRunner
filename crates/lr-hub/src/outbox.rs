@@ -1,4 +1,5 @@
 use crate::engine::Engine;
+use crate::limits::Overflow;
 use crate::policy::OnExpire;
 use lr_abstractions::{Frame, Level, OutboxEntry, OutboxKind};
 use lr_core::{Identity, JobId};
@@ -63,6 +64,12 @@ impl Engine {
                 }
                 Err(TrySendError::Full(_)) => {
                     link.flush_later = true;
+                    self.s.overflow(
+                        Overflow::BrokerDeferred,
+                        Level::Debug,
+                        "send queue to broker full, the rest waits for the next second",
+                        &[("broker", name)],
+                    );
                     break;
                 }
                 Err(TrySendError::Closed(_)) => break,

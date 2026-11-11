@@ -693,6 +693,7 @@ dependencies = [
 name = "lr-hub"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "lr-abstractions",
  "lr-core",
  "lr-proto",

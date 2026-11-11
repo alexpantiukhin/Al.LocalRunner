@@ -1,5 +1,6 @@
 use crate::engine::{refusal, CliEvent, ConnId, Engine, LOCAL_BROKER};
 use crate::handles::{handle_path, log_path, write_handle};
+use crate::limits::Overflow;
 use crate::orders::{build, order_payload, Refusal};
 use crate::relay::{relay_log, LogRead};
 use crate::track::{Stage, Track};
@@ -39,8 +40,12 @@ impl Engine {
         };
         if let Some(a) = answer {
             if reply.try_send(a).is_err() {
-                self.s
-                    .diag(Level::Warn, "CLI reply dropped: client not reading", &[]);
+                self.s.overflow(
+                    Overflow::CliReply,
+                    Level::Warn,
+                    "CLI reply dropped: client not reading",
+                    &[],
+                );
             }
         }
     }

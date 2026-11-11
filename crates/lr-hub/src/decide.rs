@@ -1,4 +1,5 @@
-use crate::engine::{Engine, Event, LOCAL_BROKER, RECENT_MAX};
+use crate::engine::{Engine, Event, LOCAL_BROKER};
+use crate::limits::{Overflow, RECENT_MAX};
 use crate::orders::order_payload;
 use crate::select::{allowed_zones, broker_zone, Candidate, Choice, Decision};
 use crate::track::{Finished, Stage};
@@ -200,7 +201,14 @@ impl Engine {
             _ => {}
         }
         if self.recent.len() >= RECENT_MAX {
-            self.recent.pop_front();
+            if let Some((old, _)) = self.recent.pop_front() {
+                self.s.overflow(
+                    Overflow::Result,
+                    Level::Debug,
+                    "finished job forgotten: more than 1024 results in memory",
+                    &[("job", &old.0)],
+                );
+            }
         }
         self.recent.push_back((
             job.clone(),

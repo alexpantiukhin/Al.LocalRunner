@@ -1,5 +1,6 @@
 use crate::client::send_within;
 use crate::engine::{refusal, CliEvent, ConnId, Event, Shared};
+use crate::limits::{Overflow, REPLY_QUEUE};
 use lr_abstractions::{Frame, Level, Listener, PeerAccess, Transport};
 use lr_core::Endpoint;
 use lr_proto::{
@@ -10,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
-const REPLY_QUEUE: usize = 256;
 const OPEN_WITHIN: Duration = Duration::from_secs(30);
 
 pub(crate) async fn serve(
@@ -137,7 +137,14 @@ async fn connection(
                 let err = e
                     .refusal()
                     .unwrap_or_else(|| refusal(ProtocolErrorCode::Malformed, e.to_string()));
-                let _ = tx.try_send(CliReply::Error(err));
+                if tx.try_send(CliReply::Error(err)).is_err() {
+                    shared.overflow(
+                        Overflow::CliReply,
+                        Level::Warn,
+                        "CLI reply dropped: client not reading",
+                        &[],
+                    );
+                }
                 continue;
             }
         };

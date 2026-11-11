@@ -1,4 +1,5 @@
 use crate::engine::{BrokerEvent, Event, Shared};
+use crate::limits::OUT_FRAMES;
 use lr_abstractions::{Frame, Level, Transport};
 use lr_core::Zone;
 use lr_proto::{
@@ -9,8 +10,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, Notify};
-
-pub(crate) const OUT_FRAMES: usize = 1024;
 
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);

@@ -10,6 +10,7 @@ mod engine;
 mod handles;
 mod inbound;
 mod ipc_server;
+mod limits;
 mod logs;
 mod metrics;
 mod orders;

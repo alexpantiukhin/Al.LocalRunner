@@ -1,4 +1,5 @@
 use crate::engine::{refusal, BrokerEvent, Engine, LOCAL_BROKER};
+use crate::limits::Overflow;
 use crate::track::Stage;
 use lr_abstractions::{Frame, Level, StoreError};
 use lr_core::{JobId, JobState};
@@ -31,7 +32,8 @@ impl Engine {
         };
         let sent = Frame::json(msg).is_ok_and(|f| out.try_send(f).is_ok());
         if !sent {
-            self.s.diag(
+            self.s.overflow(
+                Overflow::BrokerQueue,
                 Level::Warn,
                 "send queue to broker full, reconnecting",
                 &[("broker", name)],

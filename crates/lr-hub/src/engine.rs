@@ -1,4 +1,5 @@
 use crate::client::{self, Pending, Target};
+use crate::limits::{Overflow, Overflows};
 use crate::orders::JobIds;
 use crate::policy::HubPolicy;
 use crate::reaper::{Reaper, Watched};
@@ -24,7 +25,6 @@ pub const LOCAL_BROKER: &str = "local";
 
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
-pub(crate) const RECENT_MAX: usize = 1024;
 
 /// What the hub is built from; only `lr-cli` knows the implementations behind them.
 pub struct HubDeps {
@@ -66,6 +66,7 @@ pub(crate) struct Shared {
     pub(crate) name: String,
     pub(crate) pending: Pending,
     next_req: AtomicU64,
+    pub(crate) overflows: Overflows,
 }
 
 impl Shared {
@@ -164,6 +165,7 @@ impl Hub {
             name: d.name,
             pending: Pending::default(),
             next_req: AtomicU64::new(0),
+            overflows: Overflows::default(),
         });
         let (tx, mut rx) = mpsc::channel(EVENT_QUEUE);
         let mut engine = Engine {
@@ -454,7 +456,8 @@ impl Engine {
             .watchers
             .retain(|(_, tx)| tx.try_send(reply.clone()).is_ok());
         if track.watchers.len() < before {
-            self.s.diag(
+            self.s.overflow(
+                Overflow::Watcher,
                 Level::Warn,
                 "slow or closed watcher dropped; the log copy holds the full output",
                 &[("job", &job.0)],
