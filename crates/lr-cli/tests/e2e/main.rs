@@ -2,6 +2,7 @@
 mod common;
 mod failures;
 mod helper;
+mod moved_broker;
 mod services;
 mod single_machine;
 mod support;
