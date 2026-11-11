@@ -2,6 +2,7 @@
 mod common;
 mod container;
 mod scripts;
+mod scripts_ps;
 mod scripts_run;
 mod yaml;
 

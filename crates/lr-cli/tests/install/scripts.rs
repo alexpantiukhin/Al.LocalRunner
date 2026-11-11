@@ -57,7 +57,11 @@ fn shell_installer_has_the_flags_checks_and_order_of_the_spec() {
     assert!(text.contains("SHA256SUMS.sig"));
     assert!(text.contains(&format!("RELEASE_KEY=\"{KEY_PLACEHOLDER}\"")));
     assert!(text.contains(&format!("SIG_NAMESPACE=\"{NAMESPACE}\"")));
-    assert!(text.contains("--proto '=https'"), "curl only over https");
+    assert!(
+        text.contains("--proto '=https' --proto-redir '=https'"),
+        "curl only over https, redirects too"
+    );
+    assert!(text.contains("OpenSSH 8.1"));
     for banned in [
         "| sh",
         "| bash",
@@ -81,11 +85,16 @@ fn shell_installer_has_the_flags_checks_and_order_of_the_spec() {
             "verify_checksum",
             "extract",
             "run_install",
+            "run_doctor",
         ],
     );
     let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap();
     assert_eq!(last, "fi", "main runs last, after the whole script arrived");
     assert!(text.contains("[ \"${LOCALRUNNER_INSTALL_SOURCED:-}\" != 1 ]"));
+    assert!(
+        text.contains("--dir=\"$DIR\""),
+        "--dir value never becomes a flag"
+    );
 }
 
 #[test]
@@ -133,10 +142,14 @@ fn powershell_installer_has_the_flags_checks_and_order_of_the_spec() {
             "Test-ReleaseSignature",
             "Test-ReleaseChecksum",
             "Expand-Archive",
-            "'install'",
+            "Invoke-LocalRunnerInstall",
         ],
     );
     assert!(text.contains("if ($env:LOCALRUNNER_INSTALL_SOURCED -ne '1')"));
+    assert!(text.contains("OpenSSH 8.1"));
+    let run = body_of(&text, "function Invoke-LocalRunnerInstall {");
+    assert_in_order(&run, &["'install'", "'doctor'"]);
+    assert!(run.contains("Write-Warning"), "a failed doctor only warns");
 }
 
 #[test]

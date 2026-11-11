@@ -248,3 +248,16 @@ fn example_runner_settings_parse() {
     lr_cli::runner_config::RunnerConfig::parse(&text, None, "runner", dir, host)
         .expect("runner.toml parses");
 }
+
+#[test]
+fn install_files_keep_lf_line_endings_on_every_checkout() {
+    let text = std::fs::read_to_string(repo_root().join(".gitattributes"))
+        .expect(".gitattributes exists")
+        .replace("\r\n", "\n");
+    for pattern in ["*.sh", "*.yaml", "install/Dockerfile", "install/*.toml"] {
+        assert!(
+            text.lines().any(|l| l == format!("{pattern} text eol=lf")),
+            "{pattern} has eol=lf"
+        );
+    }
+}

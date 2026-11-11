@@ -1,16 +1,14 @@
-use crate::common::TempDir;
 use crate::repo_root;
-use crate::scripts::first_powershell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 const NAMESPACE: &str = "al-localrunner-release";
 
-fn script(name: &str) -> PathBuf {
+pub fn script(name: &str) -> PathBuf {
     repo_root().join("install").join(name)
 }
 
-fn text(out: &Output) -> String {
+pub fn text(out: &Output) -> String {
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -18,7 +16,7 @@ fn text(out: &Output) -> String {
     )
 }
 
-fn sign(dir: &Path, file: &Path) -> Option<String> {
+pub fn sign(dir: &Path, file: &Path) -> Option<String> {
     let key = dir.join("release-key");
     let made = Command::new("ssh-keygen")
         .args(["-q", "-t", "ed25519", "-N", "", "-C", "test", "-f"])
@@ -46,13 +44,14 @@ fn sign(dir: &Path, file: &Path) -> Option<String> {
     )
 }
 
-fn sums_line(hash: &str, name: &str) -> String {
+pub fn sums_line(hash: &str, name: &str) -> String {
     format!("{hash}  {name}\n")
 }
 
 #[cfg(unix)]
 mod sh {
     use super::*;
+    use crate::common::TempDir;
     use crate::scripts::KEY_PLACEHOLDER;
     use std::os::unix::fs::PermissionsExt;
 
@@ -90,7 +89,7 @@ mod sh {
         executable(&root.join("stub/id"), &format!("#!/bin/sh\necho {uid}\n"));
         executable(
             &root.join("pkg/localrunner"),
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$LR_MARKER\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$LR_MARKER\"\nif [ \"$1\" = doctor ]; then exit 1; fi\n",
         );
         let release = root.join("release");
         std::fs::create_dir_all(&release).unwrap();
@@ -256,11 +255,82 @@ mod sh {
         let args = ["--offline", &f.offline(), "--dir", &dir, "--role", "runner"];
         let first = f.run_with_key(&args);
         assert!(first.status.success(), "{}", text(&first));
-        let once = format!("install\n--role\nrunner\n--dir\n{dir}\n");
+        let once = format!("install\n--role\nrunner\n--dir={dir}\ndoctor\n");
         assert_eq!(f.installed().as_deref(), Some(once.as_str()));
+        assert!(text(&first).contains("doctor"), "{}", text(&first));
         let again = f.run_with_key(&args);
         assert!(again.status.success(), "{}", text(&again));
         assert_eq!(f.installed(), Some(format!("{once}{once}")));
+    }
+
+    #[test]
+    fn offline_files_are_checked_and_unpacked_as_private_copies() {
+        let f = fixture("1000", false);
+        if f.key.is_none() {
+            return;
+        }
+        let real_tar = Command::new("sh")
+            .args(["-c", "command -v tar"])
+            .output()
+            .unwrap();
+        let real_tar = String::from_utf8_lossy(&real_tar.stdout).trim().to_string();
+        executable(
+            &f.root.join("evil/localrunner"),
+            "#!/bin/sh\necho EVIL >> \"$LR_MARKER\"\n",
+        );
+        let evil = f.root.join("evil.tar.gz");
+        let made = Command::new("tar")
+            .arg("-czf")
+            .arg(&evil)
+            .arg("-C")
+            .arg(f.root.join("evil"))
+            .arg("localrunner")
+            .status()
+            .unwrap();
+        assert!(made.success());
+        executable(
+            &f.root.join("stub/tar"),
+            &format!(
+                "#!/bin/sh\ncp '{}' '{}'\nexec '{real_tar}' \"$@\"\n",
+                evil.display(),
+                f.archive.display()
+            ),
+        );
+        let out = f.run_with_key(&["--offline", &f.offline()]);
+        assert!(out.status.success(), "{}", text(&out));
+        let installed = f.installed().unwrap_or_default();
+        assert!(!installed.contains("EVIL"), "the swapped archive ran");
+        assert!(installed.starts_with("install\n"), "{installed}");
+    }
+
+    #[test]
+    fn an_ssh_keygen_without_signatures_gets_a_clear_error() {
+        let f = fixture("1000", false);
+        if f.key.is_none() {
+            return;
+        }
+        executable(
+            &f.root.join("stub/ssh-keygen"),
+            "#!/bin/sh\necho 'ssh-keygen: illegal option -- Y' >&2\nexit 1\n",
+        );
+        let out = f.run_with_key(&["--offline", &f.offline()]);
+        assert!(!out.status.success());
+        assert!(text(&out).contains("8.1"), "{}", text(&out));
+        assert!(f.installed().is_none());
+    }
+
+    #[test]
+    fn the_test_switch_in_the_environment_is_not_silent() {
+        let f = fixture("1000", false);
+        let out = f
+            .command()
+            .env("LOCALRUNNER_INSTALL_SOURCED", "1")
+            .arg(script("install.sh"))
+            .output()
+            .unwrap();
+        let all = text(&out);
+        assert!(all.contains("LOCALRUNNER_INSTALL_SOURCED"), "{all}");
+        assert!(f.installed().is_none());
     }
 
     #[test]
@@ -277,110 +347,4 @@ mod sh {
             assert!(f.installed().is_none());
         }
     }
-}
-
-fn powershell(exe: &str, body: &str) -> String {
-    let path = script("install.ps1")
-        .display()
-        .to_string()
-        .replace('\'', "''");
-    let full = format!(
-        ". '{path}'; try {{ {body}; 'RESULT:ok' }} catch {{ 'RESULT:' + $_.Exception.Message }}"
-    );
-    let out = Command::new(exe)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &full])
-        .env("LOCALRUNNER_INSTALL_SOURCED", "1")
-        .output()
-        .expect("PowerShell runs");
-    let all = text(&out);
-    all.lines()
-        .find_map(|l| l.strip_prefix("RESULT:"))
-        .unwrap_or_else(|| panic!("no result from {exe}: {all}"))
-        .to_string()
-}
-
-fn ps_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "''"))
-}
-
-#[test]
-fn powershell_installer_checks_sha256_before_anything_else() {
-    let Some(exe) = first_powershell() else {
-        return;
-    };
-    let tmp = TempDir::new("install-ps-hash");
-    let zip = tmp.path().join("al-localrunner-windows-x64.zip");
-    std::fs::write(&zip, b"archive").unwrap();
-    let sums = tmp.path().join("SHA256SUMS");
-    let check = format!(
-        "Test-ReleaseChecksum -Sums {} -File {} -Name 'al-localrunner-windows-x64.zip'",
-        ps_quote(&sums),
-        ps_quote(&zip)
-    );
-    std::fs::write(
-        &sums,
-        sums_line(&"0".repeat(64), "al-localrunner-windows-x64.zip"),
-    )
-    .unwrap();
-    let wrong = powershell(exe, &check);
-    assert!(wrong.contains("SHA-256"), "{wrong}");
-    let matching = format!(
-        "$h = (Get-FileHash -Algorithm SHA256 -LiteralPath {}).Hash.ToLowerInvariant(); \
-         [IO.File]::WriteAllText({}, $h + '  al-localrunner-windows-x64.zip' + [char]10); {check}",
-        ps_quote(&zip),
-        ps_quote(&sums)
-    );
-    assert_eq!(powershell(exe, &matching), "ok");
-    std::fs::write(&sums, "").unwrap();
-    let missing = powershell(exe, &check);
-    assert!(missing.contains("not listed"), "{missing}");
-}
-
-#[test]
-fn powershell_installer_refuses_an_administrator_without_the_flag() {
-    let Some(exe) = first_powershell() else {
-        return;
-    };
-    let out = powershell(
-        exe,
-        "function Test-Elevated { $true }; Install-LocalRunner -Arguments @('--offline', 'none.zip')",
-    );
-    assert!(out.contains("administrator"), "{out}");
-    let out = powershell(
-        exe,
-        "function Test-Elevated { $true }; Install-LocalRunner -Arguments @('--offline', 'none.zip', '--allow-elevated')",
-    );
-    assert!(!out.contains("administrator"), "{out}");
-    let out = powershell(
-        exe,
-        "Install-LocalRunner -Arguments @('--role', 'everything')",
-    );
-    assert!(out.contains("--role"), "{out}");
-}
-
-#[test]
-fn powershell_installer_verifies_the_signature_with_the_release_key() {
-    let Some(exe) = first_powershell() else {
-        return;
-    };
-    let tmp = TempDir::new("install-ps-sig");
-    let sums = tmp.path().join("SHA256SUMS");
-    std::fs::write(&sums, sums_line(&"0".repeat(64), "x.zip")).unwrap();
-    let sig = sums.with_file_name("SHA256SUMS.sig");
-    let check = format!(
-        "Test-ReleaseSignature -Sums {} -Signature {} -Work {}",
-        ps_quote(&sums),
-        ps_quote(&sig),
-        ps_quote(tmp.path())
-    );
-    let placeholder = powershell(exe, &check);
-    assert!(placeholder.contains("release key"), "{placeholder}");
-    let Some(key) = sign(tmp.path(), &sums) else {
-        return;
-    };
-    let with_key = format!("$LocalRunnerReleaseKey = '{key}'; {check}");
-    assert_eq!(powershell(exe, &with_key), "ok");
-    std::fs::write(&sums, sums_line(&"1".repeat(64), "x.zip")).unwrap();
-    let tampered = powershell(exe, &with_key);
-    assert!(tampered.contains("signature"), "{tampered}");
 }
