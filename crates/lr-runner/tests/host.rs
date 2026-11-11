@@ -220,8 +220,75 @@ async fn two_runners_never_both_take_the_same_free_disk() {
     for _ in 0..20 {
         a.settle().await;
     }
+    for (rig, broker) in [(&a, &ba), (&b, &bb)] {
+        let ran = rig.process.runs().len();
+        let refused = matches!(
+            refusal_seen(broker).await,
+            Some(r) if r.reason == Some(lr_proto::ReasonCode::DiskInsufficient)
+        );
+        assert!(
+            (ran == 1) != refused,
+            "each runner either runs its job or refuses it with disk_insufficient, none hangs"
+        );
+    }
     let running = a.process.runs().len() + b.process.runs().len();
     assert!(running <= 1, "both runners took 600 of 1000 MB");
+}
+
+async fn refusal_seen(broker: &Broker) -> Option<lr_proto::JobResult> {
+    loop {
+        let msg = tokio::select! {
+            m = broker.next_job_msg() => m?,
+            _ = async { for _ in 0..5000 { tokio::task::yield_now().await; } } => return None,
+        };
+        if let lr_proto::RunnerToBroker::JobResult(r) = msg {
+            return Some(r);
+        }
+    }
+}
+
+async fn passes_with_entry(
+    entry: &[u8],
+    alive: Option<lr_abstractions::ProcessRef>,
+) -> (JobState, bool) {
+    let mut rig = Rig::new();
+    rig.settings.disk_ledger = Some(ledger());
+    rig.files.mkdir(Path::new("/w/tree"));
+    if let Some(p) = alive {
+        rig.process.processes().add(p);
+    }
+    rig.files.put(&ledger().join("runner-b.mb"), entry);
+    rig.disk.set(Path::new("/"), 1000);
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign("job-1", 1, tree_job(600)).await;
+    let state = result_of(&b.until_result().await).state;
+    (
+        state,
+        rig.files.file(&ledger().join("runner-b.mb")).is_some(),
+    )
+}
+
+#[tokio::test]
+async fn reservation_of_a_reused_pid_counts_as_dead() {
+    let alive = lr_abstractions::ProcessRef {
+        pid: 777,
+        start: Some(6),
+    };
+    let (state, kept) = passes_with_entry(b"600 777 5", Some(alive)).await;
+    assert_eq!((state, kept), (JobState::Passed, false));
+}
+
+#[tokio::test]
+async fn reservation_of_a_process_of_unknown_liveness_still_counts() {
+    let (state, kept) = passes_with_entry(b"600 0 5", None).await;
+    assert_eq!((state, kept), (JobState::Failed, true));
+}
+
+#[tokio::test]
+async fn reservation_in_the_old_megabytes_only_format_still_counts() {
+    let (state, kept) = passes_with_entry(b"600", None).await;
+    assert_eq!((state, kept), (JobState::Failed, true));
 }
 
 #[tokio::test]
