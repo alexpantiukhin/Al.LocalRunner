@@ -21,6 +21,11 @@ pub struct FaultyStore {
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
     pub panic_prune: AtomicBool,
+    pub fail_prune: AtomicBool,
+    pub hold_prune: AtomicBool,
+    pub prune_release: Notify,
+    pub prunes: Mutex<Vec<PruneLimits>>,
+    pub expires: Mutex<Vec<Timestamp>>,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
 }
@@ -37,6 +42,11 @@ impl FaultyStore {
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
             panic_prune: AtomicBool::new(false),
+            fail_prune: AtomicBool::new(false),
+            hold_prune: AtomicBool::new(false),
+            prune_release: Notify::new(),
+            prunes: Mutex::new(Vec::new()),
+            expires: Mutex::new(Vec::new()),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
         }
@@ -149,6 +159,13 @@ impl BrokerStore for FaultyStore {
         if self.panic_prune.swap(false, Ordering::SeqCst) {
             panic!("injected prune panic");
         }
+        self.prunes.lock().unwrap().push(limits);
+        if self.hold_prune.load(Ordering::SeqCst) {
+            self.prune_release.notified().await;
+        }
+        if self.fail_prune.load(Ordering::SeqCst) {
+            return Err(io());
+        }
         self.inner.prune(limits).await
     }
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {
@@ -209,6 +226,7 @@ impl BrokerStore for FaultyStore {
         self.inner.ack_results(client, job, seq).await
     }
     async fn expire_results(&self, before: Timestamp) -> Result<usize, StoreError> {
+        self.expires.lock().unwrap().push(before);
         self.inner.expire_results(before).await
     }
     async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError> {
