@@ -187,6 +187,16 @@ pub fn startable(roles: Vec<NodeRole>, broker_is_service: bool) -> Vec<NodeRole>
         .collect()
 }
 
+/// What `up` says about a broker that is an OS service: a running one is fine, a stopped one
+/// is an error naming the service manager, since `up` never starts the service itself.
+pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
+    if running {
+        Ok("broker: running as an OS service")
+    } else {
+        Err("broker: installed as an OS service and not running; `up` does not start it: start it with the OS service manager")
+    }
+}
+
 /// `up [role]`.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     let chosen = chosen_roles(layout, role)?;
@@ -195,13 +205,10 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     let before = running_roles(layout).await;
     let mut code = 0;
     if service {
-        match before.broker {
-            true => println!("broker: running as an OS service"),
-            false => {
-                eprintln!(
-                    "broker: installed as an OS service and not running; `up` does not start \
-                     it: start it with the OS service manager"
-                );
+        match service_broker(before.broker) {
+            Ok(line) => println!("{line}"),
+            Err(line) => {
+                eprintln!("{line}");
                 code = 1;
             }
         }
