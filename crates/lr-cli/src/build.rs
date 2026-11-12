@@ -371,6 +371,10 @@ pub async fn runner(
     {
         eprintln!("runner {name}: warning: {risk}");
     }
+    cfg.settings.home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
     cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
@@ -379,10 +383,6 @@ pub async fn runner(
         pid,
         start: lr_exec::process_start(pid),
     });
-    cfg.settings.home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok();
-    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
     let clock = clock();
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =

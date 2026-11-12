@@ -251,6 +251,27 @@ impl RunnerSettings {
         Ok(s)
     }
 
+    /// The environment every job, service and `[programs]` check gets, before the OS variables
+    /// the executor adds: `PATH`, `HOME` and `TEMP`, then `[env]` variables, which replace a
+    /// variable of the same name.
+    pub fn base_env(&self) -> Vec<(String, String)> {
+        let mut env = Vec::new();
+        for (name, value) in [
+            ("PATH", &self.path),
+            ("HOME", &self.home),
+            ("TEMP", &self.temp),
+        ] {
+            if let Some(v) = value {
+                env.push((name.to_string(), v.clone()));
+            }
+        }
+        for (name, value) in &self.env {
+            env.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+            env.push((name.clone(), value.clone()));
+        }
+        env
+    }
+
     /// Seconds after which jobs are killed while the broker is unreachable: the broker's value
     /// (3 minutes without one, at most [`MAX_LOST_KILL_S`]), shortened by `[grace]
     /// broker_lost_kill_s` but never lengthened.

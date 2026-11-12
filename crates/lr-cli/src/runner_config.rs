@@ -141,10 +141,11 @@ impl RunnerConfig {
     /// only the programs that passed; returns one line per program that failed.
     pub fn check_programs(&mut self) -> Vec<String> {
         let search = self.settings.path.clone();
+        let env = self.settings.base_env();
         let mut problems = Vec::new();
         self.settings.programs.clear();
         for (name, spec) in &self.programs {
-            match check_program(name, spec, search.as_deref(), &self.settings.env) {
+            match check_program(name, spec, search.as_deref(), &env) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
@@ -255,7 +256,7 @@ fn check_program(
     name: &str,
     spec: &ProgramSpec,
     search: Option<&str>,
-    env: &BTreeMap<String, String>,
+    env: &[(String, String)],
 ) -> Result<(), String> {
     match (&spec.path, search) {
         (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
@@ -275,8 +276,13 @@ fn check_program(
             .unwrap_or(DEFAULT_CHECK_TIMEOUT_S)
             .max(1),
     );
+    let os = lr_exec::os_env(env);
     let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
+        let shell = os
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("ComSpec"))
+            .map_or("cmd", |(_, v)| v.as_str());
+        let mut c = Command::new(shell);
         c.arg("/C").arg(check);
         c
     } else {
@@ -284,8 +290,9 @@ fn check_program(
         c.arg("-c").arg(check);
         c
     };
-    cmd.envs(env)
-        .env("PATH", search.unwrap_or_default())
+    cmd.env_clear()
+        .envs(os)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -296,7 +303,11 @@ fn check_program(
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(format!("check `{check}` ended with {status}")),
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "check `{check}` ended with {status} (it runs in the job environment: PATH, HOME, TEMP and [env])"
+                ))
+            }
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();

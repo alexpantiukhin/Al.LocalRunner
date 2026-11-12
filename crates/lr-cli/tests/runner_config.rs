@@ -166,6 +166,28 @@ fn a_check_runs_with_the_variables_of_the_env_section() {
 }
 
 #[test]
+fn a_check_does_not_see_what_jobs_do_not_get() {
+    let probe = if cfg!(windows) {
+        "if defined CARGO_MANIFEST_DIR (exit 0) else (exit 1)"
+    } else {
+        r#"test -n "$CARGO_MANIFEST_DIR""#
+    };
+    assert!(
+        std::env::var_os("CARGO_MANIFEST_DIR").is_some(),
+        "the test process has the variable"
+    );
+    let text = format!(
+        "[programs]\nprobe = {{ path = '{}', check = '{probe}' }}\n{}",
+        std::env::current_exe().unwrap().display(),
+        common::env_path_toml()
+    );
+    let mut c = parse(&text, None);
+    let problems = c.check_programs();
+    assert!(c.settings.programs.is_empty(), "{problems:?}");
+    assert!(problems[0].contains("job environment"), "{problems:?}");
+}
+
+#[test]
 fn names_that_leave_the_runner_directory_are_refused() {
     for bad in [".", "..", "...", "a/b", "a\\b", ""] {
         assert!(check_runner_name(bad).is_err(), "{bad:?} accepted");
