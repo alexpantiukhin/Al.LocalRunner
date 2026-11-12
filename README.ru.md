@@ -346,7 +346,7 @@ build = "make all"
 
 ## Docker Compose
 
-Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. В образе только бинарник, он работает не от root. Инструменты проекта добавляйте в свой образ `FROM al-localrunner:<версия>`. Тег образа всегда указывается явно.
+Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. В образе только бинарник, он работает не от root. Каждый релиз публикует образ `ghcr.io/alexpantiukhin/al-localrunner:<версия>` и прикладывает `compose.yaml`, который его использует. Инструменты проекта добавляйте в свой образ `FROM al-localrunner:<версия>`. Тег образа всегда указывается явно.
 
 ```
 docker compose -f install/compose.yaml up -d broker

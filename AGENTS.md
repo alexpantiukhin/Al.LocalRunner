@@ -5,6 +5,7 @@ See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/
 
 ## Rules
 - Respond in Russian; write AGENTS.md and all AI instructions in English
+- Create all repository issues (titles, bodies, comments) in English
 - Do not add comments to code unless requested, except doc comments on public items
 - Do not create files unless strictly necessary; read a file before modifying it
 - Keep files under 500 lines; decompose by responsibility (exception: `docs/architecture.html` and `docs/architecture.en.html`, the single design document)

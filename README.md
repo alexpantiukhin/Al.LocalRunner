@@ -344,7 +344,7 @@ Only the broker needs an incoming port. There is no automatic broker discovery o
 
 ## Docker Compose
 
-Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary and does not run as root. Add the project's tools to your own image `FROM al-localrunner:<version>`. Always give the image tag explicitly.
+Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary and does not run as root. Every release publishes the image `ghcr.io/alexpantiukhin/al-localrunner:<version>` and attaches a `compose.yaml` that uses it. Add the project's tools to your own image `FROM al-localrunner:<version>`. Always give the image tag explicitly.
 
 ```
 docker compose -f install/compose.yaml up -d broker

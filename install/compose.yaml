@@ -5,7 +5,7 @@ services:
     # Both services run the image al-localrunner:<version> with an explicit tag (never latest).
     # `build` makes it from the repository: its context is the repository root (`..` from
     # install/). With the published image and no repository, remove `build`; the image is pulled.
-    image: al-localrunner:0.1.0
+    image: al-localrunner:0.1.1
     build:
       context: ..
       dockerfile: install/Dockerfile
@@ -20,7 +20,7 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
   runner:
-    image: al-localrunner:0.1.0
+    image: al-localrunner:0.1.1
     command: ["localrunner", "runner", "run"]
     user: "65532:65532"
     hostname: runner
