@@ -57,14 +57,14 @@ Claude Code:
 
 ```
 claude plugin marketplace add alexpantiukhin/Al.LocalRunner
-claude plugin install al-localrunner@al-localrunner
+claude plugin install localrunner@al-localrunner
 ```
 
 Codex:
 
 ```
 codex plugin marketplace add alexpantiukhin/Al.LocalRunner
-codex plugin add al-localrunner@al-localrunner
+codex plugin add localrunner@al-localrunner
 ```
 
 Перезапустите сессию агента и просите простыми словами:
@@ -451,7 +451,7 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 Из локальной копии репозитория вместо `alexpantiukhin/Al.LocalRunner` укажите путь к каталогу, в котором лежит `.claude-plugin/`. Удаление:
 
 ```
-claude plugin uninstall al-localrunner@al-localrunner --scope <область>
+claude plugin uninstall localrunner@al-localrunner --scope <область>
 claude plugin marketplace remove al-localrunner --scope <область>
 ```
 
@@ -460,7 +460,7 @@ claude plugin marketplace remove al-localrunner --scope <область>
 У Codex нет областей установки: плагины и маркетплейсы записываются в `~/.codex/config.toml` пользователя и действуют во всех проектах. Установка на уровень проекта невозможна. Маркетплейс берёт плагин из ветки `main`. Проверка: `codex plugin list`. Удаление:
 
 ```
-codex plugin remove al-localrunner@al-localrunner
+codex plugin remove localrunner@al-localrunner
 codex plugin marketplace remove al-localrunner
 ```
 

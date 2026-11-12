@@ -3,7 +3,7 @@
   "owner": { "name": "Alex Pantiukhin" },
   "plugins": [
     {
-      "name": "al-localrunner",
+      "name": "localrunner",
       "source": "./plugin",
       "description": "Resource-aware job queue for parallel AI agent sessions: tests, builds, lint, deploys, migrations"
     }

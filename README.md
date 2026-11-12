@@ -57,14 +57,14 @@ Claude Code:
 
 ```
 claude plugin marketplace add alexpantiukhin/Al.LocalRunner
-claude plugin install al-localrunner@al-localrunner
+claude plugin install localrunner@al-localrunner
 ```
 
 Codex:
 
 ```
 codex plugin marketplace add alexpantiukhin/Al.LocalRunner
-codex plugin add al-localrunner@al-localrunner
+codex plugin add localrunner@al-localrunner
 ```
 
 Restart the agent session, then ask in plain words:
@@ -449,7 +449,7 @@ The installation scope is set by `--scope`:
 From a local copy of the repository, give the path to the directory that holds `.claude-plugin/` instead of `alexpantiukhin/Al.LocalRunner`. Removal:
 
 ```
-claude plugin uninstall al-localrunner@al-localrunner --scope <scope>
+claude plugin uninstall localrunner@al-localrunner --scope <scope>
 claude plugin marketplace remove al-localrunner --scope <scope>
 ```
 
@@ -458,7 +458,7 @@ claude plugin marketplace remove al-localrunner --scope <scope>
 Codex has no installation scopes: plugins and marketplaces are written to the user's `~/.codex/config.toml` and apply in every project. Project-level installation is not possible. The marketplace takes the plugin from the `main` branch. Check with `codex plugin list`. Removal:
 
 ```
-codex plugin remove al-localrunner@al-localrunner
+codex plugin remove localrunner@al-localrunner
 codex plugin marketplace remove al-localrunner
 ```
 
