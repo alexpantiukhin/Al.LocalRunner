@@ -101,6 +101,7 @@ pub struct CountingStore {
     pub inner: Arc<MemoryRunnerStore>,
     pub reads: Arc<AtomicUsize>,
     pub fail_push: Arc<AtomicBool>,
+    pub fail_last_seq: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -137,6 +138,9 @@ impl RunnerStore for CountingStore {
         self.inner.accept_seq(job, seq).await
     }
     async fn last_seq(&self, job: &JobId) -> Result<u64, StoreError> {
+        if self.fail_last_seq.load(Ordering::SeqCst) {
+            return Err(StoreError::Io("disk unreadable".into()));
+        }
         self.inner.last_seq(job).await
     }
     async fn forget_finished(&self, before: Timestamp) -> Result<usize, StoreError> {

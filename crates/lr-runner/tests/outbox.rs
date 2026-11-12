@@ -185,6 +185,33 @@ async fn resume_reports_last_broker_seq_per_job() {
 }
 
 #[tokio::test]
+async fn resume_keeps_a_job_whose_received_seq_is_unreadable() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (_c, _h) = rig.start();
+    let mut b = Broker::accept(&rig).await;
+    b.auto_ack = false;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.until_result().await;
+    rig.fail_last_seq
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    rig.net.cut(BROKER);
+    rig.advance(SEC).await;
+    let b2 = Broker::accept(&rig).await;
+    let resume = b2.until(|m| matches!(m, RunnerToBroker::Resume(_))).await;
+    let RunnerToBroker::Resume(r) = resume else {
+        unreachable!()
+    };
+    let point = r.points.iter().find(|p| p.job.0 == "job-1");
+    assert_eq!(point.map(|p| p.last_seq), Some(0), "{r:?}");
+}
+
+#[tokio::test]
 async fn output_is_cut_into_chunks_within_the_text_limit() {
     let rig = Rig::new();
     rig.files.mkdir(Path::new("/w/tree"));

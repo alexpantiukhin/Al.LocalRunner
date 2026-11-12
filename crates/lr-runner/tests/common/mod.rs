@@ -45,6 +45,7 @@ pub struct Rig {
     pub gate: Gate,
     pub reads: Arc<AtomicUsize>,
     pub fail_push: Arc<std::sync::atomic::AtomicBool>,
+    pub fail_last_seq: Arc<std::sync::atomic::AtomicBool>,
     pub disk: FakeDiskSpace,
     pub awake: FakeKeepAwake,
 }
@@ -81,6 +82,7 @@ impl Rig {
             gate: Gate::default(),
             reads: Arc::new(AtomicUsize::new(0)),
             fail_push: Arc::default(),
+            fail_last_seq: Arc::default(),
             disk: FakeDiskSpace::new(),
             awake: FakeKeepAwake::new(),
         }
@@ -111,6 +113,7 @@ impl Rig {
                 inner: self.store.clone(),
                 reads: self.reads.clone(),
                 fail_push: self.fail_push.clone(),
+                fail_last_seq: self.fail_last_seq.clone(),
             }),
             process: self.process.clone(),
             inspector,

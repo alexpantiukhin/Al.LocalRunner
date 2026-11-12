@@ -113,14 +113,18 @@ impl Session<'_> {
         }
         let mut points = Vec::new();
         for job in jobs {
-            match d.store.last_seq(&job).await {
-                Ok(last_seq) => points.push(ResumePoint { job, last_seq }),
-                Err(e) => self.shared.diag.event(
-                    Level::Error,
-                    "received seq unreadable",
-                    &[("job", &job.0), ("error", &e.to_string())],
-                ),
-            }
+            let last_seq = match d.store.last_seq(&job).await {
+                Ok(last_seq) => last_seq,
+                Err(e) => {
+                    self.shared.diag.event(
+                        Level::Error,
+                        "received seq unreadable; the job is resumed from the start",
+                        &[("job", &job.0), ("error", &e.to_string())],
+                    );
+                    0
+                }
+            };
+            points.push(ResumePoint { job, last_seq });
         }
         points
     }
