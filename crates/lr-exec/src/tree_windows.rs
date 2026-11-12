@@ -1,3 +1,4 @@
+use crate::limits::MemoryEvidence;
 use crate::limits_windows::{apply, peak_job_mb};
 use crate::os_windows::handle_start;
 use lr_abstractions::ResourceLimits;
@@ -92,6 +93,12 @@ impl Tree {
     }
 
     pub(crate) fn observe(&self) {}
+
+    pub(crate) fn refresh_memory_evidence(&self) {}
+
+    pub(crate) fn memory_evidence(&self) -> MemoryEvidence {
+        MemoryEvidence::default()
+    }
 
     pub(crate) fn memory_mb(&self) -> Option<u64> {
         peak_job_mb(self.job)

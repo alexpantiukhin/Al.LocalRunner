@@ -1,4 +1,4 @@
-use lr_abstractions::{Enforce, Exceeded, LimitedResource};
+use lr_abstractions::{Enforce, Exceeded, LimitedResource, ResourceLimits};
 
 const BYTES_PER_MB: u64 = 1024 * 1024;
 
@@ -16,6 +16,47 @@ pub(crate) fn backstop_mb(ceiling_mb: u64) -> u64 {
     ceiling_mb
         .saturating_add(ceiling_mb / 10)
         .max(ceiling_mb + 1)
+}
+
+/// What the OS remembers about a job's memory: kernel OOM kills of its scope, how often it hit
+/// its hard limit, and its peak (the last needs a kernel with `memory.peak`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct MemoryEvidence {
+    pub(crate) oom_kills: u64,
+    pub(crate) max_events: u64,
+    pub(crate) peak_mb: u64,
+}
+
+const SIGKILL_CODE: i32 = 137;
+const SIGTERM_CODE: i32 = 143;
+
+/// The excess to report when the OS backstop, not the watcher, ended a job. The root exited
+/// with 137 (SIGKILL: the kernel's OOM kill) or 143 (SIGTERM: the user manager stopping the
+/// scope after that kill), the mode is kill with a memory ceiling, and the scope counted an OOM
+/// kill or hit its hard limit; a 137 also counts when the scope peaked within 10% of the
+/// backstop. `peak_mb` is the largest peak seen by the watcher.
+pub(crate) fn oom_exceeded(
+    limits: &ResourceLimits,
+    code: i32,
+    evidence: MemoryEvidence,
+    peak_mb: Option<u64>,
+) -> Option<Exceeded> {
+    let ceiling = limits.mem_mb?;
+    if limits.mode != Enforce::Kill || (code != SIGKILL_CODE && code != SIGTERM_CODE) {
+        return None;
+    }
+    let backstop = backstop_mb(ceiling);
+    let near =
+        code == SIGKILL_CODE && evidence.peak_mb.saturating_mul(10) >= backstop.saturating_mul(9);
+    if evidence.oom_kills == 0 && evidence.max_events == 0 && !near {
+        return None;
+    }
+    Some(Exceeded {
+        resource: LimitedResource::Memory,
+        limit_mb: ceiling,
+        declared_mb: limits.declared_mem_mb,
+        peak_mb: backstop.max(evidence.peak_mb).max(peak_mb.unwrap_or(0)),
+    })
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -60,6 +101,10 @@ impl Meter {
 
     pub(crate) fn peak(&self) -> Option<u64> {
         self.peak
+    }
+
+    pub(crate) fn raise_peak(&mut self, mb: u64) {
+        self.peak = Some(self.peak.map_or(mb, |p| p.max(mb)));
     }
 
     pub(crate) fn observe(&mut self, mb: u64) -> Verdict {
@@ -165,6 +210,70 @@ mod tests {
         let mut kill = meter(Enforce::Kill);
         assert!(matches!(kill.observe(1251), Verdict::Kill(_)));
         assert!(matches!(kill.observe(1251), Verdict::Kill(_)));
+    }
+
+    fn kill_limits() -> ResourceLimits {
+        ResourceLimits {
+            mem_mb: Some(320),
+            declared_mem_mb: Some(256),
+            mode: Enforce::Kill,
+            ..ResourceLimits::default()
+        }
+    }
+
+    #[test]
+    fn an_oom_kill_of_the_scope_is_an_excess() {
+        let seen = MemoryEvidence {
+            oom_kills: 1,
+            max_events: 5,
+            peak_mb: 340,
+        };
+        let ex = oom_exceeded(&kill_limits(), 137, seen, Some(200)).unwrap();
+        assert_eq!(ex.resource, LimitedResource::Memory);
+        assert_eq!(
+            (ex.limit_mb, ex.declared_mb, ex.peak_mb),
+            (320, Some(256), 352)
+        );
+        let peak = MemoryEvidence {
+            oom_kills: 0,
+            max_events: 0,
+            peak_mb: 320,
+        };
+        assert!(oom_exceeded(&kill_limits(), 137, peak, None).is_some());
+        let limit_hit = MemoryEvidence {
+            max_events: 1,
+            ..MemoryEvidence::default()
+        };
+        assert!(oom_exceeded(&kill_limits(), 137, limit_hit, None).is_some());
+    }
+
+    #[test]
+    fn other_endings_are_not_an_excess() {
+        let oom = MemoryEvidence {
+            oom_kills: 1,
+            max_events: 1,
+            peak_mb: 352,
+        };
+        assert!(oom_exceeded(&kill_limits(), 1, oom, None).is_none());
+        assert!(oom_exceeded(&kill_limits(), 143, oom, None).is_some());
+        assert!(oom_exceeded(&kill_limits(), 130, oom, None).is_none());
+        let near = MemoryEvidence {
+            peak_mb: 340,
+            ..MemoryEvidence::default()
+        };
+        assert!(oom_exceeded(&kill_limits(), 143, near, None).is_none());
+        let low = MemoryEvidence {
+            oom_kills: 0,
+            max_events: 0,
+            peak_mb: 100,
+        };
+        assert!(oom_exceeded(&kill_limits(), 137, low, Some(100)).is_none());
+        let mut warn = kill_limits();
+        warn.mode = Enforce::Warn;
+        assert!(oom_exceeded(&warn, 137, oom, None).is_none());
+        let mut none = kill_limits();
+        none.mem_mb = None;
+        assert!(oom_exceeded(&none, 137, oom, None).is_none());
     }
 
     #[test]

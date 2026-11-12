@@ -185,3 +185,36 @@ async fn a_cpu_cap_still_lets_the_job_finish() {
     let (outcome, _, _) = run("cpu_cap", "echo ok", limits, 60).await;
     assert_eq!(outcome.state, JobState::Passed);
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
+    if lr_exec::enforcement() != lr_exec::Enforcement::Os {
+        return;
+    }
+    let command = "x=$(head -c 900000000 /dev/zero | tr '\0' a); sleep 5";
+    let (outcome, events, took) = run("mem_oom", command, mem_limits(Enforce::Kill), 120).await;
+    let text = events_text(&events);
+    let ex = outcome.exceeded.expect(&text);
+    assert_eq!(ex.resource, LimitedResource::Memory);
+    assert_eq!((ex.limit_mb, ex.declared_mb), (150, Some(100)));
+    assert!(ex.peak_mb >= 165);
+    assert_eq!(outcome.state, JobState::Failed);
+    assert!(outcome.usage.peak_mem_mb.unwrap() >= 165);
+    assert!(took < Duration::from_secs(45), "took {took:?}");
+    assert!(
+        text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB"),
+        "{text}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn an_external_sigkill_is_not_an_excess() {
+    if lr_exec::enforcement() != lr_exec::Enforcement::Os {
+        return;
+    }
+    let (outcome, _, _) = run("mem_sigkill", "kill -9 $$", mem_limits(Enforce::Kill), 60).await;
+    assert!(outcome.exceeded.is_none());
+    assert_eq!(outcome.state, JobState::Failed);
+}

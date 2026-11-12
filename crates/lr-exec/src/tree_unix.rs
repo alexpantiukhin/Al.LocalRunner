@@ -1,4 +1,5 @@
 use crate::guard::Reaped;
+use crate::limits::MemoryEvidence;
 use crate::mem_unix::rss_bytes;
 use crate::os_unix::signal;
 use crate::probe::{descendants, probe, Probe};
@@ -40,6 +41,14 @@ impl Scope {
 
     fn is_empty(&self) -> Option<bool> {
         None
+    }
+
+    fn follow_memory(&self) {}
+
+    fn refresh_memory(&self) {}
+
+    fn memory_evidence(&self) -> MemoryEvidence {
+        MemoryEvidence::default()
     }
 }
 
@@ -85,7 +94,7 @@ impl Tree {
     pub(crate) fn attach(
         child: &Child,
         placement: Placement,
-        _limits: &ResourceLimits,
+        limits: &ResourceLimits,
     ) -> io::Result<Tree> {
         let pid = child
             .id()
@@ -96,6 +105,11 @@ impl Tree {
         };
         let mut tree = Tree::new(pid, start, true, true);
         tree.scope = placement.0;
+        if limits.mode == Enforce::Kill && limits.mem_mb.is_some() {
+            if let Some(scope) = &tree.scope {
+                scope.follow_memory();
+            }
+        }
         Ok(tree)
     }
 
@@ -149,6 +163,18 @@ impl Tree {
             }
         };
         Some(crate::limits::mb_of(rss_bytes(&pids)))
+    }
+
+    pub(crate) fn refresh_memory_evidence(&self) {
+        if let Some(scope) = &self.scope {
+            scope.refresh_memory();
+        }
+    }
+
+    pub(crate) fn memory_evidence(&self) -> MemoryEvidence {
+        self.scope
+            .as_ref()
+            .map_or_else(MemoryEvidence::default, |s| s.memory_evidence())
     }
 
     fn signal_all(&self, sig: libc::c_int) {

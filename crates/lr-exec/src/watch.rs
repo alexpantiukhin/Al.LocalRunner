@@ -118,6 +118,14 @@ impl Watch {
         }
     }
 
+    pub(crate) fn peak_mem_mb(&self) -> Option<u64> {
+        self.mem.peak()
+    }
+
+    pub(crate) fn raise_mem_peak(&mut self, mb: u64) {
+        self.mem.raise_peak(mb);
+    }
+
     pub(crate) fn feed(&mut self, mem_mb: Option<u64>, disk_mb: Option<u64>) -> Sampled {
         let mut out = Sampled {
             warnings: Vec::new(),

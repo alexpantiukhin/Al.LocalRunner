@@ -1,7 +1,8 @@
+use crate::limits::oom_exceeded;
 use crate::spawn::Spawned;
 use crate::watch::Watch;
 use lr_abstractions::{
-    Clock, Exceeded, JobEvent, JobOutput, ResourceLimits, Sleep, Stop, StopSignal, Usage,
+    Clock, Enforce, Exceeded, JobEvent, JobOutput, ResourceLimits, Sleep, Stop, StopSignal, Usage,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -164,6 +165,7 @@ pub(crate) async fn supervise<'a>(
         run.bound_output();
     }
     let mut watch = Watch::new(limits.resources);
+    let track_oom = limits.resources.mode == Enforce::Kill && limits.resources.mem_mb.is_some();
     let mut exceeded: Option<Exceeded> = None;
     let mut notes: Vec<u8> = Vec::new();
     let mut pending: Option<Vec<u8>> = None;
@@ -217,8 +219,20 @@ pub(crate) async fn supervise<'a>(
                 let sampled = watch.sample(&tree);
                 let open_line = line_open(&pending, emitter.line_open);
                 add_notes(&mut notes, sampled.warnings, open_line);
-                match sampled.kill {
+                let oom = if track_oom && run.decided.is_none() {
+                    tree.refresh_memory_evidence();
+                    oom_exceeded(
+                        limits.resources,
+                        code,
+                        tree.memory_evidence(),
+                        watch.peak_mem_mb(),
+                    )
+                } else {
+                    None
+                };
+                match sampled.kill.or(oom) {
                     Some(ex) if code != 0 && run.decided.is_none() => {
+                        watch.raise_mem_peak(ex.peak_mb);
                         exceeded = Some(ex);
                         run.decide(Ended::Exceeded);
                     }
