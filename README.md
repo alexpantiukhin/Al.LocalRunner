@@ -23,14 +23,12 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Troubleshooting](#troubleshooting)
 - [Security](#security)
 - [Plugin for agents (Claude Code and Codex)](#plugin-for-agents-claude-code-and-codex)
+- [License](#license)
 
 ## Highlights
 
-- One queue per pool of machines: priorities, fair share, quotas, per-client visibility rules.
-- Jobs run one at a time per runner with the resources the runner declares.
-- Works for people, agents and GitHub Actions through the same CLI.
-- Generic core: all project specifics live in the project's profiles.
-- Safe by default: one-time join codes, certificate pinning, revocable keys, a broker that never runs as a privileged account.
+- One queue per pool of machines: priorities, fair share, quotas and visibility rules; each runner executes jobs one at a time with the resources it declares.
+- The same CLI for people, agents and GitHub Actions. The core is generic: all project specifics live in the project's profiles. Safe by default: one-time join codes, certificate pinning, revocable keys, a broker that never runs as a privileged account.
 
 ## Quick start
 
@@ -495,3 +493,7 @@ codex plugin marketplace remove al-localrunner
 ```
 
 After installing the plugin, restart the agent session so the skills are picked up.
+
+## License
+
+GPL-3.0-or-later: see [LICENSE](LICENSE). Additional terms (keep the author attribution in copies and documentation): [NOTICE](NOTICE).

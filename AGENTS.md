@@ -12,7 +12,6 @@ See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/
 - Never read, print or copy files under `secrets/`
 - No agent attribution (`Co-Authored-By`, "Generated with") in commits and pull requests
 - Plugins are installed at project scope only (`--scope project`)
-- Only third-party libraries with a free commercial-use license (MIT, Apache 2.0, BSD, ISC, Zlib, Unicode-3.0; MPL-2.0 unmodified)
 - **Generic core.** The daemon, queue and scheduler MUST NOT name or branch on a specific consumer, language, toolchain or test framework. All specificity comes from consumer-supplied profiles (`.localrunner/profiles.toml`)
 - Diagrams in Markdown files use Mermaid
 - Follow the `development-standards` plugin for process phases (enabled in `.claude/settings.json`)
