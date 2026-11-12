@@ -126,6 +126,7 @@ impl Engine {
                     broker_lost_kill_s: Some(self.lost_kill_s()),
                     named_commands: !job.entry.order.requirements.commands.is_empty(),
                     cache_client,
+                    limits: self.policy.file().resources.as_ref().map(|r| r.wire()),
                 }),
             }),
         );
@@ -204,6 +205,19 @@ impl Engine {
         reason: Option<ReasonCode>,
         detail: Option<String>,
     ) {
+        self.finish_with_peaks(job, state, exit_code, reason, detail, (None, None))
+            .await
+    }
+
+    pub(crate) async fn finish_with_peaks(
+        &mut self,
+        job: &Job,
+        state: JobState,
+        exit_code: Option<i32>,
+        reason: Option<ReasonCode>,
+        detail: Option<String>,
+        peaks: (Option<u64>, Option<u64>),
+    ) {
         self.count_end(job, state);
         let key = &job.key;
         let msg = BrokerToHub::JobResult(JobResult {
@@ -213,6 +227,8 @@ impl Engine {
             exit_code,
             reason: reason.clone(),
             detail,
+            peak_mem_mb: peaks.0,
+            peak_disk_mb: peaks.1,
         });
         self.notify_hub(&key.client, &key.job, OutboxKind::JobResult, &msg)
             .await;
@@ -308,7 +324,7 @@ impl Engine {
         };
         let now = self.now();
         match msg {
-            RunnerToBroker::Heartbeat => self.runner_heartbeat(&name).await,
+            RunnerToBroker::Heartbeat { load } => self.runner_heartbeat(&name, load).await,
             RunnerToBroker::Bye(_) => {
                 self.runner_gone(&name).await;
                 self.close(conn);

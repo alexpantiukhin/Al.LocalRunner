@@ -35,7 +35,8 @@ CREATE TABLE runner (
     services      TEXT NOT NULL,
     accept        TEXT,
     last_seen     INTEGER,
-    state         TEXT NOT NULL
+    state         TEXT NOT NULL,
+    enforcement   TEXT
 );
 
 CREATE TABLE job (
@@ -63,6 +64,8 @@ CREATE TABLE job (
     exit_code       INTEGER,
     cancelled_by    TEXT,
     cancel_reason   TEXT,
+    peak_mem_mb     INTEGER,
+    peak_disk_mb    INTEGER,
     recv_seq_hub    INTEGER NOT NULL DEFAULT 0,
     recv_seq_runner INTEGER NOT NULL DEFAULT 0,
     send_seq_runner INTEGER NOT NULL DEFAULT 0,

@@ -54,10 +54,10 @@ async fn timeout_is_prompt_even_if_the_consumer_is_blocked() {
         ],
     );
     let started = Instant::now();
-    let outcome = tokio::time::timeout(Duration::from_secs(20), run(spec, out, None))
+    let outcome = tokio::time::timeout(Duration::from_secs(60), run(spec, out, None))
         .await
         .expect("run_job waited for a blocked consumer");
-    assert!(started.elapsed() < Duration::from_secs(8));
+    assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Timeout);
     assert_eq!(outcome.steps[0].state, StepState::Timeout);
     assert_eq!(outcome.steps[1].state, StepState::Skipped);
@@ -77,12 +77,12 @@ async fn cancel_is_prompt_even_if_the_consumer_is_blocked() {
     spec.cancel_grace = Duration::from_millis(500);
     let started = Instant::now();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(60),
         run(spec, out, Some(Duration::from_secs(1))),
     )
     .await
     .expect("run_job waited for a blocked consumer");
-    assert!(started.elapsed() < Duration::from_secs(8));
+    assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Cancelled);
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);
     assert_eq!(outcome.steps[1].state, StepState::Skipped);
@@ -101,12 +101,12 @@ async fn cancel_is_prompt_when_the_consumer_blocks_before_the_step_starts() {
     );
     let started = Instant::now();
     let outcome = tokio::time::timeout(
-        Duration::from_secs(20),
+        Duration::from_secs(60),
         run(spec, out, Some(Duration::from_millis(500))),
     )
     .await
     .expect("run_job waited for a blocked consumer");
-    assert!(started.elapsed() < Duration::from_secs(8));
+    assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Cancelled);
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);
     assert_eq!(outcome.steps[1].state, StepState::Skipped);

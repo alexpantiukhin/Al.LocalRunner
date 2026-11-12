@@ -8,6 +8,7 @@ mod clock;
 mod files;
 mod host;
 mod hub_runner_store;
+mod load;
 mod misc;
 mod outbox;
 mod process;
@@ -19,6 +20,7 @@ pub use clock::ManualClock;
 pub use files::MemoryFiles;
 pub use host::{FakeDiskSpace, FakeKeepAwake};
 pub use hub_runner_store::{MemoryHubStore, MemoryRunnerStore};
+pub use load::FakeHostLoad;
 pub use misc::{FakeDataSource, MemoryLogSink, MemoryMeter, MemorySecrets, MeterUpdate};
 pub use process::{
     FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript, FAKE_STEP_PID,

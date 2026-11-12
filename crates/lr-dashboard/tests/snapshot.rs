@@ -191,3 +191,25 @@ fn job_card_shows_the_reason_code_of_the_end() {
         "the card lists the code under Reason"
     );
 }
+
+#[test]
+fn job_card_and_runner_page_show_peaks_and_enforcement() {
+    let mut snapshot = common::snapshot();
+    snapshot.jobs[0].detail.summary.reason = Some(lr_proto::ReasonCode::ResourceExceeded);
+    snapshot.jobs[0].detail.summary.peak_mem_mb = Some(900);
+    snapshot.jobs[0].detail.summary.peak_disk_mb = Some(40);
+    let html = render_snapshot(&snapshot, &[]);
+    assert!(
+        html.contains("\"reason\":\"resource_exceeded\""),
+        "the card data carries the code"
+    );
+    assert!(html.contains("\"peak_mem_mb\":900") && html.contains("\"peak_disk_mb\":40"));
+    let script = include_str!("../src/page.js");
+    let card = &script[script.find("function fillCard(").unwrap()..];
+    let card = &card[..card.find("var dl").unwrap()];
+    assert!(card.contains("[\"Peak memory\", s.peak_mem_mb"));
+    assert!(card.contains("[\"Peak disk\", s.peak_disk_mb"));
+    let runners = &script[script.find("function renderRunners(").unwrap()..];
+    let runners = &runners[..runners.find("function renderBrokers(").unwrap()];
+    assert!(runners.contains("\"Enforcement\"") && runners.contains("r.caps.enforcement"));
+}

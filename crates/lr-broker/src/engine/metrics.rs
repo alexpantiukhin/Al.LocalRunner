@@ -35,14 +35,18 @@ pub(crate) fn saturation_reason(wait: &Wait) -> Option<&'static str> {
         Wait::Cpu { .. } => Some("cpu"),
         Wait::Exclusive { .. } => Some("tag"),
         Wait::Reserved { .. } | Wait::Quota { .. } => Some("rule"),
-        Wait::RunnerOffline | Wait::NoRunner | Wait::HeadReserved { .. } => None,
+        Wait::RunnerOffline
+        | Wait::NoRunner
+        | Wait::HeadReserved { .. }
+        | Wait::ForeignLoad { .. } => None,
     }
 }
 
 /// The kind of a wait as the dashboard groups it: the saturation reason, else `no_runner`,
-/// `offline` or `reserved`.
+/// `offline`, `reserved` or `foreign_load`.
 pub(crate) fn wait_code(wait: &Wait) -> &'static str {
     match wait {
+        Wait::ForeignLoad { .. } => "foreign_load",
         Wait::RunnerOffline => "offline",
         Wait::NoRunner => "no_runner",
         Wait::HeadReserved { .. } => "reserved",
@@ -268,6 +272,14 @@ mod tests {
             ),
             (Wait::RunnerOffline, None),
             (Wait::NoRunner, None),
+            (
+                Wait::ForeignLoad {
+                    resource: lr_core::LoadResource::Cpu,
+                    needed: 2,
+                    level: 90,
+                },
+                None,
+            ),
             (
                 Wait::HeadReserved {
                     head: id,

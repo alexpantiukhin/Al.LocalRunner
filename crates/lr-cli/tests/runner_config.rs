@@ -144,7 +144,7 @@ fn a_check_that_outlives_its_timeout_is_stopped_and_the_program_is_not_offered()
 }
 
 #[test]
-fn a_check_runs_with_the_variables_of_the_env_section() {
+fn a_check_runs_with_the_variables_of_the_job_env_section() {
     let probe = if cfg!(windows) {
         r#"if "%CHK_VAR%"=="yes" (exit 0) else (exit 1)"#
     } else {
@@ -155,7 +155,10 @@ fn a_check_runs_with_the_variables_of_the_env_section() {
         std::env::current_exe().unwrap().display()
     );
     let mut with = parse(
-        &format!("{programs}{}CHK_VAR = \"yes\"\n", common::env_path_toml()),
+        &format!(
+            "{programs}{}[job_env]\nCHK_VAR = \"yes\"\n",
+            common::env_path_toml()
+        ),
         None,
     );
     let problems = with.check_programs();
@@ -169,10 +172,13 @@ fn a_check_runs_with_the_variables_of_the_env_section() {
 fn a_valid_file_has_no_warnings() {
     let text = "name = \"a\"\nplatforms = [\"linux\"]\ntags = []\nmem_mb = 1024\ncpu = 2\n\
         allow_elevated = false\nallow_same_user_as_broker = false\n\
-        [accept]\nmin_mem_mb = 1\n[limits]\nmax_job_timeout_s = 60\n\
+        [accept]\nmin_mem_mb = 1\n[limits]\nmax_job_timeout_s = 60\nenforce = \"warn\"\n\
+        mem_headroom = 1.5\ndisk_headroom = 1.5\n\
         [cache]\nmax_size_gb = 1\nretention_days = 2\nevict = \"lru\"\n\
         [workspace]\nmax_size_gb = 1\n[grace]\nbroker_lost_kill_s = 5\n\
-        [env]\npath = \"/usr/bin\"\nJAVA_HOME = \"/jdk\"\n[programs]\ngit = {}\n[secret.k]\nfrom = \"env:K\"\n\
+        [env]\npath = \"/usr/bin\"\n[job_env]\nJAVA_HOME = \"/jdk\"\nHOME = \"/h\"\n\
+        [[cleanup]]\nname = \"c\"\ncommand = \"x\"\ntimeout_s = 5\non = [\"failed\"]\n\
+        [programs]\ngit = {}\n[secret.k]\nfrom = \"env:K\"\n\
         [commands]\nbuild = \"make\"\n\
         [service.db]\nstart = \"s\"\nready_check = \"r\"\nstop = \"x\"\nmax_lifetime_s = 9\n";
     assert_eq!(parse(text, None).warnings, Vec::<String>::new());
@@ -182,10 +188,11 @@ fn a_valid_file_has_no_warnings() {
 fn unknown_keys_and_sections_are_warnings_not_errors() {
     let c = parse(
         "taggs = [\"x\"]\n[limit]\nmax_job_timeout_s = 5\n[limits]\nmax_timeout = 5\n\
-         [cache]\nmax_size = 1\n[secret.k]\nfrom = \"env:K\"\nextra = 1\n",
+         [cache]\nmax_size = 1\n[secret.k]\nfrom = \"env:K\"\nextra = 1\n\
+         [env]\npath = \"/usr/bin\"\nJAVA_HOME = \"/jdk\"\n",
         None,
     );
-    assert_eq!(c.warnings.len(), 5, "{:?}", c.warnings);
+    assert_eq!(c.warnings.len(), 6, "{:?}", c.warnings);
     let all = c.warnings.join("\n");
     for needle in [
         "`taggs`",
@@ -193,6 +200,7 @@ fn unknown_keys_and_sections_are_warnings_not_errors() {
         "`[limits]` max_timeout",
         "`[cache]` max_size",
         "`[secret.k]` extra",
+        "`[env]` JAVA_HOME",
     ] {
         assert!(all.contains(needle), "{needle}: {all}");
     }
@@ -367,4 +375,20 @@ fn allow_same_user_as_broker_is_false_by_default_and_must_be_a_boolean() {
         HOST,
     );
     assert!(typo.is_err(), "{typo:?}");
+}
+
+#[test]
+fn limits_cleanup_and_job_env_survive_the_assembly_parse() {
+    let cfg = parse(
+        "[limits]\nenforce = \"warn\"\nmem_headroom = 1.5\n\n[job_env]\nFOO = \"1\"\n\n[[cleanup]]\nname = \"c\"\ncommand = \"x\"\ntimeout_s = 5\n",
+        Some("r"),
+    );
+    let s = &cfg.settings;
+    assert_eq!(s.enforce, Some(lr_abstractions::Enforce::Warn));
+    assert_eq!(s.mem_headroom_pct, Some(150));
+    assert_eq!(s.job_env["FOO"], "1");
+    assert_eq!(
+        (s.cleanup[0].name.as_str(), s.cleanup[0].timeout_s),
+        ("c", 5)
+    );
 }

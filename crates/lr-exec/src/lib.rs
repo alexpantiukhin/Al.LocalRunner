@@ -15,8 +15,13 @@ mod console;
 #[cfg(unix)]
 mod guard;
 mod job;
+mod limits;
+#[cfg(windows)]
+mod limits_windows;
 mod log;
 mod mask;
+#[cfg(unix)]
+mod mem_unix;
 #[cfg(unix)]
 mod os_unix;
 #[cfg(windows)]
@@ -31,6 +36,7 @@ mod step;
 mod tree_unix;
 #[cfg(windows)]
 mod tree_windows;
+mod watch;
 
 #[cfg(windows)]
 pub use awake::HOLD_FLAGS;
@@ -73,5 +79,37 @@ pub fn containment() -> Containment {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         Containment::ProcessGroup
+    }
+}
+
+/// Which mechanism limits the memory of a job here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Enforcement {
+    /// The OS limits the tree (Windows Job Object, delegated cgroup v2 controllers), with the
+    /// user-space watcher on top for the exceeded reason.
+    Os,
+    /// Only the user-space watcher measures the tree and kills it (macOS, Linux without
+    /// delegated controllers); approximate.
+    Watcher,
+}
+
+/// The mechanism this build and host use for the memory of a job; the first call on Linux
+/// probes `systemd-run --user --scope` once.
+pub fn enforcement() -> Enforcement {
+    #[cfg(windows)]
+    {
+        Enforcement::Os
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if scope_linux::memory_delegated() {
+            Enforcement::Os
+        } else {
+            Enforcement::Watcher
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        Enforcement::Watcher
     }
 }

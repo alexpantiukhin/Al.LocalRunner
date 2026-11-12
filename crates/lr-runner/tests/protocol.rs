@@ -71,7 +71,8 @@ async fn malformed_broker_message_is_refused_and_the_session_kept() {
         .await
         .unwrap();
     rig.advance(15 * SEC).await;
-    b.until(|m| matches!(m, RunnerToBroker::Heartbeat)).await;
+    b.until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
+        .await;
 }
 
 #[tokio::test]

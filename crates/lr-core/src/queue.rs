@@ -1,3 +1,4 @@
+use crate::admission::MachineLoad;
 use crate::identity::{Identity, Source};
 use crate::matching::Capabilities;
 use crate::model::{JobId, Timestamp, Zone};
@@ -85,6 +86,8 @@ pub struct RunnerView {
     pub endpoint: Endpoint,
     /// Whether the runner is online.
     pub online: bool,
+    /// Last load of the runner's machine; `None` from a runner that sends none.
+    pub load: Option<MachineLoad>,
 }
 
 /// A job that runs now.

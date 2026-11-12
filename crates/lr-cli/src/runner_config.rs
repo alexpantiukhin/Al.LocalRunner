@@ -309,7 +309,7 @@ fn check_program(
             Ok(Some(status)) if status.success() => return Ok(()),
             Ok(Some(status)) => {
                 return Err(format!(
-                    "check `{check}` ended with {status} (it runs in the job environment: PATH, HOME, TEMP and [env])"
+                    "check `{check}` ended with {status} (it runs in the job environment: PATH from [env], HOME, TEMP and [job_env])"
                 ))
             }
             Ok(None) if started.elapsed() >= timeout => {

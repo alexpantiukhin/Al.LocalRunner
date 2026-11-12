@@ -78,9 +78,9 @@ pub const HUB_POLICY_TEMPLATE: &str =
 /// `runner.toml` template of the runners of this installation. `[env] path` is set to `path`
 /// (the `PATH` of the shell that runs `init`): jobs get `PATH` only from it and the runner does
 /// not start without it (spec 13.4). Without `path` the entry stays a comment to fill in.
-/// `home` and `temp` are written as `HOME` and `TEMP` next to it, so the values jobs see are in
-/// the file and do not depend on who starts the runner process later.
-pub fn runner_template(path: Option<&str>, home: Option<&str>, temp: Option<&str>) -> String {
+/// `home` is written as `HOME` under `[job_env]`, so the value jobs see is in the file and does
+/// not depend on who starts the runner process later.
+pub fn runner_template(path: Option<&str>, home: Option<&str>) -> String {
     let quoted = |v: &str| toml::Value::String(v.to_string());
     let env = match path {
         Some(p) => {
@@ -88,17 +88,19 @@ pub fn runner_template(path: Option<&str>, home: Option<&str>, temp: Option<&str
                 "[env]                            # PATH of every job (spec 13.4)\npath = {}\n",
                 quoted(p)
             );
-            for (name, value) in [("HOME", home), ("TEMP", temp)] {
-                if let Some(v) = value {
-                    env.push_str(&format!("{name} = {}\n", quoted(v)));
-                }
+            if let Some(h) = home {
+                env.push_str(&format!(
+                    "\n[job_env]                        # variables of every job (spec 13.4)\nHOME = {}\n",
+                    quoted(h)
+                ));
             }
             env
         }
         None => "# [env]                          # required: PATH of every job (spec 13.4)\n\
                  # path = \"/usr/local/bin:/usr/bin:/bin\"\n\
-                 # HOME = \"/home/ci\"             # optional: default is the home of the runner's OS user\n\
-                 # TEMP = \"/tmp\"                 # optional: default is the temp directory of the runner process\n"
+                 \n\
+                 # [job_env]                      # optional: variables of every job\n\
+                 # HOME = \"/home/ci\"             # default: the home of the runner's OS user\n"
             .to_string(),
     };
     format!(
@@ -124,18 +126,13 @@ pub fn runner_template(path: Option<&str>, home: Option<&str>, temp: Option<&str
     )
 }
 
-/// `runner_template` filled from this process: its `PATH`, its home directory (`HOME`, else
-/// `USERPROFILE`) and its temp directory.
+/// `runner_template` filled from this process: its `PATH` and its home directory (`HOME`, else
+/// `USERPROFILE`).
 pub fn runner_template_here() -> String {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
-    let temp = std::env::temp_dir().to_string_lossy().into_owned();
-    runner_template(
-        std::env::var("PATH").ok().as_deref(),
-        home.as_deref(),
-        Some(&temp),
-    )
+    runner_template(std::env::var("PATH").ok().as_deref(), home.as_deref())
 }
 
 /// `logging.toml` of every role.

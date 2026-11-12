@@ -1,9 +1,10 @@
+use crate::limits::kill_line;
 use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
 use lr_abstractions::{
-    mask_secrets, Clock, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, ProcessRef,
-    SecretValue, StepOutcome, StopSignal,
+    mask_secrets, Clock, Exceeded, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, ProcessRef,
+    SecretValue, StepOutcome, StopSignal, Usage,
 };
 use lr_core::{JobState, StepState};
 use std::time::Duration;
@@ -13,6 +14,8 @@ struct Job<'a> {
     clock: &'a dyn Clock,
     secrets: Vec<&'a SecretValue>,
     emitter: Emitter<'a>,
+    usage: Usage,
+    exceeded: Option<Exceeded>,
 }
 
 fn not_run(step: &JobStep, state: StepState) -> StepOutcome {
@@ -55,6 +58,7 @@ impl<'a> Job<'a> {
             cwd: &self.spec.cwd,
             env: &self.spec.env,
             secrets: &step.secrets,
+            limits: &self.spec.limits,
         };
         if stop.current().is_some() {
             return (StepState::Cancelled, None);
@@ -83,13 +87,21 @@ impl<'a> Job<'a> {
             deadline,
             grace: self.spec.cancel_grace,
             clock: self.clock,
+            resources: &self.spec.limits,
         };
         let finished = supervise(spawned, limits, index, stop, &mut self.emitter).await;
         if finished.soft_failed {
             let text = format!("{SOFT_STOP_NOT_DELIVERED}; killed after the grace\n");
             self.line(index, &text, stop).await;
         }
+        self.usage.peak_mem_mb = self.usage.peak_mem_mb.max(finished.usage.peak_mem_mb);
+        self.usage.peak_disk_mb = self.usage.peak_disk_mb.max(finished.usage.peak_disk_mb);
+        if let Some(ex) = finished.exceeded {
+            self.line(index, &kill_line(&ex), stop).await;
+            self.exceeded.get_or_insert(ex);
+        }
         match finished.ended {
+            Ended::Exceeded => (StepState::Failed, None),
             Ended::Exited(0) => (StepState::Passed, Some(0)),
             Ended::Exited(code) => (StepState::Failed, Some(code)),
             Ended::Timeout => (StepState::Timeout, None),
@@ -109,6 +121,8 @@ pub(crate) async fn run_job(
         clock,
         secrets: spec.secret_values(),
         emitter: Emitter::new(output),
+        usage: Usage::default(),
+        exceeded: None,
     };
     let budget_end = clock.now().plus_secs(spec.timeout_s);
     let mut state = JobState::Passed;
@@ -164,7 +178,7 @@ pub(crate) async fn run_job(
         match step_state {
             StepState::Failed => {
                 state = JobState::Failed;
-                halted = !step.spec.continue_on_failure;
+                halted = !step.spec.continue_on_failure || job.exceeded.is_some();
             }
             StepState::Timeout => {
                 state = JobState::Timeout;
@@ -189,5 +203,7 @@ pub(crate) async fn run_job(
         state,
         exit_code,
         steps,
+        usage: job.usage,
+        exceeded: job.exceeded,
     }
 }

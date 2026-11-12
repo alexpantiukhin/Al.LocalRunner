@@ -217,8 +217,7 @@ pub struct JobSummary {
     pub label: Option<String>,
     /// Profile; hidden at `summary`.
     pub profile: Option<String>,
-    /// Source of the identity (session or GitHub); hidden at `summary`. Absent from older
-    /// peers.
+    /// Source of the identity (session or GitHub); hidden at `summary`. Absent from older peers.
     #[serde(default)]
     pub source: Option<WireSource>,
     /// Note `--note`; hidden at `summary`. Absent from older peers.
@@ -236,6 +235,12 @@ pub struct JobSummary {
     /// Link to the GitHub run of a `github` job; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_run_url: Option<String>,
+    /// Peak memory in MB reported when the job ended; hidden at `summary`, absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_mem_mb: Option<u64>,
+    /// Peak disk use in MB reported when the job ended; hidden at `summary`, absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_disk_mb: Option<u64>,
 }
 
 /// A step of a run.

@@ -139,6 +139,8 @@ impl BrokerState {
         if change.state.is_final() {
             job.finished_at = Some(change.at);
             job.exit_code = change.exit_code;
+            job.peak_mem_mb = change.peak_mem_mb.or(job.peak_mem_mb);
+            job.peak_disk_mb = change.peak_disk_mb.or(job.peak_disk_mb);
         }
         if outlives_cancel(job.state, change.state) {
             job.cancelled_by = change.cancelled_by;

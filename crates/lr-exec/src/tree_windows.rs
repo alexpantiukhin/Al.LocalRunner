@@ -1,4 +1,7 @@
+use crate::limits::MemoryEvidence;
+use crate::limits_windows::{apply, peak_job_mb};
 use crate::os_windows::handle_start;
+use lr_abstractions::ResourceLimits;
 use std::io;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
@@ -12,9 +15,7 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
-    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
-    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    QueryInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
 };
 use windows_sys::Win32::System::Threading::{
     OpenThread, ResumeThread, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED,
@@ -41,6 +42,7 @@ impl Tree {
     pub(crate) fn shell(
         command: &str,
         _job_vars: &[&str],
+        _limits: &ResourceLimits,
     ) -> (Command, Vec<(String, String)>, Placement) {
         let comspec = std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into());
         let mut cmd = Command::new(comspec);
@@ -48,7 +50,7 @@ impl Tree {
         (cmd, Vec::new(), Placement)
     }
 
-    pub(crate) fn prepare(cmd: &mut Command) {
+    pub(crate) fn prepare(cmd: &mut Command, _limits: &ResourceLimits, _placement: &Placement) {
         let mut flags = CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED;
         if !has_console() {
             flags |= CREATE_NO_WINDOW;
@@ -56,7 +58,11 @@ impl Tree {
         cmd.creation_flags(flags);
     }
 
-    pub(crate) fn attach(child: &Child, _placement: Placement) -> io::Result<Tree> {
+    pub(crate) fn attach(
+        child: &Child,
+        _placement: Placement,
+        limits: &ResourceLimits,
+    ) -> io::Result<Tree> {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("process already exited"))?;
@@ -74,16 +80,7 @@ impl Tree {
                 pid,
                 start: handle_start(process),
             };
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            if SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const _,
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            ) == 0
-                || AssignProcessToJobObject(job, process) == 0
-            {
+            if apply(job, limits).is_err() || AssignProcessToJobObject(job, process) == 0 {
                 return Err(io::Error::last_os_error());
             }
             resume_threads(pid)?;
@@ -96,6 +93,16 @@ impl Tree {
     }
 
     pub(crate) fn observe(&self) {}
+
+    pub(crate) fn refresh_memory_evidence(&self) {}
+
+    pub(crate) fn memory_evidence(&self) -> MemoryEvidence {
+        MemoryEvidence::default()
+    }
+
+    pub(crate) fn memory_mb(&self) -> Option<u64> {
+        peak_job_mb(self.job)
+    }
 
     pub(crate) fn soft_stop(&self) -> bool {
         self.pid != 0

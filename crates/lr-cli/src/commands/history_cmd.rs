@@ -70,12 +70,12 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tBROKER"
+        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER"
             .into(),
     ];
     for (b, s) in rows {
         out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
             s.job,
             state_name(s.state),
             format_time(s.queued_at),
@@ -90,9 +90,15 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
                 &s.client_label
             },
             dash(&s.runner),
+            mb(s.peak_mem_mb),
+            mb(s.peak_disk_mb),
         ));
     }
     out
+}
+
+fn mb(v: Option<u64>) -> String {
+    v.map_or("-".into(), |v| v.to_string())
 }
 
 fn when(t: Option<Timestamp>) -> String {
@@ -127,6 +133,12 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
         format!("started   {}", when(s.started_at)),
         format!("finished  {}", when(s.finished_at)),
     ];
+    if let Some(m) = s.peak_mem_mb {
+        out.push(format!("peak mem  {m} MB"));
+    }
+    if let Some(m) = s.peak_disk_mb {
+        out.push(format!("peak disk {m} MB"));
+    }
     let optional = [
         ("github    ", &d.github_run_url),
         ("cancelled ", &d.cancelled_by),

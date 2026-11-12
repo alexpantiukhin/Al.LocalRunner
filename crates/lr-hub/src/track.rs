@@ -127,6 +127,8 @@ impl Track {
                 lr_core::Source::Github(g) => Some(g.run_url.clone()),
                 lr_core::Source::Session => None,
             }),
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         }
     }
 }

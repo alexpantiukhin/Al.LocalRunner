@@ -143,6 +143,8 @@ impl Engine {
             .or_else(|| cancel.as_ref().map(|c| c.code.clone()));
         let mut t = Transition::to(r.state, now);
         t.exit_code = r.exit_code;
+        t.peak_mem_mb = r.peak_mem_mb;
+        t.peak_disk_mb = r.peak_disk_mb;
         match &cancel {
             Some(c) => {
                 t.cancelled_by = Some(c.by.clone());
@@ -157,7 +159,8 @@ impl Engine {
         }
         match self.store.transition(&job.key, t).await {
             Ok(Applied::Changed) => {
-                self.finish(&job, r.state, r.exit_code, reason, r.detail.clone())
+                let peaks = (r.peak_mem_mb, r.peak_disk_mb);
+                self.finish_with_peaks(&job, r.state, r.exit_code, reason, r.detail.clone(), peaks)
                     .await
             }
             Ok(Applied::Ignored) => {}

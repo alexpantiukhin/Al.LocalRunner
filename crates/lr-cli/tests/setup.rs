@@ -60,12 +60,8 @@ fn init_writes_templates_every_loader_accepts() {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
-    assert_eq!(runner.settings.env.get("HOME"), home.as_ref());
-    assert_eq!(
-        runner.settings.env.get("TEMP").map(String::as_str),
-        std::env::temp_dir().to_str()
-    );
-    let without_path = init::runner_template(None, home.as_deref(), None);
+    assert_eq!(runner.settings.job_env.get("HOME"), home.as_ref());
+    let without_path = init::runner_template(None, home.as_deref());
     assert!(
         RunnerConfig::parse(&without_path, None, "box", layout.runner_dir("box"), host()).is_err()
     );

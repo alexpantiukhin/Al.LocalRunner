@@ -1,5 +1,6 @@
 //! Generic core model: jobs, profiles, requirements and runner capabilities.
 
+pub mod admission;
 pub mod error;
 pub mod identity;
 pub mod matching;
@@ -16,6 +17,9 @@ pub mod source_github;
 pub mod strategy;
 pub mod zone;
 
+pub use admission::{
+    same_host, Admission, ForeignLoadMode, LoadResource, MachineLoad, DEFAULT_MEM_HEADROOM_MB,
+};
 pub use error::ProfileError;
 pub use identity::{
     identity_from_session, may_cancel, normalize_origin, project_name, validate_label,

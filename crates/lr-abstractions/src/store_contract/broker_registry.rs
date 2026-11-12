@@ -275,6 +275,26 @@ pub async fn runner_state_and_last_seen_stored(store: &dyn BrokerStore) {
     ));
 }
 
+/// The enforcement mode a runner reported is stored and replaced by the next registration.
+pub async fn runner_enforcement_stored(store: &dyn BrokerStore) {
+    joined(store, "box", MachineKind::Runner).await;
+    let mut row = runner("light", "box");
+    store.upsert_runner(row.clone()).await.unwrap();
+    assert_eq!(store.runners().await.unwrap()[0].enforcement, None);
+    row.enforcement = Some("watcher".into());
+    store.upsert_runner(row.clone()).await.unwrap();
+    assert_eq!(
+        store.runners().await.unwrap()[0].enforcement.as_deref(),
+        Some("watcher")
+    );
+    row.enforcement = Some("os".into());
+    store.upsert_runner(row).await.unwrap();
+    assert_eq!(
+        store.runners().await.unwrap()[0].enforcement.as_deref(),
+        Some("os")
+    );
+}
+
 /// Result seq counts per client and job from 1 and keeps growing after an ack; an ack removes
 /// entries up to its seq (spec 15.3).
 pub async fn result_outbox_seq_per_client_and_job_and_ack_removes(store: &dyn BrokerStore) {

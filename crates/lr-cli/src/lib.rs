@@ -13,6 +13,7 @@ pub mod facts;
 pub mod fs_files;
 pub mod git_repo;
 pub mod host;
+pub mod host_load;
 pub mod hub_watch;
 pub mod init;
 pub mod ipc_client;

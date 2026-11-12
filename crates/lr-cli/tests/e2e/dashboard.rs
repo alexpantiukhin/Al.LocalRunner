@@ -59,25 +59,32 @@ async fn dashboard_streams_queue_updates_after_the_token_exchange() {
         view.running.iter().any(|r| r.summary.job == busy),
         "{view:?}"
     );
-    let client = hub(&main).await.expect("hub channel");
-    let query = LogQuery {
-        job: busy.clone(),
-        step: None,
-        tail: None,
-        follow: false,
-    };
-    let mut log = String::new();
-    find_log(
-        &client,
-        None,
-        &query,
-        &Arc::new(Redactor::new(&[])),
-        &mut |t| log.push_str(t),
+    eventually(
+        "the log of the running job to hold what its child printed",
+        Duration::from_secs(30),
+        || async {
+            let client = hub(&main).await.expect("hub channel");
+            let query = LogQuery {
+                job: busy.clone(),
+                step: None,
+                tail: None,
+                follow: false,
+            };
+            let mut log = String::new();
+            find_log(
+                &client,
+                None,
+                &query,
+                &Arc::new(Redactor::new(&[])),
+                &mut |t| log.push_str(t),
+            )
+            .await
+            .expect("the log of the running job");
+            client.close().await;
+            log.contains("child-started").then_some(())
+        },
     )
-    .await
-    .expect("the log of the running job");
-    client.close().await;
-    assert!(log.contains("child-started"), "{log}");
+    .await;
 
     let page = Watched::open(&main).await;
     let (next_client, next) = submit(&main, &repo, "next", None).await;

@@ -46,14 +46,14 @@ fn broker_db_has_the_tables_and_columns_of_the_er_diagram() {
     let path = d.path().join("broker.db");
     SqliteBrokerStore::open(&path).unwrap();
     let want = expect(&[
-        ("job", "client_key, id, project, source, label, note, branch, cwd, profile, platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, cancel_reason, recv_seq_hub, recv_seq_runner, send_seq_runner"),
+        ("job", "client_key, id, project, source, label, note, branch, cwd, profile, platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, cancel_reason, peak_mem_mb, peak_disk_mb, recv_seq_hub, recv_seq_runner, send_seq_runner"),
         ("step", "client_key, job_id, ord, name, command, state, exit_code, started_at, finished_at, timeout_s"),
         ("job_spec", "client_key, job_id, resolved_json, profile_commit, order_json"),
         ("github_run", "client_key, job_id, repository, workflow, job_name, run_id, attempt, ref, actor, run_url"),
         ("job_log", "client_key, job_id, path, bytes, updated_at"),
         ("machine", "name, machine_id, kind, label, public_key, registered_at, last_seen, revoked_at"),
         ("join_code", "code_hash, kind, name, label, uses_left, issued_at, expires_at, redeemed_at, machine_name"),
-        ("runner", "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, cache_used_mb, free_disk_mb, services, accept, last_seen, state"),
+        ("runner", "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement"),
         ("result_outbox", "client_machine, job_id, seq, kind, payload_json, created_at, acked_at"),
         ("order", "client_key, job_id, client_machine, spec_json, platform, same_machine, priority_hint, enqueued_at, state"),
     ]);
@@ -440,4 +440,36 @@ fn backup_survives_when_the_database_path_is_a_bare_file_name() {
     let bak = format!("{name}.bak-1");
     assert!(Path::new(&bak).is_file(), "the fresh backup {bak} is kept");
     assert_eq!(version_of(Path::new(&bak)), 1);
+}
+
+#[tokio::test]
+async fn a_version_one_broker_database_gets_the_peak_and_enforcement_columns() {
+    use lr_abstractions::store_contract::fixtures::{intake, T0};
+    use lr_abstractions::BrokerStore;
+    let d = common::dir();
+    let path = d.path().join("broker.db");
+    let i = intake("c1", "j1", "check", T0);
+    let key = i.job.key.clone();
+    {
+        let store = SqliteBrokerStore::open(&path).unwrap();
+        store.accept(i).await.unwrap();
+    }
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE job DROP COLUMN peak_mem_mb;
+         ALTER TABLE job DROP COLUMN peak_disk_mb;
+         ALTER TABLE runner DROP COLUMN enforcement;
+         PRAGMA user_version = 1;",
+    )
+    .unwrap();
+    drop(conn);
+    let store = SqliteBrokerStore::open(&path).unwrap();
+    assert_eq!(version_of(&path), schema::BROKER.version);
+    let record = store.job(&key).await.unwrap().unwrap();
+    assert_eq!(
+        (record.job.peak_mem_mb, record.job.peak_disk_mb),
+        (None, None)
+    );
+    assert_eq!(record.job.project, "owner/repo");
+    assert!(path.with_file_name("broker.db.bak-1").is_file());
 }

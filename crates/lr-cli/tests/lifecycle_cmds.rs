@@ -132,6 +132,8 @@ fn status_masks_the_last_lines_of_running_jobs() {
         cwd: None,
         timeout_s: None,
         github_run_url: None,
+        peak_mem_mb: None,
+        peak_disk_mb: None,
     };
     let view = StatusView {
         running: vec![RunningView {

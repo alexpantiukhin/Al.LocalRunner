@@ -34,17 +34,32 @@ async fn job_environment_is_built_from_scratch() {
     let names: BTreeSet<&str> = env.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names,
-        BTreeSet::from(["PATH", "HOME", "TEMP", "LOCALRUNNER_JOB_ID"])
+        BTreeSet::from([
+            "PATH",
+            "HOME",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "LOCALRUNNER_JOB_ID"
+        ])
     );
     assert!(env.contains(&("PATH".into(), "/usr/bin:/bin".into())));
     assert!(env.contains(&("LOCALRUNNER_JOB_ID".into(), "job-1".into())));
+    let temp = |n: &str| env.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+    assert!(temp("TEMP").unwrap().ends_with("lr-job-1"));
+    assert_eq!(temp("TEMP"), temp("TMP"));
+    assert_eq!(temp("TEMP"), temp("TMPDIR"));
 }
 
 #[tokio::test]
-async fn variables_of_the_env_section_reach_the_job_and_may_replace_home_and_temp() {
+async fn variables_of_the_job_env_section_reach_the_job_and_may_replace_home() {
     let mut rig = Rig::new();
-    rig.settings.env.insert("JAVA_HOME".into(), "/jdk".into());
-    rig.settings.env.insert("HOME".into(), "/data/home".into());
+    rig.settings
+        .job_env
+        .insert("JAVA_HOME".into(), "/jdk".into());
+    rig.settings
+        .job_env
+        .insert("HOME".into(), "/data/home".into());
     rig.files.mkdir(Path::new("/w/tree"));
     let (_c, _h) = rig.start();
     let b = Broker::accept(&rig).await;

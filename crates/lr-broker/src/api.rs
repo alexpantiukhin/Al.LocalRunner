@@ -71,6 +71,8 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.cwd = None;
             s.timeout_s = None;
             s.github_run_url = None;
+            s.peak_mem_mb = None;
+            s.peak_disk_mb = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -132,6 +134,18 @@ pub fn reason_of(cancel_reason: Option<&str>) -> Option<ReasonCode> {
     code.parse().ok()
 }
 
+/// The sentence about the peaks of a finished run, `None` when the runner reported none.
+pub fn peaks_text(row: &JobRow) -> Option<String> {
+    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} МБ"));
+    (row.peak_mem_mb.is_some() || row.peak_disk_mb.is_some()).then(|| {
+        format!(
+            "пик памяти {}, пик диска {}",
+            mb(row.peak_mem_mb),
+            mb(row.peak_disk_mb)
+        )
+    })
+}
+
 /// The wire form of a source kind.
 pub fn wire_source(s: SourceKind) -> WireSource {
     match s {
@@ -162,6 +176,8 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         cwd: Some(row.cwd.clone()),
         timeout_s: None,
         github_run_url: None,
+        peak_mem_mb: row.peak_mem_mb,
+        peak_disk_mb: row.peak_disk_mb,
     }
 }
 
@@ -287,6 +303,8 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
             lr_core::Source::Github(g) => Some(g.run_url.clone()),
             lr_core::Source::Session => None,
         },
+        peak_mem_mb: None,
+        peak_disk_mb: None,
     }
 }
 

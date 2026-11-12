@@ -19,6 +19,7 @@ pub mod clock;
 pub mod datasource;
 pub mod files;
 pub mod host;
+pub mod load;
 pub mod logsink;
 pub mod meter;
 pub mod process;
@@ -36,12 +37,14 @@ pub use clock::{Clock, Sleep};
 pub use datasource::{CancelRequest, DataError, DataSource, EventStream};
 pub use files::{Files, FilesError};
 pub use host::{DiskSpace, KeepAwake};
+pub use load::{HostLoad, LoadSample};
 pub use logsink::{Level, LogSink, Record, Role};
 pub use meter::{metric, Meter};
 pub use process::{
-    mask_secrets, stop_signal, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, Liveness,
-    ProcessError, ProcessInspector, ProcessRef, ProcessRunner, SpawnSpec, StepOutcome, Stop,
-    StopHandle, StopSignal, DEFAULT_CANCEL_GRACE, MASK,
+    mask_secrets, stop_signal, Enforce, Exceeded, JobEvent, JobOutcome, JobOutput, JobSpec,
+    JobStep, LimitedResource, Liveness, ProcessError, ProcessInspector, ProcessRef, ProcessRunner,
+    ResourceLimits, SpawnSpec, StepOutcome, Stop, StopHandle, StopSignal, Usage,
+    DEFAULT_CANCEL_GRACE, MASK,
 };
 pub use repository::{Repository, RepositoryError};
 pub use secrets::{SecretError, SecretSource, SecretValue};

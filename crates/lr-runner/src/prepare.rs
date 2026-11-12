@@ -4,6 +4,7 @@ use lr_abstractions::{JobStep, Level, SecretValue};
 use lr_core::{JobId, StepSpec};
 use lr_proto::{AssignSpec, ReasonCode};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct Prepared<'a> {
     pub(crate) job: JobId,
@@ -143,5 +144,34 @@ pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
 pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
     let mut env = base_env(shared);
     env.push(("LOCALRUNNER_JOB_ID".to_string(), job.0.clone()));
+    if !shared.deps.settings.cleanup.is_empty() {
+        env.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
+    }
     env
+}
+
+/// Directory of the runner's state that holds the private temporary directories of jobs; what
+/// a crash leaves in it is removed when the runner starts.
+pub(crate) fn jobs_temp(shared: &Shared) -> PathBuf {
+    shared.deps.settings.state_dir.join("tmp")
+}
+
+/// The private temporary directory of a job: what the job writes there is measured against its
+/// `disk_mb` and removed with it.
+pub(crate) fn job_temp(shared: &Shared, job: &JobId) -> PathBuf {
+    jobs_temp(shared).join(job_label(job))
+}
+
+/// Points `TEMP`, `TMP` and `TMPDIR` of a job at its private temporary directory.
+pub(crate) fn apply_job_temp(env: &mut Vec<(String, String)>, temp: &Path) {
+    let value = temp.to_string_lossy().into_owned();
+    env.retain(|(k, _)| !["TEMP", "TMP", "TMPDIR"].contains(&k.as_str()));
+    for name in ["TEMP", "TMP", "TMPDIR"] {
+        env.push((name.to_string(), value.clone()));
+    }
+}
+
+/// A short label unique per job, for cleanup hooks to find what the job left behind.
+pub(crate) fn job_label(job: &JobId) -> String {
+    format!("lr-{}", job.0)
 }
