@@ -1,6 +1,6 @@
 //! [`lr_abstractions::HostLoad`] of this machine: free memory and CPU busy share from the OS.
-//! Windows reads `GlobalMemoryStatusEx` and `GetSystemTimes`, Linux `/proc/meminfo` and
-//! `/proc/stat`; other systems measure nothing, so their runners send no load and are admitted
+//! Windows reads `GlobalMemoryStatusEx` and `GetSystemTimes`, Linux `/proc/meminfo` (capped by the cgroup
+//! memory limit of a container) and `/proc/stat`; other systems measure nothing, so their runners send no load and are admitted
 //! as before.
 
 use lr_abstractions::load::CpuTimes;
@@ -77,7 +77,13 @@ fn cpu_times() -> Option<CpuTimes> {
 
 #[cfg(target_os = "linux")]
 fn free_memory_mb() -> Option<u64> {
-    lr_abstractions::load::mem_available_mb(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    let host =
+        lr_abstractions::load::mem_available_mb(&std::fs::read_to_string("/proc/meminfo").ok()?)?;
+    let limit = std::fs::read_to_string("/sys/fs/cgroup/memory.max")
+        .ok()
+        .zip(std::fs::read_to_string("/sys/fs/cgroup/memory.current").ok())
+        .and_then(|(max, current)| lr_abstractions::load::cgroup_free_mb(&max, &current));
+    Some(limit.map_or(host, |l| l.min(host)))
 }
 
 #[cfg(target_os = "linux")]

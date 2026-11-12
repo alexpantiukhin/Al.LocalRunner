@@ -1,5 +1,7 @@
 use lr_abstractions::fakes::FakeHostLoad;
-use lr_abstractions::load::{busy_percent, mem_available_mb, proc_stat_times, CpuTimes};
+use lr_abstractions::load::{
+    busy_percent, cgroup_free_mb, mem_available_mb, proc_stat_times, CpuTimes,
+};
 use lr_abstractions::{HostLoad, LoadSample};
 
 #[test]
@@ -62,4 +64,26 @@ fn the_fake_returns_what_it_was_given() {
     };
     fake.set(Some(sample));
     assert_eq!(fake.clone().sample(), Some(sample));
+}
+
+#[test]
+fn a_container_memory_limit_caps_the_free_memory() {
+    assert_eq!(
+        cgroup_free_mb(
+            "2147483648
+",
+            "536870912
+"
+        ),
+        Some(1536)
+    );
+    assert_eq!(
+        cgroup_free_mb(
+            "max
+", "1000
+"
+        ),
+        None
+    );
+    assert_eq!(cgroup_free_mb("1048576", "9999999999"), Some(0));
 }

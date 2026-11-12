@@ -43,6 +43,15 @@ pub fn mem_available_mb(meminfo: &str) -> Option<u64> {
     Some(kb / 1024)
 }
 
+/// What is left under a cgroup v2 memory limit in MB: `memory.max` minus `memory.current`.
+/// `None` for `max` (no limit) or text that is not a number; a container started with
+/// `mem_limit` has a limit far below the memory of its host or VM.
+pub fn cgroup_free_mb(max: &str, current: &str) -> Option<u64> {
+    let limit: u64 = max.trim().parse().ok()?;
+    let used: u64 = current.trim().parse().ok()?;
+    Some(limit.saturating_sub(used) / (1024 * 1024))
+}
+
 /// The aggregate `cpu` line of `/proc/stat` as [`CpuTimes`]: idle and iowait count as idle.
 pub fn proc_stat_times(stat: &str) -> Option<CpuTimes> {
     let line = stat.lines().find(|l| l.starts_with("cpu "))?;
