@@ -16,6 +16,11 @@ function Stop-Install {
     throw "install.ps1: $Message"
 }
 
+function Write-Step {
+    param([string]$Message)
+    Write-Host "install.ps1: $Message"
+}
+
 function Read-InstallArgs {
     param([string[]]$Arguments)
     $opts = @{ Version = ''; Dir = ''; Offline = ''; Role = 'all'; AllowElevated = $false; Help = $false }
@@ -102,6 +107,7 @@ function Get-ReleaseTarget {
 
 function Get-ReleaseFile {
     param([string]$Url, [string]$OutFile)
+    Write-Step "downloading $Url"
     try {
         Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $OutFile
     } catch {
@@ -131,6 +137,7 @@ function Test-ReleaseSignature {
     if (-not (Test-Path -LiteralPath $Signature -PathType Leaf)) {
         Stop-Install "signature $Signature is missing: nothing installed"
     }
+    Write-Step 'checking the signature of SHA256SUMS'
     $keygen = Find-SshKeygen
     $ns = $LocalRunnerSigNamespace
     $signers = Join-Path $Work 'allowed_signers'
@@ -150,6 +157,7 @@ function Test-ReleaseSignature {
 
 function Test-ReleaseChecksum {
     param([string]$Sums, [string]$File, [string]$Name)
+    Write-Step "checking SHA-256 of $Name"
     $expected = $null
     foreach ($line in [IO.File]::ReadAllLines($Sums)) {
         if ($line -match '^([0-9A-Fa-f]{64}) [ *](.+)$' -and $Matches[2] -eq $Name) {
@@ -175,10 +183,12 @@ function Invoke-LocalRunnerInstall {
     if ($Opts.AllowElevated) {
         $installArgs += '--allow-elevated'
     }
+    Write-Step 'running localrunner install'
     & $Exe @installArgs
     if ($LASTEXITCODE -ne 0) {
         Stop-Install 'localrunner install failed'
     }
+    Write-Step 'running localrunner doctor'
     & $Exe 'doctor'
     if ($LASTEXITCODE -ne 0) {
         Write-Warning 'install.ps1: localrunner doctor reported problems (above); the installation is kept'
@@ -234,6 +244,7 @@ function Install-LocalRunner {
         Test-ReleaseSignature -Sums $sums -Signature "$sums.sig" -Work $work
         Test-ReleaseChecksum -Sums $sums -File $archive -Name $name
         $bin = Join-Path $work 'bin'
+        Write-Step 'unpacking the archive'
         Expand-Archive -LiteralPath $archive -DestinationPath $bin
         $exe = Join-Path $bin 'localrunner.exe'
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {

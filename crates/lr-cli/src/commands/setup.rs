@@ -1,5 +1,6 @@
 //! `init`, `install` and `uninstall` (spec 10.1, 10.2, 10.5, 11.1).
 
+use super::confirm::{confirm, Console};
 use super::service_cmd::{autostart_plan, entries, uninstall_service_plan};
 use super::RoleArg;
 use crate::init::{self, NodeRole};
@@ -149,21 +150,18 @@ pub fn purge_confirmed(
     input: &mut dyn BufRead,
     out: &mut dyn Write,
 ) -> Result<bool, String> {
-    if yes {
-        return Ok(true);
-    }
-    if !terminal {
-        return Err("--purge deletes the state directory; confirm with --yes".into());
-    }
-    let _ = write!(
+    let question = format!("delete {} with keys, databases and logs?", root.display());
+    let mut console = Console {
+        terminal,
+        input,
         out,
-        "delete {} with keys, databases and logs? type yes: ",
-        root.display()
-    );
-    let _ = out.flush();
-    let mut line = String::new();
-    input.read_line(&mut line).map_err(|e| e.to_string())?;
-    Ok(line.trim() == "yes")
+    };
+    confirm(
+        "--purge deletes the state directory",
+        &question,
+        yes,
+        &mut console,
+    )
 }
 
 fn confirmed(root: &Path, yes: bool) -> Result<bool, String> {

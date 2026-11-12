@@ -52,7 +52,22 @@ fn inside_github_actions_submit_needs_no_as() {
         .expect("the binary runs");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("--as"), "{err}");
-    assert!(err.contains("hub is not reachable"), "{err}");
+    assert!(
+        err.contains("error: the hub is not running; start it: localrunner up"),
+        "{err}"
+    );
+    assert!(!err.contains("pipe") && !err.contains("os error"), "{err}");
+}
+
+#[test]
+fn status_without_a_hub_says_so_briefly() {
+    let out = localrunner(&["status"]);
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        err.trim(),
+        "error: the hub is not running; start it: localrunner up"
+    );
 }
 
 #[test]
