@@ -4,8 +4,8 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 
 | Item | Value |
 |---|---|
-| State and runner directories | `%LOCALAPPDATA%\Al.LocalRunner` |
-| IPC | named pipe `\\.\pipe\al-localrunner` |
+| State directory | `%LOCALAPPDATA%\Al.LocalRunner` (`LOCALRUNNER_STATE_DIR` overrides it); runners in `runner\<name>\` of it; broker service: `%ProgramData%\Al.LocalRunner` |
+| IPC | named pipes `\\.\pipe\al-localrunner-hub-<SID>`, `al-localrunner-runner-<SID>-<name>`, `al-localrunner-broker`, `al-localrunner-broker-admin`; the broker service listens on `al-localrunner-broker` too, open to `[[local_user]]` and administrators |
 | Process-tree kill | Job Object with kill-on-close |
 | Free memory and CPU | `Win32_OperatingSystem.FreePhysicalMemory`, logical processor count |
 

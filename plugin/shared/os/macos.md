@@ -4,8 +4,8 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 
 | Item | Value |
 |---|---|
-| State and runner directories | `~/Library/Application Support/Al.LocalRunner` |
-| IPC | Unix socket in the state directory, mode 0600 (the path must stay under the 104-byte socket limit) |
+| State directory | `~/.local/share/al-localrunner` (`LOCALRUNNER_STATE_DIR` overrides it); runners in `runner/<name>/` of it; only the broker service uses `/Library/Application Support/Al.LocalRunner` |
+| IPC | Unix sockets in `ipc/` of the state directory (closed to the user, 0700): `hub-<user>.sock`, `runner-<user>-<name>.sock`, `broker.sock`, `broker-admin.sock`; broker service: `ipc/broker.sock` of its state directory (group `_allocalrunner`); the path must stay under the 104-byte socket limit |
 | Process-tree kill | own process group, `killpg` then SIGKILL after a grace period |
 | Free memory and CPU | `vm_stat` (free + inactive + speculative pages), `sysctl -n hw.ncpu` |
 
