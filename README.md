@@ -30,14 +30,14 @@ The core knows no language and no toolchain. What to run and what it needs is de
 
 The simplest way: connect the plugin and ask the agent. The plugin gives the agent skills to install, start and use the queue.
 
-Claude Code, for the current project:
+Claude Code:
 
 ```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
-claude plugin install al-localrunner@al-localrunner --scope project
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner
+claude plugin install al-localrunner@al-localrunner
 ```
 
-For all your projects use `--scope user` in both commands. Codex (global only):
+Codex:
 
 ```
 codex plugin marketplace add alexpantiukhin/Al.LocalRunner

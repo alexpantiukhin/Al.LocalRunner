@@ -30,14 +30,14 @@
 
 Самый простой путь: подключить плагин и попросить агента. Плагин даёт агенту скилы для установки, запуска и работы с очередью.
 
-Claude Code, для текущего проекта:
+Claude Code:
 
 ```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
-claude plugin install al-localrunner@al-localrunner --scope project
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner
+claude plugin install al-localrunner@al-localrunner
 ```
 
-Для всех своих проектов укажите `--scope user` в обеих командах. Codex (только глобально):
+Codex:
 
 ```
 codex plugin marketplace add alexpantiukhin/Al.LocalRunner
