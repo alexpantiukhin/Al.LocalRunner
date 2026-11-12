@@ -6,3 +6,5 @@ secrets/
 .claude/settings.local.json
 .claude/worktrees/
 target/
+.playwright-mcp/
+*.stackdump
