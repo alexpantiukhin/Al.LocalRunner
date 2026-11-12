@@ -189,9 +189,9 @@ async fn a_job_gets_a_private_temp_that_is_measured_and_removed() {
     b.assign("job-1", 1, job(4000, 1000)).await;
     assert_eq!(result_of(&b.until_result().await).state, JobState::Passed);
     let run = &rig.process.runs()[0];
-    let temp = PathBuf::from("/tmp/runner/lr-job-1");
+    let temp = Path::new("/tmp/runner").join("lr-job-1");
     assert!(run.limits.disk_dirs.contains(&temp));
-    let dir = "/tmp/runner/lr-job-1".to_string();
+    let dir = temp.to_string_lossy().into_owned();
     assert!(run.env.contains(&("TEMP".into(), dir.clone())));
     assert!(run.env.contains(&("TMPDIR".into(), dir)));
     assert!(!rig.files.is_dir(&temp));
