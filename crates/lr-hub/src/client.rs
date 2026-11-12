@@ -24,64 +24,73 @@ pub(crate) fn silence_limit() -> Duration {
 
 pub(crate) const STREAM_FRAMES: usize = 1024;
 
-type Stream = (String, mpsc::Sender<BrokerToHub>);
+type Key = (String, u64);
 
 #[derive(Default)]
 pub(crate) struct Pending {
-    waiting: Mutex<HashMap<u64, oneshot::Sender<BrokerToHub>>>,
-    streams: Mutex<HashMap<u64, Stream>>,
+    waiting: Mutex<HashMap<Key, oneshot::Sender<BrokerToHub>>>,
+    streams: Mutex<HashMap<Key, mpsc::Sender<BrokerToHub>>>,
+}
+
+fn key(broker: &str, req: u64) -> Key {
+    (broker.to_string(), req)
 }
 
 impl Pending {
     pub(crate) fn stream(&self, req: u64, broker: &str) -> mpsc::Receiver<BrokerToHub> {
         let (tx, rx) = mpsc::channel(STREAM_FRAMES);
         if let Ok(mut s) = self.streams.lock() {
-            s.insert(req, (broker.to_string(), tx));
+            s.insert(key(broker, req), tx);
         }
         rx
     }
 
-    pub(crate) fn forget_stream(&self, req: u64) {
+    pub(crate) fn forget_stream(&self, req: u64, broker: &str) {
         if let Ok(mut s) = self.streams.lock() {
-            s.remove(&req);
+            s.remove(&key(broker, req));
         }
     }
 
     fn close_streams(&self, broker: &str) {
         if let Ok(mut s) = self.streams.lock() {
-            s.retain(|_, (b, _)| b != broker);
+            s.retain(|(b, _), _| b != broker);
         }
     }
 
-    fn feed(&self, req: u64, msg: BrokerToHub) -> Option<BrokerToHub> {
+    fn feed(&self, broker: &str, req: u64, msg: BrokerToHub) -> Option<BrokerToHub> {
         let Ok(mut s) = self.streams.lock() else {
             return Some(msg);
         };
-        let Some((_, tx)) = s.get(&req) else {
+        let k = key(broker, req);
+        let Some(tx) = s.get(&k) else {
             return Some(msg);
         };
         if tx.try_send(msg).is_err() {
-            s.remove(&req);
+            s.remove(&k);
         }
         None
     }
 
-    pub(crate) fn register(&self, req: u64) -> oneshot::Receiver<BrokerToHub> {
+    pub(crate) fn register(&self, req: u64, broker: &str) -> oneshot::Receiver<BrokerToHub> {
         let (tx, rx) = oneshot::channel();
         if let Ok(mut w) = self.waiting.lock() {
-            w.insert(req, tx);
+            w.insert(key(broker, req), tx);
         }
         rx
     }
 
-    pub(crate) fn forget(&self, req: u64) {
+    pub(crate) fn forget(&self, req: u64, broker: &str) {
         if let Ok(mut w) = self.waiting.lock() {
-            w.remove(&req);
+            w.remove(&key(broker, req));
         }
     }
 
-    fn deliver(&self, req: u64, msg: BrokerToHub) {
-        let waiter = self.waiting.lock().ok().and_then(|mut w| w.remove(&req));
+    fn deliver(&self, broker: &str, req: u64, msg: BrokerToHub) {
+        let waiter = self
+            .waiting
+            .lock()
+            .ok()
+            .and_then(|mut w| w.remove(&key(broker, req)));
         if let Some(tx) = waiter {
             let _ = tx.send(msg);
         }
@@ -264,17 +273,22 @@ async fn reader(target: &Target, shared: &Shared, events: &mpsc::Sender<Event>, 
                 let req = r.req;
                 shared
                     .pending
-                    .deliver(req, BrokerToHub::CapabilitiesReply(r));
+                    .deliver(&target.name, req, BrokerToHub::CapabilitiesReply(r));
             }
             BrokerToHub::ReadReply(a) => {
                 let req = a.req;
-                if let Some(msg) = shared.pending.feed(req, BrokerToHub::ReadReply(a)) {
-                    shared.pending.deliver(req, msg);
+                if let Some(msg) = shared
+                    .pending
+                    .feed(&target.name, req, BrokerToHub::ReadReply(a))
+                {
+                    shared.pending.deliver(&target.name, req, msg);
                 }
             }
             BrokerToHub::LogChunk(l) => {
                 let req = l.req;
-                shared.pending.feed(req, BrokerToHub::LogChunk(l));
+                shared
+                    .pending
+                    .feed(&target.name, req, BrokerToHub::LogChunk(l));
             }
             BrokerToHub::Event(e) => crate::bus::publish(shared, &target.name, e.event),
             BrokerToHub::Heartbeat | BrokerToHub::Welcome(_) | BrokerToHub::Joined(_) => {}

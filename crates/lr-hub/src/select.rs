@@ -142,14 +142,14 @@ impl Choice {
                 continue;
             };
             let req = s.next_req();
-            let rx = s.pending.register(req);
+            let rx = s.pending.register(req, &b.name);
             let sent = Frame::json(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery { req }))
                 .ok()
                 .is_some_and(|f| tx.try_send(f).is_ok());
             if sent {
                 waits.push((b.name.clone(), req, rx));
             } else {
-                s.pending.forget(req);
+                s.pending.forget(req, &b.name);
                 out.insert(b.name.clone(), Answer::Unavailable);
             }
         }
@@ -163,7 +163,7 @@ impl Choice {
                 },
                 _ = s.clock.sleep_until(deadline) => Answer::Unavailable,
             };
-            s.pending.forget(req);
+            s.pending.forget(req, &name);
             out.insert(name, answer);
         }
         out

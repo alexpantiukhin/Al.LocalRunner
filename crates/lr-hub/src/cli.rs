@@ -346,7 +346,7 @@ impl Engine {
             let (reply, request) = (reply.clone(), r.request.clone());
             tokio::spawn(async move {
                 let req = s.next_req();
-                let rx = s.pending.register(req);
+                let rx = s.pending.register(req, &name);
                 let sent =
                     lr_abstractions::Frame::json(&HubToBroker::Read(ReadCall { req, request }))
                         .is_ok_and(|f| out.try_send(f).is_ok());
@@ -359,7 +359,7 @@ impl Engine {
                 } else {
                     None
                 };
-                s.pending.forget(req);
+                s.pending.forget(req, &name);
                 let msg = match answer {
                     Some(lr_proto::BrokerToHub::ReadReply(a)) => CliReply::Read {
                         broker: name,

@@ -42,7 +42,7 @@ pub(crate) fn relay_log(s: Arc<Shared>, r: LogRead, reply: mpsc::Sender<CliReply
         let mut rx = s.pending.stream(req, &r.broker);
         let sent = call(req, r.request.clone()).is_some_and(|f| r.out.try_send(f).is_ok());
         if !sent {
-            s.pending.forget_stream(req);
+            s.pending.forget_stream(req, &r.broker);
             let _ = reply
                 .send(unavailable(format!("broker {} did not answer", r.broker)))
                 .await;
@@ -89,6 +89,6 @@ pub(crate) fn relay_log(s: Arc<Shared>, r: LogRead, reply: mpsc::Sender<CliReply
                 break;
             }
         }
-        s.pending.forget_stream(req);
+        s.pending.forget_stream(req, &r.broker);
     });
 }

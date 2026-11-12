@@ -227,3 +227,78 @@ async fn shutdown_stops_the_hub() {
     assert_eq!(cli.reply().await, CliReply::Stopping);
     eventually("the hub ends", || hub.is_finished()).await;
 }
+
+async fn with_a_second_broker(rig: &mut Rig) -> (FakeBroker, FakeBroker) {
+    rig.join("far").await;
+    let far = rig.broker(
+        "far",
+        lr_core::Zone::Remote,
+        Script::linux(lr_core::Zone::Remote),
+    );
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    eventually("both brokers connect", || {
+        local.hellos() == 1 && far.hellos() == 1
+    })
+    .await;
+    settle().await;
+    (local, far)
+}
+
+#[tokio::test]
+async fn another_brokers_answer_to_a_request_number_is_dropped() {
+    let mut rig = Rig::new();
+    let (local, far) = with_a_second_broker(&mut rig).await;
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Read(CliRead {
+        broker: Some("local".into()),
+        request: ReadRequest::HistoryShow {
+            job: JobId("j1".into()),
+            client: None,
+        },
+    }))
+    .await;
+    let req = asked(&local).await;
+    let forged = ReadReply::Denied {
+        reason: "forged".into(),
+    };
+    far.send(BrokerToHub::ReadReply(ReadAnswer { req, reply: forged }))
+        .await;
+    settle().await;
+    let real = ReadReply::Denied {
+        reason: "from local".into(),
+    };
+    local
+        .send(BrokerToHub::ReadReply(ReadAnswer {
+            req,
+            reply: real.clone(),
+        }))
+        .await;
+    assert_eq!(
+        cli.reply().await,
+        CliReply::Read {
+            broker: "local".into(),
+            reply: real
+        }
+    );
+}
+
+#[tokio::test]
+async fn another_brokers_log_chunks_never_reach_the_stream() {
+    let mut rig = Rig::new();
+    let (local, far) = with_a_second_broker(&mut rig).await;
+    let cli = rig.cli().await;
+    cli.send(log(false)).await;
+    let req = asked(&local).await;
+    far.send(chunk(req, "forged\n", true)).await;
+    settle().await;
+    local.send(chunk(req, "real\n", true)).await;
+    assert_eq!(
+        cli.reply().await,
+        CliReply::LogChunk {
+            broker: "local".into(),
+            text: "real\n".into(),
+            end: true
+        }
+    );
+}
