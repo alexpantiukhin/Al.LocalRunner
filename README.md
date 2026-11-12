@@ -384,9 +384,9 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 - Политику правит только тот, кто сидит за машиной брокера; `policy reload` принимается только по локальному каналу.
 - `status --html` не включает логи без `--with-logs`.
 
-## Плагин Claude Code
+## Плагин для агентов (Claude Code и Codex)
 
-Плагин в `plugin/` оборачивает команды в скилы:
+Плагин в `plugin/` оборачивает команды в скилы. Один и тот же плагин `al-localrunner` описан для обоих агентов: `.claude-plugin/marketplace.json` для Claude Code, `.agents/plugins/marketplace.json` для Codex.
 
 | Скил | Назначение |
 |---|---|
@@ -397,5 +397,54 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 | `status-runner` | очередь, джобы, раннеры, история, дашборд |
 | `run` | поставить запуск и прочитать результат |
 
-Установка в проект только на уровне проекта:
-`claude plugin marketplace add <url> --scope project`, затем `claude plugin install al-localrunner@al-localrunner --scope project`.
+Плагин только вызывает бинарник `localrunner`, поэтому бинарник нужно поставить отдельно (раздел «Установка бинарника»).
+
+### Claude Code
+
+Область установки задаёт `--scope`:
+
+| Область | Где записывается | Кому доступен |
+|---|---|---|
+| `project` | `.claude/settings.json` репозитория | всем, кто работает с этим репозиторием (файл коммитится) |
+| `local` | локальные настройки репозитория, не коммитятся | только вам и только в этом репозитории |
+| `user` (по умолчанию) | настройки пользователя | вам во всех проектах |
+
+Для проекта:
+
+```
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
+claude plugin install al-localrunner@al-localrunner --scope project
+```
+
+Глобально, для всех проектов пользователя:
+
+```
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope user
+claude plugin install al-localrunner@al-localrunner --scope user
+```
+
+Из локальной копии репозитория вместо `alexpantiukhin/Al.LocalRunner` укажите путь к каталогу, в котором лежит `.claude-plugin/`. Удаление:
+
+```
+claude plugin uninstall al-localrunner@al-localrunner --scope <область>
+claude plugin marketplace remove al-localrunner --scope <область>
+```
+
+### Codex
+
+У Codex нет областей установки: плагины и маркетплейсы записываются в `~/.codex/config.toml` пользователя и действуют во всех проектах. Установка на уровень проекта невозможна.
+
+```
+codex plugin marketplace add alexpantiukhin/Al.LocalRunner
+codex plugin add al-localrunner@al-localrunner
+codex plugin list
+```
+
+Маркетплейс Codex берёт плагин из ветки `main` репозитория, поэтому установка работает после того, как плагин влит в `main`. Удаление:
+
+```
+codex plugin remove al-localrunner@al-localrunner
+codex plugin marketplace remove al-localrunner
+```
+
+После установки плагина перезапустите сессию агента, чтобы скилы подхватились.
