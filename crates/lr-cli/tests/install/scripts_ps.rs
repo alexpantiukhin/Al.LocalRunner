@@ -93,6 +93,14 @@ fn powershell_installer_verifies_the_signature_with_the_release_key() {
     else {
         return;
     };
+    if !cfg!(windows) {
+        crate::skipped(
+            "powershell_installer_verifies_the_signature_with_the_release_key",
+            "windows",
+            "the installer runs ssh-keygen through Start-Process, which is Windows-only",
+        );
+        return;
+    }
     let tmp = TempDir::new("install-ps-sig");
     let sums = tmp.path().join("SHA256SUMS");
     std::fs::write(&sums, sums_line(&"0".repeat(64), "x.zip")).unwrap();
@@ -230,6 +238,14 @@ fn powershell_installer_explains_an_ssh_keygen_without_signatures() {
     else {
         return;
     };
+    if !cfg!(windows) {
+        crate::skipped(
+            "powershell_installer_explains_an_ssh_keygen_without_signatures",
+            "windows",
+            "the installer runs ssh-keygen through Start-Process, which is Windows-only",
+        );
+        return;
+    }
     let tmp = TempDir::new("install-ps-oldssh");
     let sums = tmp.path().join("SHA256SUMS");
     let sig = tmp.path().join("SHA256SUMS.sig");

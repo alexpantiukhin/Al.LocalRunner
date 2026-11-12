@@ -47,6 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup show
+      - name: Loopback aliases (macOS has only 127.0.0.1)
+        if: runner.os == 'macOS'
+        run: for a in 127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5 127.0.0.9; do sudo ifconfig lo0 alias $a up; done
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked --no-fail-fast
