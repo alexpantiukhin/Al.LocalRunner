@@ -144,8 +144,13 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
             .iter()
             .any(|c| c.mode == CommandMode::Any);
     any.then(|| {
-        "the broker and a runner run under the same OS user and the policy lets clients run any          command: a job of another client can use the broker admin channel, its key and its          databases (spec 3.12); run the runner under its own OS user, or the broker as an OS          service, or set [commands] default = \"named\""
-            .to_string()
+        [
+            "the broker and a runner run under the same OS user and the policy lets clients run",
+            "any command: a job of another client can use the broker admin channel, its key and",
+            "its databases (spec 3.12); run the runner under its own OS user, or the broker as an",
+            "OS service, or set [commands] default = \"named\"",
+        ]
+        .join(" ")
     })
 }
 
