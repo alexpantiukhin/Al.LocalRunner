@@ -313,7 +313,7 @@ struct DownOnDrop(Layout);
 impl Drop for DownOnDrop {
     fn drop(&mut self) {
         let _ = std::process::Command::new(env!("CARGO_BIN_EXE_localrunner"))
-            .args(["down", "--cancel", "--state-dir"])
+            .args(["down", "--cancel", "--yes", "--state-dir"])
             .arg(&self.0.root)
             .arg("--config-dir")
             .arg(&self.0.config)

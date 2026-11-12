@@ -1,6 +1,7 @@
 //! `submit`, `run`, `wait`, `jobs` and `cancel` (spec 7, 11.1): the CLI collects the identity
 //! and talks to its hub over the local CLI channel.
 
+use super::confirm::{proceed, Console, Stdio};
 use super::log_cmd::{cli_redactor, LogPrinter};
 use super::OrderArgs;
 use crate::facts::{collect_github, collect_session};
@@ -362,6 +363,47 @@ pub fn mine_line(j: &lr_proto::JobSummary) -> String {
         super::view::source_name(j.source),
         j.label.as_deref().unwrap_or("-")
     )
+}
+
+/// `cancel` as the command line runs it (see [`cancel_asked`]).
+pub async fn cancel_cli(
+    layout: &Layout,
+    job: Option<String>,
+    label: &str,
+    mine: bool,
+    force: bool,
+    reason: Option<String>,
+    yes: bool,
+) -> Result<i32, String> {
+    let mut stdio = Stdio::new();
+    let mut console = stdio.console();
+    cancel_asked(layout, job, label, mine, force, reason, yes, &mut console).await
+}
+
+/// [`cancel`] that, for `--mine` (it can cancel several jobs), first asks (`yes` answers); a
+/// refusal or a "no" ends with code 1 before the hub is reached. One named job never asks.
+#[allow(clippy::too_many_arguments)]
+pub async fn cancel_asked(
+    layout: &Layout,
+    job: Option<String>,
+    label: &str,
+    mine: bool,
+    force: bool,
+    reason: Option<String>,
+    yes: bool,
+    console: &mut Console<'_>,
+) -> Result<i32, String> {
+    if mine
+        && !proceed(
+            "cancel --mine cancels all your active jobs",
+            &format!("cancel all active jobs of label {label}?"),
+            yes,
+            console,
+        )?
+    {
+        return Ok(1);
+    }
+    cancel(layout, job, label, mine, force, reason).await
 }
 
 /// `cancel <job>` or `cancel --mine`.

@@ -1,6 +1,7 @@
 //! Broker administration from the CLI: over the broker's local admin channel only
 //! (spec 3.9); `policy check` reads the file itself and needs no broker.
 
+use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_broker::policy::{check, load};
@@ -28,6 +29,34 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
             Ok(0)
         }
     }
+}
+
+/// `runner remove` or `client remove` as the command line runs it (see [`remove_asked`]).
+pub async fn remove_cli(layout: &Layout, req: AdminRequest, yes: bool) -> Result<i32, String> {
+    let mut stdio = Stdio::new();
+    let mut console = stdio.console();
+    remove_asked(layout, req, yes, &mut console).await
+}
+
+/// Sends the removal `req` (`RunnerRemove` or `ClientRemove`) after asking, because it revokes
+/// a key (`yes` answers); a refusal or a "no" ends before the broker is reached.
+pub async fn remove_asked(
+    layout: &Layout,
+    req: AdminRequest,
+    yes: bool,
+    console: &mut Console<'_>,
+) -> Result<i32, String> {
+    let (kind, name) = match &req {
+        AdminRequest::RunnerRemove { name } => ("runner", name),
+        AdminRequest::ClientRemove { name } => ("client", name),
+        _ => return simple(layout, req).await,
+    };
+    let action = format!("{kind} remove revokes the key of {kind} {name}");
+    let question = format!("remove {kind} {name} and revoke its key? It needs a new join code.");
+    if !proceed(&action, &question, yes, console)? {
+        return Ok(1);
+    }
+    simple(layout, req).await
 }
 
 /// Sends one admin command to the broker of this installation and prints the answer.

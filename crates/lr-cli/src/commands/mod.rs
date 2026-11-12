@@ -2,6 +2,7 @@
 
 pub mod admin_cmd;
 pub mod args;
+pub mod confirm;
 pub mod down_cmd;
 pub mod history_cmd;
 pub mod jobs;
@@ -137,6 +138,9 @@ pub enum Command {
         /// Reason written to the log.
         #[arg(long)]
         reason: Option<String>,
+        /// Confirm `--mine` without asking.
+        #[arg(long)]
+        yes: bool,
     },
     /// Queue and running jobs with steps and wait reasons.
     Status {
@@ -191,9 +195,12 @@ pub enum Command {
         /// Finish the current job first (default).
         #[arg(long, conflicts_with = "cancel")]
         drain: bool,
-        /// Cancel the current job.
+        /// Cancel the current job (asks for confirmation).
         #[arg(long)]
         cancel: bool,
+        /// Confirm `--cancel` without asking.
+        #[arg(long)]
+        yes: bool,
     },
     /// Broker policy.
     Policy {
@@ -325,7 +332,8 @@ pub async fn run(cli: Cli) -> i32 {
             mine,
             force,
             reason,
-        } => jobs::cancel(&layout, job, &label, mine, force, reason).await,
+            yes,
+        } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
         Command::Status {
             project,
             source,
@@ -348,7 +356,9 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Up { role } => up_cmd::up(&layout, role).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
         Command::Dashboard => crate::dashboard::run(&layout).await,
-        Command::Down { names, cancel, .. } => down_cmd::down(&layout, names, cancel).await,
+        Command::Down {
+            names, cancel, yes, ..
+        } => down_cmd::down_cli(&layout, names, cancel, yes).await,
         Command::Policy { action } => match action {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
             PolicyAction::Reload => {
@@ -427,16 +437,18 @@ pub async fn run(cli: Cli) -> i32 {
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
             }
-            RunnerAction::Remove { name } => {
-                admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerRemove { name }).await
+            RunnerAction::Remove { name, yes } => {
+                let req = lr_proto::AdminRequest::RunnerRemove { name };
+                admin_cmd::remove_cli(&layout, req, yes).await
             }
         },
         Command::Client { action } => match action {
             ClientAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientList).await
             }
-            ClientAction::Remove { name } => {
-                admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientRemove { name }).await
+            ClientAction::Remove { name, yes } => {
+                let req = lr_proto::AdminRequest::ClientRemove { name };
+                admin_cmd::remove_cli(&layout, req, yes).await
             }
         },
         Command::Init { role } => setup::init(&layout, role),

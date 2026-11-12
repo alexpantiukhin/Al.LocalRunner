@@ -150,10 +150,13 @@ pub enum RunnerAction {
     },
     /// Runners of the pool (on the broker).
     List,
-    /// Remove a runner and revoke its key (on the broker).
+    /// Remove a runner and revoke its key (on the broker; asks for confirmation).
     Remove {
         /// Runner name.
         name: String,
+        /// Confirm without asking.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -162,10 +165,13 @@ pub enum RunnerAction {
 pub enum ClientAction {
     /// Clients of the broker.
     List,
-    /// Remove a client and revoke its key.
+    /// Remove a client and revoke its key (asks for confirmation).
     Remove {
         /// Client name.
         name: String,
+        /// Confirm without asking.
+        #[arg(long)]
+        yes: bool,
     },
 }
 

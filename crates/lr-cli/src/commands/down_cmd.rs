@@ -5,6 +5,7 @@
 //! wait: the draining runners and the broker keep running. With `--cancel` the wait is at
 //! most 30 s, also before a broker run by the OS service manager, which answers that it stays.
 
+use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use async_trait::async_trait;
@@ -272,6 +273,45 @@ pub async fn down(layout: &Layout, names: Vec<String>, cancel: bool) -> Result<i
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     down_with(layout, names, cancel, &roles, ctrl_c()).await
+}
+
+/// `down` as the command line runs it: `--cancel` asks first (see [`down_asked`]).
+pub async fn down_cli(
+    layout: &Layout,
+    names: Vec<String>,
+    cancel: bool,
+    yes: bool,
+) -> Result<i32, String> {
+    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
+    let roles = IpcRoles { layout, principal };
+    let mut stdio = Stdio::new();
+    let mut console = stdio.console();
+    down_asked(layout, names, cancel, yes, &roles, ctrl_c(), &mut console).await
+}
+
+/// [`down_with`] that, with `cancel`, first asks (`yes` answers it) because running jobs are
+/// killed; a refusal or a "no" ends with code 1 before any role is told to stop. Without
+/// `cancel` it never asks.
+pub async fn down_asked(
+    layout: &Layout,
+    names: Vec<String>,
+    cancel: bool,
+    yes: bool,
+    roles: &dyn Roles,
+    interrupt: impl Future<Output = ()>,
+    console: &mut Console<'_>,
+) -> Result<i32, String> {
+    if cancel
+        && !proceed(
+            "down --cancel kills the running jobs",
+            "cancel the running jobs and stop the roles? The jobs are lost.",
+            yes,
+            console,
+        )?
+    {
+        return Ok(1);
+    }
+    down_with(layout, names, cancel, roles, interrupt).await
 }
 
 /// `down` of the roles `roles` reaches; `interrupt` (Ctrl+C) ends the wait for the runners.
