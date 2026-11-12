@@ -166,16 +166,16 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
         for r in runners {
             let c = &r.caps;
             out.push(format!(
-                "  {}\t{}\tlast seen {}\tplatforms {}\tmemory free {}/{} MB\tcpu free {}/{}\t\
+                "  {}\t{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
                  tags {}\tprograms {}",
                 r.name,
                 if r.online { "online" } else { "offline" },
                 r.last_seen.map_or("-".into(), format_time),
                 listed(c.platforms.iter()),
-                r.free_mem_mb,
                 c.mem_mb,
-                r.free_cpu,
+                r.free_mem_mb,
                 c.cpu,
+                r.free_cpu,
                 listed(c.tags.iter()),
                 listed(c.programs.iter()),
             ));
