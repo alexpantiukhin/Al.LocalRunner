@@ -79,6 +79,8 @@ fn result_msg(job: &JobId, f: Final) -> RunnerToBroker {
         exit_code: f.exit_code,
         reason: f.reason,
         detail: f.detail,
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     })
 }
 

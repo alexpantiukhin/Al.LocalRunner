@@ -272,6 +272,8 @@ async fn hub_absent_cancel_after_resume_is_shown_and_not_resent() {
             exit_code: None,
             reason: Some(ReasonCode::HubAbsent),
             detail: None,
+            peak_disk_mb: None,
+            peak_mem_mb: None,
         }))
         .await;
 

@@ -126,6 +126,7 @@ impl Engine {
                     broker_lost_kill_s: Some(self.lost_kill_s()),
                     named_commands: !job.entry.order.requirements.commands.is_empty(),
                     cache_client,
+                    limits: None,
                 }),
             }),
         );
@@ -213,6 +214,8 @@ impl Engine {
             exit_code,
             reason: reason.clone(),
             detail,
+            peak_disk_mb: None,
+            peak_mem_mb: None,
         });
         self.notify_hub(&key.client, &key.job, OutboxKind::JobResult, &msg)
             .await;

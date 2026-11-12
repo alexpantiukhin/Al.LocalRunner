@@ -73,6 +73,11 @@ pub struct WireCapabilities {
     /// (spec 3.5); absent from runners of an earlier minor version.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub commands: BTreeSet<String>,
+    /// How the runner keeps jobs within their declared resources: `os` (Job Object or cgroup
+    /// limits) or `watcher` (user-space sampling); absent from runners of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<String>,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -102,6 +107,7 @@ impl From<&Capabilities> for WireCapabilities {
             cache_used_mb: None,
             service_mem_mb: BTreeMap::new(),
             commands: c.commands.clone(),
+            enforcement: None,
         }
     }
 }

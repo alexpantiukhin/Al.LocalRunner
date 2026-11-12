@@ -171,6 +171,8 @@ async fn restarted(shared: &Shared, job: JobId) {
         exit_code: None,
         reason: Some(ReasonCode::RunnerRestarted),
         detail: Some("the runner restarted while the job ran".into()),
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     });
     shared.outbox.push_until_stored(&job, &msg).await;
 }

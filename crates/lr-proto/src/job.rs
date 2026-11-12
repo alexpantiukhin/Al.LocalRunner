@@ -128,6 +128,36 @@ pub struct AssignSpec {
     /// Absent: the cache belongs to `client` alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_client: Option<String>,
+    /// Resource enforcement the broker policy asks for; absent from brokers of an earlier
+    /// minor version and when `[resources]` is not set: the runner then only records peaks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<WireLimits>,
+}
+
+/// How a runner treats a job that exceeds its declared resources.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WireEnforce {
+    /// Only the peaks are recorded.
+    #[default]
+    Off,
+    /// A warning goes to the job log.
+    Warn,
+    /// The job is killed.
+    Kill,
+}
+
+/// The `[resources]` part of the broker policy that travels with an assignment: the ceiling of
+/// a job is its declared value times the headroom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireLimits {
+    /// What happens above the ceiling.
+    pub mode: WireEnforce,
+    /// Memory ceiling in percent of the declared `mem_mb` (125 is the declared value plus a
+    /// quarter).
+    pub mem_headroom_pct: u32,
+    /// Disk ceiling in percent of the declared `disk_mb`.
+    pub disk_headroom_pct: u32,
 }
 
 /// Client part of the cache key the broker sends under `[cache] share = "project"`: the same
@@ -255,6 +285,13 @@ pub struct JobResult {
     pub reason: Option<ReasonCode>,
     /// Text for the log.
     pub detail: Option<String>,
+    /// Peak memory of the job's process tree in MB; absent from runners of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_mem_mb: Option<u64>,
+    /// Peak size of the job's working and temporary directories in MB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_disk_mb: Option<u64>,
 }
 
 /// The order was stored; the hub drops it from its outbox.

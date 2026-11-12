@@ -260,6 +260,7 @@ impl RunnerSettings {
                 .map(|(n, s)| (n.clone(), s.memory_mb))
                 .collect(),
             commands: self.commands.keys().cloned().collect(),
+            enforcement: None,
         }
     }
 }

@@ -90,6 +90,7 @@ pub fn caps() -> WireCapabilities {
         cache_used_mb: Some(1200),
         service_mem_mb: Default::default(),
         commands: Default::default(),
+        enforcement: None,
     }
 }
 
@@ -123,6 +124,7 @@ pub fn assign_spec() -> AssignSpec {
         broker_lost_kill_s: Some(180),
         named_commands: false,
         cache_client: None,
+        limits: None,
     }
 }
 
@@ -257,6 +259,8 @@ pub fn job_result(seq: u64) -> JobResult {
         exit_code: Some(2),
         reason: Some(ReasonCode::RunnerRestarted),
         detail: Some("restarted".into()),
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     }
 }
 

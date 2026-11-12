@@ -308,6 +308,7 @@ pub fn worktree_spec(cwd: &str, steps: Vec<StepSpec>, timeout_s: u64) -> AssignS
         broker_lost_kill_s: Some(180),
         named_commands: false,
         cache_client: None,
+        limits: None,
     }
 }
 
