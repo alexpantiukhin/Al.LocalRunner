@@ -1,6 +1,8 @@
 use super::read::{page, passes, SCAN_LIMIT};
 use super::Engine;
-use crate::api::{detail_of, mask_detail, mask_summary, summary_of, wire_source, Access, Viewer};
+use crate::api::{
+    detail_of, mask_detail, mask_summary, record_summary, wire_source, Access, Viewer,
+};
 use lr_abstractions::{JobFilter, JobRecord};
 use lr_proto::{HistoryFilter, JobDetail, JobSummary, ReadReply, WireSource};
 
@@ -39,7 +41,7 @@ impl Engine {
             .into_iter()
             .filter_map(|rec| {
                 let a = self.access_to(viewer, &rec.job.key.client);
-                let s = mask_summary(summary_of(&rec.job), a)?;
+                let s = mask_summary(record_summary(&rec), a)?;
                 let source = a.sees_fields().then(|| wire_source(rec.job.source));
                 let profile_ok = f
                     .profile

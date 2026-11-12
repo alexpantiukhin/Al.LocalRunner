@@ -88,11 +88,34 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     h.until_state("local:alex", "j2", JobState::Cancelled).await;
     r.send(&step_result("j1", 2, 0, StepState::Failed, 1_000))
         .await;
+    r.acked(2).await;
+    let view = running(
+        alex.read(ReadRequest::Status(StatusFilter::default()))
+            .await,
+    );
+    assert_eq!(
+        view.steps[1].state,
+        StepState::Queued,
+        "no step after a failed one is shown running"
+    );
     r.send(&step_result("j1", 3, 1, StepState::Skipped, 0))
         .await;
     r.send(&result("j1", 4, JobState::Failed, 1)).await;
     r.acked(4).await;
     h.until_state("local:alex", "j1", JobState::Failed).await;
+
+    let ReadReply::History { jobs, .. } = alex
+        .read(ReadRequest::History(HistoryFilter::default()))
+        .await
+    else {
+        panic!("history")
+    };
+    let listed = jobs.iter().find(|s| s.job.0 == "j1").expect("j1 listed");
+    assert_eq!(
+        listed.timeout_s,
+        Some(600),
+        "the list carries the stored job timeout"
+    );
 
     let all = details(
         alex.read(ReadRequest::HistoryDetails(HistoryFilter::default()))
@@ -102,6 +125,8 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     let states: Vec<StepState> = j1.steps.iter().map(|s| s.state).collect();
     assert_eq!(states, [StepState::Failed, StepState::Skipped]);
     assert!(j1.steps[0].started_at.is_some());
+    assert_eq!(j1.steps[1].started_at, None, "a skipped step never started");
+    assert_eq!(j1.summary.timeout_s, Some(600));
     assert_eq!(j1.note.as_deref(), Some("why"));
     assert_eq!(j1.cwd.as_deref(), Some("/work/repo"));
     let j2 = all.iter().find(|d| d.summary.job.0 == "j2").unwrap();
@@ -111,6 +136,11 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     let theirs = details(
         bob.read(ReadRequest::HistoryDetails(HistoryFilter::default()))
             .await,
+    );
+    let ids: Vec<&str> = theirs.iter().map(|d| d.summary.job.0.as_str()).collect();
+    assert!(
+        ids.contains(&"j1") && ids.contains(&"j2"),
+        "bob sees the runs at summary: {ids:?}"
     );
     for d in &theirs {
         assert!(
@@ -150,6 +180,7 @@ async fn a_queued_order_carries_the_kind_of_its_wait_for_its_owner_only() {
     );
     let mut bob = h.local_hub("bob").await;
     let theirs = queued(bob.read(ReadRequest::Status(StatusFilter::default())).await);
+    assert_eq!(theirs.len(), 1, "bob sees the queued order at summary");
     assert!(theirs.iter().all(|q| q.wait_code.is_none()), "{theirs:?}");
 }
 
@@ -182,4 +213,34 @@ async fn step_statistics_count_the_steps_that_ran() {
         .collect();
     assert_eq!(names, ["build", "test"], "{stats:?}");
     assert_eq!(stats.profiles[0].steps[0].duration_ms.median, Some(2_000));
+}
+
+#[tokio::test]
+async fn a_skipped_step_has_no_start_and_stays_out_of_step_statistics() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&two_steps("j1")).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.started_notice().await;
+    h.clock.advance(Duration::from_secs(3));
+    r.send(&step_result("j1", 2, 0, StepState::Failed, 2_000))
+        .await;
+    r.send(&step_result("j1", 3, 1, StepState::Skipped, 0))
+        .await;
+    r.send(&result("j1", 4, JobState::Failed, 1)).await;
+    r.acked(4).await;
+    h.until_state("local:alex", "j1", JobState::Failed).await;
+    let ReadReply::Stats(stats) = alex.read(ReadRequest::Stats(StatsFilter::default())).await
+    else {
+        panic!("stats")
+    };
+    let steps: Vec<(&str, u64)> = stats.profiles[0]
+        .steps
+        .iter()
+        .map(|s| (s.name.as_str(), s.runs))
+        .collect();
+    assert_eq!(steps, [("build", 1)], "{stats:?}");
 }

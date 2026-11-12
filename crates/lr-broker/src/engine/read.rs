@@ -1,7 +1,7 @@
 use super::conn::ConnId;
 use super::{Client, Engine};
 use crate::api::{
-    access, detail_of, mask_detail, mask_summary, stats_view, summary_of, summary_of_job,
+    access, detail_of, mask_detail, mask_summary, record_summary, stats_view, summary_of_job,
     wire_source, Access, Viewer,
 };
 use crate::MAX_SUBSCRIPTIONS;
@@ -261,7 +261,7 @@ impl Engine {
                 continue;
             }
             let a = self.access_to(viewer, &rec.job.key.client);
-            if let Some(s) = mask_summary(summary_of(&rec.job), a) {
+            if let Some(s) = mask_summary(record_summary(&rec), a) {
                 let source = a.sees_fields().then(|| wire_source(rec.job.source));
                 if passes(&f.project, &f.source, &f.label, &s, source) {
                     recent.push(s);

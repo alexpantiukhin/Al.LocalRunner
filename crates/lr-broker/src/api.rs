@@ -165,6 +165,20 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
     }
 }
 
+/// The unmasked summary of a stored run with what its other rows add: the job timeout from
+/// the resolved order and the link to the GitHub run.
+pub fn record_summary(rec: &JobRecord) -> JobSummary {
+    let mut s = summary_of(&rec.job);
+    s.github_run_url = rec.github.as_ref().map(|g| g.run_url.clone());
+    s.timeout_s = serde_json::from_str::<serde_json::Value>(&rec.spec.resolved_json)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/requirements/timeout_s")
+                .and_then(|t| t.as_u64())
+        });
+    s
+}
+
 /// The view of a stored step.
 pub fn step_view(row: &StepRow) -> StepView {
     StepView {
@@ -178,8 +192,8 @@ pub fn step_view(row: &StepRow) -> StepView {
     }
 }
 
-/// Steps as they stand while the job runs: the first queued step after only ended ones (none
-/// skipped or cancelled) is the one executing, started when the step before it ended, the
+/// Steps as they stand while the job runs: the first queued step after only passed ones is
+/// the one executing, started when the step before it ended, the
 /// first one when the job started. The runner reports a step only once it ends.
 pub fn live_steps(
     mut steps: Vec<StepView>,
@@ -196,9 +210,12 @@ pub fn live_steps(
         return steps;
     };
     let before = &steps[..i];
-    let blocked = before
-        .iter()
-        .any(|s| matches!(s.state, StepState::Skipped | StepState::Cancelled));
+    let blocked = before.iter().any(|s| {
+        matches!(
+            s.state,
+            StepState::Failed | StepState::Timeout | StepState::Skipped | StepState::Cancelled
+        )
+    });
     if !blocked {
         let since = before.last().map_or(started, |s| s.finished_at.or(started));
         steps[i].state = StepState::Running;
@@ -210,8 +227,7 @@ pub fn live_steps(
 /// The unmasked full record of a stored run.
 pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
     let row = &rec.job;
-    let mut summary = summary_of(row);
-    summary.github_run_url = rec.github.as_ref().map(|g| g.run_url.clone());
+    let summary = record_summary(rec);
     JobDetail {
         summary,
         note: row.note.clone(),

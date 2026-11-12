@@ -330,7 +330,14 @@ impl Engine {
             .get(s.ord as usize)
             .map_or(0, |st| st.timeout_s);
         let begun = Timestamp(now.0.saturating_sub(s.duration_ms));
-        let started_at = Some(self.active[i].started_at.map_or(begun, |j| begun.max(j)));
+        let not_run = s.state == lr_core::StepState::Skipped
+            || (s.duration_ms == 0
+                && matches!(
+                    s.state,
+                    lr_core::StepState::Timeout | lr_core::StepState::Cancelled
+                ));
+        let started_at =
+            (!not_run).then(|| self.active[i].started_at.map_or(begun, |j| begun.max(j)));
         let update = StepUpdate {
             ord: s.ord,
             state: s.state,
