@@ -80,7 +80,10 @@ fn invalid_values_are_refused_with_table_key_and_line() {
 fn kill_mode_is_not_a_warning_but_a_headroom_without_effect_is() {
     assert!(check(&ok("[resources]\nmode = \"kill\"\n"), &HOST).is_empty());
     assert!(check(&ok("[resources]\nmode = \"off\"\n"), &HOST).is_empty());
-    let w = check(&ok("[resources]\nmode = \"off\"\nmem_headroom = 2.0\n"), &HOST);
+    let w = check(
+        &ok("[resources]\nmode = \"off\"\nmem_headroom = 2.0\n"),
+        &HOST,
+    );
     assert_eq!(w.len(), 1, "{w:?}");
     assert_eq!(w[0].table.as_deref(), Some("resources"));
     assert_eq!(w[0].key.as_deref(), Some("mem_headroom"));
