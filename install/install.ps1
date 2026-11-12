@@ -5,12 +5,16 @@ $LocalRunnerArchive = 'al-localrunner-windows-x64.zip'
 $LocalRunnerUsage = @'
 Usage: install.ps1 [--version X.Y.Z] [--dir DIR] [--offline ARCHIVE]
                    [--role hub|broker|runner|all] [--allow-elevated] [--upgrade]
+                   [--yes] [--cancel] [--dry-run]
 
 Installs localrunner.exe for the current user after checking the signature
 of SHA256SUMS and the SHA-256 of the archive. --offline takes a downloaded
 archive with SHA256SUMS and SHA256SUMS.sig next to it. --upgrade runs
 `localrunner upgrade` instead of `install`: it replaces an installed binary and
 restarts the roles that run (it asks first; see --help of upgrade).
+With --upgrade, --yes answers the question (waiting for running jobs), --cancel
+cancels them instead, --dry-run prints the plan; without a terminal an agent or a
+CI job needs --yes or --cancel. --dry-run also works with install.
 '@
 
 function Stop-Install {
@@ -25,7 +29,7 @@ function Write-Step {
 
 function Read-InstallArgs {
     param([string[]]$Arguments)
-    $opts = @{ Version = ''; Dir = ''; Offline = ''; Role = 'all'; AllowElevated = $false; Upgrade = $false; Help = $false }
+    $opts = @{ Version = ''; Dir = ''; Offline = ''; Role = 'all'; AllowElevated = $false; Upgrade = $false; Yes = $false; Cancel = $false; DryRun = $false; Help = $false }
     if ($null -eq $Arguments) {
         $Arguments = @()
     }
@@ -53,6 +57,9 @@ function Read-InstallArgs {
             'role' { $opts.Role = $value.ToLowerInvariant() }
             'allow-elevated' { $opts.AllowElevated = $true }
             'upgrade' { $opts.Upgrade = $true }
+            'yes' { $opts.Yes = $true }
+            'cancel' { $opts.Cancel = $true }
+            'dry-run' { $opts.DryRun = $true }
             'h' { $opts.Help = $true }
             'help' { $opts.Help = $true }
             default { Stop-Install "unknown argument: $given (see --help)" }
@@ -60,6 +67,9 @@ function Read-InstallArgs {
     }
     if (@('hub', 'broker', 'runner', 'all') -notcontains $opts.Role) {
         Stop-Install '--role must be hub, broker, runner or all'
+    }
+    if (-not $opts.Upgrade -and ($opts.Yes -or $opts.Cancel)) {
+        Stop-Install '--yes and --cancel go with --upgrade'
     }
     if ($opts.Version.StartsWith('v')) {
         $opts.Version = $opts.Version.Substring(1)
@@ -190,6 +200,15 @@ function Invoke-LocalRunnerInstall {
     }
     if ($Opts.AllowElevated) {
         $installArgs += '--allow-elevated'
+    }
+    if ($Opts.Yes) {
+        $installArgs += '--yes'
+    }
+    if ($Opts.Cancel) {
+        $installArgs += '--cancel'
+    }
+    if ($Opts.DryRun) {
+        $installArgs += '--dry-run'
     }
     Write-Step "running localrunner $verb"
     & $Exe @installArgs

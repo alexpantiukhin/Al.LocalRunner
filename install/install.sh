@@ -19,12 +19,16 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [--version X.Y.Z] [--dir DIR] [--offline ARCHIVE]
                   [--role hub|broker|runner|all] [--allow-elevated] [--upgrade]
+                  [--yes] [--cancel] [--dry-run]
 
 Installs the localrunner binary for the current user after checking the
 signature of SHA256SUMS and the SHA-256 of the archive. --offline takes a
 downloaded archive with SHA256SUMS and SHA256SUMS.sig next to it. --upgrade
 runs `localrunner upgrade` instead of `install`: it replaces an installed
 binary and restarts the roles that run (it asks first; see --help of upgrade).
+With --upgrade, --yes answers the question (waiting for running jobs), --cancel
+cancels them instead, --dry-run prints the plan; without a terminal an agent or a
+CI job needs --yes or --cancel. --dry-run also works with install.
 EOF
 }
 
@@ -35,6 +39,9 @@ parse_args() {
     ROLE="all"
     ALLOW_ELEVATED=0
     UPGRADE=0
+    YES=0
+    CANCEL=0
+    DRY_RUN=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --version)
@@ -65,6 +72,18 @@ parse_args() {
                 UPGRADE=1
                 shift
                 ;;
+            --yes)
+                YES=1
+                shift
+                ;;
+            --cancel)
+                CANCEL=1
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
             -h | --help)
                 usage
                 exit 0
@@ -78,6 +97,9 @@ parse_args() {
         hub | broker | runner | all) ;;
         *) die "--role must be hub, broker, runner or all" ;;
     esac
+    if [ "$UPGRADE" != 1 ] && { [ "$YES" = 1 ] || [ "$CANCEL" = 1 ]; }; then
+        die "--yes and --cancel go with --upgrade"
+    fi
     VERSION=${VERSION#v}
     case "$VERSION" in
         *[!0-9A-Za-z.+-]*) die "--version must look like 1.2.3" ;;
@@ -174,6 +196,15 @@ run_install() {
     fi
     if [ "$ALLOW_ELEVATED" = 1 ]; then
         set -- "$@" --allow-elevated
+    fi
+    if [ "$YES" = 1 ]; then
+        set -- "$@" --yes
+    fi
+    if [ "$CANCEL" = 1 ]; then
+        set -- "$@" --cancel
+    fi
+    if [ "$DRY_RUN" = 1 ]; then
+        set -- "$@" --dry-run
     fi
     "$WORK/bin/localrunner" "$@" || die "localrunner $1 failed"
 }
