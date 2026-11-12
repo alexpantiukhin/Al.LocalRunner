@@ -442,3 +442,18 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
     );
     assert!(default_path().ends_with("temp/runner/queue.html"));
 }
+
+#[test]
+fn history_prints_a_dash_for_an_empty_client_label() {
+    let rows = vec![(
+        "local".to_string(),
+        JobSummary {
+            client_label: String::new(),
+            ..summary("j1", H)
+        },
+    )];
+    let lines = history_lines(&rows);
+    let cols: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(cols[8], "-", "{}", lines[1]);
+    assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
+}

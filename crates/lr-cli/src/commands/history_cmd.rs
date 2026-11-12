@@ -84,7 +84,11 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
             dash(&s.project),
             source_name(s.source),
             dash(&s.label),
-            s.client_label,
+            if s.client_label.is_empty() {
+                "-"
+            } else {
+                &s.client_label
+            },
             dash(&s.runner),
         ));
     }
