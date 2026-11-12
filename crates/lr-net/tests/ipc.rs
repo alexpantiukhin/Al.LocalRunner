@@ -175,8 +175,20 @@ async fn many_clients_each_accepted() {
         clients.push(dialer().dial(&addr, None).await.unwrap());
     }
     for c in &clients {
-        let server = listener.accept().await.unwrap();
-        exchange(c.as_ref(), server.as_ref()).await;
+        c.send(Frame::from_bytes(br#"{"type":"heartbeat"}"#.to_vec()))
+            .await
+            .expect("send");
+    }
+    for _ in &clients {
+        let server = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+            .await
+            .expect("every client is accepted")
+            .unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(30), server.recv())
+            .await
+            .expect("every accepted connection delivers its frame")
+            .expect("recv");
+        assert_eq!(got.as_bytes(), br#"{"type":"heartbeat"}"#);
     }
 }
 
