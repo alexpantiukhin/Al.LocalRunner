@@ -8,9 +8,9 @@ The core knows no language and no toolchain. What to run and what it needs is de
 
 ## Contents
 
+- [How it works](#how-it-works)
 - [Quick start with an AI agent](#quick-start-with-an-ai-agent)
 - [Quick start by hand (one machine)](#quick-start-by-hand-one-machine)
-- [Nodes](#nodes)
 - [Installation](#installation)
 - [Hub](#hub)
 - [Broker](#broker)
@@ -25,6 +25,29 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Plugin details](#plugin-details)
 - [Usage](#usage)
 - [License](#license)
+
+## How it works
+
+A session or an agent submits a task through the CLI. The task becomes an order and goes to the broker, which holds the queue and hands orders to runners that fit by memory, cores, programs and tags. The runner executes it and returns the result and the log. One binary plays three roles:
+
+| Node | What it does | Where it runs | Configuration |
+|---|---|---|---|
+| hub | takes CLI commands, turns a profile into an order, sends it to a broker, keeps a copy of the logs, shows the dashboard | on the machine you submit from; one per OS user | `hub-policy.toml`, `logging.toml` |
+| broker | holds the queue, picks a runner, keeps history and member keys | on one machine of the pool | `policy.toml`, `logging.toml` |
+| runner | executes jobs, one at a time | on the machine that has the tools | `runner.toml`, `logging.toml` |
+
+```mermaid
+flowchart LR
+    S[Session / agent] -->|IPC| H[hub]
+    D[Dashboard 127.0.0.1] --- H
+    H -->|orders, TLS or IPC| B[broker]
+    B -->|assignment| R1[runner 1]
+    B -->|assignment| R2[runner 2]
+    R1 -->|state, log, result| B
+    R2 -->|state, log, result| B
+```
+
+For several machines, install the broker first, then join the hub and the runners to it (see [Several machines](#several-machines)).
 
 ## Quick start with an AI agent
 
@@ -85,27 +108,6 @@ The skills never raise rights on their own and never print join codes or tokens.
    ```
 
 The hub on the broker's machine does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`init` adds you).
-
-## Nodes
-
-| Node | What it does | Where it runs | Configuration |
-|---|---|---|---|
-| hub | takes CLI commands, turns a profile into an order, sends it to a broker, keeps a copy of the logs, shows the dashboard | on the machine you submit from; one per OS user | `hub-policy.toml`, `logging.toml` |
-| broker | holds the queue, picks a runner, keeps history and member keys | on one machine of the pool | `policy.toml`, `logging.toml` |
-| runner | executes jobs, one at a time | on the machine that has the tools | `runner.toml`, `logging.toml` |
-
-```mermaid
-flowchart LR
-    S[Session / agent] -->|IPC| H[hub]
-    D[Dashboard 127.0.0.1] --- H
-    H -->|orders, TLS or IPC| B[broker]
-    B -->|assignment| R1[runner 1]
-    B -->|assignment| R2[runner 2]
-    R1 -->|state, log, result| B
-    R2 -->|state, log, result| B
-```
-
-For several machines, install the broker first, then join the hub and the runners to it (see [Several machines](#several-machines)).
 
 ## Installation
 
