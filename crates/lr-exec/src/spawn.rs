@@ -37,8 +37,10 @@ pub(crate) struct Launch<'a> {
 #[cfg(windows)]
 const OS_ENV: [&str; 4] = ["SystemRoot", "windir", "ComSpec", "PATHEXT"];
 
+/// The variables without which the OS itself does not work (on Windows `SystemRoot`, `windir`,
+/// `ComSpec`, `PATHEXT`), taken from this process unless `given` already names them.
 #[cfg(windows)]
-fn os_env(given: &[(String, String)]) -> Vec<(String, String)> {
+pub fn os_env(given: &[(String, String)]) -> Vec<(String, String)> {
     OS_ENV
         .iter()
         .filter(|n| !given.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)))
@@ -46,8 +48,9 @@ fn os_env(given: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The variables without which the OS itself does not work: none outside Windows.
 #[cfg(not(windows))]
-fn os_env(_given: &[(String, String)]) -> Vec<(String, String)> {
+pub fn os_env(_given: &[(String, String)]) -> Vec<(String, String)> {
     Vec::new()
 }
 

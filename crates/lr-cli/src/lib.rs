@@ -24,5 +24,6 @@ pub mod paths;
 pub mod purge;
 pub mod roles;
 pub mod runner_config;
+pub mod runner_keys;
 pub mod secrets;
 pub mod state_dir;

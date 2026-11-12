@@ -138,14 +138,7 @@ pub(crate) async fn step_secrets(
 }
 
 pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
-    let s = &shared.deps.settings;
-    let mut env = Vec::new();
-    for (name, value) in [("PATH", &s.path), ("HOME", &s.home), ("TEMP", &s.temp)] {
-        if let Some(v) = value {
-            env.push((name.to_string(), v.clone()));
-        }
-    }
-    env
+    shared.deps.settings.base_env()
 }
 
 pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {

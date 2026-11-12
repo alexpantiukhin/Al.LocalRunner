@@ -95,9 +95,10 @@ pub struct RunnerSettings {
     pub disk_headroom_pct: Option<u32>,
     /// `[[cleanup]]`: commands run after every job on this runner.
     pub cleanup: Vec<CleanupHook>,
-    /// `[job_env]`: variables put into every job (and cleanup hook) environment; the owner's
-    /// values win over any variable of the same name already there. `PATH`, `HOME`, `TEMP`,
-    /// `TMP` and `LOCALRUNNER_*` cannot be set here.
+    /// `[job_env]`: variables put into the environment of every job, service, cleanup hook and
+    /// `[programs]` check; the owner's values win over any variable of the same name already
+    /// there, `HOME` included. `PATH` (use `[env] path`), `TEMP`, `TMP`, `TMPDIR` and
+    /// `LOCALRUNNER_*` cannot be set here.
     pub job_env: BTreeMap<String, String>,
     /// `os` or `watcher`: what enforces resource limits here; set by the assembly.
     pub enforcement: Option<String>,
@@ -258,6 +259,27 @@ impl RunnerSettings {
         }
         s.commands = f.commands;
         Ok(s)
+    }
+
+    /// The environment every job, service and `[programs]` check gets, before the OS variables
+    /// the executor adds: `PATH`, `HOME` and `TEMP`, then the `[job_env]` variables, which
+    /// replace a variable of the same name (`HOME` included).
+    pub fn base_env(&self) -> Vec<(String, String)> {
+        let mut env = Vec::new();
+        for (name, value) in [
+            ("PATH", &self.path),
+            ("HOME", &self.home),
+            ("TEMP", &self.temp),
+        ] {
+            if let Some(v) = value {
+                env.push((name.to_string(), v.clone()));
+            }
+        }
+        for (name, value) in &self.job_env {
+            env.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+            env.push((name.clone(), value.clone()));
+        }
+        env
     }
 
     /// Seconds after which jobs are killed while the broker is unreachable: the broker's value

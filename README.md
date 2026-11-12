@@ -259,11 +259,14 @@ Joining members:
 ```
 localrunner broker add --name office --label dev              # for a hub: prints the address, the code and the certificate fingerprint
 localrunner broker add --runners 2 --address 192.168.1.10:7443  # for runners: a code for 2 joins
+localrunner broker add --runners 1 --code-file code.txt         # write the code to a new file instead of printing it
 localrunner runner list
 localrunner runner remove <name> [--yes]   # remove a runner and revoke its key
 localrunner client list
 localrunner client remove <name> [--yes]   # revoke a hub's key
 ```
+
+`broker add` uses the broker's admin channel: on a broker installed as a Windows service it needs an administrator, on Unix the OS user of the broker. `runner join` and `hub join` refuse to run as an administrator, so the code has to cross between two users: run `broker add --code-file <file>` as the administrator (the file must not exist yet), then `runner join <address> --code-file <file>` as the regular user, and delete the file. The code never appears on the screen; the address, the fingerprint and the expiry are printed as usual.
 
 A code is valid for 1 hour and for the given number of joins. The address with the port must be reachable by the member. The certificate fingerprint is part of the code, so there is nothing to compare by hand. `runner remove` and `client remove` ask for confirmation; without a terminal (scripts, agents) they need `--yes`.
 
@@ -292,6 +295,8 @@ localrunner up runner
 
 Configuration: `runner.toml`. `[env] path` is mandatory: it is the job's `PATH` and the place where programs are looked up. A runner without it does not start, and the runner process's `PATH` is not passed to jobs. Autostart and services give a poor environment, so set the paths explicitly.
 
+A job gets only these variables: `PATH` (from `[env] path`), `HOME` (from the runner process), `TEMP`, `TMP` and `TMPDIR` (a private directory of the job), `LOCALRUNNER_JOB_ID`, `LOCALRUNNER_CACHE_<NAME>`, the secrets it asked for and everything in `[job_env]`; on Windows also `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`. Nothing else of the runner's environment is inherited. Any other variable the jobs need (`JAVA_HOME`, `CARGO_HOME`, `ANDROID_NDK_HOME`) is written in `[job_env]` as `NAME = "value"`; `HOME` written there replaces the detected one. `init` and `runner join` write the `HOME` of the shell they run in into `[job_env]`, so you see it in the file; a runner whose file has no `HOME` takes the home directory of the OS user that runs it, so jobs on different runners may see different settings in it (`.npmrc`, `.gitconfig`); to make them the same, set `HOME` in `[job_env]` to a directory of your own. `PATH` (use `[env] path`), `TEMP`, `TMP`, `TMPDIR` and names starting with `LOCALRUNNER_` are refused. A key that is not a setting of `runner.toml` (a variable written under `[env]`, for example) is a warning at start and in `doctor`. The `[programs]` checks run in exactly the same environment, and each check may take `check_timeout_s` seconds (default 10): a program that starts slowly, such as `pnpm` through `corepack` on a cold cache, needs a larger value or a `HOME` where its cache lives.
+
 ```toml
 name      = "linux-heavy"
 platforms = ["linux", "android"]
@@ -307,7 +312,6 @@ path = "/usr/local/bin:/usr/bin:/bin"
 [programs]                     # what to look for on the runner and how to check it
 git    = {}
 gradle = { check = "gradle --version" }
-
 [accept]
 min_mem_mb = 8192              # a reserve for heavy orders
 
@@ -329,7 +333,8 @@ retention_days = 7
 [commands]                     # names for clients with mode = "named"
 build = "make all"
 
-[job_env]                     # extra variables for every job and cleanup hook
+[job_env]                     # extra variables for every job, service and cleanup hook
+JAVA_HOME = "/opt/jdk"
 GRADLE_OPTS = "-Dorg.gradle.daemon=false"
 
 [[cleanup]]                    # a command run after every job
@@ -350,7 +355,7 @@ The `cpu`, `mem_mb` and `disk_mb` of a profile limit the job itself by default i
 - **Mechanisms.** Windows: a Job Object (memory, CPU rate cap, process limit). Linux: a cgroup v2 scope through `systemd-run` (`MemoryMax`, `CPUQuota`, `TasksMax`) when the controllers are delegated to the user. Otherwise, and always on macOS, a user-space watcher samples the process tree about every 250 ms and kills it above the ceiling; CPU is lowered with the process priority (`nice`), and the process count limit does not apply. The watcher measures RSS on Unix, so the figures are approximate there (on Windows it is the commit). The runner reports `enforcement = os` or `watcher` (see `runners` and the dashboard).
 - **Disk.** A watcher sums the files in the job's working directory and in its private temporary directory `<runner state dir>/tmp/lr-<job-id>` about every 2 seconds (symbolic links are not followed; the shared system temp is not measured). `TEMP`, `TMP` and `TMPDIR` of every job point to that directory, which is always used, created before the first step and removed after the job (also after kill or cancel; up to 8 attempts 250 ms apart, since on Windows files of a just-killed process are briefly locked); after a runner crash everything under `<state dir>/tmp` is removed when the runner starts. This changes where jobs write temporary files. Before a job starts the runner checks the free space of the working volume against `disk_mb` times the factor.
 - **Cleanup.** `[[cleanup]]` commands run after every job outcome (`on` defaults to all of `passed`, `failed`, `killed`, `cancelled`, `timeout`) with the environment `LOCALRUNNER_JOB_ID` and `LOCALRUNNER_JOB_LABEL` (`lr-<job id>`). A hook failure never changes the job result: a warning goes to the job log and the diagnostics. Hooks do not run after a runner restart recovery or for orders rejected at intake. What to clean (labelled containers, build daemons) is up to the owner's command; the core knows no tools.
-- **`[job_env]`** adds variables to every job and hook; `PATH`, `HOME`, `TEMP`, `TMP` and `LOCALRUNNER_*` are forbidden. `LOCALRUNNER_JOB_LABEL` reaches the job environment only if at least one `[[cleanup]]` exists.
+- **`[job_env]`** adds variables to every job and hook; `PATH`, `TEMP`, `TMP`, `TMPDIR` and `LOCALRUNNER_*` are forbidden; `HOME` is allowed. `LOCALRUNNER_JOB_LABEL` reaches the job environment only if at least one `[[cleanup]]` exists.
 - **Foreign load.** Runners send the free memory and CPU load of their machine with the heartbeat. With `[admission] foreign_load = "wait"` an order waits while foreign processes leave too little (`занято чужими процессами: CPU 95%, нужно 4 ядер`, visible in `status` and `explain`); running jobs are never paused. The CPU of the broker's own jobs on the same machine is not counted as foreign. Runners that send no load (older ones, and macOS for now) are admitted as before.
 - **Not in this version:** disk I/O limits, core pinning, pausing running jobs, a Docker socket proxy, OS disk quotas.
 
@@ -453,8 +458,10 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 | unclear what is wrong with a node | `localrunner doctor` (`--json`; code 1 if there is a `fail`) |
 | an order does not start | `localrunner explain <job>`: the reason and the rule that fired |
 | no suitable runner | the answer names the difference between the order and the runners; `localrunner runners` |
+| a setting in `runner.toml` has no effect | a misspelled key or section is not an error: it is printed as a warning at start and by `localrunner doctor` |
 | a runner does not start | the message names the reason: no `[env] path`, run as root, runner under the broker's user |
 | the hub does not see the broker | `localrunner brokers`; check `[listen]`, `[networks]` and the port |
+| `broker add`: "admin channel is not reachable ... access denied" | run it as an administrator (Windows service) or as the broker's OS user; hand the code over with `--code-file` |
 | the join code is rejected | it lives 1 hour and has a limited number of joins; issue a new one with `broker add` |
 
 ## Security

@@ -15,7 +15,7 @@ pub const MAX_CLEANUP_TIMEOUT_S: u64 = 3_600;
 /// `runner.toml` and neither the owner nor the broker gives a headroom.
 pub const DEFAULT_HEADROOM_PCT: u32 = 125;
 
-const RESERVED_ENV: [&str; 4] = ["PATH", "HOME", "TEMP", "TMP"];
+const RESERVED_ENV: [&str; 4] = ["PATH", "TEMP", "TMP", "TMPDIR"];
 const RESERVED_PREFIX: &str = "LOCALRUNNER_";
 
 /// How a job ended, for choosing the cleanup hooks to run.
@@ -146,7 +146,7 @@ pub(crate) fn job_env_table(
         let upper = name.to_ascii_uppercase();
         if RESERVED_ENV.contains(&upper.as_str()) || upper.starts_with(RESERVED_PREFIX) {
             return Err(SettingsError(format!(
-                "[job_env] {name} is reserved (PATH, HOME, TEMP, TMP and LOCALRUNNER_* belong to the runner)"
+                "[job_env] {name} is reserved (PATH comes from [env] path; TEMP, TMP, TMPDIR and LOCALRUNNER_* belong to the runner)"
             )));
         }
     }

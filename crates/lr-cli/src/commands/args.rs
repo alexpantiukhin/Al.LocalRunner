@@ -101,6 +101,10 @@ pub enum BrokerAction {
         /// Address to print.
         #[arg(long)]
         address: Option<String>,
+        /// Write the code to this new file instead of printing it: the joining user reads it
+        /// with `runner join --code-file`.
+        #[arg(long)]
+        code_file: Option<PathBuf>,
     },
 }
 

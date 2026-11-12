@@ -47,7 +47,7 @@ pub use log::{cancel_line, header_line, LogWriter, MAX_LINE, SOFT_STOP_NOT_DELIV
 pub use mask::Masker;
 pub use probe::{process_start, OsProcessInspector};
 pub use runner::ExecRunner;
-pub use spawn::MAX_CHUNK;
+pub use spawn::{os_env, MAX_CHUNK};
 
 /// How this build contains a job's process tree (spec 3.11, 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

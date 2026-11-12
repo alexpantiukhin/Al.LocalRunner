@@ -95,6 +95,15 @@ async fn hub_and_runners_join_with_codes_and_keep_the_pinned_broker() {
             std::env::var("PATH").ok().as_deref(),
             "runner join writes [env] path from the shell PATH"
         );
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .ok();
+        assert_eq!(
+            parsed["job_env"]["HOME"].as_str(),
+            home.as_deref(),
+            "runner join writes [job_env] HOME from the home directory of the process"
+        );
+        assert!(parsed["job_env"].get("TEMP").is_none());
     }
     assert_eq!(
         admin(&layout, AdminRequest::RunnerList).await,

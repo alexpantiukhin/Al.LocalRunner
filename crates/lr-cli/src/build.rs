@@ -365,6 +365,9 @@ pub async fn runner(
     let host: HostResources = host::resources();
     let mut cfg = RunnerConfig::parse(&text, Some(name), name, dir.clone(), host)
         .map_err(|e| e.to_string())?;
+    for w in &cfg.warnings {
+        eprintln!("runner {name}: warning: runner.toml: {w}");
+    }
     elevation_allowed(host::is_elevated(), cfg.allow_elevated)
         .map_err(|e| format!("runner {name}: {e}"))?;
     if let Some(risk) = crate::doctor::same_user_verdict(layout, cfg.allow_same_user_as_broker)
@@ -372,6 +375,10 @@ pub async fn runner(
     {
         eprintln!("runner {name}: warning: {risk}");
     }
+    cfg.settings.home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
     cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
@@ -380,10 +387,6 @@ pub async fn runner(
         pid,
         start: lr_exec::process_start(pid),
     });
-    cfg.settings.home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok();
-    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
     cfg.settings.enforcement = Some(
         match lr_exec::enforcement() {
             lr_exec::Enforcement::Os => "os",

@@ -69,6 +69,8 @@ pub struct RunnerConfig {
     pub programs: BTreeMap<String, ProgramSpec>,
     /// `[secret.*]` sources.
     pub secrets: BTreeMap<String, SecretFrom>,
+    /// Keys and sections of the file that nothing reads (usually a misspelling).
+    pub warnings: Vec<String>,
 }
 
 fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
@@ -98,6 +100,7 @@ impl RunnerConfig {
     ) -> Result<RunnerConfig, SettingsError> {
         let mut table: toml::Table =
             toml::from_str(text).map_err(|e| SettingsError(e.message().to_string()))?;
+        let warnings = crate::runner_keys::unknown_keys(&table);
         let extra: Extra = table
             .clone()
             .try_into()
@@ -134,6 +137,7 @@ impl RunnerConfig {
             allow_same_user_as_broker: extra.allow_same_user_as_broker,
             programs: extra.programs,
             secrets,
+            warnings,
         })
     }
 
@@ -141,10 +145,11 @@ impl RunnerConfig {
     /// only the programs that passed; returns one line per program that failed.
     pub fn check_programs(&mut self) -> Vec<String> {
         let search = self.settings.path.clone();
+        let env = self.settings.base_env();
         let mut problems = Vec::new();
         self.settings.programs.clear();
         for (name, spec) in &self.programs {
-            match check_program(name, spec, search.as_deref()) {
+            match check_program(name, spec, search.as_deref(), &env) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
@@ -251,7 +256,12 @@ pub fn find_in_path(name: &str, search: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result<(), String> {
+fn check_program(
+    name: &str,
+    spec: &ProgramSpec,
+    search: Option<&str>,
+    env: &[(String, String)],
+) -> Result<(), String> {
     match (&spec.path, search) {
         (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
         (Some(_), _) => {}
@@ -270,8 +280,13 @@ fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result
             .unwrap_or(DEFAULT_CHECK_TIMEOUT_S)
             .max(1),
     );
+    let os = lr_exec::os_env(env);
     let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
+        let shell = os
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("ComSpec"))
+            .map_or("cmd", |(_, v)| v.as_str());
+        let mut c = Command::new(shell);
         c.arg("/C").arg(check);
         c
     } else {
@@ -279,7 +294,9 @@ fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result
         c.arg("-c").arg(check);
         c
     };
-    cmd.env("PATH", search.unwrap_or_default())
+    cmd.env_clear()
+        .envs(os)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -290,7 +307,11 @@ fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(format!("check `{check}` ended with {status}")),
+            Ok(Some(status)) => {
+                return Err(format!(
+                    "check `{check}` ended with {status} (it runs in the job environment: PATH from [env], HOME, TEMP and [job_env])"
+                ))
+            }
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();

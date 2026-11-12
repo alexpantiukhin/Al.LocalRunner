@@ -89,7 +89,20 @@ fn cleanup_entries_get_defaults_and_are_validated() {
 fn job_env_is_validated() {
     let s = parse("[job_env]\nGRADLE_OPTS = \"-Dorg.gradle.daemon=false\"\n").unwrap();
     assert_eq!(s.job_env["GRADLE_OPTS"], "-Dorg.gradle.daemon=false");
-    for bad in ["PATH", "path", "HOME", "LOCALRUNNER_JOB_ID", "1X", "A-B"] {
+    assert_eq!(
+        parse("[job_env]\nHOME = \"/data/home\"\n").unwrap().job_env["HOME"],
+        "/data/home"
+    );
+    for bad in [
+        "PATH",
+        "path",
+        "TEMP",
+        "tmp",
+        "TMPDIR",
+        "LOCALRUNNER_JOB_ID",
+        "1X",
+        "A-B",
+    ] {
         let text = format!("[job_env]\n\"{bad}\" = \"v\"\n");
         assert!(refused(&text).contains("[job_env]"), "{bad}");
     }

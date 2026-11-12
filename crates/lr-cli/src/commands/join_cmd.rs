@@ -155,9 +155,7 @@ fn template(layout: &Layout, j: &RunnerJoin) -> Result<String, String> {
         .unwrap_or_else(|| layout.config_file("runner.toml"));
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(_) if j.config.is_none() => {
-            crate::init::runner_template(std::env::var("PATH").ok().as_deref())
-        }
+        Err(_) if j.config.is_none() => crate::init::runner_template_here(),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
     with_flags(text, &j.platforms, &j.tags)

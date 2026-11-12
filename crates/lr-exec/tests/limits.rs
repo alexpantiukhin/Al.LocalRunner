@@ -6,8 +6,9 @@ use lr_abstractions::{
 };
 use lr_core::{JobState, StepState};
 use lr_exec::{ExecRunner, SystemClock};
+use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(windows)]
 fn allocate(chunks: u32, then_sleep_s: u32) -> String {
@@ -25,18 +26,17 @@ fn allocate(chunks: u32, then_sleep_s: u32) -> String {
 }
 
 #[cfg(windows)]
-fn write_big_file(mb: u32, then_sleep_s: u32) -> String {
-    format!(
-        "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"[IO.File]::WriteAllBytes('big.bin', (New-Object byte[] {mb}MB)); Start-Sleep {then_sleep_s}\""
-    )
+fn linger() -> &'static str {
+    "%SystemRoot%\\System32\\ping.exe -n 3600 127.0.0.1 >nul"
 }
 
 #[cfg(unix)]
-fn write_big_file(mb: u32, then_sleep_s: u32) -> String {
-    format!(
-        "head -c {} /dev/zero > big.bin; sleep {then_sleep_s}",
-        u64::from(mb) * 1_048_576
-    )
+fn linger() -> &'static str {
+    "sleep 3600"
+}
+
+fn prefill(dir: &Path, mb: usize) {
+    std::fs::write(dir.join("big.bin"), vec![0u8; mb * 1_048_576]).unwrap();
 }
 
 async fn run(
@@ -44,22 +44,34 @@ async fn run(
     command: &str,
     limits: ResourceLimits,
     timeout_s: u64,
-) -> (JobOutcome, Vec<JobEvent>, Duration) {
+) -> (JobOutcome, Vec<JobEvent>) {
+    run_with(name, command, limits, timeout_s, 0).await
+}
+
+async fn run_with(
+    name: &str,
+    command: &str,
+    limits: ResourceLimits,
+    timeout_s: u64,
+    prefill_mb: usize,
+) -> (JobOutcome, Vec<JobEvent>) {
     let mut spec = job(name, timeout_s, vec![step("work", command, timeout_s)]);
     spec.cwd = workdir(name);
     let _ = std::fs::remove_file(spec.cwd.join("big.bin"));
+    if prefill_mb > 0 {
+        prefill(&spec.cwd, prefill_mb);
+    }
     spec.limits = limits;
     let runner = ExecRunner::new(Arc::new(SystemClock));
     let out = Recorder::new();
     let (_handle, stop) = stop_signal();
-    let started = Instant::now();
     let outcome = tokio::time::timeout(
         Duration::from_secs(90),
         runner.run_job(spec, out.as_ref(), stop),
     )
     .await
     .expect("run_job did not return");
-    (outcome, out.events(), started.elapsed())
+    (outcome, out.events())
 }
 
 fn mem_limits(mode: Enforce) -> ResourceLimits {
@@ -73,9 +85,9 @@ fn mem_limits(mode: Enforce) -> ResourceLimits {
 
 #[tokio::test]
 async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
-    let (outcome, events, took) = run(
+    let (outcome, events) = run(
         "mem_kill",
-        &allocate(100, 60),
+        &allocate(100, 3600),
         mem_limits(Enforce::Kill),
         120,
     )
@@ -89,7 +101,6 @@ async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
     assert_eq!(outcome.steps[0].state, StepState::Failed);
     assert_eq!(outcome.steps[0].exit_code, None);
     assert!(outcome.usage.peak_mem_mb.unwrap() > 150);
-    assert!(took < Duration::from_secs(45), "took {took:?}");
     let text = events_text(&events);
     assert!(
         text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB, peak"),
@@ -99,7 +110,7 @@ async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
 
 #[tokio::test]
 async fn warn_mode_keeps_the_job_running_and_writes_one_line() {
-    let (outcome, events, _) = run(
+    let (outcome, events) = run(
         "mem_warn",
         &allocate(100, 2),
         mem_limits(Enforce::Warn),
@@ -119,8 +130,7 @@ async fn warn_mode_keeps_the_job_running_and_writes_one_line() {
 
 #[tokio::test]
 async fn off_mode_records_the_peak_and_limits_nothing() {
-    let (outcome, events, _) =
-        run("mem_off", &allocate(100, 1), mem_limits(Enforce::Off), 120).await;
+    let (outcome, events) = run("mem_off", &allocate(100, 1), mem_limits(Enforce::Off), 120).await;
     assert_eq!(outcome.state, JobState::Passed, "{}", events_text(&events));
     assert!(outcome.exceeded.is_none());
     assert!(outcome.usage.peak_mem_mb.unwrap() > 150);
@@ -129,7 +139,7 @@ async fn off_mode_records_the_peak_and_limits_nothing() {
 
 #[tokio::test]
 async fn no_limits_changes_nothing_but_the_peak_is_recorded() {
-    let (outcome, _, _) = run("mem_none", "echo hi", ResourceLimits::default(), 60).await;
+    let (outcome, _) = run("mem_none", "echo hi", ResourceLimits::default(), 60).await;
     assert_eq!(outcome.state, JobState::Passed);
     assert!(outcome.exceeded.is_none());
 }
@@ -143,13 +153,12 @@ async fn kill_mode_ends_a_job_over_the_disk_ceiling() {
         mode: Enforce::Kill,
         ..ResourceLimits::default()
     };
-    let (outcome, events, took) = run("disk_kill", &write_big_file(20, 60), limits, 120).await;
+    let (outcome, events) = run_with("disk_kill", linger(), limits, 120, 20).await;
     let ex = outcome.exceeded.expect("exceeded is set");
     assert_eq!(ex.resource, LimitedResource::Disk);
     assert!(ex.peak_mb > ex.limit_mb);
     assert_eq!(outcome.state, JobState::Failed);
     assert!(outcome.usage.peak_disk_mb.unwrap() > 5);
-    assert!(took < Duration::from_secs(45), "took {took:?}");
     assert!(events_text(&events).contains("killed: declared disk_mb exceeded: declared 4 MB"));
 }
 
@@ -162,14 +171,14 @@ async fn the_process_limit_stops_a_second_process() {
         mode: Enforce::Off,
         ..ResourceLimits::default()
     };
-    let (outcome, _, _) = run("procs_off", command, free, 60).await;
+    let (outcome, _) = run("procs_off", command, free, 60).await;
     assert_eq!(outcome.state, JobState::Passed);
     let capped = ResourceLimits {
         procs: Some(1),
         mode: Enforce::Warn,
         ..ResourceLimits::default()
     };
-    let (outcome, _, _) = run("procs_on", command, capped, 60).await;
+    let (outcome, _) = run("procs_on", command, capped, 60).await;
     assert_eq!(outcome.state, JobState::Failed);
     assert!(outcome.exceeded.is_none());
 }
@@ -182,7 +191,7 @@ async fn a_cpu_cap_still_lets_the_job_finish() {
         mode: Enforce::Warn,
         ..ResourceLimits::default()
     };
-    let (outcome, _, _) = run("cpu_cap", "echo ok", limits, 60).await;
+    let (outcome, _) = run("cpu_cap", "echo ok", limits, 60).await;
     assert_eq!(outcome.state, JobState::Passed);
 }
 
@@ -192,8 +201,8 @@ async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
     if lr_exec::enforcement() != lr_exec::Enforcement::Os {
         return;
     }
-    let command = "x=$(head -c 900000000 /dev/zero | tr '\\0' a); sleep 5";
-    let (outcome, events, took) = run("mem_oom", command, mem_limits(Enforce::Kill), 120).await;
+    let command = "x=$(head -c 900000000 /dev/zero | tr '\\0' a); sleep 3600";
+    let (outcome, events) = run("mem_oom", command, mem_limits(Enforce::Kill), 120).await;
     let text = events_text(&events);
     let ex = outcome.exceeded.expect(&text);
     assert_eq!(ex.resource, LimitedResource::Memory);
@@ -201,7 +210,6 @@ async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
     assert!(ex.peak_mb > ex.limit_mb);
     assert_eq!(outcome.state, JobState::Failed);
     assert!(outcome.usage.peak_mem_mb.unwrap() > ex.limit_mb);
-    assert!(took < Duration::from_secs(45), "took {took:?}");
     assert!(
         text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB"),
         "{text}"
@@ -214,7 +222,7 @@ async fn an_external_sigkill_is_not_an_excess() {
     if lr_exec::enforcement() != lr_exec::Enforcement::Os {
         return;
     }
-    let (outcome, _, _) = run("mem_sigkill", "kill -9 $$", mem_limits(Enforce::Kill), 60).await;
+    let (outcome, _) = run("mem_sigkill", "kill -9 $$", mem_limits(Enforce::Kill), 60).await;
     assert!(outcome.exceeded.is_none());
     assert_eq!(outcome.state, JobState::Failed);
 }
