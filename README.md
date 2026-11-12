@@ -45,7 +45,22 @@ localrunner doctor                             # проверить узел
 
 `install` не запускает роли и не включает автозапуск. От root или администратора он отказывается без `--allow-elevated`. Установку нужно повторять на каждой машине.
 
-Скрипты `install/install.sh` и `install/install.ps1` ставят готовый релиз и проверяют его SHA-256 и подпись. В репозитории в них стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases (`install.sh`, `install.ps1`). Берите скрипт оттуда, а не из ветки. Пока релиза нет, используйте сборку из исходников.
+Скрипты `install/install.sh` и `install/install.ps1` ставят готовый релиз и проверяют его SHA-256 и подпись. Репозиторий клонировать не нужно. В репозитории в скриптах стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Берите скрипт оттуда, а не из ветки.
+
+Linux и macOS (последний обычный релиз):
+
+```
+curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role runner
+```
+
+Windows (PowerShell, от обычного пользователя). Скрипт принимает параметры только как файл, поэтому сначала его скачивают:
+
+```
+Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 --role runner
+```
+
+Роль задаёт `--role hub|broker|runner|all` (по умолчанию `all`). Остальные параметры: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; список даёт `--help`. Для предварительного релиза `latest` в ссылке не подходит: подставьте тег и версию, например `.../releases/download/v0.1.0-rc1/install.sh` и `--version 0.1.0-rc1`. Скрипт проверяет подпись `SHA256SUMS` и SHA-256 архива и при любом несовпадении ничего не ставит. Пока нет ни одного обычного релиза, используйте сборку из исходников или ссылку на предварительный.
 
 Файлы узла:
 
