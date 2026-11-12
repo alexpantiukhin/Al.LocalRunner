@@ -1,5 +1,5 @@
 use super::{Cancel, Engine, Job};
-use lr_abstractions::{JobKey, Level, StoreError};
+use lr_abstractions::{JobKey, Level, OutboxKind, StoreError};
 use lr_core::Timestamp;
 use lr_proto::{JobResult, ReasonCode};
 use std::collections::HashSet;
@@ -11,6 +11,7 @@ pub(crate) enum Retry {
     Cancel(Job, Cancel),
     Lose(Job, ReasonCode),
     Result(Job, Box<JobResult>, Timestamp),
+    Notify(JobKey, OutboxKind, String),
 }
 
 impl Retry {
@@ -20,7 +21,12 @@ impl Retry {
             | Retry::Cancel(job, _)
             | Retry::Lose(job, _)
             | Retry::Result(job, _, _) => &job.key,
+            Retry::Notify(key, _, _) => key,
         }
+    }
+
+    fn holds_run(&self) -> bool {
+        !matches!(self, Retry::Notify(..))
     }
 }
 
@@ -74,6 +80,7 @@ impl Engine {
                     self.lose(job, now, code).await
                 }
                 Retry::Result(job, r, at) => self.job_result(job, &r, at).await,
+                Retry::Notify(key, kind, payload) => self.push_hub(&key, kind, payload).await,
             }
         }
         self.retry_round = false;
@@ -104,7 +111,10 @@ impl Engine {
     }
 
     pub(crate) fn cancel_parked(&mut self, key: &JobKey, cancel: &Cancel) -> Option<bool> {
-        let retry = self.retries.iter_mut().find(|r| r.key() == key)?;
+        let retry = self
+            .retries
+            .iter_mut()
+            .find(|r| r.holds_run() && r.key() == key)?;
         match retry {
             Retry::Requeue(job) if job.cancel.is_none() => {
                 job.cancel = Some(cancel.clone());
@@ -115,7 +125,10 @@ impl Engine {
     }
 
     pub(crate) fn parked_keys(&self) -> impl Iterator<Item = &JobKey> {
-        self.retries.iter().map(Retry::key)
+        self.retries
+            .iter()
+            .filter(|r| r.holds_run())
+            .map(Retry::key)
     }
 
     pub(crate) fn forget_clients(&mut self) {

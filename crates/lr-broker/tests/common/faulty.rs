@@ -20,6 +20,7 @@ pub struct FaultyStore {
     pub fail_accept_seq: AtomicBool,
     pub fail_transition: AtomicBool,
     pub fail_requeue: AtomicBool,
+    pub fail_push_result: AtomicBool,
     pub panic_prune: AtomicBool,
     pub fail_prune: AtomicBool,
     pub hold_prune: AtomicBool,
@@ -42,6 +43,7 @@ impl FaultyStore {
             fail_accept_seq: AtomicBool::new(false),
             fail_transition: AtomicBool::new(false),
             fail_requeue: AtomicBool::new(false),
+            fail_push_result: AtomicBool::new(false),
             panic_prune: AtomicBool::new(false),
             fail_prune: AtomicBool::new(false),
             hold_prune: AtomicBool::new(false),
@@ -217,6 +219,9 @@ impl BrokerStore for FaultyStore {
         at: Timestamp,
         limit_bytes: u64,
     ) -> Result<Option<u64>, StoreError> {
+        if self.fail_push_result.load(Ordering::SeqCst) {
+            return Err(io());
+        }
         self.inner
             .push_result(client, job, kind, payload, at, limit_bytes)
             .await

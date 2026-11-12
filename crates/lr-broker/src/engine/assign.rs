@@ -1,8 +1,9 @@
 use super::conn::ConnId;
 use super::hello::peer_kind;
+use super::retry::Retry;
 use super::{Engine, Job};
 use crate::policy::CacheShare;
-use lr_abstractions::{Applied, Frame, Inbound, Level, OutboxKind, StepUpdate, StoreError};
+use lr_abstractions::{Applied, Frame, Inbound, JobKey, Level, OutboxKind, StepUpdate, StoreError};
 use lr_core::{Assignment, JobId, JobState, RunningJob, Timestamp, Wait};
 use lr_proto::{
     receive, Ack, Assign, AssignSpec, BrokerToHub, BrokerToRunner, Chunk, JobResult, ProtocolError,
@@ -88,7 +89,18 @@ impl Engine {
             return;
         }
         let mut job = self.queue.remove(i);
-        let seq = self.store.next_seq_to_runner(&job.key).await.unwrap_or(1);
+        let seq = match self.store.next_seq_to_runner(&job.key).await {
+            Ok(seq) => seq,
+            Err(e) => {
+                self.store_failed(
+                    "number the assignment; the run goes back to the queue",
+                    &job.key,
+                    &e,
+                );
+                job.runner = Some(a.runner);
+                return self.requeue_or_retry(job).await;
+            }
+        };
         let spec = &job.spec;
         let cache_client = (self.policy.file().cache.share == CacheShare::Project)
             .then(|| SHARED_CACHE_CLIENT.to_string());
@@ -142,15 +154,45 @@ impl Engine {
         let Ok(payload) = serde_json::to_string(msg) else {
             return;
         };
+        let key = JobKey {
+            client: client.to_string(),
+            job: job.clone(),
+        };
+        self.push_hub(&key, kind, payload).await;
+    }
+
+    pub(crate) async fn push_hub(&mut self, key: &JobKey, kind: OutboxKind, payload: String) {
         let limit = self.outbox_limit();
         let pushed = self
             .store
-            .push_result(client, job, kind, payload.clone(), self.now(), limit)
+            .push_result(
+                &key.client,
+                &key.job,
+                kind,
+                payload.clone(),
+                self.now(),
+                limit,
+            )
             .await;
-        if let (Ok(Some(seq)), Some(&conn)) = (pushed, self.hubs.get(client)) {
-            if let Some(frame) = with_seq(&payload, seq) {
-                self.send_ordered(conn, [frame]);
+        match pushed {
+            Ok(Some(seq)) => {
+                if let Some(&conn) = self.hubs.get(&key.client) {
+                    if let Some(frame) = with_seq(&payload, seq) {
+                        self.send_ordered(conn, [frame]);
+                    }
+                }
             }
+            Ok(None) => {}
+            Err(e) if kind == OutboxKind::Chunk => self.store_failed(
+                "keep a log chunk for the hub; the chunk is dropped",
+                key,
+                &e,
+            ),
+            Err(e) => self.retry_later(
+                "keep a message for the hub",
+                &e,
+                Retry::Notify(key.clone(), kind, payload),
+            ),
         }
     }
 
@@ -238,7 +280,15 @@ impl Engine {
                 );
                 None
             }
-            Err(_) => None,
+            Err(e) => {
+                self.store_failed(
+                    "record a message seq from the runner; the connection is closed so the runner sends it again",
+                    &key,
+                    &e,
+                );
+                self.close(conn);
+                None
+            }
         }
     }
 
@@ -276,10 +326,17 @@ impl Engine {
                 };
                 let key = self.active[i].key.clone();
                 let limit = self.log_limit();
-                let _ = self
+                if let Err(e) = self
                     .store
                     .append_log(&key, c.text.as_bytes(), now, limit)
-                    .await;
+                    .await
+                {
+                    self.store_failed(
+                        "append a log chunk; the chunk is missing from the stored log",
+                        &key,
+                        &e,
+                    );
+                }
                 self.feed_follows(&key, c.step, &c.text);
                 let msg = BrokerToHub::Chunk(Chunk {
                     seq: 0,

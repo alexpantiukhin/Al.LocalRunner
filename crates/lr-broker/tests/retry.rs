@@ -236,3 +236,40 @@ async fn result_after_a_failed_started_write_still_ends_the_run() {
     r.acked(2).await;
     h.until_state(ALEX, "j1", JobState::Passed).await;
 }
+
+#[tokio::test]
+async fn a_runner_message_whose_seq_was_not_stored_closes_the_connection_and_is_sent_again() {
+    let h = Harness::start("");
+    let (mut r, _hub) = assigned_on_r1(&h, "j1").await;
+    r.send(&started("j1", 1)).await;
+    r.acked(1).await;
+    FaultyStore::set(&h.faults.fail_accept_seq);
+    r.send(&result("j1", 2, JobState::Passed, 0)).await;
+    assert!(r.closed().await, "the runner must reconnect and resend");
+    assert!(logged_error(&h), "{:?}", h.log.records());
+    FaultyStore::clear(&h.faults.fail_accept_seq);
+    let mut back = rejoin_r1(&h).await;
+    back.send(&result("j1", 2, JobState::Passed, 0)).await;
+    back.acked(2).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+}
+
+#[tokio::test]
+async fn a_hub_message_not_kept_in_the_outbox_is_retried() {
+    let h = Harness::start("");
+    let (mut r, mut hub) = assigned_on_r1(&h, "j1").await;
+    r.send(&started("j1", 1)).await;
+    r.acked(1).await;
+    hub.started_notice().await;
+    FaultyStore::set(&h.faults.fail_push_result);
+    r.send(&result("j1", 2, JobState::Passed, 0)).await;
+    r.acked(2).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    retried(&h, &h.faults.fail_push_result).await;
+    loop {
+        if let BrokerToHub::JobResult(res) = hub.hub().await {
+            assert_eq!(res.state, JobState::Passed);
+            break;
+        }
+    }
+}
