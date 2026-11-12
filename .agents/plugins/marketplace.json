@@ -2,7 +2,7 @@
   "name": "al-localrunner",
   "plugins": [
     {
-      "name": "al-localrunner",
+      "name": "localrunner",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/alexpantiukhin/Al.LocalRunner",
