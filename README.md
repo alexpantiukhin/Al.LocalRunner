@@ -257,11 +257,14 @@ Joining members:
 ```
 localrunner broker add --name office --label dev              # for a hub: prints the address, the code and the certificate fingerprint
 localrunner broker add --runners 2 --address 192.168.1.10:7443  # for runners: a code for 2 joins
+localrunner broker add --runners 1 --code-file code.txt         # write the code to a new file instead of printing it
 localrunner runner list
 localrunner runner remove <name> [--yes]   # remove a runner and revoke its key
 localrunner client list
 localrunner client remove <name> [--yes]   # revoke a hub's key
 ```
+
+`broker add` uses the broker's admin channel: on a broker installed as a Windows service it needs an administrator, on Unix the OS user of the broker. `runner join` and `hub join` refuse to run as an administrator, so the code has to cross between two users: run `broker add --code-file <file>` as the administrator (the file must not exist yet), then `runner join <address> --code-file <file>` as the regular user, and delete the file. The code never appears on the screen; the address, the fingerprint and the expiry are printed as usual.
 
 A code is valid for 1 hour and for the given number of joins. The address with the port must be reachable by the member. The certificate fingerprint is part of the code, so there is nothing to compare by hand. `runner remove` and `client remove` ask for confirmation; without a terminal (scripts, agents) they need `--yes`.
 
@@ -290,6 +293,8 @@ localrunner up runner
 
 Configuration: `runner.toml`. `[env] path` is mandatory: it is the job's `PATH` and the place where programs are looked up. A runner without it does not start, and the runner process's `PATH` is not passed to jobs. Autostart and services give a poor environment, so set the paths explicitly.
 
+A job gets only these variables: `PATH` (from `[env] path`), `HOME` and `TEMP` (from the runner process), `LOCALRUNNER_JOB_ID`, `LOCALRUNNER_CACHE_<NAME>`, and the secrets it asked for; on Windows also `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`. Nothing else of the runner's environment is inherited. Any other variable the jobs need (`JAVA_HOME`, `CARGO_HOME`, `ANDROID_NDK_HOME`) is written in the same `[env]` section as `NAME = "value"`; `HOME` and `TEMP` written there replace the detected values. `PATH` (use `path`) and names starting with `LOCALRUNNER_` are refused. The `[programs]` checks run with the same variables, and each check may take `check_timeout_s` seconds (default 10): a program that starts slowly, such as `pnpm` through `corepack` on a cold cache, needs a larger value or a `HOME` where its cache lives.
+
 ```toml
 name      = "linux-heavy"
 platforms = ["linux", "android"]
@@ -301,11 +306,11 @@ allow_same_user_as_broker = false
 
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"
+JAVA_HOME = "/opt/jdk"         # optional: any other variable of the jobs
 
 [programs]                     # what to look for on the runner and how to check it
 git    = {}
 gradle = { check = "gradle --version" }
-
 [accept]
 min_mem_mb = 8192              # a reserve for heavy orders
 
@@ -426,6 +431,7 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 | no suitable runner | the answer names the difference between the order and the runners; `localrunner runners` |
 | a runner does not start | the message names the reason: no `[env] path`, run as root, runner under the broker's user |
 | the hub does not see the broker | `localrunner brokers`; check `[listen]`, `[networks]` and the port |
+| `broker add`: "admin channel is not reachable ... access denied" | run it as an administrator (Windows service) or as the broker's OS user; hand the code over with `--code-file` |
 | the join code is rejected | it lives 1 hour and has a limited number of joins; issue a new one with `broker add` |
 
 ## Security

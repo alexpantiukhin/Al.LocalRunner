@@ -74,6 +74,9 @@ pub struct RunnerSettings {
     pub process: Option<lr_abstractions::ProcessRef>,
     /// `[env] path`: `PATH` of every job; an empty or blank value counts as absent.
     pub path: Option<String>,
+    /// `[env]` variables other than `path`: added to the environment of every job and of the
+    /// `[programs]` checks; `HOME` and `TEMP` given here replace the detected ones.
+    pub env: BTreeMap<String, String>,
     /// `HOME` of every job.
     pub home: Option<String>,
     /// `TEMP` of every job.
@@ -122,6 +125,28 @@ struct Grace {
 #[derive(Deserialize, Default)]
 struct Env {
     path: Option<String>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, String>,
+}
+
+fn env_variables(
+    extra: BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, SettingsError> {
+    for name in extra.keys() {
+        let why = if name.is_empty() || name.contains(['=', '\0']) {
+            Some("is not a variable name")
+        } else if name.eq_ignore_ascii_case("PATH") {
+            Some("is set by `path`")
+        } else if name.starts_with("LOCALRUNNER_") {
+            Some("is reserved for the runner")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return Err(SettingsError(format!("[env] {name:?} {why}")));
+        }
+    }
+    Ok(extra)
 }
 
 #[derive(Deserialize)]
@@ -183,6 +208,7 @@ impl RunnerSettings {
             disk_ledger: None,
             process: None,
             path: None,
+            env: BTreeMap::new(),
             home: None,
             temp: None,
             services: BTreeMap::new(),
@@ -209,6 +235,7 @@ impl RunnerSettings {
         s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
+        s.env = env_variables(f.env.extra)?;
         s.services = services(f.service)?;
         if let Some(name) = f
             .commands

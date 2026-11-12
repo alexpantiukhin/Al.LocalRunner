@@ -6,7 +6,7 @@ use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_broker::policy::{check, load};
 use lr_proto::{AdminReply, AdminRequest};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The file the running broker uses and its warnings, or its refusal; `None` when the admin
 /// channel of the broker cannot be reached (no broker, or no right to use the channel).
@@ -120,13 +120,72 @@ pub async fn policy_reload(layout: &Layout) -> Result<i32, String> {
     Ok(code)
 }
 
-/// Sends one admin command to the broker of this installation and prints the answer.
-pub async fn simple(layout: &Layout, req: AdminRequest) -> Result<i32, String> {
+/// The error for an admin channel that cannot be opened: a refused access names the cause and
+/// what to do about it.
+pub fn unreachable_message(cause: &str) -> String {
+    let denied = [
+        "os error 5",
+        "os error 13",
+        "ermission denied",
+        "ccess is denied",
+    ]
+    .iter()
+    .any(|m| cause.contains(m));
+    let base = format!("the broker admin channel is not reachable: {cause}");
+    if denied {
+        format!(
+            "{base}\nthe admin channel is open only to an administrator (Windows) or to the OS user of the broker (Unix): \
+             run this command from an elevated shell or as that user. To hand a join code to another user, \
+             add --code-file <file> to `broker add` and give the file to `runner join --code-file`"
+        )
+    } else {
+        base
+    }
+}
+
+/// Writes `code` and a newline to the new file `path`, private to its owner where the OS has
+/// such modes; an existing file is never overwritten.
+pub fn write_code_file(path: &Path, code: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            format!("{}: already exists; give a new file", path.display())
+        } else {
+            format!("{}: {e}", path.display())
+        }
+    })?;
+    writeln!(file, "{code}").map_err(|e| format!("{}: {e}", path.display()))
+}
+
+async fn call(layout: &Layout, req: &AdminRequest) -> Result<AdminReply, String> {
     let client = IpcClient::connect_broker_admin(&layout.admin_ipc())
         .await
-        .map_err(|e| format!("the broker admin channel is not reachable: {e}"))?;
-    let reply: AdminReply = client.call(&req).await?;
+        .map_err(|e| unreachable_message(&e.to_string()))?;
+    let reply = client.call(req).await;
     client.close().await;
+    reply
+}
+
+/// `broker add`: prints the join code, or with `code_file` writes it to that new file and
+/// prints the rest, so the code does not appear on the screen of the administrator.
+pub async fn broker_add(
+    layout: &Layout,
+    req: AdminRequest,
+    code_file: Option<PathBuf>,
+) -> Result<i32, String> {
+    show(call(layout, &req).await?, code_file.as_deref())
+}
+
+/// Sends one admin command to the broker of this installation and prints the answer.
+pub async fn simple(layout: &Layout, req: AdminRequest) -> Result<i32, String> {
+    show(call(layout, &req).await?, None)
+}
+
+fn show(reply: AdminReply, code_file: Option<&Path>) -> Result<i32, String> {
     match reply {
         AdminReply::Ok { warnings } => {
             for w in warnings {
@@ -149,7 +208,13 @@ pub async fn simple(layout: &Layout, req: AdminRequest) -> Result<i32, String> {
             expires_at,
         } => {
             println!("address:     {address}");
-            println!("code:        {code}");
+            match code_file {
+                Some(path) => {
+                    write_code_file(path, &code)?;
+                    println!("code:        written to {}", path.display());
+                }
+                None => println!("code:        {code}"),
+            }
             println!("fingerprint: {fingerprint}");
             println!("expires at:  {} (unix ms)", expires_at.0);
             Ok(0)

@@ -144,7 +144,7 @@ impl RunnerConfig {
         let mut problems = Vec::new();
         self.settings.programs.clear();
         for (name, spec) in &self.programs {
-            match check_program(name, spec, search.as_deref()) {
+            match check_program(name, spec, search.as_deref(), &self.settings.env) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
@@ -251,7 +251,12 @@ pub fn find_in_path(name: &str, search: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result<(), String> {
+fn check_program(
+    name: &str,
+    spec: &ProgramSpec,
+    search: Option<&str>,
+    env: &BTreeMap<String, String>,
+) -> Result<(), String> {
     match (&spec.path, search) {
         (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
         (Some(_), _) => {}
@@ -279,7 +284,8 @@ fn check_program(name: &str, spec: &ProgramSpec, search: Option<&str>) -> Result
         c.arg("-c").arg(check);
         c
     };
-    cmd.env("PATH", search.unwrap_or_default())
+    cmd.envs(env)
+        .env("PATH", search.unwrap_or_default())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

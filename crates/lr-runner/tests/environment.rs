@@ -41,6 +41,37 @@ async fn job_environment_is_built_from_scratch() {
 }
 
 #[tokio::test]
+async fn variables_of_the_env_section_reach_the_job_and_may_replace_home_and_temp() {
+    let mut rig = Rig::new();
+    rig.settings.env.insert("JAVA_HOME".into(), "/jdk".into());
+    rig.settings.env.insert("HOME".into(), "/data/home".into());
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.until_result().await;
+    let env = env_of(&rig.process.runs()[0]);
+    assert!(
+        env.contains(&("JAVA_HOME".into(), "/jdk".into())),
+        "{env:?}"
+    );
+    assert!(
+        env.contains(&("HOME".into(), "/data/home".into())),
+        "{env:?}"
+    );
+    assert!(
+        !env.contains(&("HOME".into(), "/home/runner".into())),
+        "{env:?}"
+    );
+    assert!(env.contains(&("PATH".into(), "/usr/bin:/bin".into())));
+}
+
+#[tokio::test]
 async fn secrets_reach_only_the_steps_that_requested_them() {
     let rig = Rig::new();
     rig.files.mkdir(Path::new("/w/tree"));

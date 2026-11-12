@@ -144,6 +144,10 @@ pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
             env.push((name.to_string(), v.clone()));
         }
     }
+    for (name, value) in &s.env {
+        env.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+        env.push((name.clone(), value.clone()));
+    }
     env
 }
 

@@ -395,6 +395,7 @@ pub async fn run(cli: Cli) -> i32 {
                 label,
                 runners,
                 address,
+                code_file,
             } => {
                 let req = lr_proto::AdminRequest::BrokerAdd {
                     name,
@@ -402,7 +403,7 @@ pub async fn run(cli: Cli) -> i32 {
                     runners,
                     address,
                 };
-                admin_cmd::simple(&layout, req).await
+                admin_cmd::broker_add(&layout, req, code_file).await
             }
         },
         Command::Runner { action } => match action {

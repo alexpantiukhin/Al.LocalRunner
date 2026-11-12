@@ -144,6 +144,28 @@ fn a_check_that_outlives_its_timeout_is_stopped_and_the_program_is_not_offered()
 }
 
 #[test]
+fn a_check_runs_with_the_variables_of_the_env_section() {
+    let probe = if cfg!(windows) {
+        r#"if "%CHK_VAR%"=="yes" (exit 0) else (exit 1)"#
+    } else {
+        r#"test "$CHK_VAR" = yes"#
+    };
+    let programs = format!(
+        "[programs]\nprobe = {{ path = '{}', check = '{probe}' }}\n",
+        std::env::current_exe().unwrap().display()
+    );
+    let mut with = parse(
+        &format!("{programs}{}CHK_VAR = \"yes\"\n", common::env_path_toml()),
+        None,
+    );
+    let problems = with.check_programs();
+    assert!(with.settings.programs.contains("probe"), "{problems:?}");
+    let mut without = parse(&format!("{programs}{}", common::env_path_toml()), None);
+    assert_eq!(without.check_programs().len(), 1);
+    assert!(without.settings.programs.is_empty());
+}
+
+#[test]
 fn names_that_leave_the_runner_directory_are_refused() {
     for bad in [".", "..", "...", "a/b", "a\\b", ""] {
         assert!(check_runner_name(bad).is_err(), "{bad:?} accepted");
