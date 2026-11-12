@@ -216,6 +216,8 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
 | `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` or `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
+| `[resources]` | limits of a job by its declared `mem_mb` and `disk_mb`: `mode` = `off` (default), `warn`, `kill`; `mem_headroom`, `disk_headroom` (factor, default 1.25). See [Resource limits](#resource-limits-cleanup-and-foreign-load) |
+| `[admission]` | `foreign_load` = `off` (default) or `wait`: wait while foreign processes load the runner machine; `mem_headroom_mb` (256) |
 | `[commands]` | `default = "any"` or `"named"`; `[[commands.client]]` for single keys or labels |
 | `[visibility]` | `others_orders` = `none`, `summary`, `full`: what other clients see |
 | `[cancel]` | `others = "none"` or `"owner"`: who cancels other clients' orders |
@@ -309,6 +311,9 @@ min_mem_mb = 8192              # a reserve for heavy orders
 
 [limits]
 max_job_timeout_s = 3600       # ceiling of a job's timeout on this runner
+enforce       = "kill"        # optional: off | warn | kill; replaces the broker's mode
+mem_headroom  = 1.25          # optional: factor of the declared mem_mb (1.0 to 100.0)
+disk_headroom = 1.5           # optional: factor of the declared disk_mb (1.0 to 100.0)
 
 [cache]
 max_size_gb    = 40
@@ -321,9 +326,33 @@ retention_days = 7
 
 [commands]                     # names for clients with mode = "named"
 build = "make all"
+
+[job_env]                     # extra variables for every job and cleanup hook
+GRADLE_OPTS = "-Dorg.gradle.daemon=false"
+
+[[cleanup]]                    # a command run after every job
+name      = "labelled-containers"
+command   = "sh -c 'docker rm -f $(docker ps -aq --filter label=$LOCALRUNNER_JOB_LABEL)'"
+timeout_s = 60                 # 1 to 3600, default 60
+on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # default: all
 ```
 
 Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
+
+### Resource limits, cleanup and foreign load
+
+The `cpu`, `mem_mb` and `disk_mb` of a profile limit the job itself only when the owner turns it on. By default nothing is limited and the runner only records the peaks of every job (`peak_mem_mb`, `peak_disk_mb`): see the `PEAK_MEM_MB` and `PEAK_DISK_MB` columns of `history`, and `history show`, `jobs`, `explain`, `status --json` and the dashboard.
+
+- **Modes.** Broker `policy.toml` `[resources] mode` or the runner's `[limits] enforce` (the runner owner's value wins): `off` records peaks only, `warn` writes a warning line to the job log, `kill` ends the whole process tree and the job fails with the reason `resource_exceeded` and the text `превышен заявленный mem_mb: заявлено X МБ, пик Y МБ`. Turn `kill` on after a history of peaks has accumulated.
+- **Ceilings** (only when the mode is not `off`): memory is the declared `mem_mb` times `mem_headroom`, disk is `disk_mb` times `disk_headroom` (a factor from 1.0 to 100.0, default 1.25). CPU is the declared `cpu` cores of CPU time: a share, not pinning to cores, a hard cap, never a reason to kill. The process count is limited to `max(512, cpu * 256)`. A job that exits with code 0 while its peak was above the ceiling stays passed.
+- **Mechanisms.** Windows: a Job Object (memory, CPU rate cap, process limit). Linux: a cgroup v2 scope through `systemd-run` (`MemoryMax`, `CPUQuota`, `TasksMax`) when the controllers are delegated to the user. Otherwise, and always on macOS, a user-space watcher samples the process tree about every 250 ms and kills it above the ceiling; CPU is lowered with the process priority (`nice`), and the process count limit does not apply. The watcher measures RSS on Unix, so the figures are approximate there (on Windows it is the commit). The runner reports `enforcement = os` or `watcher` (see `runners` and the dashboard).
+- **Disk.** A watcher sums the files in the job's working and temporary directories about every 2 seconds (symbolic links are not followed). Before a job starts the runner checks the free space of the working volume against `disk_mb` times the factor.
+- **Cleanup.** `[[cleanup]]` commands run after every job outcome (`on` defaults to all of `passed`, `failed`, `killed`, `cancelled`, `timeout`) with the environment `LOCALRUNNER_JOB_ID` and `LOCALRUNNER_JOB_LABEL` (`lr-<job id>`). A hook failure never changes the job result: a warning goes to the job log and the diagnostics. Hooks do not run after a runner restart recovery or for orders rejected at intake. What to clean (labelled containers, build daemons) is up to the owner's command; the core knows no tools.
+- **`[job_env]`** adds variables to every job and hook; `PATH`, `HOME`, `TEMP`, `TMP` and `LOCALRUNNER_*` are forbidden. `LOCALRUNNER_JOB_LABEL` reaches the job environment only if at least one `[[cleanup]]` exists.
+- **Foreign load.** Runners send the free memory and CPU load of their machine with the heartbeat. With `[admission] foreign_load = "wait"` an order waits while foreign processes leave too little (`занято чужими процессами: CPU 95%, нужно 4 ядер`, visible in `status` and `explain`); running jobs are never paused. The CPU of the broker's own jobs on the same machine is not counted as foreign. Runners that send no load (older ones, and macOS for now) are admitted as before.
+- **Not in this version:** disk I/O limits, core pinning, pausing running jobs, a Docker socket proxy, OS disk quotas.
+
+The database `broker.db` moves to schema 2 on the first start (a copy `broker.db.bak-1` is kept). The two new `history` columns stand before `BROKER`: shift column numbers in scripts. The details are in section 3.14 of the architecture document.
 
 Permissions:
 
