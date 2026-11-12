@@ -1,5 +1,6 @@
 use crate::agent::{Current, Shared};
 use crate::connect::Session;
+use crate::hooks_config::CleanupOn;
 use crate::prepare::{job_env, resolve_commands, step_secrets, Prepared};
 use crate::run::run_phases;
 use lr_abstractions::{stop_signal, Level, Stop, StoreError};
@@ -14,6 +15,8 @@ pub(crate) struct Final {
     pub(crate) exit_code: Option<i32>,
     pub(crate) reason: Option<ReasonCode>,
     pub(crate) detail: Option<String>,
+    pub(crate) peak_mem_mb: Option<u64>,
+    pub(crate) peak_disk_mb: Option<u64>,
 }
 
 impl Final {
@@ -23,6 +26,8 @@ impl Final {
             exit_code: None,
             reason: None,
             detail: Some(detail.into()),
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         }
     }
 }
@@ -79,8 +84,8 @@ fn result_msg(job: &JobId, f: Final) -> RunnerToBroker {
         exit_code: f.exit_code,
         reason: f.reason,
         detail: f.detail,
-        peak_disk_mb: None,
-        peak_mem_mb: None,
+        peak_disk_mb: f.peak_disk_mb,
+        peak_mem_mb: f.peak_mem_mb,
     })
 }
 
@@ -316,6 +321,7 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
         }),
         ..f
     };
+    crate::hooks::run_cleanup(shared, &job, CleanupOn::of(f.state, f.reason.as_ref())).await;
     finish(shared, &job, f).await;
     shared.release_disk().await;
     shared.deps.awake.release();

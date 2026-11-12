@@ -1,6 +1,7 @@
 use super::admission::ForeignLoad;
 use super::error::PolicyWarning;
 use super::file::{HostResources, PolicyFile};
+use super::resources::{ResourceMode, DEFAULT_HEADROOM};
 use super::rules::{display_name, has_action, RuleEntry};
 use super::sections::{AllowEntry, CacheShare, CommandMode, OthersOrders, TimeoutAboveMax};
 use ipnet::IpNet;
@@ -18,6 +19,7 @@ pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
     let mut out = Vec::new();
     rule_warnings(file, host, &mut out);
     admission_warnings(file, host, &mut out);
+    resources_warnings(file, &mut out);
     network_warnings(file, &mut out);
     allow_warnings("secrets.allow", &file.secrets.allow, &mut out);
     allow_warnings("services.allow", &file.services.allow, &mut out);
@@ -263,5 +265,27 @@ fn admission_warnings(file: &PolicyFile, host: &HostResources, out: &mut Vec<Pol
                 adm.mem_headroom_mb
             ),
         ));
+    }
+}
+
+fn resources_warnings(file: &PolicyFile, out: &mut Vec<PolicyWarning>) {
+    let Some(res) = &file.resources else {
+        return;
+    };
+    if res.mode != ResourceMode::Off {
+        return;
+    }
+    for (key, value) in [
+        ("mem_headroom", res.mem_headroom),
+        ("disk_headroom", res.disk_headroom),
+    ] {
+        if (value.factor() - DEFAULT_HEADROOM).abs() > f64::EPSILON {
+            out.push(PolicyWarning::at(
+                "resources",
+                Some(key),
+                None,
+                format!("{key} has no effect while mode = \"off\": peaks are only recorded"),
+            ));
+        }
     }
 }

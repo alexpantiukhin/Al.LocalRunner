@@ -54,6 +54,8 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             exit_code: None,
             cancelled_by: None,
             cancel_reason: None,
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         },
         steps: vec![step(0, "build"), step(1, "test")],
         spec: JobSpecRow {
@@ -126,6 +128,7 @@ pub fn runner(name: &str, machine_name: &str) -> RunnerRow {
         free_disk_mb: 100_000,
         services: BTreeMap::new(),
         accept_min_mem_mb: None,
+        enforcement: None,
         last_seen: None,
         state: RunnerState::Registered,
     }

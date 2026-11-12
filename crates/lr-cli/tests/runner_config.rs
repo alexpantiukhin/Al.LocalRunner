@@ -290,3 +290,19 @@ fn allow_same_user_as_broker_is_false_by_default_and_must_be_a_boolean() {
     );
     assert!(typo.is_err(), "{typo:?}");
 }
+
+#[test]
+fn limits_cleanup_and_job_env_survive_the_assembly_parse() {
+    let cfg = parse(
+        "[limits]\nenforce = \"warn\"\nmem_headroom = 1.5\n\n[job_env]\nFOO = \"1\"\n\n[[cleanup]]\nname = \"c\"\ncommand = \"x\"\ntimeout_s = 5\n",
+        Some("r"),
+    );
+    let s = &cfg.settings;
+    assert_eq!(s.enforce, Some(lr_abstractions::Enforce::Warn));
+    assert_eq!(s.mem_headroom_pct, Some(150));
+    assert_eq!(s.job_env["FOO"], "1");
+    assert_eq!(
+        (s.cleanup[0].name.as_str(), s.cleanup[0].timeout_s),
+        ("c", 5)
+    );
+}

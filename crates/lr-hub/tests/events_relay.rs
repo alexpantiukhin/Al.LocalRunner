@@ -30,6 +30,8 @@ fn queued(job: &str) -> QueueEvent {
             cwd: None,
             timeout_s: None,
             github_run_url: None,
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         }),
     }
 }

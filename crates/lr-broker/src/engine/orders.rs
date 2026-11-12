@@ -120,6 +120,8 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             exit_code: None,
             cancelled_by: None,
             cancel_reason: None,
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         },
         steps: spec
             .steps

@@ -6,6 +6,7 @@ mod error;
 mod file;
 mod listen;
 mod reload;
+mod resources;
 mod rules;
 mod sections;
 mod validate;
@@ -15,6 +16,7 @@ pub use error::{PolicyError, PolicyWarning};
 pub use file::{load, HostResources, PolicyFile};
 pub use listen::{ListenSection, ListenValue};
 pub use reload::{ActivePolicy, Applied, RestartOnly};
+pub use resources::{Headroom, ResourceMode, ResourcesSection, DEFAULT_HEADROOM};
 pub use rules::{default_rules, RuleEntry, DEFAULT_CI_LABEL, DEFAULT_CI_PRIORITY, DEFAULT_CI_RULE};
 pub use sections::{
     AllowEntry, CacheSection, CacheShare, CancelOthers, CancelSection, ClientsSection,

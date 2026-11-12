@@ -7,3 +7,20 @@ address = "container"
 # published port come from it.
 [networks]
 compose = ["172.30.57.0/24"]
+
+# Enforcement of the declared mem_mb and disk_mb of a job (optional; without this table the
+# runners only record peaks). The ceiling of a job is its declared value times the headroom.
+# mode: "off" (peaks only), "warn" (a warning in the job log) or "kill" (the job ends failed with
+# the reason resource_exceeded). Turn "kill" on after some history of peaks has accumulated:
+# `localrunner history` shows PEAK_MEM_MB and PEAK_DISK_MB of every finished job.
+# [resources]
+# mode = "off"
+# mem_headroom = 1.25
+# disk_headroom = 1.25
+
+# Admission by the real load of the runner machine (optional, off by default): an order waits
+# with the reason "занято чужими процессами" while foreign processes leave too little free
+# memory or CPU.
+# [admission]
+# foreign_load = "wait"
+# mem_headroom_mb = 256

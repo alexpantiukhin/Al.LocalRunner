@@ -1,6 +1,7 @@
 use super::admission::AdmissionSection;
 use super::error::{header_line_at, line_of, PolicyError};
 use super::listen::{networks, ListenSection};
+use super::resources::ResourcesSection;
 use super::rules::{build, default_rules, RawRule, RuleEntry};
 use super::sections::{
     CacheSection, CancelSection, ClientsSection, CommandMode, CommandsSection, GraceSection,
@@ -71,6 +72,8 @@ pub struct PolicyFile {
     pub commands: CommandsSection,
     /// `[admission]`.
     pub admission: AdmissionSection,
+    /// `[resources]`; `None` when the table is absent.
+    pub resources: Option<ResourcesSection>,
 }
 
 #[derive(Default, Deserialize)]
@@ -99,6 +102,7 @@ struct RawFile {
     visibility: VisibilitySection,
     commands: CommandsSection,
     admission: AdmissionSection,
+    resources: Option<ResourcesSection>,
 }
 
 fn entry_line(text: &str, span: Range<usize>, table: &str) -> Option<usize> {
@@ -162,6 +166,7 @@ pub fn load(text: &str) -> Result<PolicyFile, PolicyError> {
         visibility: raw.visibility,
         commands: raw.commands,
         admission: raw.admission,
+        resources: raw.resources,
     })
 }
 

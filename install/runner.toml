@@ -4,3 +4,25 @@ platforms = ["linux"]
 
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"
+
+# Resource limits (optional). enforce replaces the broker policy mode: "off", "warn" or "kill".
+# mem_headroom and disk_headroom are factors of the declared mem_mb and disk_mb (the ceiling,
+# and for disk also the free space required before a job starts).
+# [limits]
+# enforce = "kill"
+# mem_headroom = 1.25
+# disk_headroom = 1.5
+
+# Variables put into every job and cleanup hook; they win over a variable of the same name.
+# PATH, HOME, TEMP, TMP and LOCALRUNNER_* cannot be set here.
+# [job_env]
+# GRADLE_OPTS = "-Dorg.gradle.daemon=false"
+
+# Commands run after every job (passed, failed, killed, cancelled or timeout) with the job
+# environment plus LOCALRUNNER_JOB_ID and LOCALRUNNER_JOB_LABEL (unique per job). A hook's
+# failure never changes the job result. Defaults: timeout_s = 60, on = all outcomes.
+# [[cleanup]]
+# name = "labelled-containers"
+# command = "sh -c 'docker rm -f $(docker ps -aq --filter label=$LOCALRUNNER_JOB_LABEL)'"
+# timeout_s = 60
+# on = ["passed", "failed", "killed", "cancelled", "timeout"]

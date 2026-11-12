@@ -358,7 +358,7 @@ pub async fn jobs(
 /// One line of `jobs --mine`: job, state, profile, then project, source and label together
 /// (spec 7.2); an unknown value is `-`.
 pub fn mine_line(j: &lr_proto::JobSummary) -> String {
-    format!(
+    let mut line = format!(
         "{}\t{:?}\t{}\t{}\t{}\t{}",
         j.job,
         j.state,
@@ -366,7 +366,16 @@ pub fn mine_line(j: &lr_proto::JobSummary) -> String {
         j.project.as_deref().unwrap_or("-"),
         super::view::source_name(j.source),
         j.label.as_deref().unwrap_or("-")
-    )
+    );
+    if j.peak_mem_mb.is_some() || j.peak_disk_mb.is_some() {
+        let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| v.to_string());
+        line.push_str(&format!(
+            "\tpeak mem {} MB, disk {} MB",
+            mb(j.peak_mem_mb),
+            mb(j.peak_disk_mb)
+        ));
+    }
+    line
 }
 
 /// `cancel` as the command line runs it (see [`cancel_asked`]).

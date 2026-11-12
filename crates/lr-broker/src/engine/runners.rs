@@ -64,6 +64,7 @@ pub(crate) fn row_of(name: &str, owner: &str, wire: &WireCapabilities, at: Times
             .map(|(n, s)| (n.clone(), *s == WireServiceStatus::Available))
             .collect(),
         accept_min_mem_mb: wire.accept_min_mem_mb,
+        enforcement: wire.enforcement.clone(),
         last_seen: Some(at),
         state: RunnerState::Online,
     }

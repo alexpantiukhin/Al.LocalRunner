@@ -150,5 +150,13 @@ pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
 pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
     let mut env = base_env(shared);
     env.push(("LOCALRUNNER_JOB_ID".to_string(), job.0.clone()));
+    if !shared.deps.settings.cleanup.is_empty() {
+        env.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
+    }
     env
+}
+
+/// A short label unique per job, for cleanup hooks to find what the job left behind.
+pub(crate) fn job_label(job: &JobId) -> String {
+    format!("lr-{}", job.0)
 }

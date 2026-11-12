@@ -1,4 +1,8 @@
+use crate::hooks_config::{
+    cleanup_hooks, enforce_mode, headroom_pct, job_env_table, CleanupHook, RawCleanup,
+};
 use crate::service_config::{services, RawService, ServiceSpec};
+use lr_abstractions::Enforce;
 use lr_proto::{WireCapabilities, WireServiceStatus};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,6 +87,20 @@ pub struct RunnerSettings {
     /// `[commands]`: command lines by name, the only ones run for a client limited to named
     /// commands (`[commands] mode = "named"` of the broker, spec 3.5).
     pub commands: BTreeMap<String, String>,
+    /// `[limits] enforce`: replaces the broker's enforcement mode when set.
+    pub enforce: Option<Enforce>,
+    /// `[limits] mem_headroom` as a percentage of the declared memory (1.25 is 125).
+    pub mem_headroom_pct: Option<u32>,
+    /// `[limits] disk_headroom` as a percentage of the declared disk.
+    pub disk_headroom_pct: Option<u32>,
+    /// `[[cleanup]]`: commands run after every job on this runner.
+    pub cleanup: Vec<CleanupHook>,
+    /// `[job_env]`: variables put into every job (and cleanup hook) environment; the owner's
+    /// values win over any variable of the same name already there. `PATH`, `HOME`, `TEMP`,
+    /// `TMP` and `LOCALRUNNER_*` cannot be set here.
+    pub job_env: BTreeMap<String, String>,
+    /// `os` or `watcher`: what enforces resource limits here; set by the assembly.
+    pub enforcement: Option<String>,
 }
 
 /// Why `runner.toml` was refused.
@@ -112,6 +130,9 @@ struct Accept {
 #[derive(Deserialize, Default)]
 struct Limits {
     max_job_timeout_s: Option<u64>,
+    enforce: Option<String>,
+    mem_headroom: Option<f64>,
+    disk_headroom: Option<f64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -149,6 +170,10 @@ struct File {
     service: BTreeMap<String, RawService>,
     #[serde(default)]
     commands: BTreeMap<String, String>,
+    #[serde(default)]
+    cleanup: Vec<RawCleanup>,
+    #[serde(default)]
+    job_env: BTreeMap<String, String>,
 }
 
 fn retention(section: &str, f: RetentionFile) -> Result<Retention, SettingsError> {
@@ -187,6 +212,12 @@ impl RunnerSettings {
             temp: None,
             services: BTreeMap::new(),
             commands: BTreeMap::new(),
+            enforce: None,
+            mem_headroom_pct: None,
+            disk_headroom_pct: None,
+            cleanup: Vec::new(),
+            job_env: BTreeMap::new(),
+            enforcement: None,
         }
     }
 
@@ -205,6 +236,11 @@ impl RunnerSettings {
         s.programs = f.programs.into_keys().collect();
         s.accept_min_mem_mb = f.accept.min_mem_mb;
         s.max_job_timeout_s = f.limits.max_job_timeout_s;
+        s.enforce = f.limits.enforce.as_deref().map(enforce_mode).transpose()?;
+        s.mem_headroom_pct = headroom_pct("mem_headroom", f.limits.mem_headroom)?;
+        s.disk_headroom_pct = headroom_pct("disk_headroom", f.limits.disk_headroom)?;
+        s.cleanup = cleanup_hooks(f.cleanup)?;
+        s.job_env = job_env_table(f.job_env)?;
         s.cache = retention("cache", f.cache)?;
         s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
@@ -260,7 +296,7 @@ impl RunnerSettings {
                 .map(|(n, s)| (n.clone(), s.memory_mb))
                 .collect(),
             commands: self.commands.keys().cloned().collect(),
-            enforcement: None,
+            enforcement: self.enforcement.clone(),
         }
     }
 }

@@ -109,10 +109,15 @@ impl Shared {
     /// counting means two runners deciding at once may both refuse but never both take the
     /// same space. The reservation lasts until [`Shared::release_disk`].
     pub(crate) async fn reserve_disk(&self, spec: &AssignSpec) -> Result<(), String> {
-        let need = spec.requirements.disk_mb;
-        if need == 0 {
+        let declared = spec.requirements.disk_mb;
+        if declared == 0 {
             return Ok(());
         }
+        let need = match crate::limits::disk_headroom_pct(spec.limits.as_ref(), &self.deps.settings)
+        {
+            Some(pct) => declared.saturating_mul(u64::from(pct)).div_ceil(100),
+            None => declared,
+        };
         let volume = match &spec.code {
             WireCode::WorkTree { cwd } => PathBuf::from(cwd),
             _ => self.deps.settings.state_dir.clone(),

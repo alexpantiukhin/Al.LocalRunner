@@ -101,6 +101,10 @@ pub struct JobRow {
     pub cancelled_by: Option<String>,
     /// Why it was cancelled or ended (reason code and text).
     pub cancel_reason: Option<String>,
+    /// Peak memory of the run's process tree in MB, as the runner reported it at the end.
+    pub peak_mem_mb: Option<u64>,
+    /// Peak size of the run's working and temporary directories in MB.
+    pub peak_disk_mb: Option<u64>,
 }
 
 /// Row of `step`.
@@ -256,6 +260,10 @@ pub struct Transition {
     pub cancelled_by: Option<String>,
     /// Reason, kept once set.
     pub cancel_reason: Option<String>,
+    /// Peak memory in MB reported with a final state, kept when `None`.
+    pub peak_mem_mb: Option<u64>,
+    /// Peak disk use in MB reported with a final state, kept when `None`.
+    pub peak_disk_mb: Option<u64>,
 }
 
 impl Transition {
@@ -267,6 +275,8 @@ impl Transition {
             exit_code: None,
             cancelled_by: None,
             cancel_reason: None,
+            peak_mem_mb: None,
+            peak_disk_mb: None,
         }
     }
 }
@@ -410,6 +420,8 @@ pub struct RunnerRow {
     pub services: BTreeMap<String, bool>,
     /// `[accept] min_mem_mb`.
     pub accept_min_mem_mb: Option<u64>,
+    /// How the runner enforces declared resources (`os` or `watcher`); `None` when unknown.
+    pub enforcement: Option<String>,
     /// Last heartbeat.
     pub last_seen: Option<Timestamp>,
     /// State.

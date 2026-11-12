@@ -179,6 +179,9 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
                 listed(c.tags.iter()),
                 listed(c.programs.iter()),
             ));
+            if let Some(e) = &c.enforcement {
+                out.push(format!("    enforcement {e}"));
+            }
             for t in &r.held_tags {
                 let kind = if t.exclusive { ", exclusive" } else { "" };
                 out.push(format!("    tag {} held by {}{kind}", t.tag, t.job));

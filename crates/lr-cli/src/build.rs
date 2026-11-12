@@ -384,6 +384,13 @@ pub async fn runner(
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
     cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
+    cfg.settings.enforcement = Some(
+        match lr_exec::enforcement() {
+            lr_exec::Enforcement::Os => "os",
+            lr_exec::Enforcement::Watcher => "watcher",
+        }
+        .to_string(),
+    );
     let clock = clock();
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =
