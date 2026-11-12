@@ -127,6 +127,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <li><b>Hubs and brokers are many-to-many.</b> Each hub has its own list of brokers; a broker does not know how many hubs use it.</li>
 <li><b>The working tree goes to a runner on the same machine, the commit to a remote one.</b></li>
 <li><b>The dashboard is an addition, not the only way.</b> Everything visible on the page can be obtained with a CLI command as text and in <code>--json</code>; there are no actions on the page that the CLI lacks. Agents and scripts work only through the CLI.</li>
+<li><b>Tests do not wait on real time.</b> A test synchronizes on an event the code itself produces (a reply, a queue or SSE event, a closed channel, a marker written after the action), checks timers with a manual clock and <code>start_paused</code>, and never polls with <code>eventually</code> or <code>sleep</code> for a result. A timeout is only an upper bound against hangs. Where the code has no such signal, a test hook is added, not a wait.</li>
 <li><b>Nothing leaves the machine.</b> The dashboard listens only on the loopback; there is no telemetry and there are no downloads. The only exception is the network sink for logs and metrics (OTLP), which the owner enables explicitly and by choice.</li>
 </ul>
 
