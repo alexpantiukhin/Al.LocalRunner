@@ -114,6 +114,8 @@ async fn doctor_names_elevation_busy_ports_and_a_broker_with_another_certificate
     drop(busy);
 }
 
+const OTHER_USER: &str = "[[local_user]]\nname = \"bob\"\n";
+
 fn broker_and_runner(name: &str, policy: &str) -> (TempDir, Layout) {
     let dir = TempDir::new(name);
     let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
@@ -127,7 +129,7 @@ fn broker_and_runner(name: &str, policy: &str) -> (TempDir, Layout) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn doctor_warns_about_a_runner_under_the_brokers_user_that_runs_any_command() {
-    let (_dir, layout) = broker_and_runner("doctor-same-user", "");
+    let (_dir, layout) = broker_and_runner("doctor-same-user", OTHER_USER);
     let all = checks_with(&layout, false).await;
     let risk = find(&all, "broker and runner user");
     assert_eq!(risk.status, Status::Warn);
@@ -142,10 +144,29 @@ async fn doctor_warns_about_a_runner_under_the_brokers_user_that_runs_any_comman
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn named_commands_for_every_client_need_no_warning() {
-    let (_dir, layout) = broker_and_runner("doctor-named", "[commands]\ndefault = \"named\"\n");
+    let policy = format!("{OTHER_USER}\n[commands]\ndefault = \"named\"\n");
+    let (_dir, layout) = broker_and_runner("doctor-named", &policy);
     let all = checks_with(&layout, false).await;
     assert!(
         all.iter().all(|c| c.name != "broker and runner user"),
         "{all:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_broker_only_its_owner_can_reach_needs_no_warning_and_no_policy_means_the_default() {
+    let (_dir, layout) = broker_and_runner("doctor-owner-only", "");
+    assert_eq!(lr_cli::doctor::same_user_risk(&layout, true), None);
+    std::fs::write(
+        layout.config_file("policy.toml"),
+        "[listen]\naddress = \"127.0.0.1:0\"\n",
+    )
+    .unwrap();
+    assert!(lr_cli::doctor::same_user_risk(&layout, true).is_some());
+    std::fs::remove_file(layout.config_file("policy.toml")).unwrap();
+    assert_eq!(
+        lr_cli::doctor::same_user_risk(&layout, true),
+        None,
+        "the default policy listens nowhere and names no other user"
     );
 }

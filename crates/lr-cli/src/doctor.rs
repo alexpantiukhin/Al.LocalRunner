@@ -127,16 +127,25 @@ fn policy(layout: &Layout, out: &mut Vec<Check>) {
 }
 
 /// The risk of spec 3.12 when the broker of `layout` runs under this OS user, not as an OS
-/// service, next to a runner of the same user (`with_runner`) while its policy lets some
-/// client run any command: the job of a remote client then acts as the pool owner (admin
-/// channel, broker key and databases). `None` when that is not the case.
+/// service, next to a runner of the same user (`with_runner`) while its policy (the default
+/// one without `policy.toml`) admits clients other than the owner (a `[listen]` address or a
+/// `[[local_user]]`) and lets some client run any command: the job of such a client then acts
+/// as the pool owner (admin channel, broker key and databases). `None` when that is not the
+/// case or the policy is unreadable.
 pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
     use lr_broker::policy::CommandMode;
     if !with_runner || layout.broker_is_service() {
         return None;
     }
-    let text = std::fs::read_to_string(layout.config_file("policy.toml")).ok()?;
+    let text = match std::fs::read_to_string(layout.config_file("policy.toml")) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(_) => return None,
+    };
     let file = lr_broker::policy::load(&text).ok()?;
+    if file.listen.addresses.is_empty() && file.local_users.is_empty() {
+        return None;
+    }
     let any = file.commands.default == CommandMode::Any
         || file
             .commands
