@@ -143,6 +143,11 @@ async fn unavailable_secret_ends_the_job_with_secret_missing() {
         rig.process.runs().is_empty(),
         "never run without the secret"
     );
+    let logs = rig.logs_text();
+    assert!(
+        logs.contains("missing") && logs.contains("signing_key"),
+        "the log names the secret that is missing: {logs}"
+    );
 }
 
 #[tokio::test]

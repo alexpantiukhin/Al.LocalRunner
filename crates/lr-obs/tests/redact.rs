@@ -116,6 +116,14 @@ fn configured_fields_extend_builtin_list() {
 }
 
 #[test]
+fn the_name_of_a_missing_secret_survives_in_a_field_called_missing() {
+    let redactor = plain();
+    assert!(redactor.is_sensitive_field("secret"));
+    let out = redactor.redact(&record("secret unavailable").field("missing", "signing_key"));
+    assert_eq!(value_of(out.record(), "missing"), "signing_key");
+}
+
+#[test]
 fn field_names_match_by_segment_case_insensitively() {
     let redactor = plain();
     for name in [

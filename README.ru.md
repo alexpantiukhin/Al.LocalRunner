@@ -530,6 +530,7 @@ codex plugin marketplace remove al-localrunner
 | `cancel <job> --as метка`, `cancel --mine --as метка [--yes]` | отменить |
 | `jobs --mine [--active] [--as метка]` | свои джобы |
 | `status`, `explain <job>` | очередь; почему заказ ждёт |
+| `profile check [профиль] [--label L]` | перед запуском: для каждого секрета профилей — в какую переменную джобы он превратится, разрешает ли политика его метке (метке записи `[[local_user]]`, а не `--as`), есть ли у раннера этой машины источник; код 1, если что-то остановит запуск |
 | `history [--all]`, `history show <job>` | история |
 | `stats`, `runners`, `brokers` | статистика, раннеры, брокеры |
 | `dashboard` | страница на 127.0.0.1 |

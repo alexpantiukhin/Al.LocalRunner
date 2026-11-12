@@ -45,7 +45,8 @@ pub(crate) fn resolve_commands(
     Ok(())
 }
 
-pub(crate) fn secret_var(name: &str) -> String {
+/// The name of the job variable that carries the secret `name`.
+pub fn secret_var(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
@@ -96,7 +97,7 @@ pub(crate) async fn step_secrets(
                 shared.diag.event(
                     Level::Warn,
                     "secret unavailable, job not run",
-                    &[("secret", name)],
+                    &[("missing", name)],
                 );
                 return Err(Final {
                     reason: Some(ReasonCode::SecretMissing),

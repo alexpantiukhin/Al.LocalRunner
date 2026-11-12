@@ -173,6 +173,22 @@ pub enum RunnerAction {
     },
 }
 
+/// `profile ...`.
+#[derive(Subcommand, Debug)]
+pub enum ProfileAction {
+    /// Check the secrets of the profiles of this project: whether the policy lets the client
+    /// request them, whether a runner of this machine has a source for each, and the variable
+    /// each one becomes in the job.
+    Check {
+        /// Profile name; without one, every profile that asks for a secret.
+        profile: Option<String>,
+        /// The client label the policy compares with: the `label` of the `[[local_user]]`
+        /// entry, not the `--as` of a run. Default: the entry of this OS user.
+        #[arg(long)]
+        label: Option<String>,
+    },
+}
+
 /// `client ...`.
 #[derive(Subcommand, Debug)]
 pub enum ClientAction {

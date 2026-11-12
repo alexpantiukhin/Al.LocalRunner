@@ -9,6 +9,7 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod profile_cmd;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
@@ -293,6 +294,12 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Checks of the project profiles.
+    Profile {
+        /// What to check.
+        #[command(subcommand)]
+        action: ProfileAction,
+    },
     /// Check this node and print what is wrong.
     Doctor {
         /// Print JSON.
@@ -486,6 +493,11 @@ pub async fn run(cli: Cli) -> i32 {
             runner,
             dry_run,
         } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
+        Command::Profile { action } => match action {
+            ProfileAction::Check { profile, label } => {
+                profile_cmd::check(&layout, profile.as_deref(), label.as_deref())
+            }
+        },
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };
     match result {

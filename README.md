@@ -527,6 +527,7 @@ All commands:
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `explain <job>` | the queue; why an order waits |
+| `profile check [profile] [--label L]` | before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
 | `history [--all]`, `history show <job>` | history |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
 | `dashboard` | a page on 127.0.0.1 |
