@@ -153,7 +153,7 @@ async fn runner_name_held_by_another_machine_is_refused() {
         .await;
     let mut b = h.dial(member_peer(&key, "10.0.0.8")).await;
     b.send(&hello("r1", Some(linux()))).await;
-    assert_eq!(error(b.hub().await).code, ProtocolErrorCode::NameTaken);
+    assert_eq!(error(b.hub().await).code, ProtocolErrorCode::Unauthorized);
     assert!(b.closed().await);
 }
 
@@ -210,6 +210,23 @@ async fn hub_key_cannot_register_a_runner() {
     c.send(&hello("hub1", Some(linux()))).await;
     assert_eq!(error(c.hub().await).code, ProtocolErrorCode::Unauthorized);
     assert!(c.closed().await);
+}
+
+#[tokio::test]
+async fn a_runner_key_registers_only_the_name_it_joined_with() {
+    let h = Harness::start("");
+    let key = h.seed("r1", lr_abstractions::MachineKind::Runner, "").await;
+    let mut c = h.dial(member_peer(&key, "10.0.0.5")).await;
+    c.send(&hello("r2", Some(linux()))).await;
+    assert_eq!(error(c.hub().await).code, ProtocolErrorCode::Unauthorized);
+    assert!(c.closed().await);
+    assert!(h
+        .store
+        .runners()
+        .await
+        .unwrap()
+        .iter()
+        .all(|r| r.name != "r2"));
 }
 
 #[tokio::test]

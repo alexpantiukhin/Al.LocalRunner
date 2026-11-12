@@ -135,6 +135,18 @@ impl Engine {
                     format!("runner name {} must not contain a colon", hello.name),
                 );
             }
+            if let Who::Member(row) = &who {
+                if hello.name != row.name {
+                    return self.refuse(
+                        conn,
+                        ProtocolErrorCode::Unauthorized,
+                        format!(
+                            "the key joined as runner {}, not as {}",
+                            row.name, hello.name
+                        ),
+                    );
+                }
+            }
             if let Err(e) = self
                 .register_runner(conn, &name, caps, owner, persisted, machine)
                 .await
