@@ -1,103 +1,178 @@
 # Al.LocalRunner
 
-Очередь запусков тестов и сборок. Сессии и агенты ставят запуски в общую очередь вместо того, чтобы спорить за процессор, память, эмулятор и кэши. Работает на Windows, Linux и macOS. Один бинарник `localrunner` выполняет все роли.
+**English** | [Русский](README.ru.md)
 
-Ядро не знает ни языка, ни инструментов проекта. Что запускать и что для этого нужно, описывает профиль в `.localrunner/profiles.toml` самого проекта. Полное описание, форматы и требования: [`docs/architecture.html`](docs/architecture.html).
+A resource-aware job queue for a developer and their AI agents. Heavy tasks (tests, builds, lint, deploys, migrations) go into one queue and run one at a time on a suitable machine, within its memory and cores, instead of agents fighting over CPU, memory, emulators and caches. One machine or many, on one network or several. Works on Windows, Linux and macOS. One binary, `localrunner`, plays every role.
 
-## Узлы
+The core knows no language and no toolchain. What to run and what it needs is described by a profile in the project's own `.localrunner/profiles.toml`. The full design, formats and requirements: [`docs/architecture.en.html`](docs/architecture.en.html) ([Russian](docs/architecture.html)).
 
-| Узел | Что делает | Где работает | Конфигурация |
+## Contents
+
+- [How it works](#how-it-works)
+- [Quick start with an AI agent](#quick-start-with-an-ai-agent)
+- [Quick start by hand (one machine)](#quick-start-by-hand-one-machine)
+- [Installation](#installation)
+- [Hub](#hub)
+- [Broker](#broker)
+- [Runner](#runner)
+- [Several machines](#several-machines)
+- [Docker Compose](#docker-compose)
+- [Project profiles](#project-profiles)
+- [Logging](#logging)
+- [Autostart, stop, update, uninstall](#autostart-stop-update-uninstall)
+- [Troubleshooting](#troubleshooting)
+- [Security](#security)
+- [Plugin details](#plugin-details)
+- [Usage](#usage)
+- [License](#license)
+
+## How it works
+
+A session or an agent submits a task through the CLI. The task becomes an order and goes to the broker, which holds the queue and hands orders to runners that fit by memory, cores, programs and tags. The runner executes it and returns the result and the log. One binary plays three roles:
+
+| Node | What it does | Where it runs | Configuration |
 |---|---|---|---|
-| hub | принимает команды CLI, превращает профиль в заказ, отправляет его брокеру, хранит копию логов, показывает дашборд | на машине, откуда запускают; один на пользователя ОС | `hub-policy.toml`, `logging.toml` |
-| broker | держит очередь, выбирает раннер, хранит историю и ключи участников | на одной машине пула | `policy.toml`, `logging.toml` |
-| runner | исполняет джобы, по одной за раз | на машине, где нужны инструменты | `runner.toml`, `logging.toml` |
+| hub | takes CLI commands, turns a profile into an order, sends it to a broker, keeps a copy of the logs, shows the dashboard | on the machine you submit from; one per OS user | `hub-policy.toml`, `logging.toml` |
+| broker | holds the queue, picks a runner, keeps history and member keys | on one machine of the pool | `policy.toml`, `logging.toml` |
+| runner | executes jobs, one at a time | on the machine that has the tools | `runner.toml`, `logging.toml` |
 
 ```mermaid
 flowchart LR
-    S[Сессия / агент] -->|IPC| H[hub]
-    D[Дашборд 127.0.0.1] --- H
-    H -->|заказы, TLS или IPC| B[broker]
-    B -->|выдача| R1[runner 1]
-    B -->|выдача| R2[runner 2]
-    R1 -->|состояние, лог, результат| B
-    R2 -->|состояние, лог, результат| B
+    S[Session / agent] -->|IPC| H[hub]
+    D[Dashboard 127.0.0.1] --- H
+    H -->|orders, TLS or IPC| B[broker]
+    B -->|assignment| R1[runner 1]
+    B -->|assignment| R2[runner 2]
+    R1 -->|state, log, result| B
+    R2 -->|state, log, result| B
 ```
 
-На одной машине можно запустить все три роли без настройки. Для нескольких машин сначала ставят брокер, потом к нему присоединяют hub и раннеры (раздел «Несколько машин»).
+For several machines, install the broker first, then join the hub and the runners to it (see [Several machines](#several-machines)).
 
-## Установка бинарника
+## Quick start with an AI agent
 
-Из исходников (нужен Rust, версия задана в `rust-toolchain.toml`):
+The simplest way: connect the plugin and ask the agent. The plugin gives the agent skills to install, start and use the queue.
+
+Claude Code:
+
+```
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner
+claude plugin install al-localrunner@al-localrunner
+```
+
+Codex:
+
+```
+codex plugin marketplace add alexpantiukhin/Al.LocalRunner
+codex plugin add al-localrunner@al-localrunner
+```
+
+Restart the agent session, then ask in plain words:
+
+| Say | Skill | What it does |
+|---|---|---|
+| "install the runner" | `install-runner` | gets the binary from a release, runs `init` and `doctor` |
+| "start the runners" | `up-runner` | starts the hub, the broker and the runners |
+| "run the tests through the runner" | `run` | puts the task into the queue and reads the result |
+| "show the queue" | `status-runner` | queue, jobs, runners, history, dashboard |
+| "stop the runners", "turn autostart on" | `down-runner`, `autostart-runner` | stop the roles, switch autostart |
+
+The skills never raise rights on their own and never print join codes or tokens. Until the first regular release exists, use a pre-release or a source build (see below). Scopes, removal and Codex limits: [Plugin details](#plugin-details).
+
+## Quick start by hand (one machine)
+
+1. Install the binary. Take the script from a release, not from a branch (the repository copy holds the placeholder `@RELEASE_PUBKEY@` and refuses to install). Linux and macOS:
+
+   ```
+   curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role all
+   ```
+
+   Windows (PowerShell, as an ordinary user; the script takes parameters only as a file):
+
+   ```
+   Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 --role all
+   ```
+
+   Or from source: `cargo build --release`, then `target/release/localrunner install`. Details and options: [Installation](#installation).
+
+2. Start everything and run a task:
+
+   ```
+   localrunner init
+   localrunner doctor
+   localrunner up                               # broker, hub and runners as background processes
+   localrunner run rust-unit --as claude:fix-1  # submit a run, show its output, return the job's exit code
+   localrunner status                           # queue, running jobs, reasons for waiting
+   localrunner down                             # runners finish the current job, then everything stops
+   ```
+
+The hub on the broker's machine does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`init` adds you).
+
+## Installation
+
+### Release scripts
+
+You do not need to clone the repository. In the repository the scripts hold the placeholder `@RELEASE_PUBKEY@` and refuse to install anything with it. Working copies with the release public key built in are attached to every release: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Take the script from there, not from a branch.
+
+The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
+
+### From source
+
+You need Rust; the version is set in `rust-toolchain.toml`.
 
 ```
 cargo build --release
 ```
 
-Бинарник: `target/release/localrunner` (`localrunner.exe` на Windows).
-
-Положить в каталог пользователя и подготовить узел:
+The binary is `target/release/localrunner` (`localrunner.exe` on Windows). Put it into the user's directory and prepare the node:
 
 ```
-target/release/localrunner install --dry-run   # показать действия
-target/release/localrunner install             # скопировать бинарник, дополнить PATH, выполнить init
-localrunner doctor                             # проверить узел
+target/release/localrunner install --dry-run   # show the actions
+target/release/localrunner install             # copy the binary, extend PATH, run init
+localrunner doctor                             # check the node
 ```
 
-`install` не запускает роли и не включает автозапуск. От root или администратора он отказывается без `--allow-elevated`. Установку нужно повторять на каждой машине.
+`install` starts no roles and enables no autostart. It refuses to run as root or administrator without `--allow-elevated`. Repeat the installation on every machine.
 
-Скрипты `install/install.sh` и `install/install.ps1` ставят готовый релиз и проверяют его SHA-256 и подпись. В репозитории в них стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases (`install.sh`, `install.ps1`). Берите скрипт оттуда, а не из ветки. Пока релиза нет, используйте сборку из исходников.
+### Files of a node
 
-Файлы узла:
-
-| Что | Windows | Linux, macOS |
+| What | Windows | Linux, macOS |
 |---|---|---|
-| бинарник | `%LOCALAPPDATA%\Programs\Al.LocalRunner` | `~/.local/bin` |
-| состояние и конфигурации hub и раннера | `%LOCALAPPDATA%\Al.LocalRunner` | `~/.local/share/al-localrunner` |
-| состояние брокера-службы | `%ProgramData%\Al.LocalRunner` | `/var/lib/al-localrunner` (Linux), `/Library/Application Support/Al.LocalRunner` (macOS) |
+| binary | `%LOCALAPPDATA%\Programs\Al.LocalRunner` | `~/.local/bin` |
+| state and configuration of hub and runner | `%LOCALAPPDATA%\Al.LocalRunner` | `~/.local/share/al-localrunner` |
+| state of the broker service | `%ProgramData%\Al.LocalRunner` | `/var/lib/al-localrunner` (Linux), `/Library/Application Support/Al.LocalRunner` (macOS) |
 
-Каталоги можно заменить: `--state-dir` и `--config-dir`, либо переменные `LOCALRUNNER_STATE_DIR` и `LOCALRUNNER_CONFIG_DIR`.
+The directories can be replaced: `--state-dir` and `--config-dir`, or the variables `LOCALRUNNER_STATE_DIR` and `LOCALRUNNER_CONFIG_DIR`.
 
-`localrunner init [--role hub|broker|runner|all]` создаёт каталог состояния и шаблоны конфигураций. Существующие файлы он не перезаписывает.
-
-## Одна машина
-
-```
-localrunner init
-localrunner doctor
-localrunner up                               # брокер, hub и раннеры фоновыми процессами
-localrunner run rust-unit --as claude:fix-1  # поставить запуск, показывать вывод, вернуть код джобы
-localrunner status                           # очередь, выполняющиеся джобы, причины ожидания
-localrunner down                             # раннеры доделывают текущую джобу, затем всё останавливается
-```
-
-Hub на машине брокера по коду не вступает: брокер разрешает локальным пользователям доступ по списку `[[local_user]]` в `policy.toml` (`init` вносит туда вас).
+`localrunner init [--role hub|broker|runner|all]` creates the state directory and the configuration templates. It never overwrites existing files.
 
 ## Hub
 
-Нужен на каждой машине, откуда ставят запуски. Один hub на пользователя ОС.
+Needed on every machine you submit runs from. One hub per OS user.
 
-Установка и запуск:
+Install and start:
 
 ```
 localrunner install
 localrunner init --role hub
-localrunner up hub          # или: localrunner hub run (на переднем плане)
+localrunner up hub          # or: localrunner hub run (in the foreground)
 ```
 
-Если брокер на другой машине, hub вступает в пул (код выдаёт брокер, см. «Брокер»):
+If the broker is on another machine, the hub joins the pool (the broker issues the code, see [Broker](#broker)):
 
 ```
-localrunner hub join <адрес:порт> --code-file code.txt --name office
-localrunner brokers         # проверить: брокер в списке, зона, доступность
+localrunner hub join <host:port> --code-file code.txt --name office
+localrunner brokers         # check: the broker is listed, its zone, availability
 ```
 
-Код можно передать так: `--code-file файл`, `--code-file -` (стандартный ввод), переменная `LOCALRUNNER_JOIN_CODE`, аргумент командной строки. Последний способ показывает код другим пользователям машины.
+The code can be passed as `--code-file file`, `--code-file -` (standard input), the variable `LOCALRUNNER_JOIN_CODE`, or a command-line argument. The last way shows the code to other users of the machine.
 
-Настройка: `hub-policy.toml` в каталоге конфигурации. Определяет, какому брокеру отправить заказ:
+Configuration: `hub-policy.toml` in the configuration directory. It decides which broker gets an order:
 
 ```toml
 [brokers]
-order             = ["win-host", "linux-box"]   # имена из hub join, по порядку
+order             = ["win-host", "linux-box"]   # names from hub join, in order
 strategy          = "first"                     # first | least_loaded
 broker_zone_order = ["local", "lan", "remote"]
 query_timeout_s   = 3
@@ -106,76 +181,58 @@ zone_query        = "sequential"                # sequential | all
 query_retry_s     = 5
 
 [outbox]
-ttl_hours = 24                                  # сколько заказ ждёт брокера
+ttl_hours = 24                                  # how long an order waits for a broker
 on_expire = "fail"                              # fail | keep
 ```
 
-Без файла действуют значения по умолчанию. Заказы «та же машина» (рабочее дерево) уходят только на брокер с этой же машины.
+Without the file the defaults apply. "Same machine" orders (a working tree) go only to a broker on that machine.
 
-Работа с джобами:
+Commands for working with jobs: see [Usage](#usage).
 
-| Команда | Действие |
-|---|---|
-| `submit [профиль] --as метка` | поставить заказ, напечатать id, вернуться сразу |
-| `run [профиль] --as метка` | то же, но показывать вывод и вернуть код выхода |
-| `wait <job>` | следить за джобой; прерывание ничего не отменяет |
-| `log <job> [--step имя] [--tail N] [-f]` | лог джобы |
-| `cancel <job> --as метка`, `cancel --mine --as метка` | отменить |
-| `jobs --mine [--active] [--as метка]` | свои джобы |
-| `status`, `explain <job>` | очередь; почему заказ ждёт |
-| `history [--all]`, `history show <job>` | история |
-| `stats`, `runners`, `brokers` | статистика, раннеры, брокеры |
-| `dashboard` | страница на 127.0.0.1 |
+## Broker
 
-Флаги `submit` и `run`: `--note`, `--platform`, `--timeout <с>` (только уменьшает таймаут профиля), `--mem 6144|512m|6g`, `--cpu <ядра>` (заменяют значения профиля на один запуск), `--detach` (заказ переживает процесс-отправитель). `--as` обязателен; внутри GitHub Actions по умолчанию `github:<workflow>/<job>`. У команд чтения есть `--json`.
+One per pool. Holds the queue, member keys and history. Executes nothing itself.
 
-## Брокер
-
-Один на пул. Держит очередь, ключи участников и историю. Сам ничего не исполняет.
-
-Запуск на машине пользователя:
+Start on a user's machine:
 
 ```
 localrunner init --role broker
-localrunner up broker       # или: localrunner broker run
+localrunner up broker       # or: localrunner broker run
 ```
 
-Запуск службой ОС (выделенная машина, несколько пользователей). Нужны права администратора. Служба работает под отдельной учётной записью, не под root и не под SYSTEM:
+Start as an OS service (a dedicated machine, several users). Administrator rights are needed. The service runs under its own account, never root or SYSTEM:
 
 ```
 localrunner broker install-service --dry-run
 localrunner broker install-service
 ```
 
-Служба снимается командой `localrunner autostart off broker` или `uninstall`. Команда `down` службу не останавливает: останавливайте менеджером служб ОС. `up` службу не запускает.
+Remove the service with `localrunner autostart off broker` or `uninstall`. `down` does not stop the service: use the OS service manager. `up` does not start it.
 
-Настройка: `policy.toml` в каталоге состояния брокера. Без файла действуют значения по умолчанию. Основные таблицы:
+Configuration: `policy.toml` in the broker's state directory. Without the file the defaults apply. Main tables:
 
-| Таблица | Назначение |
+| Table | Purpose |
 |---|---|
-| `[listen]` | адрес, на котором брокер слушает сеть. Без него сеть не слушается. Подстановочные адреса (`0.0.0.0`, `::`) отвергаются. В контейнере: `address = "container"` |
-| `[networks]` | именованные сети; от них зависит зона hub (`lan` или `remote`) |
-| `[[local_user]]` | кому разрешён локальный IPC: `name`, `label` |
+| `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
+| `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
+| `[[local_user]]` | who may use local IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted`; `age_after_min` |
-| `[[rule]]` | приоритет, резерв, квота, вес по условию `when` (первое подошедшее правило по каждому полю) |
-| `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; по умолчанию вся память и все ядра машины брокера |
-| `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` или `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
-| `[commands]` | `default = "any"` или `"named"`; `[[commands.client]]` для отдельных ключей или ярлыков |
-| `[visibility]` | `others_orders` = `none`, `summary`, `full`: что видят чужие клиенты |
-| `[cancel]` | `others = "none"` или `"owner"`: кто отменяет чужие заказы |
-| `[join]` | `code_ttl_min` — срок жизни кода вступления (60) |
-| `[orphans]`, `[grace]`, `[results]` | что делать с заказами пропавшего hub, льготный срок потери раннера (`lost_min`), хранение результатов |
-| `[history]`, `[saturation]`, `[cache]`, `[services]` | хранение истории, пороги насыщения, общий кэш, сервисы раннеров |
-| `[[secrets.allow]]` | какой ярлык какие секреты может просить |
+| `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
+| `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
+| `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` or `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
+| `[commands]` | `default = "any"` or `"named"`; `[[commands.client]]` for single keys or labels |
+| `[visibility]` | `others_orders` = `none`, `summary`, `full`: what other clients see |
+| `[cancel]` | `others = "none"` or `"owner"`: who cancels other clients' orders |
+| `[join]` | `code_ttl_min`: lifetime of a join code (60) |
+| `[orphans]`, `[grace]`, `[results]` | what to do with orders of a vanished hub, the grace period for a lost runner (`lost_min`), result retention |
+| `[history]`, `[saturation]`, `[cache]`, `[services]` | history retention, saturation thresholds, shared cache, runner services |
+| `[[secrets.allow]]` | which label may ask for which secrets |
 
-Пример:
+Example:
 
 ```toml
 [listen]
 address = "192.168.1.10:7443"
-
-[networks]
-home = ["192.168.1.0/24"]
 
 [[local_user]]
 name  = "alex"
@@ -185,82 +242,78 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
-
-[pool]
-mem_mb = 16384
-cpu    = 8
 ```
 
-Правила с условием по заявленным атрибутам (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) допускаются только вместе с условием `client_label`. Неизвестные таблицы и ключи отвергаются с номером строки.
+Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) are allowed only together with a `client_label` condition. Unknown tables and keys are rejected with a line number.
 
-Команды:
-
-```
-localrunner policy check [файл]   # проверить, не применяя
-localrunner policy reload         # применить; только на машине брокера. [listen] и [networks] требуют перезапуска
-localrunner logging reload        # перечитать logging.toml во всех работающих ролях
-```
-
-Присоединение участников:
+Commands:
 
 ```
-localrunner broker add --name office --label dev              # для hub: печатает адрес, код и отпечаток сертификата
-localrunner broker add --runners 2 --address 192.168.1.10:7443  # для раннеров: код на 2 вступления
+localrunner policy check [file]   # check without applying
+localrunner policy reload         # apply; only on the broker machine. [listen] and [networks] need a restart
+localrunner logging reload        # reread logging.toml in every running role
+```
+
+Joining members:
+
+```
+localrunner broker add --name office --label dev              # for a hub: prints the address, the code and the certificate fingerprint
+localrunner broker add --runners 2 --address 192.168.1.10:7443  # for runners: a code for 2 joins
 localrunner runner list
-localrunner runner remove <имя>     # удалить раннер и отозвать его ключ
+localrunner runner remove <name>     # remove a runner and revoke its key
 localrunner client list
-localrunner client remove <имя>     # отозвать ключ hub
+localrunner client remove <name>     # revoke a hub's key
 ```
 
-Код действует 1 час и на указанное число вступлений. Адрес с портом должен быть доступен участнику. Отпечаток сертификата входит в код, поэтому вручную его сверять не нужно.
+A code is valid for 1 hour and for the given number of joins. The address with the port must be reachable by the member. The certificate fingerprint is part of the code, so there is nothing to compare by hand.
 
-## Раннер
+## Runner
 
-Исполняет джобы. Одну за раз, с теми ресурсами, которые объявлены в `runner.toml`.
+Executes jobs, one at a time, with the resources declared in `runner.toml`.
 
-Установка и запуск на машине брокера:
+Install and start on the broker's machine:
 
 ```
 localrunner init --role runner
-# отредактировать runner.toml (раздел ниже)
+# edit runner.toml (see below)
 localrunner up runner
 ```
 
-Раннер на другой машине:
+A runner on another machine:
 
 ```
 localrunner install
 localrunner init --role runner
-# отредактировать runner.toml
-localrunner runner join <адрес:порт> --code-file code.txt --name box --count 2
+# edit runner.toml
+localrunner runner join <host:port> --code-file code.txt --name box --count 2
 localrunner up runner
 ```
 
-`--count N` (от 1 до 64) создаёт раннеры `box-1` … `box-N` с одним шаблоном `runner.toml`; у каждого свой каталог, ключ и запись на брокере. `--name` побеждает `name` из файла; без обоих берётся имя машины.
+`--count N` (1 to 64) creates runners `box-1` … `box-N` from one `runner.toml` template; each has its own directory, key and record on the broker. `--name` wins over `name` in the file; with neither, the machine name is used.
 
-Настройка: `runner.toml`. Обязателен `[env] path`: это `PATH` джобы и место поиска программ. Раннер без него не запускается, `PATH` процесса раннера джобам не передаётся. Автозапуск и службы дают бедное окружение, поэтому пути задают явно.
+Configuration: `runner.toml`. `[env] path` is mandatory: it is the job's `PATH` and the place where programs are looked up. A runner without it does not start, and the runner process's `PATH` is not passed to jobs. Autostart and services give a poor environment, so set the paths explicitly.
 
 ```toml
 name      = "linux-heavy"
 platforms = ["linux", "android"]
 tags      = ["gradle", "emulator"]
-mem_mb    = 16384              # необязательно: вся память хоста
-cpu       = 8                  # необязательно: все ядра хоста
-allow_elevated = false         # запуск от root или администратора
+mem_mb    = 16384              # optional: all host memory
+cpu       = 8                  # optional: all host cores
+allow_elevated = false         # run as root or administrator
 allow_same_user_as_broker = false
 
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"
 
-[programs]                     # что искать на раннере и чем проверять
+[programs]                     # what to look for on the runner and how to check it
 git    = {}
 gradle = { check = "gradle --version" }
 
 [accept]
-min_mem_mb = 8192              # резерв под тяжёлые заказы
+min_mem_mb = 8192              # a reserve for heavy orders
 
 [limits]
-max_job_timeout_s = 3600       # потолок таймаута джобы на этом раннере
+max_job_timeout_s = 3600       # ceiling of a job's timeout on this runner
 
 [cache]
 max_size_gb    = 40
@@ -271,50 +324,50 @@ evict          = "lru"
 max_size_gb    = 20
 retention_days = 7
 
-[commands]                     # названия для клиентов с mode = "named"
+[commands]                     # names for clients with mode = "named"
 build = "make all"
 ```
 
-Сервисы раннера (демон сборки, эмулятор) описываются в `[service.<имя>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (обязателен), `reuse`. Формат — в разделе 3.11 архитектуры.
+Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
 
-Права:
+Permissions:
 
-- Раннер выполняет команды из заказов и работает под пользователем, который его запустил. Для чужих клиентов заведите отдельного ограниченного пользователя ОС.
-- От root, администратора и SYSTEM раннер отказывается запускаться без `allow_elevated = true`.
-- Если брокер запущен не службой, принимает других клиентов (`[listen]` или чужой `[[local_user]]`) и разрешает им любые команды, раннер под тем же пользователем ОС не запустится. Варианты: раннер под другим пользователем, брокер службой ОС, `[commands] default = "named"` в `policy.toml` или `allow_same_user_as_broker = true` в `runner.toml` (вы принимаете риск).
+- A runner executes commands from orders and runs as the user who started it. For other people's clients, create a separate restricted OS user.
+- A runner refuses to start as root, administrator or SYSTEM without `allow_elevated = true`.
+- If the broker is not a service, admits other clients (`[listen]` or a foreign `[[local_user]]`) and lets them run any command, a runner under the same OS user will not start. Options: run the runner under another user, run the broker as an OS service, set `[commands] default = "named"` in `policy.toml`, or set `allow_same_user_as_broker = true` in `runner.toml` (you accept the risk).
 
-## Несколько машин
+## Several machines
 
-Порядок: брокер, затем остальные.
+Order: the broker first, then the rest.
 
-1. Брокер-машина. Установить бинарник, `init --role broker`, в `policy.toml` задать `[listen]` и `[networks]`, запустить (`broker install-service` для постоянной работы).
-2. Для каждой клиентской машины: на брокере `broker add --name <имя> --label <ярлык>`; на клиенте `install`, `init --role hub`, `hub join <адрес:порт> --code-file code.txt --name <имя брокера>`, `up hub`.
-3. Для каждой машины с раннерами: на брокере `broker add --runners N --address <адрес:порт>`; на машине `install`, `init --role runner`, правка `runner.toml`, `runner join ...`, `up runner`.
-4. Проверка: `localrunner doctor`, `localrunner runners`, `localrunner brokers`.
+1. Broker machine. Install the binary, `init --role broker`, set `[listen]` and `[networks]` in `policy.toml`, start it (`broker install-service` for permanent operation).
+2. For each client machine: on the broker `broker add --name <name> --label <label>`; on the client `install`, `init --role hub`, `hub join <host:port> --code-file code.txt --name <broker name>`, `up hub`.
+3. For each machine with runners: on the broker `broker add --runners N --address <host:port>`; on the machine `install`, `init --role runner`, edit `runner.toml`, `runner join ...`, `up runner`.
+4. Check: `localrunner doctor`, `localrunner runners`, `localrunner brokers`.
 
-Входящий порт нужен только брокеру. Автоматического поиска брокера в сети нет, адрес вводят вручную.
+Only the broker needs an incoming port. There is no automatic broker discovery on the network; enter the address by hand.
 
 ## Docker Compose
 
-Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. В образе только бинарник, он работает не от root. Инструменты проекта добавляйте в свой образ `FROM al-localrunner:<версия>`. Тег образа всегда указывается явно.
+Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary and does not run as root. Add the project's tools to your own image `FROM al-localrunner:<version>`. Always give the image tag explicitly.
 
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443
-docker compose -f install/compose.yaml run --rm runner localrunner runner join broker:7443 <код>
+docker compose -f install/compose.yaml run --rm runner localrunner runner join broker:7443 <code>
 docker compose -f install/compose.yaml up -d runner
 ```
 
-Политика: правьте `install/policy.toml`, затем `docker compose exec broker localrunner policy reload`. Порт брокера опубликован на `127.0.0.1:7443`; для других машин замените адрес на интерфейс хоста. Раннер в контейнере не видит файлы хоста и берёт только заказы с коммитом.
+Policy: edit `install/policy.toml`, then `docker compose exec broker localrunner policy reload`. The broker port is published on `127.0.0.1:7443`; for other machines replace the address with the host interface. A runner in a container does not see host files and takes only orders with a commit.
 
-## Профили проекта
+## Project profiles
 
-`.localrunner/profiles.toml` в репозитории проекта:
+`.localrunner/profiles.toml` in the project's repository:
 
 ```toml
 [profile.rust-unit]
 command   = "cargo test --workspace"
-timeout_s = 900                     # обязателен
+timeout_s = 900                     # mandatory
 mem_mb    = 4096
 cpu       = 4
 tags      = ["cargo"]
@@ -327,11 +380,11 @@ steps = [
 ]
 ```
 
-В профиле либо `command`, либо `steps`. Упавший шаг останавливает джобу; `continue_on_failure = true` разрешает продолжить. `exclusive` — теги, которые одновременно держит одна джоба. `cache` — именованные кэши раннера. Остальные поля описаны в разделах 4 и 5 архитектуры.
+A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
 
-## Журналы
+## Logging
 
-`logging.toml` в каталоге состояния каждой роли. Без файла пишется JSON-файл с ротацией. Применение без перезапуска: `localrunner logging reload`.
+`logging.toml` in the state directory of each role. Without the file a rotated JSON file is written. Apply without a restart: `localrunner logging reload`.
 
 ```toml
 [logging]
@@ -345,106 +398,102 @@ keep_days  = 14
 keep_files = 10
 
 [[sink]]
-kind = "console"       # только на переднем плане
+kind = "console"       # foreground only
 ```
 
-Получатель `otlp` (`endpoint`, `ca_file`, `enabled`) по умолчанию выключен: это единственное, что может отправлять данные с машины. Значения секретов, коды вступления и токены маскируются в логах и выводе.
+The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output.
 
-## Автозапуск, остановка, обновление, удаление
+## Autostart, stop, update, uninstall
 
 ```
 localrunner autostart on [hub|broker|runner|all] [--dry-run]
-localrunner autostart on runner <имя>
+localrunner autostart on runner <name>
 localrunner autostart off [...]
-localrunner down [имена] [--drain | --cancel]
+localrunner down [names] [--drain | --cancel]
 localrunner uninstall [--purge] [--yes] [--dry-run]
 ```
 
-- Автозапуск по умолчанию выключен. Он работает под пользователем, который его включил: задача планировщика на Windows, пользовательский юнит systemd на Linux, LaunchAgent на macOS. `autostart on broker` то же, что `broker install-service`.
-- `down` по умолчанию (`--drain`) дожидается текущих джоб; `--cancel` отменяет их и ждёт раннеры не дольше 30 секунд. Брокер останавливается после раннеров.
-- Обновление: остановить раннеры (`down`), заменить бинарник, снова `up`. Схемы баз обновляются при старте с резервной копией; откат на более старую версию не поддерживается.
-- `uninstall` останавливает роли, снимает автозапуск, службу, бинарник и запись в PATH. Ключи и история остаются; `--purge` удаляет и состояние после подтверждения.
+- Autostart is off by default. It runs as the user who enabled it: a scheduler task on Windows, a systemd user unit on Linux, a LaunchAgent on macOS. `autostart on broker` is the same as `broker install-service`.
+- `down` by default (`--drain`) waits for current jobs; `--cancel` cancels them and waits for the runners no longer than 30 seconds. The broker stops after the runners.
+- Update: stop the runners (`down`), replace the binary, `up` again. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported.
+- `uninstall` stops the roles and removes autostart, the service, the binary and the PATH entry. Keys and history stay; `--purge` removes the state too, after confirmation.
 
-## Диагностика
+## Troubleshooting
 
-| Проблема | Что сделать |
+| Problem | What to do |
 |---|---|
-| не ясно, что с узлом | `localrunner doctor` (`--json`; код 1, если есть `fail`) |
-| заказ не стартует | `localrunner explain <job>`: причина и сработавшее правило |
-| нет подходящего раннера | в ответе указана разница между заказом и раннерами; `localrunner runners` |
-| раннер не запускается | сообщение называет причину: нет `[env] path`, запуск от root, раннер под пользователем брокера |
-| hub не видит брокера | `localrunner brokers`; проверить `[listen]`, `[networks]` и порт |
-| код вступления не подходит | срок 1 час и число вступлений ограничены; выдать новый `broker add` |
+| unclear what is wrong with a node | `localrunner doctor` (`--json`; code 1 if there is a `fail`) |
+| an order does not start | `localrunner explain <job>`: the reason and the rule that fired |
+| no suitable runner | the answer names the difference between the order and the runners; `localrunner runners` |
+| a runner does not start | the message names the reason: no `[env] path`, run as root, runner under the broker's user |
+| the hub does not see the broker | `localrunner brokers`; check `[listen]`, `[networks]` and the port |
+| the join code is rejected | it lives 1 hour and has a limited number of joins; issue a new one with `broker add` |
 
-## Безопасность
+## Security
 
-- Дашборд слушает только `127.0.0.1` и `::1`.
-- Участник вступает по одноразовому коду; сертификат брокера закреплён отпечатком из кода. Дальше работает отзываемый ключ участника: `client remove`, `runner remove`.
-- Брокер никогда не работает под привилегированной учётной записью.
-- Политику правит только тот, кто сидит за машиной брокера; `policy reload` принимается только по локальному каналу.
-- `status --html` не включает логи без `--with-logs`.
+- The dashboard listens only on `127.0.0.1` and `::1`.
+- A member joins by a one-time code; the broker's certificate is pinned by the fingerprint from the code. After that a revocable member key works: `client remove`, `runner remove`.
+- The broker never runs under a privileged account.
+- Only whoever sits at the broker machine edits the policy; `policy reload` is accepted only over the local channel.
+- `status --html` does not include logs without `--with-logs`.
 
-## Плагин для агентов (Claude Code и Codex)
+## Plugin details
 
-Плагин в `plugin/` оборачивает команды в скилы. Один и тот же плагин `al-localrunner` описан для обоих агентов: `.claude-plugin/marketplace.json` для Claude Code, `.agents/plugins/marketplace.json` для Codex.
-
-| Скил | Назначение |
-|---|---|
-| `install-runner` | разовая установка бинарника и, если его нет, раннера `ci` |
-| `up-runner` | запуск hub, брокера и раннеров |
-| `autostart-runner` | включить или выключить автозапуск |
-| `down-runner` | остановить раннеры |
-| `status-runner` | очередь, джобы, раннеры, история, дашборд |
-| `run` | поставить запуск и прочитать результат |
-
-Плагин только вызывает бинарник `localrunner`, поэтому бинарник нужно поставить отдельно (раздел «Установка бинарника»).
+The plugin in `plugin/` wraps the commands into skills. The same `al-localrunner` plugin is described for both agents: `.claude-plugin/marketplace.json` for Claude Code, `.agents/plugins/marketplace.json` for Codex. The plugin only calls the `localrunner` binary.
 
 ### Claude Code
 
-Область установки задаёт `--scope`:
+The installation scope is set by `--scope`:
 
-| Область | Где записывается | Кому доступен |
+| Scope | Where it is written | Who gets it |
 |---|---|---|
-| `project` | `.claude/settings.json` репозитория | всем, кто работает с этим репозиторием (файл коммитится) |
-| `local` | локальные настройки репозитория, не коммитятся | только вам и только в этом репозитории |
-| `user` (по умолчанию) | настройки пользователя | вам во всех проектах |
+| `project` | `.claude/settings.json` of the repository | everyone who works with this repository (the file is committed) |
+| `local` | local repository settings, not committed | only you and only in this repository |
+| `user` (default) | user settings | you, in every project |
 
-Для проекта:
-
-```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
-claude plugin install al-localrunner@al-localrunner --scope project
-```
-
-Глобально, для всех проектов пользователя:
+From a local copy of the repository, give the path to the directory that holds `.claude-plugin/` instead of `alexpantiukhin/Al.LocalRunner`. Removal:
 
 ```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope user
-claude plugin install al-localrunner@al-localrunner --scope user
-```
-
-Из локальной копии репозитория вместо `alexpantiukhin/Al.LocalRunner` укажите путь к каталогу, в котором лежит `.claude-plugin/`. Удаление:
-
-```
-claude plugin uninstall al-localrunner@al-localrunner --scope <область>
-claude plugin marketplace remove al-localrunner --scope <область>
+claude plugin uninstall al-localrunner@al-localrunner --scope <scope>
+claude plugin marketplace remove al-localrunner --scope <scope>
 ```
 
 ### Codex
 
-У Codex нет областей установки: плагины и маркетплейсы записываются в `~/.codex/config.toml` пользователя и действуют во всех проектах. Установка на уровень проекта невозможна.
-
-```
-codex plugin marketplace add alexpantiukhin/Al.LocalRunner
-codex plugin add al-localrunner@al-localrunner
-codex plugin list
-```
-
-Маркетплейс Codex берёт плагин из ветки `main` репозитория, поэтому установка работает после того, как плагин влит в `main`. Удаление:
+Codex has no installation scopes: plugins and marketplaces are written to the user's `~/.codex/config.toml` and apply in every project. Project-level installation is not possible. The marketplace takes the plugin from the `main` branch. Check with `codex plugin list`. Removal:
 
 ```
 codex plugin remove al-localrunner@al-localrunner
 codex plugin marketplace remove al-localrunner
 ```
 
-После установки плагина перезапустите сессию агента, чтобы скилы подхватились.
+## Usage
+
+Order of a typical session:
+
+1. Put the task in the queue: `localrunner run [profile] --as label` (waits and returns the exit code) or `submit` (returns the job id at once). Profiles come from [`.localrunner/profiles.toml`](#project-profiles).
+2. Follow it: `wait <job>` or `log <job> -f`.
+3. If it waits: `explain <job>` says why; `status` shows the whole queue.
+4. If the result no longer matters: `cancel <job> --as label` or `cancel --mine --as label`.
+5. Afterwards: `history`, `stats`, `dashboard`.
+
+All commands:
+
+| Command | Action |
+|---|---|
+| `submit [profile] --as label` | submit an order, print the id, return at once |
+| `run [profile] --as label` | the same, but show the output and return the exit code |
+| `wait <job>` | follow a job; interrupting cancels nothing |
+| `log <job> [--step name] [--tail N] [-f]` | the job log |
+| `cancel <job> --as label`, `cancel --mine --as label` | cancel |
+| `jobs --mine [--active] [--as label]` | your jobs |
+| `status`, `explain <job>` | the queue; why an order waits |
+| `history [--all]`, `history show <job>` | history |
+| `stats`, `runners`, `brokers` | statistics, runners, brokers |
+| `dashboard` | a page on 127.0.0.1 |
+
+Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+
+## License
+
+GPL-3.0-or-later: see [LICENSE](LICENSE). Additional terms (keep the author attribution in copies and documentation): [NOTICE](NOTICE).

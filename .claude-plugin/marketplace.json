@@ -5,7 +5,7 @@
     {
       "name": "al-localrunner",
       "source": "./plugin",
-      "description": "Local queued runners for tests and builds shared by parallel agent sessions"
+      "description": "Resource-aware job queue for parallel AI agent sessions: tests, builds, lint, deploys, migrations"
     }
   ]
 }
