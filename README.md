@@ -8,8 +8,8 @@ The core knows no language and no toolchain. What to run and what it needs is de
 
 ## Contents
 
-- [Highlights](#highlights)
-- [Quick start](#quick-start)
+- [Quick start with an AI agent](#quick-start-with-an-ai-agent)
+- [Quick start by hand (one machine)](#quick-start-by-hand-one-machine)
 - [Nodes](#nodes)
 - [Installation](#installation)
 - [Hub](#hub)
@@ -22,26 +22,67 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Autostart, stop, update, uninstall](#autostart-stop-update-uninstall)
 - [Troubleshooting](#troubleshooting)
 - [Security](#security)
-- [Plugin for agents (Claude Code and Codex)](#plugin-for-agents-claude-code-and-codex)
+- [Plugin details](#plugin-details)
+- [Usage](#usage)
 - [License](#license)
 
-## Highlights
+## Quick start with an AI agent
 
-- One queue per pool of machines: priorities, fair share, quotas and visibility rules; each runner executes jobs one at a time with the resources it declares.
-- The same CLI for people, agents and GitHub Actions. The core is generic: all project specifics live in the project's profiles. Safe by default: one-time join codes, certificate pinning, revocable keys, a broker that never runs as a privileged account.
+The simplest way: connect the plugin and ask the agent. The plugin gives the agent skills to install, start and use the queue.
 
-## Quick start
-
-On one machine, with every role, no configuration:
+Claude Code, for the current project:
 
 ```
-localrunner init
-localrunner doctor
-localrunner up                               # broker, hub and runners as background processes
-localrunner run rust-unit --as claude:fix-1  # submit a run, show its output, return the job's exit code
-localrunner status                           # queue, running jobs, reasons for waiting
-localrunner down                             # runners finish the current job, then everything stops
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
+claude plugin install al-localrunner@al-localrunner --scope project
 ```
+
+For all your projects use `--scope user` in both commands. Codex (global only):
+
+```
+codex plugin marketplace add alexpantiukhin/Al.LocalRunner
+codex plugin add al-localrunner@al-localrunner
+```
+
+Restart the agent session, then ask in plain words:
+
+| Say | Skill | What it does |
+|---|---|---|
+| "install the runner" | `install-runner` | gets the binary from a release, runs `init` and `doctor` |
+| "start the runners" | `up-runner` | starts the hub, the broker and the runners |
+| "run the tests through the runner" | `run` | puts the task into the queue and reads the result |
+| "show the queue" | `status-runner` | queue, jobs, runners, history, dashboard |
+| "stop the runners", "turn autostart on" | `down-runner`, `autostart-runner` | stop the roles, switch autostart |
+
+The skills never raise rights on their own and never print join codes or tokens. Until the first regular release exists, use a pre-release or a source build (see below). Scopes, removal and Codex limits: [Plugin details](#plugin-details).
+
+## Quick start by hand (one machine)
+
+1. Install the binary. Take the script from a release, not from a branch (the repository copy holds the placeholder `@RELEASE_PUBKEY@` and refuses to install). Linux and macOS:
+
+   ```
+   curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role all
+   ```
+
+   Windows (PowerShell, as an ordinary user; the script takes parameters only as a file):
+
+   ```
+   Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 --role all
+   ```
+
+   Or from source: `cargo build --release`, then `target/release/localrunner install`. Details and options: [Installation](#installation).
+
+2. Start everything and run a task:
+
+   ```
+   localrunner init
+   localrunner doctor
+   localrunner up                               # broker, hub and runners as background processes
+   localrunner run rust-unit --as claude:fix-1  # submit a run, show its output, return the job's exit code
+   localrunner status                           # queue, running jobs, reasons for waiting
+   localrunner down                             # runners finish the current job, then everything stops
+   ```
 
 The hub on the broker's machine does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`init` adds you).
 
@@ -68,22 +109,9 @@ For several machines, install the broker first, then join the hub and the runner
 
 ## Installation
 
-### From a release
+### Release scripts
 
 You do not need to clone the repository. In the repository the scripts hold the placeholder `@RELEASE_PUBKEY@` and refuse to install anything with it. Working copies with the release public key built in are attached to every release: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Take the script from there, not from a branch.
-
-Linux and macOS (latest regular release):
-
-```
-curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role runner
-```
-
-Windows (PowerShell, as an ordinary user). The script takes parameters only as a file, so download it first:
-
-```
-Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 --role runner
-```
 
 The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
 
@@ -157,22 +185,7 @@ on_expire = "fail"                              # fail | keep
 
 Without the file the defaults apply. "Same machine" orders (a working tree) go only to a broker on that machine.
 
-Working with jobs:
-
-| Command | Action |
-|---|---|
-| `submit [profile] --as label` | submit an order, print the id, return at once |
-| `run [profile] --as label` | the same, but show the output and return the exit code |
-| `wait <job>` | follow a job; interrupting cancels nothing |
-| `log <job> [--step name] [--tail N] [-f]` | the job log |
-| `cancel <job> --as label`, `cancel --mine --as label` | cancel |
-| `jobs --mine [--active] [--as label]` | your jobs |
-| `status`, `explain <job>` | the queue; why an order waits |
-| `history [--all]`, `history show <job>` | history |
-| `stats`, `runners`, `brokers` | statistics, runners, brokers |
-| `dashboard` | a page on 127.0.0.1 |
-
-Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+Commands for working with jobs: see [Usage](#usage).
 
 ## Broker
 
@@ -219,9 +232,6 @@ Example:
 [listen]
 address = "192.168.1.10:7443"
 
-[networks]
-home = ["192.168.1.0/24"]
-
 [[local_user]]
 name  = "alex"
 label = ""
@@ -230,10 +240,6 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
-
-[pool]
-mem_mb = 16384
-cpu    = 8
 ```
 
 Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) are allowed only together with a `client_label` condition. Unknown tables and keys are rejected with a line number.
@@ -429,20 +435,9 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 - Only whoever sits at the broker machine edits the policy; `policy reload` is accepted only over the local channel.
 - `status --html` does not include logs without `--with-logs`.
 
-## Plugin for agents (Claude Code and Codex)
+## Plugin details
 
-The plugin in `plugin/` wraps the commands into skills. The same `al-localrunner` plugin is described for both agents: `.claude-plugin/marketplace.json` for Claude Code, `.agents/plugins/marketplace.json` for Codex.
-
-| Skill | Purpose |
-|---|---|
-| `install-runner` | one-time installation of the binary and, if absent, the `ci` runner |
-| `up-runner` | start the hub, the broker and the runners |
-| `autostart-runner` | turn autostart on or off |
-| `down-runner` | stop the runners |
-| `status-runner` | queue, jobs, runners, history, dashboard |
-| `run` | submit a run and read the result |
-
-The plugin only calls the `localrunner` binary, so install the binary separately (see [Installation](#installation)).
+The plugin in `plugin/` wraps the commands into skills. The same `al-localrunner` plugin is described for both agents: `.claude-plugin/marketplace.json` for Claude Code, `.agents/plugins/marketplace.json` for Codex. The plugin only calls the `localrunner` binary.
 
 ### Claude Code
 
@@ -454,20 +449,6 @@ The installation scope is set by `--scope`:
 | `local` | local repository settings, not committed | only you and only in this repository |
 | `user` (default) | user settings | you, in every project |
 
-For a project:
-
-```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
-claude plugin install al-localrunner@al-localrunner --scope project
-```
-
-Globally, for all of a user's projects:
-
-```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope user
-claude plugin install al-localrunner@al-localrunner --scope user
-```
-
 From a local copy of the repository, give the path to the directory that holds `.claude-plugin/` instead of `alexpantiukhin/Al.LocalRunner`. Removal:
 
 ```
@@ -477,22 +458,39 @@ claude plugin marketplace remove al-localrunner --scope <scope>
 
 ### Codex
 
-Codex has no installation scopes: plugins and marketplaces are written to the user's `~/.codex/config.toml` and apply in every project. Project-level installation is not possible.
-
-```
-codex plugin marketplace add alexpantiukhin/Al.LocalRunner
-codex plugin add al-localrunner@al-localrunner
-codex plugin list
-```
-
-The Codex marketplace takes the plugin from the `main` branch of the repository, so the installation works once the plugin is merged into `main`. Removal:
+Codex has no installation scopes: plugins and marketplaces are written to the user's `~/.codex/config.toml` and apply in every project. Project-level installation is not possible. The marketplace takes the plugin from the `main` branch. Check with `codex plugin list`. Removal:
 
 ```
 codex plugin remove al-localrunner@al-localrunner
 codex plugin marketplace remove al-localrunner
 ```
 
-After installing the plugin, restart the agent session so the skills are picked up.
+## Usage
+
+Order of a typical session:
+
+1. Put the task in the queue: `localrunner run [profile] --as label` (waits and returns the exit code) or `submit` (returns the job id at once). Profiles come from [`.localrunner/profiles.toml`](#project-profiles).
+2. Follow it: `wait <job>` or `log <job> -f`.
+3. If it waits: `explain <job>` says why; `status` shows the whole queue.
+4. If the result no longer matters: `cancel <job> --as label` or `cancel --mine --as label`.
+5. Afterwards: `history`, `stats`, `dashboard`.
+
+All commands:
+
+| Command | Action |
+|---|---|
+| `submit [profile] --as label` | submit an order, print the id, return at once |
+| `run [profile] --as label` | the same, but show the output and return the exit code |
+| `wait <job>` | follow a job; interrupting cancels nothing |
+| `log <job> [--step name] [--tail N] [-f]` | the job log |
+| `cancel <job> --as label`, `cancel --mine --as label` | cancel |
+| `jobs --mine [--active] [--as label]` | your jobs |
+| `status`, `explain <job>` | the queue; why an order waits |
+| `history [--all]`, `history show <job>` | history |
+| `stats`, `runners`, `brokers` | statistics, runners, brokers |
+| `dashboard` | a page on 127.0.0.1 |
+
+Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
 
 ## License
 

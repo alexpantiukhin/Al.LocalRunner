@@ -8,8 +8,8 @@
 
 ## Содержание
 
-- [Возможности](#возможности)
-- [Быстрый старт](#быстрый-старт)
+- [Быстрый старт с AI-агентом](#быстрый-старт-с-ai-агентом)
+- [Быстрый старт вручную (одна машина)](#быстрый-старт-вручную-одна-машина)
 - [Узлы](#узлы)
 - [Установка](#установка)
 - [Hub](#hub)
@@ -22,26 +22,67 @@
 - [Автозапуск, остановка, обновление, удаление](#автозапуск-остановка-обновление-удаление)
 - [Диагностика](#диагностика)
 - [Безопасность](#безопасность)
-- [Плагин для агентов (Claude Code и Codex)](#плагин-для-агентов-claude-code-и-codex)
+- [Подробности о плагине](#подробности-о-плагине)
+- [Использование](#использование)
 - [Лицензия](#лицензия)
 
-## Возможности
+## Быстрый старт с AI-агентом
 
-- Одна очередь на пул машин: приоритеты, справедливое распределение, квоты и правила видимости; раннер выполняет джобы по одной, с теми ресурсами, которые сам объявил.
-- Одни и те же команды для людей, агентов и GitHub Actions. Ядро универсальное: всё, что связано с проектом, лежит в его профилях. Безопасные умолчания: одноразовые коды вступления, закреплённый сертификат, отзываемые ключи, брокер никогда не работает под привилегированной учётной записью.
+Самый простой путь: подключить плагин и попросить агента. Плагин даёт агенту скилы для установки, запуска и работы с очередью.
 
-## Быстрый старт
-
-На одной машине, со всеми ролями, без настройки:
+Claude Code, для текущего проекта:
 
 ```
-localrunner init
-localrunner doctor
-localrunner up                               # брокер, hub и раннеры фоновыми процессами
-localrunner run rust-unit --as claude:fix-1  # поставить запуск, показывать вывод, вернуть код джобы
-localrunner status                           # очередь, выполняющиеся джобы, причины ожидания
-localrunner down                             # раннеры доделывают текущую джобу, затем всё останавливается
+claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
+claude plugin install al-localrunner@al-localrunner --scope project
 ```
+
+Для всех своих проектов укажите `--scope user` в обеих командах. Codex (только глобально):
+
+```
+codex plugin marketplace add alexpantiukhin/Al.LocalRunner
+codex plugin add al-localrunner@al-localrunner
+```
+
+Перезапустите сессию агента и просите простыми словами:
+
+| Скажите | Скил | Что делает |
+|---|---|---|
+| «установи раннер» | `install-runner` | берёт бинарник из релиза, выполняет `init` и `doctor` |
+| «подними раннеры» | `up-runner` | запускает hub, брокер и раннеры |
+| «прогони тесты через раннер» | `run` | ставит задачу в очередь и читает результат |
+| «покажи очередь» | `status-runner` | очередь, джобы, раннеры, история, дашборд |
+| «останови раннеры», «включи автозапуск» | `down-runner`, `autostart-runner` | остановить роли, переключить автозапуск |
+
+Скилы сами не повышают права и не печатают коды вступления и токены. Пока нет первого обычного релиза, используйте предварительный релиз или сборку из исходников (см. ниже). Области установки, удаление и ограничения Codex: [«Подробности о плагине»](#подробности-о-плагине).
+
+## Быстрый старт вручную (одна машина)
+
+1. Установите бинарник. Берите скрипт из релиза, а не из ветки (копия в репозитории содержит метку `@RELEASE_PUBKEY@` и отказывается что-либо ставить). Linux и macOS:
+
+   ```
+   curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role all
+   ```
+
+   Windows (PowerShell, от обычного пользователя; скрипт принимает параметры только как файл):
+
+   ```
+   Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
+   powershell -ExecutionPolicy Bypass -File .\install.ps1 --role all
+   ```
+
+   Или из исходников: `cargo build --release`, затем `target/release/localrunner install`. Подробности и параметры: [«Установка»](#установка).
+
+2. Запустите всё и поставьте задачу:
+
+   ```
+   localrunner init
+   localrunner doctor
+   localrunner up                               # брокер, hub и раннеры фоновыми процессами
+   localrunner run rust-unit --as claude:fix-1  # поставить запуск, показывать вывод, вернуть код джобы
+   localrunner status                           # очередь, выполняющиеся джобы, причины ожидания
+   localrunner down                             # раннеры доделывают текущую джобу, затем всё останавливается
+   ```
 
 Hub на машине брокера по коду не вступает: брокер разрешает локальным пользователям доступ по списку `[[local_user]]` в `policy.toml` (`init` вносит туда вас).
 
@@ -68,39 +109,19 @@ flowchart LR
 
 ## Установка
 
-### Из релиза
+### Скрипты релиза
 
-Репозиторий клонировать не нужно. В репозитории в скриптах стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Берите скрипт оттуда, а не из ветки.
-
-Linux и macOS (последний обычный релиз):
-
-```
-curl -fsSL https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.sh | sh -s -- --role runner
-```
-
-Windows (PowerShell, от обычного пользователя). Скрипт принимает параметры только как файл, поэтому сначала его скачивают:
-
-```
-Invoke-WebRequest https://github.com/alexpantiukhin/Al.LocalRunner/releases/latest/download/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 --role runner
-```
+В репозитории в скриптах стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Берите скрипт оттуда, а не из ветки.
 
 Роль задаёт `--role hub|broker|runner|all` (по умолчанию `all`). Остальные параметры: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; список даёт `--help`. Для предварительного релиза `latest` в ссылке не подходит: подставьте тег и версию, например `.../releases/download/v0.1.0-rc1/install.sh` и `--version 0.1.0-rc1`. Скрипт проверяет подпись `SHA256SUMS` и SHA-256 архива и при любом несовпадении ничего не ставит. Пока нет ни одного обычного релиза, используйте сборку из исходников или ссылку на предварительный.
 
 ### Из исходников
 
-Нужен Rust, версия задана в `rust-toolchain.toml`.
-
-```
-cargo build --release
-```
-
-Бинарник: `target/release/localrunner` (`localrunner.exe` на Windows). Положить в каталог пользователя и подготовить узел:
+Нужен Rust (версия в `rust-toolchain.toml`). `cargo build --release` даёт `target/release/localrunner` (`localrunner.exe` на Windows). Положите его в каталог пользователя и подготовьте узел:
 
 ```
 target/release/localrunner install --dry-run   # показать действия
 target/release/localrunner install             # скопировать бинарник, дополнить PATH, выполнить init
-localrunner doctor                             # проверить узел
 ```
 
 `install` не запускает роли и не включает автозапуск. От root или администратора он отказывается без `--allow-elevated`. Установку нужно повторять на каждой машине.
@@ -157,22 +178,7 @@ on_expire = "fail"                              # fail | keep
 
 Без файла действуют значения по умолчанию. Заказы «та же машина» (рабочее дерево) уходят только на брокер с этой же машины.
 
-Работа с джобами:
-
-| Команда | Действие |
-|---|---|
-| `submit [профиль] --as метка` | поставить заказ, напечатать id, вернуться сразу |
-| `run [профиль] --as метка` | то же, но показывать вывод и вернуть код выхода |
-| `wait <job>` | следить за джобой; прерывание ничего не отменяет |
-| `log <job> [--step имя] [--tail N] [-f]` | лог джобы |
-| `cancel <job> --as метка`, `cancel --mine --as метка` | отменить |
-| `jobs --mine [--active] [--as метка]` | свои джобы |
-| `status`, `explain <job>` | очередь; почему заказ ждёт |
-| `history [--all]`, `history show <job>` | история |
-| `stats`, `runners`, `brokers` | статистика, раннеры, брокеры |
-| `dashboard` | страница на 127.0.0.1 |
-
-Флаги `submit` и `run`: `--note`, `--platform`, `--timeout <с>` (только уменьшает таймаут профиля), `--mem 6144|512m|6g`, `--cpu <ядра>` (заменяют значения профиля на один запуск), `--detach` (заказ переживает процесс-отправитель). `--as` обязателен; внутри GitHub Actions по умолчанию `github:<workflow>/<job>`. У команд чтения есть `--json`.
+Команды для работы с джобами: см. [«Использование»](#использование).
 
 ## Брокер
 
@@ -219,9 +225,6 @@ localrunner broker install-service
 [listen]
 address = "192.168.1.10:7443"
 
-[networks]
-home = ["192.168.1.0/24"]
-
 [[local_user]]
 name  = "alex"
 label = ""
@@ -230,10 +233,6 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
-
-[pool]
-mem_mb = 16384
-cpu    = 8
 ```
 
 Правила с условием по заявленным атрибутам (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) допускаются только вместе с условием `client_label`. Неизвестные таблицы и ключи отвергаются с номером строки.
@@ -429,20 +428,9 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 - Политику правит только тот, кто сидит за машиной брокера; `policy reload` принимается только по локальному каналу.
 - `status --html` не включает логи без `--with-logs`.
 
-## Плагин для агентов (Claude Code и Codex)
+## Подробности о плагине
 
-Плагин в `plugin/` оборачивает команды в скилы. Один и тот же плагин `al-localrunner` описан для обоих агентов: `.claude-plugin/marketplace.json` для Claude Code, `.agents/plugins/marketplace.json` для Codex.
-
-| Скил | Назначение |
-|---|---|
-| `install-runner` | разовая установка бинарника и, если его нет, раннера `ci` |
-| `up-runner` | запуск hub, брокера и раннеров |
-| `autostart-runner` | включить или выключить автозапуск |
-| `down-runner` | остановить раннеры |
-| `status-runner` | очередь, джобы, раннеры, история, дашборд |
-| `run` | поставить запуск и прочитать результат |
-
-Плагин только вызывает бинарник `localrunner`, поэтому бинарник нужно поставить отдельно (раздел [«Установка»](#установка)).
+Плагин в `plugin/` оборачивает команды в скилы. Один и тот же плагин `al-localrunner` описан для обоих агентов: `.claude-plugin/marketplace.json` для Claude Code, `.agents/plugins/marketplace.json` для Codex. Плагин только вызывает бинарник `localrunner`.
 
 ### Claude Code
 
@@ -454,20 +442,6 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 | `local` | локальные настройки репозитория, не коммитятся | только вам и только в этом репозитории |
 | `user` (по умолчанию) | настройки пользователя | вам во всех проектах |
 
-Для проекта:
-
-```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope project
-claude plugin install al-localrunner@al-localrunner --scope project
-```
-
-Глобально, для всех проектов пользователя:
-
-```
-claude plugin marketplace add alexpantiukhin/Al.LocalRunner --scope user
-claude plugin install al-localrunner@al-localrunner --scope user
-```
-
 Из локальной копии репозитория вместо `alexpantiukhin/Al.LocalRunner` укажите путь к каталогу, в котором лежит `.claude-plugin/`. Удаление:
 
 ```
@@ -477,22 +451,39 @@ claude plugin marketplace remove al-localrunner --scope <область>
 
 ### Codex
 
-У Codex нет областей установки: плагины и маркетплейсы записываются в `~/.codex/config.toml` пользователя и действуют во всех проектах. Установка на уровень проекта невозможна.
-
-```
-codex plugin marketplace add alexpantiukhin/Al.LocalRunner
-codex plugin add al-localrunner@al-localrunner
-codex plugin list
-```
-
-Маркетплейс Codex берёт плагин из ветки `main` репозитория, поэтому установка работает после того, как плагин влит в `main`. Удаление:
+У Codex нет областей установки: плагины и маркетплейсы записываются в `~/.codex/config.toml` пользователя и действуют во всех проектах. Установка на уровень проекта невозможна. Маркетплейс берёт плагин из ветки `main`. Проверка: `codex plugin list`. Удаление:
 
 ```
 codex plugin remove al-localrunner@al-localrunner
 codex plugin marketplace remove al-localrunner
 ```
 
-После установки плагина перезапустите сессию агента, чтобы скилы подхватились.
+## Использование
+
+Порядок обычной сессии:
+
+1. Поставьте задачу в очередь: `localrunner run [профиль] --as метка` (ждёт и возвращает код выхода) или `submit` (сразу печатает id джобы). Профили берутся из [`.localrunner/profiles.toml`](#профили-проекта).
+2. Следите за ней: `wait <job>` или `log <job> -f`.
+3. Если она ждёт: `explain <job>` скажет почему; `status` покажет всю очередь.
+4. Если результат уже не нужен: `cancel <job> --as метка` или `cancel --mine --as метка`.
+5. Потом: `history`, `stats`, `dashboard`.
+
+Все команды:
+
+| Команда | Действие |
+|---|---|
+| `submit [профиль] --as метка` | поставить заказ, напечатать id, вернуться сразу |
+| `run [профиль] --as метка` | то же, но показывать вывод и вернуть код выхода |
+| `wait <job>` | следить за джобой; прерывание ничего не отменяет |
+| `log <job> [--step имя] [--tail N] [-f]` | лог джобы |
+| `cancel <job> --as метка`, `cancel --mine --as метка` | отменить |
+| `jobs --mine [--active] [--as метка]` | свои джобы |
+| `status`, `explain <job>` | очередь; почему заказ ждёт |
+| `history [--all]`, `history show <job>` | история |
+| `stats`, `runners`, `brokers` | статистика, раннеры, брокеры |
+| `dashboard` | страница на 127.0.0.1 |
+
+Флаги `submit` и `run`: `--note`, `--platform`, `--timeout <с>` (только уменьшает таймаут профиля), `--mem 6144|512m|6g`, `--cpu <ядра>` (заменяют значения профиля на один запуск), `--detach` (заказ переживает процесс-отправитель). `--as` обязателен; внутри GitHub Actions по умолчанию `github:<workflow>/<job>`. У команд чтения есть `--json`.
 
 ## Лицензия
 
