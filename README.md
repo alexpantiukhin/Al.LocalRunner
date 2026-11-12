@@ -2,7 +2,7 @@
 
 **English** | [Русский](README.ru.md)
 
-A queue for test and build runs. Sessions and agents put their runs into one shared queue instead of fighting over CPU, memory, emulators and caches. Works on Windows, Linux and macOS. One binary, `localrunner`, plays every role.
+A resource-aware job queue for a developer and their AI agents. Heavy tasks (tests, builds, lint, deploys, migrations) go into one queue and run one at a time on a suitable machine, within its memory and cores, instead of agents fighting over CPU, memory, emulators and caches. One machine or many, on one network or several. Works on Windows, Linux and macOS. One binary, `localrunner`, plays every role.
 
 The core knows no language and no toolchain. What to run and what it needs is described by a profile in the project's own `.localrunner/profiles.toml`. The full design, formats and requirements: [`docs/architecture.en.html`](docs/architecture.en.html) ([Russian](docs/architecture.html)).
 

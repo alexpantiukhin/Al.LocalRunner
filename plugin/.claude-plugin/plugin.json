@@ -1,5 +1,5 @@
 {
   "name": "al-localrunner",
   "version": "0.1.0",
-  "description": "Local queued runners: install, start, stop, autostart, inspect and submit runs from parallel agent sessions through one shared queue"
+  "description": "Resource-aware job queue: install, start, stop, autostart, inspect and submit heavy tasks (tests, builds, lint, deploys, migrations) from parallel agent sessions through one shared queue"
 }

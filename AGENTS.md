@@ -1,4 +1,4 @@
-# Al.LocalRunner — local queued runners
+# Al.LocalRunner — a resource-aware job queue for a developer and AI agents
 
 ## Project overview
 See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/architecture.html` (Russian) with `docs/architecture.en.html` (English): the single design document in two languages (architecture, requirements, config formats, security) with a table of contents. Do not add design Markdown files; update the HTML instead. Keep each pair in sync: a change to one file of a pair is made in the other in the same commit. Each README starts with a language switch line.

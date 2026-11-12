@@ -1,8 +1,8 @@
 ---
 name: run
 description: >-
-  Use whenever tests or builds must run on a machine shared by parallel sessions: submit the run
-  to the queue instead of starting it directly. Triggers: "run tests via runner", "прогони через
+  Use whenever a heavy task (tests, builds, lint, deploy, migration) must run on a machine shared by
+  parallel sessions: submit it to the queue instead of starting it directly. Triggers: "run tests via runner", "прогони через
   раннер", and any test-run step of a consumer project that declares profiles.
 ---
 
