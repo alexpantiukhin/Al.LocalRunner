@@ -278,3 +278,25 @@ fn runner_run_refuses_to_start_under_the_brokers_user_without_the_setting() {
         "{stderr}"
     );
 }
+
+#[test]
+fn doctor_reports_a_broker_database_that_no_service_state_uses() {
+    use lr_cli::doctor::stale_broker_db;
+    let dir = TempDir::new("doctor-stale-db");
+    assert!(
+        stale_broker_db(dir.path(), true, false).is_none(),
+        "no file"
+    );
+    std::fs::write(dir.path().join("broker.db"), b"").unwrap();
+    let found = stale_broker_db(dir.path(), true, false).expect("left over");
+    assert_eq!(found.status, Status::Warn);
+    assert!(found.detail.contains("left over"), "{}", found.detail);
+    assert!(
+        stale_broker_db(dir.path(), false, false).is_none(),
+        "a broker started by hand owns the file"
+    );
+    assert!(
+        stale_broker_db(dir.path(), true, true).is_none(),
+        "the service's own state"
+    );
+}

@@ -95,7 +95,33 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     });
 }
 
+/// The warning for a broker database left in the state directory of a user while the broker
+/// runs as the OS service: nothing uses it, and `up broker --state-dir` would start a second
+/// broker on it.
+pub fn stale_broker_db(
+    root: &Path,
+    broker_is_service: bool,
+    root_is_service: bool,
+) -> Option<Check> {
+    let db = root.join("broker.db");
+    (broker_is_service && !root_is_service && db.exists()).then(|| {
+        check(
+            "broker.db",
+            Status::Warn,
+            format!(
+                "{} is left over: the broker runs as a service with its own state; nothing uses this database, remove it with its -wal/-shm files, certificate and key once you do not need the old history",
+                db.display()
+            ),
+        )
+    })
+}
+
 async fn policy(layout: &Layout, out: &mut Vec<Check>) {
+    out.extend(stale_broker_db(
+        &layout.root,
+        layout.broker_is_service(),
+        layout.is_service(),
+    ));
     match crate::commands::admin_cmd::broker_policy(layout).await {
         Some(Ok((path, warnings))) => {
             out.push(check(
@@ -115,6 +141,14 @@ async fn policy(layout: &Layout, out: &mut Vec<Check>) {
         None => {}
     }
     if let Some(note) = crate::commands::admin_cmd::service_policy_note(layout) {
+        if crate::commands::admin_cmd::service_running(layout).await {
+            out.push(check(
+                "policy.toml",
+                Status::Ok,
+                crate::commands::admin_cmd::service_running_note(),
+            ));
+            return;
+        }
         out.push(check("policy.toml", Status::Warn, note));
     }
     let path = layout.config_file("policy.toml");

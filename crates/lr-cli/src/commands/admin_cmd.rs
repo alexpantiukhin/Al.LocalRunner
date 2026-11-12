@@ -26,6 +26,25 @@ pub async fn broker_policy(layout: &Layout) -> Option<Result<(String, Vec<String
     })
 }
 
+/// Whether the broker service accepts connections on its local channel, which is open to
+/// every local user: it answers even when its admin channel is closed to this user.
+pub async fn service_running(layout: &Layout) -> bool {
+    let Ok(server) = crate::os_service::broker_servers() else {
+        return false;
+    };
+    lr_abstractions::Dialer::dial(&lr_net::IpcDialer::new(server), &layout.broker_ipc(), None)
+        .await
+        .is_ok()
+}
+
+/// The text for a broker service that is running while its policy cannot be read here.
+pub fn service_running_note() -> String {
+    format!(
+        "the broker service is running; its policy ({}) is not readable without administrator rights, so it is not checked here",
+        crate::paths::service_root().join("policy.toml").display()
+    )
+}
+
 /// The warning for a broker service that cannot be asked: the user's `policy.toml` is not the
 /// one the service loads.
 pub fn service_policy_note(layout: &Layout) -> Option<String> {
