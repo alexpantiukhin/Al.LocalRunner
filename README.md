@@ -94,46 +94,49 @@ The skills never raise rights on their own and never print join codes or tokens.
    powershell -ExecutionPolicy Bypass -File .\install.ps1 --role all
    ```
 
-   Or from source: `cargo build --release`, then `target/release/localrunner install`. Details and options: [Installation](#installation).
+   Or from source: `cargo build --release`, then `target/release/localrunner install`. The installer itself creates the configuration templates (`init`) and runs `doctor`. Details and options: [Installation](#installation).
 
-2. Start everything and run a task:
+2. Start and check:
 
    ```
-   localrunner init
-   localrunner doctor
-   localrunner up                               # broker, hub and runners as background processes
-   localrunner run rust-unit --as claude:fix-1  # submit a run, show its output, return the job's exit code
-   localrunner status                           # queue, running jobs, reasons for waiting
-   localrunner down                             # runners finish the current job, then everything stops
+   localrunner up        # broker, hub and runner as background processes
+   localrunner status    # the queue and the pool: memory and cores
+   localrunner runners   # your runner is `online`
    ```
 
-The hub on the broker's machine does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`init` adds you).
+3. Describe a task. A profile lives in `.localrunner/profiles.toml` of a project; in any empty folder create it with:
+
+   ```toml
+   [profile.hello]
+   command   = "echo hello from localrunner"   # on Windows: "cmd /c echo hello from localrunner"
+   timeout_s = 60
+   ```
+
+4. Run it, look at the result, stop everything:
+
+   ```
+   localrunner run hello --as me:test   # submit, show the output, return the exit code
+   localrunner history                  # the record of the run
+   localrunner dashboard                # live page on 127.0.0.1, Ctrl+C stops it
+   localrunner down                     # the runner finishes the current job, then everything stops
+   ```
 
 ## Installation
 
 ### Release scripts
 
-You do not need to clone the repository. In the repository the scripts hold the placeholder `@RELEASE_PUBKEY@` and refuse to install anything with it. Working copies with the release public key built in are attached to every release: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Take the script from there, not from a branch.
-
-The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
+Copies with the release public key built in are attached to every release (https://github.com/alexpantiukhin/Al.LocalRunner/releases); take the script from there, not from a branch. The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
 
 ### From source
 
-You need Rust; the version is set in `rust-toolchain.toml`.
-
-```
-cargo build --release
-```
-
-The binary is `target/release/localrunner` (`localrunner.exe` on Windows). Put it into the user's directory and prepare the node:
+You need Rust; the version is set in `rust-toolchain.toml`. `cargo build --release` gives `target/release/localrunner` (`localrunner.exe` on Windows). Put it into the user's directory and prepare the node:
 
 ```
 target/release/localrunner install --dry-run   # show the actions
 target/release/localrunner install             # copy the binary, extend PATH, run init
-localrunner doctor                             # check the node
 ```
 
-`install` starts no roles and enables no autostart. It refuses to run as root or administrator without `--allow-elevated`. Repeat the installation on every machine.
+Check the node with `localrunner doctor`. `install` starts no roles and enables no autostart. It refuses to run as root or administrator without `--allow-elevated`. Repeat the installation on every machine.
 
 ### Files of a node
 
@@ -143,9 +146,7 @@ localrunner doctor                             # check the node
 | state and configuration of hub and runner | `%LOCALAPPDATA%\Al.LocalRunner` | `~/.local/share/al-localrunner` |
 | state of the broker service | `%ProgramData%\Al.LocalRunner` | `/var/lib/al-localrunner` (Linux), `/Library/Application Support/Al.LocalRunner` (macOS) |
 
-The directories can be replaced: `--state-dir` and `--config-dir`, or the variables `LOCALRUNNER_STATE_DIR` and `LOCALRUNNER_CONFIG_DIR`.
-
-`localrunner init [--role hub|broker|runner|all]` creates the state directory and the configuration templates. It never overwrites existing files.
+The directories can be replaced: `--state-dir` and `--config-dir`, or the variables `LOCALRUNNER_STATE_DIR` and `LOCALRUNNER_CONFIG_DIR`. `localrunner init [--role hub|broker|runner|all]` creates the state directory and the configuration templates. It never overwrites existing files.
 
 ## Hub
 
@@ -154,9 +155,8 @@ Needed on every machine you submit runs from. One hub per OS user.
 Install and start:
 
 ```
-localrunner install
-localrunner init --role hub
-localrunner up hub          # or: localrunner hub run (in the foreground)
+localrunner install --role hub   # the binary and the hub templates (init)
+localrunner up hub               # or: localrunner hub run (in the foreground)
 ```
 
 If the broker is on another machine, the hub joins the pool (the broker issues the code, see [Broker](#broker)):
@@ -185,9 +185,7 @@ ttl_hours = 24                                  # how long an order waits for a 
 on_expire = "fail"                              # fail | keep
 ```
 
-Without the file the defaults apply. "Same machine" orders (a working tree) go only to a broker on that machine.
-
-Commands for working with jobs: see [Usage](#usage).
+Without the file the defaults apply. "Same machine" orders (a working tree) go only to a broker on that machine. On the broker's machine the hub does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`install` adds you). Commands for working with jobs: see [Usage](#usage).
 
 ## Broker
 
@@ -196,7 +194,7 @@ One per pool. Holds the queue, member keys and history. Executes nothing itself.
 Start on a user's machine:
 
 ```
-localrunner init --role broker
+localrunner install --role broker
 localrunner up broker       # or: localrunner broker run
 ```
 
@@ -207,9 +205,7 @@ localrunner broker install-service --dry-run
 localrunner broker install-service
 ```
 
-Remove the service with `localrunner autostart off broker` or `uninstall`. `down` does not stop the service: use the OS service manager. `up` does not start it.
-
-Configuration: `policy.toml` in the broker's state directory. Without the file the defaults apply. Main tables:
+Remove the service with `localrunner autostart off broker` or `uninstall`. `down` does not stop the service: use the OS service manager. `up` does not start it. Configuration: `policy.toml` in the broker's state directory. Without the file the defaults apply. Main tables:
 
 | Table | Purpose |
 |---|---|
@@ -274,7 +270,7 @@ Executes jobs, one at a time, with the resources declared in `runner.toml`.
 Install and start on the broker's machine:
 
 ```
-localrunner init --role runner
+localrunner install --role runner
 # edit runner.toml (see below)
 localrunner up runner
 ```
@@ -282,8 +278,7 @@ localrunner up runner
 A runner on another machine:
 
 ```
-localrunner install
-localrunner init --role runner
+localrunner install --role runner
 # edit runner.toml
 localrunner runner join <host:port> --code-file code.txt --name box --count 2
 localrunner up runner
@@ -340,9 +335,9 @@ Permissions:
 
 Order: the broker first, then the rest.
 
-1. Broker machine. Install the binary, `init --role broker`, set `[listen]` and `[networks]` in `policy.toml`, start it (`broker install-service` for permanent operation).
-2. For each client machine: on the broker `broker add --name <name> --label <label>`; on the client `install`, `init --role hub`, `hub join <host:port> --code-file code.txt --name <broker name>`, `up hub`.
-3. For each machine with runners: on the broker `broker add --runners N --address <host:port>`; on the machine `install`, `init --role runner`, edit `runner.toml`, `runner join ...`, `up runner`.
+1. Broker machine. `install --role broker`, set `[listen]` and `[networks]` in `policy.toml`, start it (`broker install-service` for permanent operation).
+2. For each client machine: on the broker `broker add --name <name> --label <label>`; on the client `install --role hub`, `hub join <host:port> --code-file code.txt --name <broker name>`, `up hub`.
+3. For each machine with runners: on the broker `broker add --runners N --address <host:port>`; on the machine `install --role runner`, edit `runner.toml`, `runner join ...`, `up runner`.
 4. Check: `localrunner doctor`, `localrunner runners`, `localrunner brokers`.
 
 Only the broker needs an incoming port. There is no automatic broker discovery on the network; enter the address by hand.

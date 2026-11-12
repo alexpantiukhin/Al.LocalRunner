@@ -94,28 +94,38 @@ codex plugin add al-localrunner@al-localrunner
    powershell -ExecutionPolicy Bypass -File .\install.ps1 --role all
    ```
 
-   Или из исходников: `cargo build --release`, затем `target/release/localrunner install`. Подробности и параметры: [«Установка»](#установка).
+   Или из исходников: `cargo build --release`, затем `target/release/localrunner install`. Установщик сам создаёт шаблоны конфигураций (`init`) и запускает `doctor`. Подробности и параметры: [«Установка»](#установка).
 
-2. Запустите всё и поставьте задачу:
+2. Запустите и проверьте:
 
    ```
-   localrunner init
-   localrunner doctor
-   localrunner up                               # брокер, hub и раннеры фоновыми процессами
-   localrunner run rust-unit --as claude:fix-1  # поставить запуск, показывать вывод, вернуть код джобы
-   localrunner status                           # очередь, выполняющиеся джобы, причины ожидания
-   localrunner down                             # раннеры доделывают текущую джобу, затем всё останавливается
+   localrunner up        # брокер, hub и раннер фоновыми процессами
+   localrunner status    # очередь и пул: память и ядра
+   localrunner runners   # ваш раннер в состоянии `online`
    ```
 
-Hub на машине брокера по коду не вступает: брокер разрешает локальным пользователям доступ по списку `[[local_user]]` в `policy.toml` (`init` вносит туда вас).
+3. Опишите задачу. Профиль лежит в `.localrunner/profiles.toml` проекта; в любой пустой папке создайте его:
+
+   ```toml
+   [profile.hello]
+   command   = "echo hello from localrunner"   # на Windows: "cmd /c echo hello from localrunner"
+   timeout_s = 60
+   ```
+
+4. Запустите, посмотрите результат и остановите всё:
+
+   ```
+   localrunner run hello --as me:test   # поставить, показать вывод, вернуть код выхода
+   localrunner history                  # запись о запуске
+   localrunner dashboard                # живая страница на 127.0.0.1, Ctrl+C останавливает
+   localrunner down                     # раннер доделывает текущую джобу, затем всё останавливается
+   ```
 
 ## Установка
 
 ### Скрипты релиза
 
-В репозитории в скриптах стоит метка `@RELEASE_PUBKEY@`, и с ней они отказываются что-либо ставить. Рабочие копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза: https://github.com/alexpantiukhin/Al.LocalRunner/releases. Берите скрипт оттуда, а не из ветки.
-
-Роль задаёт `--role hub|broker|runner|all` (по умолчанию `all`). Остальные параметры: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; список даёт `--help`. Для предварительного релиза `latest` в ссылке не подходит: подставьте тег и версию, например `.../releases/download/v0.1.0-rc1/install.sh` и `--version 0.1.0-rc1`. Скрипт проверяет подпись `SHA256SUMS` и SHA-256 архива и при любом несовпадении ничего не ставит. Пока нет ни одного обычного релиза, используйте сборку из исходников или ссылку на предварительный.
+Копии с вшитым открытым ключом выпуска лежат среди файлов каждого релиза (https://github.com/alexpantiukhin/Al.LocalRunner/releases); берите скрипт оттуда, а не из ветки. Роль задаёт `--role hub|broker|runner|all` (по умолчанию `all`). Остальные параметры: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; список даёт `--help`. Для предварительного релиза `latest` в ссылке не подходит: подставьте тег и версию, например `.../releases/download/v0.1.0-rc1/install.sh` и `--version 0.1.0-rc1`. Скрипт проверяет подпись `SHA256SUMS` и SHA-256 архива и при любом несовпадении ничего не ставит. Пока нет ни одного обычного релиза, используйте сборку из исходников или ссылку на предварительный.
 
 ### Из исходников
 
@@ -126,7 +136,7 @@ target/release/localrunner install --dry-run   # показать действи
 target/release/localrunner install             # скопировать бинарник, дополнить PATH, выполнить init
 ```
 
-`install` не запускает роли и не включает автозапуск. От root или администратора он отказывается без `--allow-elevated`. Установку нужно повторять на каждой машине.
+Проверить узел можно командой `localrunner doctor`. `install` не запускает роли и не включает автозапуск. От root или администратора он отказывается без `--allow-elevated`. Установку нужно повторять на каждой машине.
 
 ### Файлы узла
 
@@ -136,9 +146,7 @@ target/release/localrunner install             # скопировать бина
 | состояние и конфигурации hub и раннера | `%LOCALAPPDATA%\Al.LocalRunner` | `~/.local/share/al-localrunner` |
 | состояние брокера-службы | `%ProgramData%\Al.LocalRunner` | `/var/lib/al-localrunner` (Linux), `/Library/Application Support/Al.LocalRunner` (macOS) |
 
-Каталоги можно заменить: `--state-dir` и `--config-dir`, либо переменные `LOCALRUNNER_STATE_DIR` и `LOCALRUNNER_CONFIG_DIR`.
-
-`localrunner init [--role hub|broker|runner|all]` создаёт каталог состояния и шаблоны конфигураций. Существующие файлы он не перезаписывает.
+Каталоги можно заменить: `--state-dir` и `--config-dir`, либо переменные `LOCALRUNNER_STATE_DIR` и `LOCALRUNNER_CONFIG_DIR`. `localrunner init [--role hub|broker|runner|all]` создаёт каталог состояния и шаблоны конфигураций. Существующие файлы он не перезаписывает.
 
 ## Hub
 
@@ -147,9 +155,8 @@ target/release/localrunner install             # скопировать бина
 Установка и запуск:
 
 ```
-localrunner install
-localrunner init --role hub
-localrunner up hub          # или: localrunner hub run (на переднем плане)
+localrunner install --role hub   # бинарник и шаблоны hub (init)
+localrunner up hub               # или: localrunner hub run (на переднем плане)
 ```
 
 Если брокер на другой машине, hub вступает в пул (код выдаёт брокер, см. [«Брокер»](#брокер)):
@@ -178,9 +185,7 @@ ttl_hours = 24                                  # сколько заказ жд
 on_expire = "fail"                              # fail | keep
 ```
 
-Без файла действуют значения по умолчанию. Заказы «та же машина» (рабочее дерево) уходят только на брокер с этой же машины.
-
-Команды для работы с джобами: см. [«Использование»](#использование).
+Без файла действуют значения по умолчанию. Заказы «та же машина» (рабочее дерево) уходят только на брокер с этой же машины. На машине брокера hub по коду не вступает: брокер разрешает локальным пользователям доступ по списку `[[local_user]]` в `policy.toml` (`install` вносит туда вас). Команды для работы с джобами: см. [«Использование»](#использование).
 
 ## Брокер
 
@@ -189,7 +194,7 @@ on_expire = "fail"                              # fail | keep
 Запуск на машине пользователя:
 
 ```
-localrunner init --role broker
+localrunner install --role broker
 localrunner up broker       # или: localrunner broker run
 ```
 
@@ -267,7 +272,7 @@ localrunner client remove <имя> [--yes]   # отозвать ключ hub
 Установка и запуск на машине брокера:
 
 ```
-localrunner init --role runner
+localrunner install --role runner
 # отредактировать runner.toml (раздел ниже)
 localrunner up runner
 ```
@@ -275,8 +280,7 @@ localrunner up runner
 Раннер на другой машине:
 
 ```
-localrunner install
-localrunner init --role runner
+localrunner install --role runner
 # отредактировать runner.toml
 localrunner runner join <адрес:порт> --code-file code.txt --name box --count 2
 localrunner up runner
@@ -333,9 +337,9 @@ build = "make all"
 
 Порядок: брокер, затем остальные.
 
-1. Брокер-машина. Установить бинарник, `init --role broker`, в `policy.toml` задать `[listen]` и `[networks]`, запустить (`broker install-service` для постоянной работы).
-2. Для каждой клиентской машины: на брокере `broker add --name <имя> --label <ярлык>`; на клиенте `install`, `init --role hub`, `hub join <адрес:порт> --code-file code.txt --name <имя брокера>`, `up hub`.
-3. Для каждой машины с раннерами: на брокере `broker add --runners N --address <адрес:порт>`; на машине `install`, `init --role runner`, правка `runner.toml`, `runner join ...`, `up runner`.
+1. Брокер-машина. `install --role broker`, в `policy.toml` задать `[listen]` и `[networks]`, запустить (`broker install-service` для постоянной работы).
+2. Для каждой клиентской машины: на брокере `broker add --name <имя> --label <ярлык>`; на клиенте `install --role hub`, `hub join <адрес:порт> --code-file code.txt --name <имя брокера>`, `up hub`.
+3. Для каждой машины с раннерами: на брокере `broker add --runners N --address <адрес:порт>`; на машине `install --role runner`, правка `runner.toml`, `runner join ...`, `up runner`.
 4. Проверка: `localrunner doctor`, `localrunner runners`, `localrunner brokers`.
 
 Входящий порт нужен только брокеру. Автоматического поиска брокера в сети нет, адрес вводят вручную.
