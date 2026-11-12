@@ -123,6 +123,34 @@ impl Caches<'_> {
             .event(Level::Error, what, &[("error", &e.to_string())]);
     }
 
+    async fn remove_job_copies(&self, mirror: &str) {
+        let Some(jobs) = Path::new(mirror).parent().map(|p| p.join("jobs")) else {
+            return;
+        };
+        if let Err(err) = self.files.remove_dir_all(&jobs).await {
+            self.diag.event(
+                Level::Error,
+                "job checkouts not removed",
+                &[
+                    ("path", &jobs.display().to_string()),
+                    ("error", &err.to_string()),
+                ],
+            );
+        }
+    }
+
+    /// Removes the checkouts of every workspace (spec 3.7): called at start, when no job runs,
+    /// so the copies a crash or a failed removal left behind do not pile up.
+    pub(crate) async fn remove_left_checkouts(&self) {
+        let entries = match self.store.cache_entries().await {
+            Ok(e) => e,
+            Err(e) => return self.store_err("cache index unreadable", &e),
+        };
+        for e in entries.iter().filter(|e| is_workspace(e)) {
+            self.remove_job_copies(&e.path).await;
+        }
+    }
+
     pub(crate) async fn sweep(&self, now: Timestamp, in_use: &[CacheKey]) {
         let entries = match self.store.cache_entries().await {
             Ok(e) => e,
@@ -151,6 +179,9 @@ impl Caches<'_> {
                     &[("path", &e.path), ("error", &err.to_string())],
                 );
                 continue;
+            }
+            if why.is_none() {
+                self.remove_job_copies(&e.path).await;
             }
             if let Err(err) = self.store.remove_cache(&key).await {
                 self.store_err("cache entry not removed", &err);

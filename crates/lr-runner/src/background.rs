@@ -133,6 +133,7 @@ pub(crate) async fn recover(shared: &Shared) {
             &[("error", &e.to_string())],
         ),
     }
+    shared.caches().remove_left_checkouts().await;
     shared.release_disk().await;
     shared.forget_undeclared_services().await;
     shared.services().kill_orphans().await;

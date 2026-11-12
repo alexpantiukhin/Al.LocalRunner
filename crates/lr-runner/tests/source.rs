@@ -308,3 +308,33 @@ fn workspace_names_are_safe_and_distinct() {
     let j = l.job_dir("acme/app", URL, "client-1", &JobId("a/../b".into()));
     assert_eq!(j.parent().unwrap(), a.join("jobs"));
 }
+
+#[tokio::test]
+async fn checkouts_left_by_a_crash_are_removed_at_start_and_the_mirror_stays() {
+    use lr_abstractions::{CacheEntry, CacheKey, RunnerStore};
+    let rig = Rig::new();
+    let mirror = layout().mirror_dir("acme/app", URL);
+    let left = layout().job_dir("acme/app", URL, "client-1", &JobId("job-0".into()));
+    rig.files.mkdir(&mirror);
+    rig.files.put(&left.join("Cargo.toml"), b"x");
+    let ws = layout().project_dir("acme/app", URL);
+    rig.store
+        .upsert_cache(CacheEntry {
+            key: CacheKey {
+                client: lr_runner::WORKSPACE_CLIENT.into(),
+                project: ws.file_name().unwrap().to_string_lossy().into_owned(),
+                name: "mirror".into(),
+            },
+            path: mirror.display().to_string(),
+            bytes: 0,
+            last_used: lr_core::Timestamp(START),
+        })
+        .await
+        .unwrap();
+    let (_c, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    rig.settle().await;
+    assert_eq!(rig.files.file(&left.join("Cargo.toml")), None);
+    assert!(!rig.files.is_dir(&left));
+    assert!(rig.files.is_dir(&mirror));
+}
