@@ -338,6 +338,13 @@ pub enum AdminReply {
         /// Warnings, such as shadowed rules.
         warnings: Vec<String>,
     },
+    /// The answer to `PolicyCheck`: the file the broker uses, and what is wrong with it.
+    Policy {
+        /// The `policy.toml` the broker loads and `policy reload` rereads.
+        path: String,
+        /// Warnings, such as shadowed rules.
+        warnings: Vec<String>,
+    },
     /// A join code.
     JoinCode {
         /// Address to join.
@@ -453,7 +460,7 @@ message!(
 message!(
     AdminReply,
     local: true,
-    ["ok", "join_code", "names", "failed"]
+    ["ok", "policy", "join_code", "names", "failed"]
 );
 message!(RunnerControl, local: true, ["down", "logging_reload"]);
 message!(IpcOpen, local: true, ["hello"]);

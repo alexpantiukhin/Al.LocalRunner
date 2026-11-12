@@ -361,9 +361,7 @@ pub async fn run(cli: Cli) -> i32 {
         } => down_cmd::down_cli(&layout, names, cancel, yes).await,
         Command::Policy { action } => match action {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
-            PolicyAction::Reload => {
-                admin_cmd::simple(&layout, lr_proto::AdminRequest::PolicyReload).await
-            }
+            PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,
         },
         Command::Logging {
             action: LoggingAction::Reload,

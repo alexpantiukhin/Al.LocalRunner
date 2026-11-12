@@ -95,7 +95,28 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     });
 }
 
-fn policy(layout: &Layout, out: &mut Vec<Check>) {
+async fn policy(layout: &Layout, out: &mut Vec<Check>) {
+    match crate::commands::admin_cmd::broker_policy(layout).await {
+        Some(Ok((path, warnings))) => {
+            out.push(check(
+                "policy.toml",
+                Status::Ok,
+                format!("{path} (the file the running broker uses)"),
+            ));
+            for w in warnings {
+                out.push(check("policy.toml", Status::Warn, w));
+            }
+            return;
+        }
+        Some(Err(e)) => {
+            out.push(check("policy.toml", Status::Fail, e));
+            return;
+        }
+        None => {}
+    }
+    if let Some(note) = crate::commands::admin_cmd::service_policy_note(layout) {
+        out.push(check("policy.toml", Status::Warn, note));
+    }
     let path = layout.config_file("policy.toml");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return;
@@ -319,7 +340,7 @@ pub async fn checks(layout: &Layout) -> Vec<Check> {
 pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     let mut out = Vec::new();
     basics(layout, elevated, &mut out);
-    policy(layout, &mut out);
+    policy(layout, &mut out).await;
     runners(layout, &mut out);
     same_user(layout, &mut out);
     brokers(layout, &mut out).await;

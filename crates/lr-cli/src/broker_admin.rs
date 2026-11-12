@@ -207,7 +207,8 @@ impl BrokerAdmin {
         };
         match load(&text) {
             Err(e) => failed(e.to_string()),
-            Ok(file) => AdminReply::Ok {
+            Ok(file) => AdminReply::Policy {
+                path: self.policy_path.display().to_string(),
                 warnings: check(&file, &self.host)
                     .iter()
                     .map(|w| w.to_string())
