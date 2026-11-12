@@ -415,6 +415,8 @@ steps = [
 
 A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
 
+**Working tree or commit.** An order without `--platform` runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Only an order for a commit (`--platform`) is isolated from such edits. Do not touch the files of a long run in progress; the dashboard card says where the code comes from (`Directory` for the working tree, `Commit` for a commit).
+
 ## Logging
 
 `logging.toml` in the state directory of each role. Without the file a rotated JSON file is written. Apply without a restart: `localrunner logging reload`.
