@@ -8,7 +8,9 @@ use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
 use lr_obs::Redactor;
-use lr_proto::{CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, SubmitRequest};
+use lr_proto::{
+    CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, ReasonCode, SubmitRequest,
+};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -51,6 +53,36 @@ fn unexpected(reply: &CliReply) -> String {
     }
 }
 
+/// How following a job ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ended {
+    /// The job finished.
+    Exit {
+        /// Final state.
+        state: JobState,
+        /// Exit code of the job.
+        exit_code: Option<i32>,
+        /// Reason code.
+        reason: Option<ReasonCode>,
+    },
+    /// The hub refused the order.
+    Rejected,
+}
+
+impl Ended {
+    /// The exit code for the process.
+    pub fn process_code(&self) -> i32 {
+        match self {
+            Ended::Exit {
+                state,
+                exit_code: code,
+                ..
+            } => exit_code(*state, *code),
+            Ended::Rejected => 1,
+        }
+    }
+}
+
 /// Hands the output of `job` to `out` as it comes, whole lines masked by `redactor`, until the
 /// job ends; the result is the exit code for the process.
 pub async fn follow(
@@ -59,6 +91,18 @@ pub async fn follow(
     redactor: &Arc<Redactor>,
     out: &mut dyn FnMut(&str),
 ) -> Result<i32, String> {
+    Ok(follow_to_end(client, job, redactor, out)
+        .await?
+        .process_code())
+}
+
+/// [`follow`], returning how the job ended.
+pub async fn follow_to_end(
+    client: &IpcClient,
+    job: &JobId,
+    redactor: &Arc<Redactor>,
+    out: &mut dyn FnMut(&str),
+) -> Result<Ended, String> {
     let mut printer = LogPrinter::new(redactor.clone());
     loop {
         let reply = client.recv::<CliReply>().await;
@@ -78,20 +122,50 @@ pub async fn follow(
             CliReply::Exit {
                 job: j,
                 state,
-                exit_code: code,
+                exit_code,
                 reason,
             } if &j == job => {
-                let reason = reason.map(|r| format!(", {r}")).unwrap_or_default();
-                eprintln!("job {job}: {state:?}{reason}");
-                return Ok(exit_code(state, code));
+                let why = reason
+                    .as_ref()
+                    .map(|r| format!(", {r}"))
+                    .unwrap_or_default();
+                eprintln!("job {job}: {state:?}{why}");
+                return Ok(Ended::Exit {
+                    state,
+                    exit_code,
+                    reason,
+                });
             }
             CliReply::Rejected { code, detail } => {
                 eprintln!("job {job} rejected ({code}): {detail}");
-                return Ok(1);
+                return Ok(Ended::Rejected);
             }
             CliReply::Error(e) => return Err(format!("{:?}: {}", e.code, e.message)),
             _ => continue,
         }
+    }
+}
+
+/// The `wait --json` line: the job, its final state, exit code and reason (`null` when the
+/// hub refused the order).
+pub fn ended_json(job: &JobId, ended: &Ended) -> serde_json::Value {
+    match ended {
+        Ended::Exit {
+            state,
+            exit_code,
+            reason,
+        } => serde_json::json!({
+            "job": job,
+            "state": state,
+            "exit_code": exit_code,
+            "reason": reason,
+        }),
+        Ended::Rejected => serde_json::json!({
+            "job": job,
+            "state": null,
+            "exit_code": null,
+            "reason": null,
+        }),
     }
 }
 
@@ -177,12 +251,22 @@ pub async fn submit_on(
     follow(&client, &job, redactor, out).await
 }
 
-/// `wait <job>`.
-pub async fn wait(layout: &Layout, job: &str) -> Result<i32, String> {
+/// `wait <job> [--json]`: with `--json` the output goes to stderr and stdout gets one line,
+/// [`ended_json`].
+pub async fn wait(layout: &Layout, job: &str, json: bool) -> Result<i32, String> {
     let job = JobId(job.to_string());
     let client = hub(layout).await?;
     client.send(&CliRequest::Wait { job: job.clone() }).await?;
-    follow_to_stdout(layout, &client, &job).await
+    if !json {
+        return follow_to_stdout(layout, &client, &job).await;
+    }
+    let mut stderr = std::io::stderr();
+    let ended = follow_to_end(&client, &job, &cli_redactor(layout), &mut |text| {
+        let _ = stderr.write_all(text.as_bytes());
+    })
+    .await?;
+    println!("{}", ended_json(&job, &ended));
+    Ok(ended.process_code())
 }
 
 #[derive(serde::Deserialize)]

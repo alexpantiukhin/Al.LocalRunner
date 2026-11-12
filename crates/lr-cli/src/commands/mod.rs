@@ -102,6 +102,9 @@ pub enum Command {
     Wait {
         /// The job.
         job: String,
+        /// Print JSON: the output goes to stderr, stdout gets the final state.
+        #[arg(long)]
+        json: bool,
     },
     /// Own jobs (label `--as` and OS user).
     Jobs {
@@ -309,7 +312,7 @@ pub async fn run(cli: Cli) -> i32 {
     let result = match cli.command {
         Command::Submit { order, wait, json } => jobs::submit(&layout, order, wait, json).await,
         Command::Run { order } => jobs::submit(&layout, order, true, false).await,
-        Command::Wait { job } => jobs::wait(&layout, &job).await,
+        Command::Wait { job, json } => jobs::wait(&layout, &job, json).await,
         Command::Jobs {
             label,
             active,
