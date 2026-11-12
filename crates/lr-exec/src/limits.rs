@@ -6,6 +6,7 @@ pub(crate) fn mb_of(bytes: u64) -> u64 {
     bytes.div_ceil(BYTES_PER_MB)
 }
 
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn bytes_of(mb: u64) -> u64 {
     mb.saturating_mul(BYTES_PER_MB)
 }
