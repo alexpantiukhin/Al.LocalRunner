@@ -429,6 +429,7 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 | unclear what is wrong with a node | `localrunner doctor` (`--json`; code 1 if there is a `fail`) |
 | an order does not start | `localrunner explain <job>`: the reason and the rule that fired |
 | no suitable runner | the answer names the difference between the order and the runners; `localrunner runners` |
+| a setting in `runner.toml` has no effect | a misspelled key or section is not an error: it is printed as a warning at start and by `localrunner doctor` |
 | a runner does not start | the message names the reason: no `[env] path`, run as root, runner under the broker's user |
 | the hub does not see the broker | `localrunner brokers`; check `[listen]`, `[networks]` and the port |
 | `broker add`: "admin channel is not reachable ... access denied" | run it as an administrator (Windows service) or as the broker's OS user; hand the code over with `--code-file` |

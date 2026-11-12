@@ -52,6 +52,11 @@ fn init_writes_templates_every_loader_accepts() {
     )
     .expect("the runner.toml of init starts a runner");
     assert_eq!(runner.settings.path, std::env::var("PATH").ok());
+    assert!(
+        runner.warnings.is_empty(),
+        "the template has no unknown keys: {:?}",
+        runner.warnings
+    );
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();

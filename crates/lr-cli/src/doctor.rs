@@ -257,8 +257,15 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Err(e) => out.push(check(label, Status::Fail, e.to_string())),
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
-                if problems.is_empty() {
+                if problems.is_empty() && cfg.warnings.is_empty() {
                     out.push(check(label.clone(), Status::Ok, "runner.toml and programs"));
+                }
+                for w in &cfg.warnings {
+                    out.push(check(
+                        label.clone(),
+                        Status::Warn,
+                        format!("runner.toml: {w}"),
+                    ));
                 }
                 for p in problems {
                     out.push(check(label.clone(), Status::Warn, p));

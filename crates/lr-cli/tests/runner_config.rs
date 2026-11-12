@@ -166,6 +166,40 @@ fn a_check_runs_with_the_variables_of_the_env_section() {
 }
 
 #[test]
+fn a_valid_file_has_no_warnings() {
+    let text = "name = \"a\"\nplatforms = [\"linux\"]\ntags = []\nmem_mb = 1024\ncpu = 2\n\
+        allow_elevated = false\nallow_same_user_as_broker = false\n\
+        [accept]\nmin_mem_mb = 1\n[limits]\nmax_job_timeout_s = 60\n\
+        [cache]\nmax_size_gb = 1\nretention_days = 2\nevict = \"lru\"\n\
+        [workspace]\nmax_size_gb = 1\n[grace]\nbroker_lost_kill_s = 5\n\
+        [env]\npath = \"/usr/bin\"\nJAVA_HOME = \"/jdk\"\n[programs]\ngit = {}\n[secret.k]\nfrom = \"env:K\"\n\
+        [commands]\nbuild = \"make\"\n\
+        [service.db]\nstart = \"s\"\nready_check = \"r\"\nstop = \"x\"\nmax_lifetime_s = 9\n";
+    assert_eq!(parse(text, None).warnings, Vec::<String>::new());
+}
+
+#[test]
+fn unknown_keys_and_sections_are_warnings_not_errors() {
+    let c = parse(
+        "taggs = [\"x\"]\n[limit]\nmax_job_timeout_s = 5\n[limits]\nmax_timeout = 5\n\
+         [cache]\nmax_size = 1\n[secret.k]\nfrom = \"env:K\"\nextra = 1\n",
+        None,
+    );
+    assert_eq!(c.warnings.len(), 5, "{:?}", c.warnings);
+    let all = c.warnings.join("\n");
+    for needle in [
+        "`taggs`",
+        "`[limit]`",
+        "`[limits]` max_timeout",
+        "`[cache]` max_size",
+        "`[secret.k]` extra",
+    ] {
+        assert!(all.contains(needle), "{needle}: {all}");
+    }
+    assert!(all.contains("known"), "{all}");
+}
+
+#[test]
 fn a_check_does_not_see_what_jobs_do_not_get() {
     let probe = if cfg!(windows) {
         "if defined CARGO_MANIFEST_DIR (exit 0) else (exit 1)"

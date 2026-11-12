@@ -465,7 +465,7 @@ on_expire = "fail"                              # fail | keep
 <li><b>ci on another computer.</b> A GitHub job calls <code>run</code> through the hub of the computer with the runner <code>al-ci</code>; the hub is connected to the broker with its own key with the label <code>ci</code>, and there are no special messages for CI in the protocol.</li>
 </ul>
 <h3>3.10 Runner settings: timeout ceiling and cache</h3>
-<p>Each runner has its own owner settings file (<code>runner.toml</code> in its state directory). The core knows nothing about builds in it: for the core, a cache is named directories with a size and a last-use time. The format is a draft.</p>
+<p>Each runner has its own owner settings file (<code>runner.toml</code> in its state directory). The core knows nothing about builds in it: for the core, a cache is named directories with a size and a last-use time. The format is a draft. A key or section that nothing reads (usually a misspelling) does not stop the runner: it is printed as a warning at start and by <code>doctor</code>.</p>
 <pre class="code">name    = "linux-heavy"
 platforms = ["linux", "android"]
 tags    = ["gradle", "emulator"]

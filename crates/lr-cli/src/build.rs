@@ -364,6 +364,9 @@ pub async fn runner(
     let host: HostResources = host::resources();
     let mut cfg = RunnerConfig::parse(&text, Some(name), name, dir.clone(), host)
         .map_err(|e| e.to_string())?;
+    for w in &cfg.warnings {
+        eprintln!("runner {name}: warning: runner.toml: {w}");
+    }
     elevation_allowed(host::is_elevated(), cfg.allow_elevated)
         .map_err(|e| format!("runner {name}: {e}"))?;
     if let Some(risk) = crate::doctor::same_user_verdict(layout, cfg.allow_same_user_as_broker)

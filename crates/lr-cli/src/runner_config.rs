@@ -69,6 +69,8 @@ pub struct RunnerConfig {
     pub programs: BTreeMap<String, ProgramSpec>,
     /// `[secret.*]` sources.
     pub secrets: BTreeMap<String, SecretFrom>,
+    /// Keys and sections of the file that nothing reads (usually a misspelling).
+    pub warnings: Vec<String>,
 }
 
 fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
@@ -98,6 +100,7 @@ impl RunnerConfig {
     ) -> Result<RunnerConfig, SettingsError> {
         let mut table: toml::Table =
             toml::from_str(text).map_err(|e| SettingsError(e.message().to_string()))?;
+        let warnings = crate::runner_keys::unknown_keys(&table);
         let extra: Extra = table
             .clone()
             .try_into()
@@ -134,6 +137,7 @@ impl RunnerConfig {
             allow_same_user_as_broker: extra.allow_same_user_as_broker,
             programs: extra.programs,
             secrets,
+            warnings,
         })
     }
 
