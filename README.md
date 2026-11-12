@@ -109,6 +109,7 @@ Priority, visibility and which clients may use which runners are set by the owne
 - A machine joins a broker with a one-time code that expires (1 hour by default) and is limited to N joins; the broker certificate fingerprint is shown by `broker add`. Each hub and runner then has its own revocable key (`client remove`, `runner remove`).
 - Secret values in job output, secrets and join codes are masked in logs and CLI output; `status --html` leaves logs out unless `--with-logs` is given.
 - The broker never runs as a privileged account.
+- A runner refuses to start under the OS user of a broker that is not an OS service and admits other clients (a `[listen]` address or a `[[local_user]]` of another user) while some client may run any command: such a job would act as the pool owner. Run the runner under its own user, the broker as a service, or set `[commands] default = "named"`; `allow_same_user_as_broker = true` in `runner.toml` accepts the risk.
 
 ## Claude Code plugin
 

@@ -13,7 +13,7 @@ Inputs: the repository for the `ci` runner (optional) and a fresh registration t
 1. Detect the OS and read `../../shared/os/<windows|linux|macos>.md` (relative to this skill); its paths, runner archive, start and stop methods are binding.
 2. Detect what is present: `localrunner --version`, the state directory, the `ci` runner directory. If everything is present, report it and stop.
 3. Install the binary for the current user: `localrunner install` (show the actions first with `--dry-run`; `--dir <dir>` chooses the directory, `--role hub|broker|runner|all` limits the roles). It refuses root or administrator unless `--allow-elevated` is given; do not pass that flag on your own. It starts no roles and enables no autostart.
-4. Run `localrunner init` if the state directory has no templates, then `localrunner doctor` and show what it reports.
+4. Run `localrunner init` if the state directory has no templates, then `localrunner doctor` and show what it reports. `init` writes `[env] path` of `runner.toml` from the `PATH` of the shell it runs in; jobs get `PATH` only from it and a runner without it does not start. If `doctor` reports it missing, ask the user which `PATH` jobs need and set `[env] path` in `runner.toml`. A `doctor` failure "runner … and broker user" means the runner would run under the OS user of a broker that admits other clients (spec 3.12): report it, do not set `allow_same_user_as_broker = true` without the owner's decision.
 5. `ci` runner: only when a repository is given and no `ci` runner exists. Ask for the token and configure the GitHub Actions runner in its own directory with the labels from the OS file.
 6. Install nothing at user scope; plugins stay project-scoped (`--scope project`).
 7. Finish with `status-runner`.
