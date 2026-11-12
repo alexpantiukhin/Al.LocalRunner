@@ -101,6 +101,9 @@ impl Engine {
         for job in gone {
             self.cancel_waiting(job, removal_cancel()).await;
         }
+        for key in &keys {
+            self.cancel_parked(key, &removal_cancel());
+        }
         if self.policy.file().orphans.running != OrphanRunning::Cancel {
             return;
         }

@@ -305,3 +305,22 @@ async fn revoked_client_gets_no_results_after_a_broker_restart() {
     h.until_state(LAPTOP, "j1", JobState::Passed).await;
     assert_eq!(pending(&h, LAPTOP).await, 0);
 }
+
+#[tokio::test]
+async fn a_run_of_a_revoked_key_parked_by_a_failed_requeue_ends_client_removed() {
+    let h = Harness::start("");
+    let mut hub = h.member_hub(LAPTOP, "", "10.0.0.8").await;
+    let mut r = h.member_runner("r1", "10.0.0.5", linux()).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    r.assign().await;
+    common::faulty::FaultyStore::set(&h.faults.fail_requeue);
+    r.close().await;
+    hub.until_runner("r1", false).await;
+    h.handle.revoked(LAPTOP).await;
+    common::faulty::FaultyStore::clear(&h.faults.fail_requeue);
+    h.clock.advance(std::time::Duration::from_secs(1));
+    h.poke().await;
+    let row = h.until_state(LAPTOP, "j1", JobState::Cancelled).await;
+    assert_eq!(row.job.cancel_reason.as_deref(), Some("client_removed"));
+}
