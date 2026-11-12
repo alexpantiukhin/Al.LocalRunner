@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 const BROKER: &str = "broker";
 
-fn removal_cancel() -> Cancel {
+pub(crate) fn removal_cancel() -> Cancel {
     Cancel {
         by: BROKER.into(),
         reason: ReasonCode::ClientRemoved.to_string(),

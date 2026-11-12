@@ -347,3 +347,69 @@ async fn a_hub_message_waiting_for_a_retry_is_dropped_with_the_revoked_key() {
     h.poke().await;
     assert_eq!(h.store.results_backlog().await.unwrap().pending, 0);
 }
+
+const GRACE: &str = "[grace]\nlost_min = 2\n";
+const GRACE_MS: u64 = 120_000;
+
+async fn confirmed_on_vanished_r1(h: &Harness) {
+    let mut hub = h.member_hub(LAPTOP, "", "10.0.0.8").await;
+    let mut r1 = h.member_runner("r1", "10.0.0.5", linux()).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r1.assign().await.seq, 1);
+    r1.send(&RunnerToBroker::Ack(Ack {
+        job: JobId("j1".into()),
+        seq: 1,
+    }))
+    .await;
+    r1.close().await;
+    hub.until_runner("r1", false).await;
+    h.handle.revoked(LAPTOP).await;
+}
+
+async fn ends_client_removed_and_r2_gets_nothing(h: &Harness, r2: &mut Conn) {
+    let row = h.until_state(LAPTOP, "j1", JobState::Cancelled).await;
+    assert_eq!(row.job.cancel_reason.as_deref(), Some("client_removed"));
+    r2.quiet().await;
+}
+
+async fn past_the_grace_with_r2(h: &Harness) -> Conn {
+    h.clock
+        .advance(std::time::Duration::from_millis(GRACE_MS - 1));
+    let r2 = h.member_runner("r2", "10.0.0.6", linux()).await;
+    h.clock.advance(std::time::Duration::from_millis(1));
+    h.poke().await;
+    r2
+}
+
+#[tokio::test]
+async fn a_held_assignment_of_a_revoked_key_is_cancelled_past_the_grace() {
+    let h = Harness::start(GRACE);
+    confirmed_on_vanished_r1(&h).await;
+    let mut r2 = past_the_grace_with_r2(&h).await;
+    ends_client_removed_and_r2_gets_nothing(&h, &mut r2).await;
+}
+
+#[tokio::test]
+async fn a_held_assignment_of_a_revoked_key_is_cancelled_past_the_grace_after_a_broker_restart() {
+    let h = Harness::start(GRACE);
+    confirmed_on_vanished_r1(&h).await;
+    let h = h.restart().await;
+    let mut r2 = past_the_grace_with_r2(&h).await;
+    ends_client_removed_and_r2_gets_nothing(&h, &mut r2).await;
+}
+
+#[tokio::test]
+async fn a_held_assignment_of_a_revoked_key_resumed_without_it_is_cancelled() {
+    let h = Harness::start(GRACE);
+    confirmed_on_vanished_r1(&h).await;
+    let h = h.restart().await;
+    let mut r2 = h.member_runner("r2", "10.0.0.6", linux()).await;
+    let mut back = h.dial(member_peer("pk-r1", "10.0.0.5")).await;
+    back.send(&hello("r1", Some(linux()))).await;
+    back.welcome().await;
+    back.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
+        .await;
+    ends_client_removed_and_r2_gets_nothing(&h, &mut r2).await;
+    back.quiet().await;
+}

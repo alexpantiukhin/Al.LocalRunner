@@ -108,7 +108,10 @@ impl Engine {
         job.confirmed = false;
         job.gone_since = None;
         job.queued_since = self.now();
-        match job.cancel.take() {
+        let cancel = job.cancel.take().or_else(|| {
+            (!self.delivers_to(&job.key.client, &job.key.job)).then(super::revoke::removal_cancel)
+        });
+        match cancel {
             Some(cancel) => self.cancel_waiting(job, cancel).await,
             None => self.queue.push(job),
         }
