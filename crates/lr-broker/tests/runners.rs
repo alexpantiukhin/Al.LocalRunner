@@ -95,7 +95,7 @@ async fn heartbeat_keeps_the_runner_online() {
     let mut hub = h.local_hub("alex").await;
     for _ in 0..4 {
         h.clock.advance(Duration::from_secs(15));
-        r.send(&RunnerToBroker::Heartbeat).await;
+        r.send(&RunnerToBroker::Heartbeat { load: None }).await;
         hub.send(&HubToBroker::Heartbeat).await;
         hub.until_runner("r1", true).await;
     }

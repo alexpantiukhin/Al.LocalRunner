@@ -10,6 +10,7 @@ mod connect;
 mod diag;
 mod disk;
 mod job;
+mod load;
 mod metrics;
 mod outbox;
 mod output;

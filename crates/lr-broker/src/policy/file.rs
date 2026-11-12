@@ -1,3 +1,4 @@
+use super::admission::AdmissionSection;
 use super::error::{header_line_at, line_of, PolicyError};
 use super::listen::{networks, ListenSection};
 use super::rules::{build, default_rules, RawRule, RuleEntry};
@@ -68,6 +69,8 @@ pub struct PolicyFile {
     pub visibility: VisibilitySection,
     /// `[commands]`.
     pub commands: CommandsSection,
+    /// `[admission]`.
+    pub admission: AdmissionSection,
 }
 
 #[derive(Default, Deserialize)]
@@ -95,6 +98,7 @@ struct RawFile {
     services: ServicesSection,
     visibility: VisibilitySection,
     commands: CommandsSection,
+    admission: AdmissionSection,
 }
 
 fn entry_line(text: &str, span: Range<usize>, table: &str) -> Option<usize> {
@@ -157,6 +161,7 @@ pub fn load(text: &str) -> Result<PolicyFile, PolicyError> {
         services: raw.services,
         visibility: raw.visibility,
         commands: raw.commands,
+        admission: raw.admission,
     })
 }
 

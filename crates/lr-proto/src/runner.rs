@@ -1,3 +1,4 @@
+use crate::caps::WireLoad;
 use crate::common::{
     Ack, Bye, CapabilitiesUpdate, Hello, Join, Joined, ProtocolError, Resume, ServicesReport,
     SettingsUpdate, StopService, Welcome,
@@ -20,8 +21,13 @@ pub enum RunnerToBroker {
     Resume(Resume),
     /// Confirms broker messages up to `seq`.
     Ack(Ack),
-    /// Every 15 seconds.
-    Heartbeat,
+    /// Every 15 seconds, with the load of the machine when the runner measures it; absent from
+    /// runners of an earlier minor version.
+    Heartbeat {
+        /// Real load of the machine.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        load: Option<WireLoad>,
+    },
     /// Take no new orders, finish the current job.
     Drain,
     /// The runner leaves in an orderly way.

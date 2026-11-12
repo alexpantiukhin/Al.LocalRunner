@@ -5,6 +5,7 @@ use crate::broker_admin::{ipc_access, listen_addresses, BrokerAdmin, TlsListenin
 use crate::fs_files::StdFiles;
 use crate::git_repo::GitRepository;
 use crate::host;
+use crate::host_load;
 use crate::net::{MergedListener, NetAdmission, RoutingDialer};
 use crate::paths::Layout;
 use crate::runner_config::{check_runner_name, elevation_allowed, RunnerConfig};
@@ -409,6 +410,7 @@ pub async fn runner(
         settings: cfg.settings,
         disk: Arc::new(host::HostDiskSpace),
         awake: Arc::new(lr_exec::system_keep_awake()),
+        load: Some(Arc::new(host_load::SystemHostLoad::new())),
     });
     Ok(RunnerParts {
         agent,

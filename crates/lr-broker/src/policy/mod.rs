@@ -1,6 +1,7 @@
 //! Loader of the broker's `policy.toml` (spec 3.5): the file format, its defaults and checks,
 //! `policy reload` semantics and the conversion to the core [`Policy`].
 
+mod admission;
 mod error;
 mod file;
 mod listen;
@@ -9,6 +10,7 @@ mod rules;
 mod sections;
 mod validate;
 
+pub use admission::{AdmissionSection, ForeignLoad};
 pub use error::{PolicyError, PolicyWarning};
 pub use file::{load, HostResources, PolicyFile};
 pub use listen::{ListenSection, ListenValue};
@@ -35,6 +37,7 @@ pub fn rule_policy(file: &PolicyFile, host: &HostResources) -> RulePolicy {
         pool: file.pool.limits(host),
         max_job_timeout_s: file.limits.max_job_timeout_s.map(|v| v.get()),
         runner_zone_order: file.routing.runner_zone_order.clone(),
+        admission: file.admission.admission(),
     }
 }
 

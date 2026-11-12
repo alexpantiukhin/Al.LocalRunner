@@ -1,9 +1,10 @@
+use super::admission::ForeignLoad;
 use super::error::PolicyWarning;
 use super::file::{HostResources, PolicyFile};
 use super::rules::{display_name, has_action, RuleEntry};
 use super::sections::{AllowEntry, CacheShare, CommandMode, OthersOrders, TimeoutAboveMax};
 use ipnet::IpNet;
-use lr_core::{Condition, Rule};
+use lr_core::{Condition, Rule, DEFAULT_MEM_HEADROOM_MB};
 
 /// IPv4 ranges shorter than this prefix are reported as too wide.
 pub const WIDE_V4_PREFIX: u8 = 16;
@@ -16,6 +17,7 @@ pub const WIDE_V6_PREFIX: u8 = 48;
 pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
     let mut out = Vec::new();
     rule_warnings(file, host, &mut out);
+    admission_warnings(file, host, &mut out);
     network_warnings(file, &mut out);
     allow_warnings("secrets.allow", &file.secrets.allow, &mut out);
     allow_warnings("services.allow", &file.services.allow, &mut out);
@@ -231,6 +233,34 @@ fn secret_warnings(file: &PolicyFile, out: &mut Vec<PolicyWarning>) {
                 "label `{}` gets secrets but may run any command: the admission holds only with \
                  [commands] mode = \"named\" or a runner under a separate OS user",
                 entry.label
+            ),
+        ));
+    }
+}
+
+fn admission_warnings(file: &PolicyFile, host: &HostResources, out: &mut Vec<PolicyWarning>) {
+    let adm = &file.admission;
+    if adm.foreign_load == ForeignLoad::Off {
+        if adm.mem_headroom_mb != DEFAULT_MEM_HEADROOM_MB {
+            out.push(PolicyWarning::at(
+                "admission",
+                Some("mem_headroom_mb"),
+                None,
+                "mem_headroom_mb has no effect while foreign_load = \"off\"".into(),
+            ));
+        }
+        return;
+    }
+    let pool = file.pool.limits(host).mem_mb;
+    if adm.mem_headroom_mb >= pool {
+        out.push(PolicyWarning::at(
+            "admission",
+            Some("mem_headroom_mb"),
+            None,
+            format!(
+                "mem_headroom_mb = {} is not less than the pool's {pool} MB; with a runner that \
+                 reports its load no order would ever start",
+                adm.mem_headroom_mb
             ),
         ));
     }

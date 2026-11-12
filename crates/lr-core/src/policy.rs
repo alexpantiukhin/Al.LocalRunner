@@ -1,3 +1,4 @@
+use crate::admission::Admission;
 use crate::model::{Timestamp, Zone};
 use crate::queue::{ClientView, Order, QueueEntry, ServeLog};
 use crate::scheduler::{PoolLimits, Reject, Scheduler, Wait};
@@ -154,6 +155,10 @@ pub trait Policy {
     fn runner_zone_order(&self) -> &[Zone];
     /// Group key of a client by `[clients] group_by`.
     fn group_of(&self, client: &ClientView) -> String;
+    /// `[admission]`: how the real load of a runner machine gates a start.
+    fn admission(&self) -> Admission {
+        Admission::default()
+    }
 }
 
 /// The policy of declarative rules and built-in strategies.
@@ -173,6 +178,8 @@ pub struct RulePolicy {
     pub max_job_timeout_s: Option<u64>,
     /// `[routing] runner_zone_order`.
     pub runner_zone_order: Vec<Zone>,
+    /// `[admission]`.
+    pub admission: Admission,
 }
 
 /// Default `[queue] age_after_min`.
@@ -190,6 +197,7 @@ impl RulePolicy {
             pool,
             max_job_timeout_s: None,
             runner_zone_order: vec![Zone::Local, Zone::Lan, Zone::Remote],
+            admission: Admission::default(),
         }
     }
 
@@ -396,5 +404,9 @@ impl Policy for RulePolicy {
             GroupBy::Key => client.key.clone(),
             GroupBy::Label => client.label.clone(),
         }
+    }
+
+    fn admission(&self) -> Admission {
+        self.admission
     }
 }

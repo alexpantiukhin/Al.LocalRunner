@@ -308,7 +308,7 @@ impl Engine {
         };
         let now = self.now();
         match msg {
-            RunnerToBroker::Heartbeat => self.runner_heartbeat(&name).await,
+            RunnerToBroker::Heartbeat { load } => self.runner_heartbeat(&name, load).await,
             RunnerToBroker::Bye(_) => {
                 self.runner_gone(&name).await;
                 self.close(conn);

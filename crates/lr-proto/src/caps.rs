@@ -1,4 +1,4 @@
-use lr_core::{Accept, Capabilities, MachineRef, ServiceStatus, Zone};
+use lr_core::{Accept, Capabilities, MachineLoad, MachineRef, ServiceStatus, Zone};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +13,28 @@ pub enum WireServiceStatus {
     /// A status of a newer minor version, treated as unavailable.
     #[serde(other)]
     Unknown,
+}
+
+/// Real load of the machine of a runner, sent with each heartbeat (issue 35, item 4). It covers
+/// the whole machine, jobs of localrunner included; the broker takes its own reservations out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireLoad {
+    /// Memory the OS can give to a new process, MB.
+    pub free_mem_mb: u64,
+    /// Share of CPU time busy since the previous sample, 0 to 100.
+    pub cpu_busy_percent: u8,
+    /// Logical cores of the machine.
+    pub cpu_cores: u32,
+}
+
+impl From<WireLoad> for MachineLoad {
+    fn from(l: WireLoad) -> Self {
+        MachineLoad {
+            free_mem_mb: l.free_mem_mb,
+            cpu_busy_percent: l.cpu_busy_percent.min(100),
+            cpu_cores: l.cpu_cores,
+        }
+    }
 }
 
 /// What a runner offers, as it travels. The zone is not part of it: the broker computes it per

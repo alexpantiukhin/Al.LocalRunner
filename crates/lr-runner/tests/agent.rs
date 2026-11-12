@@ -176,9 +176,37 @@ async fn heartbeat_every_15_seconds() {
     let b = Broker::accept(&rig).await;
     rig.advance(14 * SEC).await;
     rig.advance(SEC).await;
-    let m = b.until(|m| matches!(m, RunnerToBroker::Heartbeat)).await;
-    assert_eq!(m, RunnerToBroker::Heartbeat);
+    let m = b
+        .until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
+        .await;
+    assert_eq!(m, RunnerToBroker::Heartbeat { load: None });
     assert_eq!(rig.clock.now().0, START + 15_000);
+}
+
+#[tokio::test]
+async fn heartbeat_carries_the_load_of_the_machine() {
+    let rig = Rig::new();
+    rig.load.set(Some(lr_abstractions::LoadSample {
+        free_mem_mb: 2048,
+        cpu_busy_percent: 40,
+        cpu_cores: 8,
+    }));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    rig.advance(15 * SEC).await;
+    let m = b
+        .until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
+        .await;
+    assert_eq!(
+        m,
+        RunnerToBroker::Heartbeat {
+            load: Some(lr_proto::WireLoad {
+                free_mem_mb: 2048,
+                cpu_busy_percent: 40,
+                cpu_cores: 8,
+            })
+        }
+    );
 }
 
 #[tokio::test]

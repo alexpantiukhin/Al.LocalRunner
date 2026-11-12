@@ -4,8 +4,9 @@ pub mod svc;
 pub mod wrap;
 
 use lr_abstractions::fakes::{
-    FakeDiskSpace, FakeKeepAwake, FakeListener, FakeNetwork, FakeProcessRunner, JobScript,
-    ManualClock, MemoryFiles, MemoryLogSink, MemoryMeter, MemoryRunnerStore, MemorySecrets,
+    FakeDiskSpace, FakeHostLoad, FakeKeepAwake, FakeListener, FakeNetwork, FakeProcessRunner,
+    JobScript, ManualClock, MemoryFiles, MemoryLogSink, MemoryMeter, MemoryRunnerStore,
+    MemorySecrets,
 };
 use lr_abstractions::{
     Clock, Frame, Listener, Peer, PeerAccess, ProcessInspector, RunnerStore, Transport,
@@ -48,6 +49,7 @@ pub struct Rig {
     pub fail_last_seq: Arc<std::sync::atomic::AtomicBool>,
     pub disk: FakeDiskSpace,
     pub awake: FakeKeepAwake,
+    pub load: FakeHostLoad,
 }
 
 impl Rig {
@@ -85,6 +87,7 @@ impl Rig {
             fail_last_seq: Arc::default(),
             disk: FakeDiskSpace::new(),
             awake: FakeKeepAwake::new(),
+            load: FakeHostLoad::new(),
         }
     }
 
@@ -124,6 +127,7 @@ impl Rig {
             settings: self.settings.clone(),
             disk: Arc::new(self.disk.clone()),
             awake: Arc::new(self.awake.clone()),
+            load: Some(Arc::new(self.load.clone())),
         }
     }
 

@@ -34,7 +34,9 @@ fn seq_bearing_messages_expose_job_and_seq() {
 
 #[test]
 fn control_and_reply_messages_carry_no_seq() {
-    assert!(RunnerToBroker::Heartbeat.sequence().is_none());
+    assert!(RunnerToBroker::Heartbeat { load: None }
+        .sequence()
+        .is_none());
     assert!(RunnerToBroker::Resume(resume()).sequence().is_none());
     assert!(RunnerToBroker::Ack(ack(3)).sequence().is_none());
     assert!(BrokerToHub::Accepted(Accepted {
@@ -110,7 +112,7 @@ fn seq_is_counted_per_direction_so_equal_numbers_do_not_collide() {
 
 #[test]
 fn messages_without_seq_have_no_dedup_key() {
-    assert!(DedupKey::of("c", &RunnerToBroker::Heartbeat).is_none());
+    assert!(DedupKey::of("c", &RunnerToBroker::Heartbeat { load: None }).is_none());
 }
 
 #[test]

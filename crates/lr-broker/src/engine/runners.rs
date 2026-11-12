@@ -4,7 +4,7 @@ use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
-    ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities,
+    ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities, WireLoad,
     WireServiceStatus,
 };
 use std::collections::BTreeSet;
@@ -21,6 +21,7 @@ pub(crate) struct RunnerSlot {
     pub(crate) services: Vec<ServiceReport>,
     pub(crate) stopping: BTreeSet<String>,
     pub(crate) restored: bool,
+    pub(crate) load: Option<WireLoad>,
 }
 
 impl RunnerSlot {
@@ -37,6 +38,7 @@ impl RunnerSlot {
             services: Vec::new(),
             stopping: BTreeSet::new(),
             restored: true,
+            load: None,
         }
     }
 
@@ -130,6 +132,7 @@ impl Engine {
                 services: Vec::new(),
                 stopping: BTreeSet::new(),
                 restored: false,
+                load: None,
             },
         );
         if let Some(c) = self.conns.get_mut(&conn) {
@@ -201,6 +204,7 @@ impl Engine {
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
                 online: s.takes_work(),
+                load: s.load.map(Into::into),
             })
             .collect()
     }
@@ -209,12 +213,16 @@ impl Engine {
         self.runners.get(name).and_then(|s| s.conn)
     }
 
-    pub(crate) async fn runner_heartbeat(&mut self, name: &str) {
+    pub(crate) async fn runner_heartbeat(&mut self, name: &str, load: Option<WireLoad>) {
         let now = self.now();
         let Some(slot) = self.runners.get_mut(name) else {
             return;
         };
         slot.last_seen = now;
+        let load_changed = load.is_some() && slot.load != load;
+        if load.is_some() {
+            slot.load = load;
+        }
         let state = if slot.draining {
             RunnerState::Draining
         } else {
@@ -229,6 +237,10 @@ impl Engine {
                 );
             }
         }
+        let on_foreign_load = self.wait_codes.values().any(|c| *c == "foreign_load");
+        if load_changed && on_foreign_load {
+            self.plan().await;
+        }
     }
 
     pub(crate) async fn runner_gone(&mut self, name: &str) {
@@ -239,6 +251,7 @@ impl Engine {
         if slot.conn.take().is_none() {
             return;
         }
+        slot.load = None;
         if slot.persisted {
             if let Err(e) = self
                 .store

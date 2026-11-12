@@ -8,8 +8,8 @@ use crate::services::Services;
 use crate::settings::{RunnerSettings, MAX_LOST_KILL_S};
 use crate::source::WorkspaceLayout;
 use lr_abstractions::{
-    CacheKey, Clock, Dialer, DiskSpace, Files, KeepAwake, Level, LogSink, Meter, ProcessInspector,
-    ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle, TransportError,
+    CacheKey, Clock, Dialer, DiskSpace, Files, HostLoad, KeepAwake, Level, LogSink, Meter,
+    ProcessInspector, ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle, TransportError,
 };
 use lr_core::{JobId, Timestamp};
 use lr_proto::{ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus};
@@ -67,6 +67,8 @@ pub struct RunnerDeps {
     pub disk: Arc<dyn DiskSpace>,
     /// Keeps the machine awake while a job runs.
     pub awake: Arc<dyn KeepAwake>,
+    /// Reads the load of this machine for the heartbeat; `None` sends none.
+    pub load: Option<Arc<dyn HostLoad>>,
 }
 
 /// How [`RunnerAgent::run`] ended.

@@ -52,7 +52,7 @@ async fn a_draining_row_stays_draining_through_heartbeats_until_bye() {
     until_row_state(&h, "r1", RunnerState::Online).await;
     r.send(&RunnerToBroker::Drain).await;
     until_row_state(&h, "r1", RunnerState::Draining).await;
-    r.send(&RunnerToBroker::Heartbeat).await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
     let mut hub = h.local_hub("alex").await;
     hub.sync().await;
     assert_eq!(row(&h, "r1").await.unwrap().state, RunnerState::Draining);
