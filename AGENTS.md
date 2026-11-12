@@ -5,6 +5,7 @@ See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/
 
 ## Rules
 - Respond in Russian; write AGENTS.md and all AI instructions in English
+- Everything on GitHub is written in English: issues, pull requests, comments, labels, release notes and commit messages. Russian appears only as a supplement in documentation and instructions (`README.ru.md`, `docs/architecture.html`)
 - Do not add comments to code unless requested, except doc comments on public items
 - Do not create files unless strictly necessary; read a file before modifying it
 - Keep files under 500 lines; decompose by responsibility (exception: `docs/architecture.html` and `docs/architecture.en.html`, the single design document)
