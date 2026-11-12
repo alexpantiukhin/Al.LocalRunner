@@ -117,6 +117,7 @@ pub(crate) async fn recover(shared: &Shared) {
             if let Some(process) = &process {
                 kill_left(shared, &job, process).await;
             }
+            crate::hooks::run_cleanup(shared, &job, crate::hooks_config::CleanupOn::Killed).await;
             restarted(shared, job).await;
             if let Err(e) = shared.deps.files.remove_file(&marker).await {
                 shared.diag.event(

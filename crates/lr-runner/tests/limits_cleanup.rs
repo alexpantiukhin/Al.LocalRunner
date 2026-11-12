@@ -414,3 +414,42 @@ async fn cleanup_runs_after_a_resource_kill_and_a_timeout() {
     let names: Vec<String> = hook_runs(&rig).iter().map(|r| r.job.0.clone()).collect();
     assert_eq!(names, vec!["job-1.cleanup.k".to_string()]);
 }
+
+#[tokio::test]
+async fn a_job_cut_short_by_a_runner_restart_gets_its_cleanup_hooks_at_the_next_start() {
+    let mut rig = Rig::new();
+    with_hooks(
+        &mut rig,
+        &format!(
+            "{}[[cleanup]]
+name = \"after-pass\"
+command = \"x\"
+on = [\"passed\"]
+",
+            hook("docker", "remove-labelled")
+        ),
+    );
+    rig.script("job-1", JobScript::new(vec![StepScript::new(600 * SEC, 0)]));
+    let (_c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign("job-1", 1, job(0, 0)).await;
+    b.next_job_msg().await.unwrap();
+    rig.settle().await;
+    assert!(hook_runs(&rig).is_empty(), "nothing ran yet");
+    h.abort();
+    rig.settle().await;
+    rig.net.cut(BROKER);
+    let (_c2, _h2) = rig.start();
+    let b2 = Broker::accept(&rig).await;
+    let msgs = b2.until_result().await;
+    assert_eq!(result_of(&msgs).reason, Some(ReasonCode::RunnerRestarted));
+    let runs = hook_runs(&rig);
+    assert_eq!(runs.len(), 1, "only the hooks that apply to a killed job");
+    assert_eq!(runs[0].job.0, "job-1.cleanup.docker");
+    assert!(runs[0]
+        .env
+        .contains(&("LOCALRUNNER_JOB_LABEL".into(), "lr-job-1".into())));
+    assert!(runs[0]
+        .env
+        .contains(&("LOCALRUNNER_JOB_ID".into(), "job-1".into())));
+}
