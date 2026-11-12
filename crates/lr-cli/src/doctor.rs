@@ -372,6 +372,49 @@ async fn brokers(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// One warning per broker whose registered runners run another version than `mine` (or an
+/// unknown one); nothing when all agree.
+pub fn runner_version_checks(
+    per: &[(String, Vec<lr_proto::RunnerInfo>)],
+    mine: &str,
+) -> Vec<Check> {
+    per.iter()
+        .filter_map(|(broker, runners)| {
+            let off: Vec<String> = runners
+                .iter()
+                .filter(|r| r.caps.version.as_deref() != Some(mine))
+                .map(|r| {
+                    format!(
+                        "{} ({})",
+                        r.name,
+                        r.caps.version.as_deref().unwrap_or("unknown")
+                    )
+                })
+                .collect();
+            (!off.is_empty()).then(|| {
+                check(
+                    format!("broker {broker} runners"),
+                    Status::Warn,
+                    format!(
+                        "runners not on version {mine}: {}; run `localrunner upgrade` on their machines",
+                        off.join(", ")
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
+    let Ok(client) = crate::commands::jobs::hub(layout).await else {
+        return;
+    };
+    if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
+        out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
+    }
+    client.close().await;
+}
+
 /// Runs every check of this node.
 pub async fn checks(layout: &Layout) -> Vec<Check> {
     checks_with(layout, crate::host::is_elevated()).await
@@ -385,6 +428,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     runners(layout, &mut out);
     same_user(layout, &mut out);
     brokers(layout, &mut out).await;
+    runner_versions(layout, &mut out).await;
     out
 }
 

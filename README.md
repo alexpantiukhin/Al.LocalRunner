@@ -365,6 +365,8 @@ An order the broker refuses at intake (more than the pool can ever give, a name 
 
 The database `broker.db` moves to schema 2 on the first start (a copy `broker.db.bak-1` is kept). The two new `history` columns stand before `BROKER`: shift column numbers in scripts. The details are in section 3.14 of the architecture document.
 
+`localrunner doctor` warns when a runner registered with a broker runs another version than this binary (`runners` marks the same mismatch); upgrade such a machine with `localrunner upgrade`.
+
 Permissions:
 
 - A runner executes commands from orders and runs as the user who started it. For other people's clients, create a separate restricted OS user.

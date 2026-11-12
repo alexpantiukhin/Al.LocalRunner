@@ -300,3 +300,54 @@ fn doctor_reports_a_broker_database_that_no_service_state_uses() {
         "the service's own state"
     );
 }
+
+#[test]
+fn runners_on_another_version_are_named_per_broker() {
+    use lr_cli::doctor::{runner_version_checks, Status};
+    use lr_core::Timestamp;
+    use lr_proto::{RunnerInfo, WireCapabilities};
+    let runner = |name: &str, version: Option<&str>| RunnerInfo {
+        name: name.into(),
+        online: true,
+        caps: WireCapabilities {
+            platforms: Default::default(),
+            mem_mb: 1,
+            cpu: 1,
+            disk_mb: 1,
+            programs: Default::default(),
+            tags: Default::default(),
+            max_job_timeout_s: None,
+            services: Default::default(),
+            machine: None,
+            accept_min_mem_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: version.map(str::to_string),
+        },
+        last_seen: Some(Timestamp(1)),
+        free_mem_mb: 0,
+        free_cpu: 0,
+        held_tags: Vec::new(),
+        services: Vec::new(),
+        unmet: Vec::new(),
+    };
+    let per = vec![
+        ("a".to_string(), vec![runner("r1", Some("1.2.0"))]),
+        (
+            "b".to_string(),
+            vec![runner("r2", Some("1.1.0")), runner("r3", None)],
+        ),
+    ];
+    let found = runner_version_checks(&per, "1.2.0");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].status, Status::Warn);
+    assert!(
+        found[0].detail.contains("r2 (1.1.0), r3 (unknown)"),
+        "{}",
+        found[0].detail
+    );
+    assert!(runner_version_checks(&per[..1], "1.2.0").is_empty());
+}
