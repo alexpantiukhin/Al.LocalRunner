@@ -320,8 +320,10 @@ pub trait ProcessRunner: Send + Sync {
     async fn spawn(&self, spec: SpawnSpec) -> Result<ProcessRef, ProcessError>;
 
     /// Kills the whole tree of `process` if it is still the same process (same start
-    /// fingerprint); a process already gone is not an error. Refuses a reference without a
-    /// fingerprint.
+    /// fingerprint); a process already gone is not an error. When it is gone, an
+    /// implementation may kill what it left behind (on Unix its process group) only if the
+    /// fingerprint shows it started in the current boot of the OS. Refuses a reference without
+    /// a fingerprint.
     async fn kill_tree(&self, process: &ProcessRef) -> Result<(), ProcessError>;
 
     /// Kills what runs of an earlier, crashed runner process left in containers that outlive

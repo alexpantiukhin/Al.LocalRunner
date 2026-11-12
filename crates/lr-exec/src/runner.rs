@@ -38,9 +38,13 @@ struct Service {
 /// without it a child that detaches (`setsid`, double fork) and loses its parent between two
 /// scans (100 ms) escapes the kill.
 ///
-/// After a crash of the runner, [`ProcessRunner::kill_tree`] on the recorded root also kills
-/// the process group the root leaves behind, and [`ProcessRunner::sweep_orphans`] kills the
-/// scopes of runner processes that are gone (Linux).
+/// After a crash of the runner, [`ProcessRunner::kill_tree`] on a recorded root that is gone
+/// also kills the process group it left behind, but only when its start fingerprint belongs to
+/// the current boot of the OS (Linux: the boot tag of the fingerprint; macOS: started after
+/// `kern.boottime`) and the tree did not live in a cgroup scope. [`ProcessRunner::sweep_orphans`]
+/// kills the scopes of runner processes that are gone (Linux); the scopes of a runner that ran
+/// in this very process (a restart inside a living `up`) are not swept, so a descendant that
+/// left the process group there survives.
 ///
 /// Stops: a step timeout kills the tree at once without a soft signal; a
 /// [`lr_abstractions::Stop::Cancel`] sends Ctrl+Break to the process group on Windows or
@@ -188,7 +192,7 @@ impl ProcessRunner for ExecRunner {
             Probe::Alive(s) if s == start => kill_unmanaged(process.pid, start).await,
             Probe::Unreadable => return Err(ProcessError::Unverifiable(process.pid)),
             #[cfg(unix)]
-            Probe::Gone => crate::os_unix::kill_left_group(process.pid),
+            Probe::Gone => crate::os_unix::kill_left_group(process.pid, start),
             _ => {}
         }
         Ok(())

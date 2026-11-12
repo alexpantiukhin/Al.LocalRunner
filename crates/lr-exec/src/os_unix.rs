@@ -1,5 +1,16 @@
+use crate::boot::may_kill_left_group;
 use crate::probe::Probe;
 use std::collections::HashMap;
+
+#[cfg(target_os = "linux")]
+fn in_scope() -> bool {
+    crate::containment() == crate::Containment::CgroupScope
+}
+
+#[cfg(not(target_os = "linux"))]
+fn in_scope() -> bool {
+    false
+}
 
 pub(crate) fn signal(pid: u32, start: u64, signal: libc::c_int) {
     if pid == 0 || pid > i32::MAX as u32 {
@@ -12,10 +23,11 @@ pub(crate) fn signal(pid: u32, start: u64, signal: libc::c_int) {
     }
 }
 
-/// Kills process group `pgid` whose leader is gone: a pid is not handed out again while a
-/// process group with that id exists, so a group named after a vanished root is that root's.
-pub(crate) fn kill_left_group(pgid: u32) {
+pub(crate) fn kill_left_group(pgid: u32, start: u64) {
     if pgid <= 1 || pgid > i32::MAX as u32 || probe(pgid) != Probe::Gone {
+        return;
+    }
+    if !may_kill_left_group(start, imp::boot(), in_scope()) {
         return;
     }
     unsafe {
@@ -45,7 +57,11 @@ mod imp {
         })
     }
 
-    const TICK_BITS: u32 = 40;
+    use crate::boot::{Boot, TICK_BITS};
+
+    pub(crate) fn boot() -> Boot {
+        Boot::Tag(boot_tag())
+    }
 
     fn boot_tag() -> u64 {
         static CACHE: OnceLock<u64> = OnceLock::new();
@@ -109,7 +125,27 @@ mod imp {
     use std::collections::HashMap;
     use std::mem::{size_of, zeroed};
 
+    use crate::boot::Boot;
+
     const SZOMB: u32 = 5;
+
+    pub(crate) fn boot() -> Boot {
+        let mut at: libc::timeval = unsafe { zeroed() };
+        let mut size = size_of::<libc::timeval>();
+        let got = unsafe {
+            libc::sysctlbyname(
+                c"kern.boottime".as_ptr(),
+                &mut at as *mut libc::timeval as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if got != 0 || size != size_of::<libc::timeval>() || at.tv_sec < 0 {
+            return Boot::Unknown;
+        }
+        Boot::Since(at.tv_sec as u64 * 1_000_000 + at.tv_usec as u64)
+    }
 
     fn info(pid: u32) -> Result<libc::proc_bsdinfo, Probe> {
         let mut info: libc::proc_bsdinfo = unsafe { zeroed() };
@@ -170,6 +206,10 @@ mod imp {
 mod imp {
     use super::Probe;
     use std::collections::HashMap;
+
+    pub(crate) fn boot() -> crate::boot::Boot {
+        crate::boot::Boot::Unknown
+    }
 
     pub(crate) fn probe(_pid: u32) -> Probe {
         Probe::Unreadable

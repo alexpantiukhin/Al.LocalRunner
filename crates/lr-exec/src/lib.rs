@@ -9,6 +9,7 @@
 //! begins with a [`header_line`].
 
 mod awake;
+mod boot;
 mod clock;
 mod console;
 #[cfg(unix)]
