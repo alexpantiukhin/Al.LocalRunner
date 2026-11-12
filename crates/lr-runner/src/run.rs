@@ -32,6 +32,7 @@ async fn run_phase(
         cwd: phase.cwd.to_path_buf(),
         env: phase.env.to_vec(),
         cancel_grace: DEFAULT_CANCEL_GRACE,
+        limits: Default::default(),
         header: vec![
             ("project".to_string(), p.spec.project.clone()),
             ("cwd".to_string(), phase.cwd.display().to_string()),

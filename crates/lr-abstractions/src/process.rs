@@ -31,6 +31,72 @@ impl From<StepSpec> for JobStep {
     }
 }
 
+/// What the owner does when a job exceeds a resource ceiling.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Enforce {
+    /// Only the peaks are measured; no limit is applied.
+    #[default]
+    Off,
+    /// A warning line goes into the step output and the job keeps running.
+    Warn,
+    /// The whole tree is killed and the job ends failed with [`JobOutcome::exceeded`] set.
+    Kill,
+}
+
+/// Resource ceilings for the processes of one job. The memory and disk values are already the
+/// ceiling (declared value times the owner's margin), computed by the caller.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResourceLimits {
+    /// Memory ceiling of the whole process tree, MB.
+    pub mem_mb: Option<u64>,
+    /// Share of CPU time in thousandths of one core (1000 is one core of CPU time, not core
+    /// pinning). Applied as a hard cap by the OS where it can, else by lowering priority.
+    pub cpu_millis: Option<u32>,
+    /// Maximum number of processes of the job.
+    pub procs: Option<u32>,
+    /// Ceiling of the bytes occupied under [`ResourceLimits::disk_dirs`], MB.
+    pub disk_mb: Option<u64>,
+    /// Workspace and temporary directories whose size is measured.
+    pub disk_dirs: Vec<PathBuf>,
+    /// What happens on exceeding; with [`Enforce::Off`] no limit is applied at all.
+    pub mode: Enforce,
+    /// The declared memory, for messages.
+    pub declared_mem_mb: Option<u64>,
+    /// The declared disk, for messages.
+    pub declared_disk_mb: Option<u64>,
+}
+
+/// Which resource a ceiling was exceeded for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitedResource {
+    /// Memory of the process tree.
+    Memory,
+    /// Disk space of the job directories.
+    Disk,
+}
+
+/// A ceiling a job exceeded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exceeded {
+    /// The resource.
+    pub resource: LimitedResource,
+    /// The ceiling, MB.
+    pub limit_mb: u64,
+    /// The declared amount, MB, when known.
+    pub declared_mb: Option<u64>,
+    /// The peak seen, MB.
+    pub peak_mb: u64,
+}
+
+/// Peaks measured over a job; `None` when nothing was measured.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// Peak memory of the process tree, MB.
+    pub peak_mem_mb: Option<u64>,
+    /// Peak size of the job directories, MB.
+    pub peak_disk_mb: Option<u64>,
+}
+
 /// Everything a [`ProcessRunner`] needs to run one job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSpec {
@@ -50,6 +116,8 @@ pub struct JobSpec {
     /// Name and value pairs written in the log header of each step (project, source, label,
     /// note, branch, cwd, cancel reason).
     pub header: Vec<(String, String)>,
+    /// Resource ceilings; the default sets none.
+    pub limits: ResourceLimits,
 }
 
 impl JobSpec {
@@ -63,6 +131,7 @@ impl JobSpec {
             env: Vec::new(),
             cancel_grace: DEFAULT_CANCEL_GRACE,
             header: Vec::new(),
+            limits: ResourceLimits::default(),
         }
     }
 
@@ -99,6 +168,11 @@ pub struct JobOutcome {
     pub exit_code: Option<i32>,
     /// One outcome per step, in order.
     pub steps: Vec<StepOutcome>,
+    /// Peaks measured over the job.
+    pub usage: Usage,
+    /// The ceiling that ended the job, when it was killed for exceeding one; the state is then
+    /// `Failed` and the job is not an ordinary non-zero exit.
+    pub exceeded: Option<Exceeded>,
 }
 
 /// Progress of a running job.

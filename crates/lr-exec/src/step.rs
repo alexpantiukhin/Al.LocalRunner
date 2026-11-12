@@ -1,5 +1,8 @@
 use crate::spawn::Spawned;
-use lr_abstractions::{Clock, JobEvent, JobOutput, Sleep, Stop, StopSignal};
+use crate::watch::Watch;
+use lr_abstractions::{
+    Clock, Exceeded, JobEvent, JobOutput, ResourceLimits, Sleep, Stop, StopSignal, Usage,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -7,6 +10,7 @@ use tokio::time::{sleep_until, timeout, Instant};
 
 const POLL: Duration = Duration::from_millis(20);
 const OBSERVE_EVERY: u32 = 5;
+const SAMPLE_EVERY: u32 = 12;
 const FLUSH_LIMIT: Duration = Duration::from_secs(1);
 const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 const KILL_LIMIT: Duration = Duration::from_secs(10);
@@ -18,6 +22,7 @@ pub(crate) enum Ended {
     Exited(i32),
     Timeout,
     Cancelled,
+    Exceeded,
 }
 
 pub(crate) struct Emitter<'a> {
@@ -60,12 +65,15 @@ impl<'a> Emitter<'a> {
 pub(crate) struct Finished {
     pub(crate) ended: Ended,
     pub(crate) soft_failed: bool,
+    pub(crate) usage: Usage,
+    pub(crate) exceeded: Option<Exceeded>,
 }
 
 pub(crate) struct Limits<'c> {
     pub(crate) deadline: Sleep,
     pub(crate) grace: Duration,
     pub(crate) clock: &'c dyn Clock,
+    pub(crate) resources: &'c ResourceLimits,
 }
 
 struct Run {
@@ -155,6 +163,9 @@ pub(crate) async fn supervise<'a>(
     if emitter.bounded {
         run.bound_output();
     }
+    let mut watch = Watch::new(limits.resources);
+    let mut exceeded: Option<Exceeded> = None;
+    let mut notes: Vec<u8> = Vec::new();
     let mut pending: Option<Vec<u8>> = None;
     let mut inflight: Option<Emit<'a>> = None;
     let mut tick = tokio::time::interval(POLL);
@@ -162,6 +173,9 @@ pub(crate) async fn supervise<'a>(
     loop {
         if run.exited && run.tree_empty && !run.open && pending.is_none() && inflight.is_none() {
             break;
+        }
+        if pending.is_none() && !notes.is_empty() {
+            pending = Some(std::mem::take(&mut notes));
         }
         if inflight.is_none() {
             if let Some(data) = pending.take() {
@@ -199,7 +213,17 @@ pub(crate) async fn supervise<'a>(
             }
             status = child.wait(), if !run.exited => {
                 run.exited = true;
-                run.decide(Ended::Exited(exit_code(status)));
+                let code = exit_code(status);
+                let sampled = watch.sample(&tree);
+                let open_line = line_open(&pending, emitter.line_open);
+                add_notes(&mut notes, sampled.warnings, open_line);
+                match sampled.kill {
+                    Some(ex) if code != 0 && run.decided.is_none() => {
+                        exceeded = Some(ex);
+                        run.decide(Ended::Exceeded);
+                    }
+                    _ => run.decide(Ended::Exited(code)),
+                }
                 if run.grace.is_none() {
                     tree.kill();
                     run.mark_killed();
@@ -219,6 +243,20 @@ pub(crate) async fn supervise<'a>(
             },
             _ = tick.tick() => {
                 ticks = ticks.wrapping_add(1);
+                if ticks % SAMPLE_EVERY == 1 && !run.tree_empty && !run.killed {
+                    let sampled = watch.sample(&tree);
+                    let open_line = line_open(&pending, emitter.line_open) && notes.is_empty();
+                    add_notes(&mut notes, sampled.warnings, open_line);
+                    if let Some(ex) = sampled.kill {
+                        if run.decided.is_none() {
+                            exceeded = Some(ex);
+                            run.decide(Ended::Exceeded);
+                            run.bound_output();
+                            tree.kill();
+                            run.mark_killed();
+                        }
+                    }
+                }
                 if ticks.is_multiple_of(OBSERVE_EVERY) && !run.tree_empty {
                     tree.observe();
                 }
@@ -254,5 +292,24 @@ pub(crate) async fn supervise<'a>(
     Finished {
         ended: run.decided.unwrap_or(Ended::Cancelled),
         soft_failed: run.soft_failed,
+        usage: watch.usage(),
+        exceeded,
     }
+}
+
+fn line_open(pending: &Option<Vec<u8>>, emitted_open: bool) -> bool {
+    pending
+        .as_ref()
+        .and_then(|p| p.last())
+        .map_or(emitted_open, |&b| b != b'\n')
+}
+
+fn add_notes(notes: &mut Vec<u8>, warnings: Vec<u8>, line_open: bool) {
+    if warnings.is_empty() {
+        return;
+    }
+    if line_open {
+        notes.push(b'\n');
+    }
+    notes.extend_from_slice(&warnings);
 }

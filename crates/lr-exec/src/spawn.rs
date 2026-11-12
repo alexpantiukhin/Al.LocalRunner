@@ -1,5 +1,5 @@
 use crate::mask::Masker;
-use lr_abstractions::SecretValue;
+use lr_abstractions::{ResourceLimits, SecretValue};
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
@@ -31,6 +31,7 @@ pub(crate) struct Launch<'a> {
     pub(crate) cwd: &'a Path,
     pub(crate) env: &'a [(String, String)],
     pub(crate) secrets: &'a [(String, SecretValue)],
+    pub(crate) limits: &'a ResourceLimits,
 }
 
 #[cfg(windows)]
@@ -57,7 +58,7 @@ fn command(launch: &Launch<'_>) -> (Command, Placement) {
         .map(|(k, _)| k.as_str())
         .chain(launch.secrets.iter().map(|(k, _)| k.as_str()))
         .collect();
-    let (mut cmd, extra, placement) = Tree::shell(launch.command, &names);
+    let (mut cmd, extra, placement) = Tree::shell(launch.command, &names, launch.limits);
     cmd.current_dir(launch.cwd)
         .env_clear()
         .envs(os_env(launch.env))
@@ -66,11 +67,15 @@ fn command(launch: &Launch<'_>) -> (Command, Placement) {
         .envs(extra)
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    Tree::prepare(&mut cmd);
+    Tree::prepare(&mut cmd, launch.limits, &placement);
     (cmd, placement)
 }
 
-fn start(mut cmd: Command, placement: Placement) -> io::Result<(Child, Tree)> {
+fn start(
+    mut cmd: Command,
+    placement: Placement,
+    limits: &ResourceLimits,
+) -> io::Result<(Child, Tree)> {
     if cmd.as_std().get_current_dir().is_some_and(|d| !d.is_dir()) {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -78,7 +83,7 @@ fn start(mut cmd: Command, placement: Placement) -> io::Result<(Child, Tree)> {
         ));
     }
     let mut child = cmd.spawn()?;
-    match Tree::attach(&child, placement) {
+    match Tree::attach(&child, placement, limits) {
         Ok(tree) => Ok((child, tree)),
         Err(err) => {
             let _ = child.start_kill();
@@ -90,7 +95,7 @@ fn start(mut cmd: Command, placement: Placement) -> io::Result<(Child, Tree)> {
 pub(crate) fn spawn_step(launch: &Launch<'_>, mask: &[&SecretValue]) -> io::Result<Spawned> {
     let (mut cmd, placement) = command(launch);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let (mut child, tree) = start(cmd, placement)?;
+    let (mut child, tree) = start(cmd, placement, launch.limits)?;
     let (tx, rx) = mpsc::channel(CHANNEL);
     let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
@@ -110,7 +115,7 @@ pub(crate) fn spawn_step(launch: &Launch<'_>, mask: &[&SecretValue]) -> io::Resu
 pub(crate) fn spawn_service(launch: &Launch<'_>) -> io::Result<(Child, Tree)> {
     let (mut cmd, placement) = command(launch);
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
-    start(cmd, placement)
+    start(cmd, placement, launch.limits)
 }
 
 fn forward<R>(mut stream: R, mut masker: Masker, out: mpsc::Sender<Vec<u8>>) -> JoinHandle<()>

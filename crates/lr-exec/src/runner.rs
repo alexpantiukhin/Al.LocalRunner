@@ -2,8 +2,8 @@ use crate::probe::{probe, Probe};
 use crate::spawn::{spawn_service, Launch, Tree};
 use async_trait::async_trait;
 use lr_abstractions::{
-    Clock, JobOutcome, JobOutput, JobSpec, ProcessError, ProcessRef, ProcessRunner, SpawnSpec,
-    StopSignal,
+    Clock, JobOutcome, JobOutput, JobSpec, ProcessError, ProcessRef, ProcessRunner, ResourceLimits,
+    SpawnSpec, StopSignal,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -152,11 +152,13 @@ impl ProcessRunner for ExecRunner {
     }
 
     async fn spawn(&self, spec: SpawnSpec) -> Result<ProcessRef, ProcessError> {
+        let no_limits = ResourceLimits::default();
         let launch = Launch {
             command: &spec.command,
             cwd: &spec.cwd,
             env: &spec.env,
             secrets: &spec.secrets,
+            limits: &no_limits,
         };
         let (mut child, tree) =
             spawn_service(&launch).map_err(|e| ProcessError::Spawn(e.to_string()))?;

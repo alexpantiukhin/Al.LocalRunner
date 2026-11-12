@@ -1,3 +1,4 @@
+use lr_abstractions::{Enforce, ResourceLimits};
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ pub(crate) type Wrapped = (Command, Vec<(OsString, OsString)>, Scope);
 struct Systemd {
     exe: PathBuf,
     slice: PathBuf,
+    controllers: Vec<String>,
 }
 
 static SYSTEMD: OnceLock<Option<Systemd>> = OnceLock::new();
@@ -72,9 +74,14 @@ fn probe() -> Option<Systemd> {
     if !name.ends_with(".scope") {
         return None;
     }
+    let slice = scope.parent()?.to_path_buf();
+    let controllers = std::fs::read_to_string(slice.join("cgroup.controllers"))
+        .map(|t| t.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
     Some(Systemd {
-        slice: scope.parent()?.to_path_buf(),
+        slice,
         exe,
+        controllers,
     })
 }
 
@@ -130,13 +137,46 @@ pub(crate) fn sweep_orphans() {
         if pid == std::process::id() || crate::probe::probe(pid) != crate::probe::Probe::Gone {
             continue;
         }
-        Scope { dir: entry.path() }.signal(libc::SIGKILL);
+        Scope {
+            dir: entry.path(),
+            cpu_capped: false,
+        }
+        .signal(libc::SIGKILL);
     }
 }
 
 /// Whether job trees go into their own cgroup v2 scope (`systemd-run --user --scope`).
 pub(crate) fn available() -> bool {
     systemd_blocking().is_some()
+}
+
+/// Whether the user manager hands the memory controller to job scopes, so the OS can limit
+/// a job's memory.
+pub(crate) fn memory_delegated() -> bool {
+    systemd_blocking().is_some_and(|s| s.controllers.iter().any(|c| c == "memory"))
+}
+
+/// The `systemd-run -p` properties for `limits` given the controllers available: the hard
+/// memory limit sits above the ceiling the watcher enforces, so the watcher ends the job with
+/// the proper reason first.
+pub(crate) fn properties(limits: &ResourceLimits, controllers: &[String]) -> Vec<String> {
+    let has = |name: &str| controllers.iter().any(|c| c == name);
+    let mut out = Vec::new();
+    if limits.mode == Enforce::Off {
+        return out;
+    }
+    if let (Enforce::Kill, Some(mem), true) = (limits.mode, limits.mem_mb, has("memory")) {
+        let bytes = crate::limits::bytes_of(crate::limits::backstop_mb(mem));
+        out.push(format!("MemoryMax={bytes}"));
+        out.push("MemorySwapMax=0".to_string());
+    }
+    if let (Some(millis), true) = (limits.cpu_millis, has("cpu")) {
+        out.push(format!("CPUQuota={}%", (millis / 10).max(1)));
+    }
+    if let (Some(procs), true) = (limits.procs, has("pids")) {
+        out.push(format!("TasksMax={}", procs.max(1)));
+    }
+    out
 }
 
 fn procs(dir: &Path) -> io::Result<Vec<u32>> {
@@ -157,13 +197,18 @@ pub(crate) fn job_owns_bus(job_vars: &[&str]) -> bool {
 /// its unit name, so it stays reachable after the root process is gone.
 pub(crate) struct Scope {
     dir: PathBuf,
+    cpu_capped: bool,
 }
 
 impl Scope {
     /// `sh -c command` inside a new scope, or `None` when scopes are unavailable here or the job
     /// sets the bus variables itself. Those variables are added for `systemd-run` and removed
     /// again before the shell.
-    pub(crate) fn wrap(command: &str, job_vars: &[&str]) -> Option<Wrapped> {
+    pub(crate) fn wrap(
+        command: &str,
+        job_vars: &[&str],
+        limits: &ResourceLimits,
+    ) -> Option<Wrapped> {
         if job_owns_bus(job_vars) {
             return None;
         }
@@ -175,8 +220,12 @@ impl Scope {
         );
         let mut cmd = Command::new(&systemd.exe);
         cmd.args(["--user", "--scope", "--quiet", "--collect"])
-            .arg(format!("--unit={unit}"))
-            .args(["--", "/usr/bin/env"]);
+            .arg(format!("--unit={unit}"));
+        let props = properties(limits, &systemd.controllers);
+        for prop in &props {
+            cmd.arg("-p").arg(prop);
+        }
+        cmd.args(["--", "/usr/bin/env"]);
         let mut extra = Vec::new();
         for var in BUS_VARS {
             if let Some(value) = std::env::var_os(var) {
@@ -186,7 +235,8 @@ impl Scope {
         }
         cmd.args(["/bin/sh", "-c", command]);
         let dir = systemd.slice.join(format!("{unit}.scope"));
-        Some((cmd, extra, Scope { dir }))
+        let cpu_capped = props.iter().any(|p| p.starts_with("CPUQuota="));
+        Some((cmd, extra, Scope { dir, cpu_capped }))
     }
 
     /// The scope a process started by an earlier runner lives in, when it is one of ours.
@@ -198,7 +248,20 @@ impl Scope {
         if !unit.starts_with(UNIT_PREFIX) {
             return None;
         }
-        Some(Scope { dir })
+        Some(Scope {
+            dir,
+            cpu_capped: false,
+        })
+    }
+
+    /// The pids of the scope's processes, when they can be read.
+    pub(crate) fn pids(&self) -> Option<Vec<u32>> {
+        procs(&self.dir).ok()
+    }
+
+    /// Whether a CPU quota was requested for the scope.
+    pub(crate) fn cpu_capped(&self) -> bool {
+        self.cpu_capped
     }
 
     /// Sends `sig` to every process of the scope; `SIGKILL` goes through `cgroup.kill` where
@@ -266,7 +329,34 @@ mod tests {
     fn a_scope_that_never_came_up_is_empty() {
         let scope = Scope {
             dir: PathBuf::from("/sys/fs/cgroup/no-such-lr-scope.scope"),
+            cpu_capped: false,
         };
         assert_eq!(scope.is_empty(), Some(true));
+    }
+
+    #[test]
+    fn properties_follow_the_mode_and_the_controllers() {
+        let all: Vec<String> = ["memory", "cpu", "pids"].map(String::from).to_vec();
+        let mut limits = ResourceLimits {
+            mem_mb: Some(1000),
+            cpu_millis: Some(4000),
+            procs: Some(64),
+            mode: Enforce::Kill,
+            ..ResourceLimits::default()
+        };
+        assert_eq!(
+            properties(&limits, &all),
+            [
+                "MemoryMax=1153433600",
+                "MemorySwapMax=0",
+                "CPUQuota=400%",
+                "TasksMax=64"
+            ]
+        );
+        assert_eq!(properties(&limits, &["pids".to_string()]), ["TasksMax=64"]);
+        limits.mode = Enforce::Warn;
+        assert_eq!(properties(&limits, &all), ["CPUQuota=400%", "TasksMax=64"]);
+        limits.mode = Enforce::Off;
+        assert!(properties(&limits, &all).is_empty());
     }
 }
