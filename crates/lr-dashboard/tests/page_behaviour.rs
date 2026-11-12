@@ -44,9 +44,13 @@ fn running(build: StepState, test: StepState, job: JobState) -> String {
 }
 
 fn run(scenario: &str, test: &str) -> Option<Value> {
+    run_with("{ live: true, logs: {} }", scenario, test)
+}
+
+fn run_with(config: &str, scenario: &str, test: &str) -> Option<Value> {
     let first = running(StepState::Running, StepState::Queued, JobState::Running);
     let program = format!(
-        "{DOM}\nstart({{ live: true, logs: {{}} }}, {first});\n{CHARTS}\n{PAGE}\n\
+        "{DOM}\nstart({config}, {first});\n{CHARTS}\n{PAGE}\n\
          var $ = function (id) {{ return document.getElementById(id); }};\n\
          var LOG = {};\n\
          (async function () {{ var out = {{}};\n{scenario}\n\
@@ -154,4 +158,46 @@ fn a_changed_hash_restores_the_view_with_its_tab_and_filters() {
     assert!(stats.contains("Saturation of the queue now"), "{stats}");
     assert_eq!(out["queue"]["project"], "alpha");
     assert_eq!(out["queue"]["rows"], serde_json::json!(["j-queued"]));
+}
+
+#[test]
+fn a_step_that_never_ran_shows_a_full_skipped_bar_once_the_run_is_over() {
+    let over = running(StepState::Failed, StepState::Queued, JobState::Cancelled);
+    let scenario = format!(
+        r#"
+  sources[0].onopen(); await tick();
+  $("queue-body").children[0].fire("click"); await tick();
+  nextData = {over}; sources[0].onopen(); await tick();
+  var row = $("card-steps").children[1], fill = row.children[1].children[0];
+  out.label = row.children[0].textContent;
+  out.cls = fill.className;
+  out.width = fill.style.width;
+"#
+    );
+    let Some(out) = run(&scenario, "a_step_that_never_ran_shows_a_full_skipped_bar") else {
+        return;
+    };
+    assert_eq!(out["label"], "test · skipped", "{out}");
+    assert_eq!(out["cls"], "fill skipped");
+    assert_eq!(out["width"], "100%");
+}
+
+#[test]
+fn a_snapshot_without_logs_says_so_once_and_offers_nothing_to_copy() {
+    let scenario = r#"
+  await tick();
+  $("queue-body").children[0].fire("click"); await tick();
+  out.title = $("log-title").textContent;
+  out.log = $("log").textContent;
+  out.copy = $("log-copy").disabled;
+  out.download = $("log-download").disabled;
+"#;
+    let config = "{ live: false, logs: {}, with_logs: false }";
+    let Some(out) = run_with(config, scenario, "a_snapshot_without_logs_says_so_once") else {
+        return;
+    };
+    assert_eq!(out["title"], "Log", "{out}");
+    assert_eq!(out["log"], "(logs are not included in this snapshot)");
+    assert_eq!(out["copy"], true);
+    assert_eq!(out["download"], true);
 }

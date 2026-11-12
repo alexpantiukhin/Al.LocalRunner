@@ -194,12 +194,19 @@ pub fn step_view(row: &StepRow) -> StepView {
 
 /// Steps as they stand while the job runs: the first queued step after only passed ones is
 /// the one executing, started when the step before it ended, the
-/// first one when the job started. The runner reports a step only once it ends.
+/// first one when the job started. The runner reports a step only once it ends. Once the
+/// job is final, a step still queued never ran: it is shown skipped.
 pub fn live_steps(
     mut steps: Vec<StepView>,
     state: JobState,
     started: Option<Timestamp>,
 ) -> Vec<StepView> {
+    if state.is_final() {
+        for s in steps.iter_mut().filter(|s| s.state == StepState::Queued) {
+            s.state = StepState::Skipped;
+        }
+        return steps;
+    }
     if !matches!(state, JobState::Running | JobState::Cancelling) || started.is_none() {
         return steps;
     }

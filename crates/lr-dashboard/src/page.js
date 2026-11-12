@@ -100,7 +100,7 @@
     }));
   }
   var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "label", "profile", "runner", "queued", "duration"];
+  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
@@ -221,10 +221,11 @@
     var steps = $("card-steps");
     steps.replaceChildren.apply(steps, (d.steps || []).map(function (st) {
       var spent = st.started_at ? (st.finished_at || t) - st.started_at : 0;
-      var fill = el("div", { cls: "fill " + st.state });
-      fill.style.width = Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0) + "%";
+      var state = st.state === "queued" && FINAL.indexOf(s.state) >= 0 ? "skipped" : st.state;
+      var fill = el("div", { cls: "fill " + state });
+      fill.style.width = (state === "skipped" ? 100 : Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0)) + "%";
       var row = el("button", { type: "button", cls: "step" + (st.name === S.step ? " chosen" : ""), "aria-pressed": String(st.name === S.step), title: "Show the log of this step" },
-        [el("span", { text: st.name + " · " + st.state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
+        [el("span", { text: st.name + " · " + state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
       row.addEventListener("click", function () { S.stepAuto = false; S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
       return row;
     }));
@@ -235,6 +236,7 @@
   function openCard(j) {
     S.stepAuto = true;
     S.log = "";
+    S.noLog = false;
     fillCard(j);
     S.log = (j.last_lines || []).join("\n");
     showLog();
@@ -256,7 +258,8 @@
   }
   function showLog() {
     var q = $("log-search").value.toLowerCase(), part = stepLog(S.log, S.step), all = part == null ? S.log : part;
-    $("log-title").textContent = !S.step ? "Log" : part == null ? "Log (step " + S.step + " is not in the loaded part)" : "Log · step " + S.step;
+    $("log-title").textContent = !S.step || S.noLog ? "Log" : part == null ? "Log (step " + S.step + " is not in the loaded part)" : "Log · step " + S.step;
+    $("log-copy").disabled = $("log-download").disabled = !!S.noLog;
     var text = q ? all.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : all;
     var pre = $("log");
     pre.textContent = text;
@@ -266,7 +269,8 @@
     if (!S.open) return;
     var id = S.open.detail.summary.job;
     if (!config.live) {
-      S.log = config.logs[id] != null ? config.logs[id] : config.with_logs ? "(no log)" : "(logs are not included in this snapshot)";
+      S.noLog = config.logs[id] == null;
+      S.log = !S.noLog ? config.logs[id] : config.with_logs ? "(no log)" : "(logs are not included in this snapshot)";
       showLog();
       return;
     }

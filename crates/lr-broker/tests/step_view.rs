@@ -147,6 +147,11 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     assert_eq!(j1.cwd.as_deref(), Some("/work/repo"));
     let j2 = all.iter().find(|d| d.summary.job.0 == "j2").unwrap();
     assert!(j2.cancelled_by.is_some(), "{j2:?}");
+    assert!(
+        !j2.steps.is_empty() && j2.steps.iter().all(|s| s.state == StepState::Skipped),
+        "a run cancelled in the queue shows its steps skipped: {:?}",
+        j2.steps
+    );
 
     let mut bob = h.local_hub("bob").await;
     let theirs = details(
