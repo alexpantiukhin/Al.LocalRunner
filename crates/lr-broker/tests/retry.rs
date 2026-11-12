@@ -21,6 +21,15 @@ async fn retried(h: &Harness, flag: &std::sync::atomic::AtomicBool) {
     h.poke().await;
 }
 
+const GRACE: &str = "[grace]
+lost_min = 2
+";
+
+async fn past_the_grace(h: &Harness) {
+    h.clock.advance(Duration::from_secs(120));
+    h.poke().await;
+}
+
 async fn cancel_ack(c: &mut Conn) -> CancelAck {
     loop {
         if let BrokerToHub::CancelAck(a) = c.hub().await {
@@ -64,13 +73,14 @@ async fn failed_lost_write_is_retried_on_the_next_tick() {
 
 #[tokio::test]
 async fn failed_requeue_at_start_is_retried_on_the_next_tick() {
-    let h = Harness::start("");
+    let h = Harness::start(GRACE);
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut hub = h.local_hub("alex").await;
     hub.send(&order("j1", req(512, 1, 60))).await;
     hub.accepted().await;
     r.assign().await;
     let h = h.restart_with(|f| FaultyStore::set(&f.fail_requeue)).await;
+    past_the_grace(&h).await;
     assert_eq!(
         h.job_row(ALEX, "j1").await.unwrap().job.runner.as_deref(),
         Some("r1")
@@ -150,9 +160,10 @@ async fn rejoin_r1(h: &Harness) -> Conn {
 
 #[tokio::test]
 async fn cancel_of_a_run_parked_by_a_failed_requeue_at_start_is_kept() {
-    let h = Harness::start("");
+    let h = Harness::start(GRACE);
     assigned_on_r1(&h, "j1").await;
     let h = h.restart_with(|f| FaultyStore::set(&f.fail_requeue)).await;
+    past_the_grace(&h).await;
     let mut hub = h.local_hub("alex").await;
     hub.send(&cancel("j1", 2)).await;
     assert_eq!(cancel_ack(&mut hub).await.outcome, CancelOutcome::Applied);

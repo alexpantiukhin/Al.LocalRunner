@@ -160,7 +160,11 @@ impl Engine {
         }
         match (job.runner.is_some(), job.cancel.take()) {
             (_, Some(cancel)) => self.cancel_waiting(job, cancel).await,
-            (true, None) => self.requeue_or_retry(job).await,
+            (true, None) => {
+                job.confirmed = true;
+                job.gone_since = Some(self.now());
+                self.active.push(job);
+            }
             (false, None) => self.queue.push(job),
         }
     }

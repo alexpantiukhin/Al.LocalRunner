@@ -155,5 +155,7 @@ async fn restored_same_machine_order_runs_when_its_runner_comes_back() {
     r.assign().await;
     let h = h.restart().await;
     let mut back = h.local_runner("alex", "lr", linux()).await;
+    back.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
+        .await;
     assert_eq!(back.assign().await.job, JobId("s1".into()));
 }

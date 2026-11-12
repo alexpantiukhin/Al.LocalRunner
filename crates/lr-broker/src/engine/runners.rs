@@ -1,6 +1,6 @@
 use super::conn::ConnId;
 use super::recovery::unknown_address;
-use super::{Engine, Role};
+use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
@@ -135,10 +135,9 @@ impl Engine {
         if let Some(c) = self.conns.get_mut(&conn) {
             c.role = Role::Runner(name.to_string());
         }
-        for job in self.active.iter_mut() {
-            if job.runner.as_deref() == Some(name) {
-                job.gone_since = None;
-                if first_contact && job.lost_floor.is_some() {
+        if first_contact {
+            for job in self.active.iter_mut() {
+                if job.runner.as_deref() == Some(name) && job.lost_floor.is_some() {
                     job.lost_floor = Some(now);
                 }
             }
@@ -150,6 +149,26 @@ impl Engine {
             },
         );
         Ok(())
+    }
+
+    pub(crate) async fn runner_resumed(&mut self, runner: &str, points: &[lr_proto::ResumePoint]) {
+        let held = |j: &Job| {
+            j.runner.as_deref() == Some(runner) && j.started_at.is_none() && j.gone_since.is_some()
+        };
+        let (unknown, keep): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.active)
+            .into_iter()
+            .partition(|j| held(j) && !points.iter().any(|p| p.job == j.key.job));
+        self.active = keep;
+        for j in self.active.iter_mut().filter(|j| held(j)) {
+            j.gone_since = None;
+        }
+        let changed = !unknown.is_empty();
+        for job in unknown {
+            self.requeue_or_retry(job).await;
+        }
+        if changed {
+            self.plan().await;
+        }
     }
 
     pub(crate) fn confirm_assign(&mut self, runner: &str, job: &lr_core::JobId) {
