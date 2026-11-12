@@ -1,3 +1,4 @@
+use super::retry::Retry;
 use super::{Cancel, Engine, Job, Role};
 use crate::policy::OrphanRunning;
 use lr_abstractions::{JobKey, Level, StoreError};
@@ -49,6 +50,8 @@ impl Engine {
             .cloned()
             .collect();
         self.retire(keys).await;
+        self.retries
+            .retain(|r| !matches!(r, Retry::Notify(key, ..) if key.client == name));
         let now = self.now();
         match self.store.revoke(name, now).await {
             Ok(_) | Err(StoreError::NotFound(_)) => {}

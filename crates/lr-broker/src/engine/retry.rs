@@ -80,7 +80,11 @@ impl Engine {
                     self.lose(job, now, code).await
                 }
                 Retry::Result(job, r, at) => self.job_result(job, &r, at).await,
-                Retry::Notify(key, kind, payload) => self.push_hub(&key, kind, payload).await,
+                Retry::Notify(key, kind, payload) => {
+                    if self.delivers_to(&key.client, &key.job) {
+                        self.push_hub(&key, kind, payload).await
+                    }
+                }
             }
         }
         self.retry_round = false;

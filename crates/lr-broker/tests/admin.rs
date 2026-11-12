@@ -324,3 +324,26 @@ async fn a_run_of_a_revoked_key_parked_by_a_failed_requeue_ends_client_removed()
     let row = h.until_state(LAPTOP, "j1", JobState::Cancelled).await;
     assert_eq!(row.job.cancel_reason.as_deref(), Some("client_removed"));
 }
+
+#[tokio::test]
+async fn a_hub_message_waiting_for_a_retry_is_dropped_with_the_revoked_key() {
+    let h = Harness::start("");
+    let mut hub = h.member_hub(LAPTOP, "", "10.0.0.8").await;
+    let mut r = h.member_runner("r1", "10.0.0.5", linux()).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    r.acked(1).await;
+    hub.started_notice().await;
+    common::faulty::FaultyStore::set(&h.faults.fail_push_result);
+    r.send(&result("j1", 2, JobState::Passed, 0)).await;
+    r.acked(2).await;
+    h.until_state(LAPTOP, "j1", JobState::Passed).await;
+    h.handle.revoked(LAPTOP).await;
+    common::faulty::FaultyStore::clear(&h.faults.fail_push_result);
+    h.clock.advance(std::time::Duration::from_secs(1));
+    h.poke().await;
+    h.poke().await;
+    assert_eq!(h.store.results_backlog().await.unwrap().pending, 0);
+}
