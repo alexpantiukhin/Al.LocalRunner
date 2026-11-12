@@ -293,3 +293,22 @@ async fn bye_is_sent_when_the_broker_comes_back() {
     assert!(matches!(bye, RunnerToBroker::Bye(_)));
     assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
 }
+
+#[tokio::test]
+async fn idle_runner_told_to_stop_exits_even_when_the_broker_is_unreachable() {
+    let rig = Rig::new();
+    let (c, h) = rig.start();
+    rig.settle().await;
+    c.drain().await;
+    for _ in 0..40 {
+        if h.is_finished() {
+            break;
+        }
+        rig.advance(10 * SEC).await;
+    }
+    assert!(
+        h.is_finished(),
+        "the idle runner waits for a broker it cannot reach"
+    );
+    assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
+}

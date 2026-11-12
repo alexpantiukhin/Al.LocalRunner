@@ -324,22 +324,31 @@ impl RunnerAgent {
                 }
                 Some(End::Lost { welcomed: false }) | None => {}
             }
-            tokio::select! {
-                _ = self.wait_offline(&shared, backoff) => {}
-                never = background::<()>(&shared, &mut next_sweep) => never,
+            let stop = tokio::select! {
+                stop = self.wait_offline(&shared, backoff) => stop,
+                never = background::<bool>(&shared, &mut next_sweep) => never,
+            };
+            if stop {
+                shared.stop_all_services().await;
+                return AgentExit::Stopped;
             }
             backoff = backoff.saturating_mul(2).min(MAX_BACKOFF);
         }
     }
 
-    async fn wait_offline(&mut self, shared: &Shared, backoff: Duration) {
+    /// Waits for the next dial; `true` when the runner was told to stop while the broker is
+    /// unreachable and has nothing left to deliver, so it exits instead of waiting for the broker.
+    async fn wait_offline(&mut self, shared: &Shared, backoff: Duration) -> bool {
         let retry_at = after(shared.now(), backoff);
         loop {
             tokio::select! {
-                _ = shared.deps.clock.sleep_until(retry_at) => return,
+                _ = shared.deps.clock.sleep_until(retry_at) => return false,
                 cmd = self.control_rx.recv() => {
                     if let Some(cmd) = cmd {
                         apply_control(shared, cmd);
+                        if crate::connect::idle_and_stopping(shared).await {
+                            return true;
+                        }
                     }
                 }
             }

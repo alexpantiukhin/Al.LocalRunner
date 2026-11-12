@@ -130,11 +130,7 @@ impl Session<'_> {
     }
 
     async fn idle_and_stopping(&self) -> bool {
-        let s = self.shared;
-        if !s.state().draining || s.state().job.is_some() {
-            return false;
-        }
-        matches!(s.deps.store.pending_outbox().await, Ok(p) if p.is_empty())
+        idle_and_stopping(self.shared).await
     }
 
     async fn refused(&mut self, e: ProtocolError) -> End {
@@ -215,6 +211,14 @@ impl Session<'_> {
         }
         Step::Go
     }
+}
+
+/// Whether the runner was told to stop, runs no job and has no result left to deliver.
+pub(crate) async fn idle_and_stopping(s: &Shared) -> bool {
+    if !s.state().draining || s.state().job.is_some() {
+        return false;
+    }
+    matches!(s.deps.store.pending_outbox().await, Ok(p) if p.is_empty())
 }
 
 fn peer_kind(t: &dyn Transport) -> PeerKind {

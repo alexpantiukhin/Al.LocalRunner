@@ -17,6 +17,7 @@ use std::time::Duration;
 
 const POLL: Duration = Duration::from_millis(200);
 const ROLE_GONE_WITHIN: Duration = Duration::from_secs(15);
+const STOPPED_WITHIN: Duration = Duration::from_secs(3);
 const CANCELLED_EXIT_WITHIN: Duration = Duration::from_secs(30);
 
 /// What `down` stops.
@@ -210,6 +211,37 @@ async fn ctrl_c() {
     }
 }
 
+/// Waits up to [`STOPPED_WITHIN`] for the runners `names` to stop answering and reports each:
+/// `stopped`, or `still running` (it is stopping: it finishes or cancels its job first, so
+/// this is not an error).
+async fn report_stopped(roles: &dyn Roles, names: &[String]) {
+    let start = tokio::time::Instant::now();
+    let mut left: Vec<&String> = names.iter().collect();
+    loop {
+        let mut still = Vec::new();
+        for n in left {
+            if roles.runner_answers(n).await {
+                still.push(n);
+            } else {
+                println!("{n}: stopped");
+            }
+        }
+        left = still;
+        if left.is_empty() {
+            return;
+        }
+        if start.elapsed() >= STOPPED_WITHIN {
+            for n in left {
+                println!(
+                    "{n}: still running, it stops when its job ends (`localrunner status` shows the job)"
+                );
+            }
+            return;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
 /// What runners are told: `--cancel` cancels the current job, otherwise (`--drain` or no
 /// flag) they finish it.
 pub fn down_mode(cancel: bool) -> DownMode {
@@ -344,6 +376,7 @@ pub async fn down_with(
         }
     };
     let mut stopping = Vec::new();
+    let mut waited_for_runners = false;
     for t in &targets {
         match t {
             Target::Runner(name) => match roles.stop_runner(name, mode).await {
@@ -372,6 +405,7 @@ pub async fn down_with(
                         stopping.join(", "),
                         if cancel { "exit" } else { "finish" }
                     );
+                    waited_for_runners = true;
                     let names = &stopping;
                     let any_answers = move || async move {
                         for n in names {
@@ -420,6 +454,9 @@ pub async fn down_with(
                 }
             }
         }
+    }
+    if !waited_for_runners && !stopping.is_empty() {
+        report_stopped(roles, &stopping).await;
     }
     Ok(code)
 }
