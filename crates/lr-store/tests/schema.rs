@@ -459,6 +459,7 @@ async fn a_version_one_broker_database_gets_the_peak_and_enforcement_columns() {
         "ALTER TABLE job DROP COLUMN peak_mem_mb;
          ALTER TABLE job DROP COLUMN peak_disk_mb;
          ALTER TABLE runner DROP COLUMN enforcement;
+         ALTER TABLE runner DROP COLUMN version;
          PRAGMA user_version = 1;",
     )
     .unwrap();

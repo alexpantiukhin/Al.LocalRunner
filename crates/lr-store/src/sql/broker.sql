@@ -36,7 +36,8 @@ CREATE TABLE runner (
     accept        TEXT,
     last_seen     INTEGER,
     state         TEXT NOT NULL,
-    enforcement   TEXT
+    enforcement   TEXT,
+    version       TEXT
 );
 
 CREATE TABLE job (

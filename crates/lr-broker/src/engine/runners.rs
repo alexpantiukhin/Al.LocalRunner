@@ -65,6 +65,7 @@ pub(crate) fn row_of(name: &str, owner: &str, wire: &WireCapabilities, at: Times
             .collect(),
         accept_min_mem_mb: wire.accept_min_mem_mb,
         enforcement: wire.enforcement.clone(),
+        version: wire.version.clone(),
         last_seen: Some(at),
         state: RunnerState::Online,
     }

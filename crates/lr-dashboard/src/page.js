@@ -137,7 +137,7 @@
     var kids = (S.data.runners || []).map(function (b) {
       var p = b.pool;
       var queued = S.data.jobs.filter(function (j) { return j.list === "queued" && j.broker === b.broker; });
-      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Enforcement", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
+      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Enforcement", "Version", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
@@ -149,6 +149,7 @@
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
           el("td", { text: r.caps.enforcement || "" }),
+          el("td", { text: r.caps.version || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));
       });

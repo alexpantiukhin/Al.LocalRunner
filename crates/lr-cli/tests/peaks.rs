@@ -121,6 +121,7 @@ fn runners_list_shows_enforcement() {
         service_mem_mb: Default::default(),
         commands: Default::default(),
         enforcement: enforcement.map(str::to_string),
+        version: None,
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
         name: name.into(),

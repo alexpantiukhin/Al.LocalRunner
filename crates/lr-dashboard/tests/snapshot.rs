@@ -212,4 +212,5 @@ fn job_card_and_runner_page_show_peaks_and_enforcement() {
     let runners = &script[script.find("function renderRunners(").unwrap()..];
     let runners = &runners[..runners.find("function renderBrokers(").unwrap()];
     assert!(runners.contains("\"Enforcement\"") && runners.contains("r.caps.enforcement"));
+    assert!(runners.contains("\"Version\"") && runners.contains("r.caps.version"));
 }

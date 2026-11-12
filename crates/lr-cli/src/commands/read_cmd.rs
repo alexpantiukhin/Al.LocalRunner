@@ -179,6 +179,12 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
                 listed(c.tags.iter()),
                 listed(c.programs.iter()),
             ));
+            let mine = env!("CARGO_PKG_VERSION");
+            match c.version.as_deref() {
+                Some(v) if v == mine => out.push(format!("    version {v}")),
+                Some(v) => out.push(format!("    version {v} (this binary: {mine})")),
+                None => out.push(format!("    version unknown (this binary: {mine})")),
+            }
             if let Some(e) = &c.enforcement {
                 out.push(format!("    enforcement {e}"));
             }

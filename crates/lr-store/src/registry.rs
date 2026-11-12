@@ -15,7 +15,8 @@ const MACHINE: &str = "name, machine_id, kind, label, public_key, registered_at,
 const CODE: &str = "code_hash, kind, name, label, uses_left, issued_at, expires_at, redeemed_at, \
                     machine_name";
 const RUNNER: &str = "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, \
-                      cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement";
+                      cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement, \
+                      version";
 
 fn machine_row(r: &Row<'_>) -> rusqlite::Result<MachineRow> {
     Ok(MachineRow {
@@ -67,6 +68,7 @@ fn runner_row(r: &Row<'_>) -> rusqlite::Result<RunnerRow> {
         last_seen: col_opt_time(r, 11)?,
         state: col_enum(r, 12)?,
         enforcement: r.get(13)?,
+        version: r.get(14)?,
     })
 }
 
@@ -280,14 +282,14 @@ pub(crate) fn upsert_runner(conn: &mut Connection, r: RunnerRow) -> R<()> {
             .map(|m| json(&serde_json::json!({ "min_mem_mb": m })));
         tx.execute(
             &format!(
-                "INSERT INTO runner ({RUNNER}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) \
+                "INSERT INTO runner ({RUNNER}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) \
                  ON CONFLICT (name) DO UPDATE SET machine_name = excluded.machine_name, \
                  programs = excluded.programs, platforms = excluded.platforms, \
                  tags = excluded.tags, max_timeout_s = excluded.max_timeout_s, \
                  cache_max_mb = excluded.cache_max_mb, cache_used_mb = excluded.cache_used_mb, \
                  free_disk_mb = excluded.free_disk_mb, services = excluded.services, \
                  accept = excluded.accept, last_seen = excluded.last_seen, state = excluded.state, \
-                 enforcement = excluded.enforcement"
+                 enforcement = excluded.enforcement, version = excluded.version"
             ),
             params![
                 r.name,
@@ -303,7 +305,8 @@ pub(crate) fn upsert_runner(conn: &mut Connection, r: RunnerRow) -> R<()> {
                 accept,
                 opt_time(r.last_seen),
                 r.state.text(),
-                r.enforcement
+                r.enforcement,
+                r.version
             ],
         )?;
         Ok(())

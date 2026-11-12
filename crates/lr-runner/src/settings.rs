@@ -102,6 +102,8 @@ pub struct RunnerSettings {
     pub job_env: BTreeMap<String, String>,
     /// `os` or `watcher`: what enforces resource limits here; set by the assembly.
     pub enforcement: Option<String>,
+    /// The `localrunner` version this runner runs; set by the assembly.
+    pub version: Option<String>,
 }
 
 /// Why `runner.toml` was refused.
@@ -219,6 +221,7 @@ impl RunnerSettings {
             cleanup: Vec::new(),
             job_env: BTreeMap::new(),
             enforcement: None,
+            version: None,
         }
     }
 
@@ -319,6 +322,7 @@ impl RunnerSettings {
                 .collect(),
             commands: self.commands.keys().cloned().collect(),
             enforcement: self.enforcement.clone(),
+            version: self.version.clone(),
         }
     }
 }

@@ -32,9 +32,9 @@ pub struct Schema {
 pub static BROKER: Schema = Schema {
     name: "broker.db",
     application_id: 0x4c52_4231,
-    version: 2,
+    version: 3,
     create: include_str!("sql/broker.sql"),
-    migrations: &[broker_v2],
+    migrations: &[broker_v2, broker_v3],
 };
 
 fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -43,6 +43,10 @@ fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          ALTER TABLE job ADD COLUMN peak_disk_mb INTEGER;
          ALTER TABLE runner ADD COLUMN enforcement TEXT;",
     )
+}
+
+fn broker_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch("ALTER TABLE runner ADD COLUMN version TEXT;")
 }
 
 /// Schema of `hub.db`.

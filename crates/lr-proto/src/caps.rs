@@ -78,6 +78,10 @@ pub struct WireCapabilities {
     /// version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enforcement: Option<String>,
+    /// The `localrunner` version of the runner; absent from runners of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -108,6 +112,7 @@ impl From<&Capabilities> for WireCapabilities {
             service_mem_mb: BTreeMap::new(),
             commands: c.commands.clone(),
             enforcement: None,
+            version: None,
         }
     }
 }

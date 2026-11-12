@@ -387,6 +387,7 @@ pub async fn runner(
         pid,
         start: lr_exec::process_start(pid),
     });
+    cfg.settings.version = Some(env!("CARGO_PKG_VERSION").to_string());
     cfg.settings.enforcement = Some(
         match lr_exec::enforcement() {
             lr_exec::Enforcement::Os => "os",

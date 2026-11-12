@@ -22,6 +22,7 @@ async fn stored_runner(h: &Harness, name: &str) {
             services: BTreeMap::new(),
             accept_min_mem_mb: None,
             enforcement: None,
+            version: None,
             last_seen: Some(Timestamp(START)),
             state: RunnerState::Offline,
         })

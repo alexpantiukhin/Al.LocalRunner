@@ -91,6 +91,7 @@ pub fn caps() -> WireCapabilities {
         service_mem_mb: Default::default(),
         commands: Default::default(),
         enforcement: None,
+        version: None,
     }
 }
 

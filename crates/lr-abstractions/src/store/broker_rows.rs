@@ -422,6 +422,8 @@ pub struct RunnerRow {
     pub accept_min_mem_mb: Option<u64>,
     /// How the runner enforces declared resources (`os` or `watcher`); `None` when unknown.
     pub enforcement: Option<String>,
+    /// The `localrunner` version the runner registered with; `None` when unknown.
+    pub version: Option<String>,
     /// Last heartbeat.
     pub last_seen: Option<Timestamp>,
     /// State.
