@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-latest, ext: tar.gz }
+          - { target: linux-arm64, os: ubuntu-24.04-arm, ext: tar.gz }
+          - { target: macos-arm64, os: macos-latest, ext: tar.gz }
+          - { target: macos-x64, os: macos-15-intel, ext: tar.gz }
+          - { target: windows-x64, os: windows-latest, ext: zip }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: cargo build --release --locked -p lr-cli
+      - name: Pack (unix)
+        if: matrix.ext == 'tar.gz'
+        run: |
+          mkdir dist
+          tar -czf "dist/al-localrunner-${{ matrix.target }}.tar.gz" -C target/release localrunner
+      - name: Pack (windows)
+        if: matrix.ext == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Compress-Archive -Path target/release/localrunner.exe, target/release/localrunnerw.exe -DestinationPath dist/al-localrunner-${{ matrix.target }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  sign-and-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Sums
+        working-directory: dist
+        run: sha256sum al-localrunner-* > SHA256SUMS
+      - name: Sign
+        working-directory: dist
+        env:
+          SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/release_key"
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          ssh-keygen -Y sign -f "$key" -n al-localrunner-release SHA256SUMS
+          rm -f "$key"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
