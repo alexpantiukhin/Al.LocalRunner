@@ -5,6 +5,8 @@ use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::*;
 use std::time::Duration;
 
+const RUN_URL: &str = "https://github.com/acme/app/actions/runs/7";
+
 fn two_steps(job: &str) -> HubToBroker {
     let HubToBroker::Order(mut o) = order(job, req(512, 1, 600)) else {
         unreachable!()
@@ -77,7 +79,20 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     let h = Harness::start("");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut alex = h.local_hub("alex").await;
-    alex.send(&two_steps("j1")).await;
+    let HubToBroker::Order(mut o) = two_steps("j1") else {
+        unreachable!()
+    };
+    o.spec.identity.source = lr_core::Source::Github(lr_core::GithubInfo {
+        repository: "acme/app".into(),
+        workflow: "ci".into(),
+        job: "build".into(),
+        run_id: 7,
+        attempt: Some(1),
+        git_ref: "refs/heads/main".into(),
+        actor: "alex".into(),
+        run_url: RUN_URL.into(),
+    });
+    alex.send(&HubToBroker::Order(o)).await;
     alex.accepted().await;
     r.assign().await;
     r.send(&started("j1", 1)).await;
@@ -127,6 +142,7 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
     assert!(j1.steps[0].started_at.is_some());
     assert_eq!(j1.steps[1].started_at, None, "a skipped step never started");
     assert_eq!(j1.summary.timeout_s, Some(600));
+    assert_eq!(j1.summary.github_run_url.as_deref(), Some(RUN_URL));
     assert_eq!(j1.note.as_deref(), Some("why"));
     assert_eq!(j1.cwd.as_deref(), Some("/work/repo"));
     let j2 = all.iter().find(|d| d.summary.job.0 == "j2").unwrap();
@@ -153,6 +169,17 @@ async fn history_details_carry_steps_and_the_canceller_and_stay_masked_for_other
         );
         assert!(d.summary.timeout_s.is_none() && d.summary.github_run_url.is_none());
     }
+    let ReadReply::History { jobs, .. } = bob
+        .read(ReadRequest::History(HistoryFilter::default()))
+        .await
+    else {
+        panic!("history")
+    };
+    let listed = jobs.iter().find(|s| s.job.0 == "j1").expect("bob lists j1");
+    assert!(
+        listed.timeout_s.is_none() && listed.github_run_url.is_none(),
+        "{listed:?}"
+    );
 }
 
 #[tokio::test]

@@ -68,34 +68,10 @@ fn csv_export_defuses_formulas() {
         csv_cell_source(),
         serde_json::to_string(&cases).unwrap()
     );
-    let out = match std::process::Command::new("node")
-        .args(["-e", &program])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => {
-            let why = format!("node is not available ({e}), csvCell not executed");
-            let required = std::env::var("LOCALRUNNER_REQUIRE_TEST_TOOLS").unwrap_or_default();
-            assert!(
-                !required
-                    .split(',')
-                    .any(|t| t.trim() == "node" || t.trim() == "all"),
-                "LOCALRUNNER_REQUIRE_TEST_TOOLS={required} requires node, but {why}"
-            );
-            use std::io::Write;
-            let _ = writeln!(
-                std::io::stderr(),
-                "SKIPPED csv_export_defuses_formulas: {why}"
-            );
-            return;
-        }
+    let Some(out) = common::node::run(&program, "csv_export_defuses_formulas") else {
+        return;
     };
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let cells: Vec<String> = serde_json::from_slice(&out.stdout).unwrap();
+    let cells: Vec<String> = serde_json::from_value(out).unwrap();
     assert_eq!(
         cells,
         [

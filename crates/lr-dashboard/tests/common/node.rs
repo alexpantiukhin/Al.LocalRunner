@@ -13,7 +13,7 @@ pub fn run(program: &str, test: &str) -> Option<Value> {
     let out = match child {
         Ok(mut child) => {
             let mut stdin = child.stdin.take().unwrap();
-            stdin.write_all(program.as_bytes()).unwrap();
+            let _ = stdin.write_all(program.as_bytes());
             drop(stdin);
             child.wait_with_output().unwrap()
         }
