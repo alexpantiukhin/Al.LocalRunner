@@ -24,6 +24,7 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Security](#security)
 - [Plugin details](#plugin-details)
 - [Usage](#usage)
+- [Releasing](#releasing)
 - [License](#license)
 
 ## How it works
@@ -491,6 +492,14 @@ All commands:
 | `dashboard` | a page on 127.0.0.1 |
 
 Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+
+## Releasing
+
+1. Put one version `X.Y.Z` everywhere: `version` of every `crates/*/Cargo.toml`, `image: al-localrunner:X.Y.Z` in `install/compose.yaml`, `version` of `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`. Run `cargo build` so `Cargo.lock` follows (CI and the release build use `--locked`). A pre-release carries the suffix in all of them, for example `0.2.0-rc1`.
+2. Open a pull request and wait for `ci-ok`: it is required for `main`, nothing is merged before it passes.
+3. Tag the merge commit `vX.Y.Z` and push the tag. The `release` workflow builds the archives for five platforms and fails when `localrunner --version` differs from the tag, then (environment `release`, which may wait for approval) signs `SHA256SUMS` with the release key and publishes the archives with `install.sh` and `install.ps1`. `latest` does not point to a pre-release.
+4. Check the release on one machine with `install.sh --upgrade --version X.Y.Z` (or `install.ps1`), then `localrunner doctor`. The broker OS service keeps its own copy of the binary and is updated by hand (see "Autostart, stop, update, uninstall"); other machines follow one by one, the broker first unless the major protocol version changes.
+5. A plugin update reaches users only with a new plugin `version`: change the plugin files only together with a version bump.
 
 ## License
 
