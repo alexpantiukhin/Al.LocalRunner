@@ -11,7 +11,7 @@ use crate::paths::Layout;
 use lr_abstractions::Dialer;
 use lr_proto::IpcChannel;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -249,6 +249,15 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
         spawn(&exe, argv)
     };
     up_with(layout, role, STARTED_WITHIN, &start).await
+}
+
+/// A starter of roles that runs `exe` detached, for [`up_with`].
+pub fn starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
+    move |argv: &[String]| {
+        #[cfg(windows)]
+        keep_std_handles_from_children();
+        spawn(&exe, argv)
+    }
 }
 
 /// `up [role]` that starts each role through `start` and waits for it at most `within`. When

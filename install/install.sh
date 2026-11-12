@@ -18,11 +18,13 @@ step() {
 usage() {
     cat <<'EOF'
 Usage: install.sh [--version X.Y.Z] [--dir DIR] [--offline ARCHIVE]
-                  [--role hub|broker|runner|all] [--allow-elevated]
+                  [--role hub|broker|runner|all] [--allow-elevated] [--upgrade]
 
 Installs the localrunner binary for the current user after checking the
 signature of SHA256SUMS and the SHA-256 of the archive. --offline takes a
-downloaded archive with SHA256SUMS and SHA256SUMS.sig next to it.
+downloaded archive with SHA256SUMS and SHA256SUMS.sig next to it. --upgrade
+runs `localrunner upgrade` instead of `install`: it replaces an installed
+binary and restarts the roles that run (it asks first; see --help of upgrade).
 EOF
 }
 
@@ -32,6 +34,7 @@ parse_args() {
     OFFLINE=""
     ROLE="all"
     ALLOW_ELEVATED=0
+    UPGRADE=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --version)
@@ -56,6 +59,10 @@ parse_args() {
                 ;;
             --allow-elevated)
                 ALLOW_ELEVATED=1
+                shift
+                ;;
+            --upgrade)
+                UPGRADE=1
                 shift
                 ;;
             -h | --help)
@@ -155,15 +162,20 @@ extract() {
 }
 
 run_install() {
-    step "running localrunner install"
-    set -- install --role "$ROLE"
+    if [ "$UPGRADE" = 1 ]; then
+        step "running localrunner upgrade"
+        set -- upgrade
+    else
+        step "running localrunner install"
+        set -- install --role "$ROLE"
+    fi
     if [ -n "$DIR" ]; then
         set -- "$@" --dir="$DIR"
     fi
     if [ "$ALLOW_ELEVATED" = 1 ]; then
         set -- "$@" --allow-elevated
     fi
-    "$WORK/bin/localrunner" "$@" || die "localrunner install failed"
+    "$WORK/bin/localrunner" "$@" || die "localrunner $1 failed"
 }
 
 run_doctor() {

@@ -196,3 +196,23 @@ pub enum Switch {
     /// Disable.
     Off,
 }
+
+/// `upgrade [--dir] [--yes] [--allow-elevated] [--dry-run]`.
+#[derive(clap::Args, Debug, Clone)]
+pub struct UpgradeArgs {
+    /// Directory the binary was installed to (default: the user's program directory).
+    #[arg(long)]
+    pub dir: Option<PathBuf>,
+    /// Confirm without asking; with running jobs it waits for them.
+    #[arg(long)]
+    pub yes: bool,
+    /// With running jobs: cancel them instead of waiting for them to finish.
+    #[arg(long)]
+    pub cancel: bool,
+    /// Allow upgrading as root or administrator.
+    #[arg(long)]
+    pub allow_elevated: bool,
+    /// Print what would be done and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}

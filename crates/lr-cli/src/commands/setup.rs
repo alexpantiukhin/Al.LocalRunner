@@ -45,7 +45,7 @@ pub fn default_bin_dir() -> Result<PathBuf, String> {
     }
 }
 
-fn binary_name() -> &'static str {
+pub(crate) fn binary_name() -> &'static str {
     if cfg!(windows) {
         "localrunner.exe"
     } else {

@@ -17,6 +17,8 @@ pub mod setup;
 pub mod snapshot_cmd;
 pub mod timefmt;
 pub mod up_cmd;
+pub mod upgrade_cmd;
+pub mod upgrade_jobs;
 pub mod view;
 
 pub use args::*;
@@ -259,6 +261,8 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Run by the new binary: stop the roles, replace the installed binary with this one and start the roles again.
+    Upgrade(#[command(flatten)] UpgradeArgs),
     /// Stop runners, remove autostart, the broker service and the binary; keys and history stay.
     Uninstall {
         /// Also delete the state directory (asks for confirmation).
@@ -456,6 +460,7 @@ pub async fn run(cli: Cli) -> i32 {
             allow_elevated,
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
+        Command::Upgrade(a) => upgrade_cmd::upgrade(&layout, a).await,
         Command::Uninstall {
             purge,
             yes,
