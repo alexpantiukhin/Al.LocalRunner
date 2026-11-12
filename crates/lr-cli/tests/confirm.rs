@@ -241,12 +241,12 @@ async fn cancel_mine_asks_and_cancel_of_one_job_does_not() {
     assert_eq!(call(&NO, None, true, false).await, Ok(1));
     for (typed, yes) in [(&YES, false), (&NO_TERMINAL, true)] {
         let err = call(typed, None, true, yes).await.unwrap_err();
-        assert!(err.contains("hub is not"), "{err}");
+        assert!(err.contains("hub is not running"), "{err}");
     }
     let err = call(&NO_TERMINAL, Some("job-1"), false, false)
         .await
         .unwrap_err();
-    assert!(err.contains("hub is not"), "{err}");
+    assert!(err.contains("hub is not running"), "{err}");
 }
 
 #[test]

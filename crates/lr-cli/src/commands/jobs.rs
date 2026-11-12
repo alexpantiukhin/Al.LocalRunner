@@ -20,9 +20,13 @@ use std::sync::Arc;
 /// Opens the CLI channel of the current OS user's hub.
 pub async fn hub(layout: &Layout) -> Result<IpcClient, String> {
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
-    IpcClient::connect(&layout.hub_ipc(&principal), IpcChannel::Cli)
+    let address = layout.hub_ipc(&principal);
+    IpcClient::connect(&address, IpcChannel::Cli)
         .await
-        .map_err(|e| format!("the hub is not reachable ({e}); start it: localrunner up"))
+        .map_err(|e| match e.starts_with(&format!("{address}: ")) {
+            true => "the hub is not running; start it: localrunner up".to_string(),
+            false => format!("the hub did not open its channel: {e}"),
+        })
 }
 
 fn identity(label: Option<&str>, note: Option<&str>) -> Result<Identity, String> {
