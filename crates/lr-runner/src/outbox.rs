@@ -41,7 +41,27 @@ pub(crate) struct Outbox {
     pub(crate) tail: Mutex<Tail>,
 }
 
+struct Unsure<'a> {
+    outbox: &'a Outbox,
+    settled: bool,
+}
+
+impl Drop for Unsure<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.outbox.forget_tail();
+            self.outbox.wake.notify_one();
+        }
+    }
+}
+
 impl Outbox {
+    fn forget_tail(&self) {
+        let mut tail = self.tail.lock().unwrap_or_else(|p| p.into_inner());
+        tail.entries.clear();
+        tail.overflow = true;
+    }
+
     fn remember(&self, entry: OutboxEntry) {
         let mut tail = self.tail.lock().unwrap_or_else(|p| p.into_inner());
         if tail.overflow || tail.entries.len() >= TAIL_LIMIT {
@@ -72,10 +92,16 @@ impl Outbox {
         let kind = kind_of(msg).ok_or_else(|| StoreError::Conflict("not a job message".into()))?;
         let payload = serde_json::to_string(msg).map_err(|e| StoreError::Io(e.to_string()))?;
         let created_at = self.clock.now();
-        let seq = self
+        let mut unsure = Unsure {
+            outbox: self,
+            settled: false,
+        };
+        let stored = self
             .store
             .push_outbox(job, kind, payload.clone(), created_at)
-            .await?;
+            .await;
+        unsure.settled = true;
+        let seq = stored?;
         self.remember(OutboxEntry {
             job: job.clone(),
             seq,
@@ -177,3 +203,7 @@ impl Replay {
         frames
     }
 }
+
+#[cfg(test)]
+#[path = "outbox_cancel_test.rs"]
+mod cancel_test;
