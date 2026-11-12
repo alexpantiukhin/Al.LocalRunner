@@ -14,6 +14,7 @@ pub struct Gate {
     pub stall_sends: Arc<AtomicBool>,
     pub sent: Arc<AtomicUsize>,
     pub refusal: Arc<Mutex<Option<String>>>,
+    pub split_frames: Arc<AtomicBool>,
 }
 
 impl Gate {
@@ -27,6 +28,10 @@ impl Gate {
 
     pub fn refuse_dials(&self, refusal: Option<&str>) {
         *self.refusal.lock().unwrap() = refusal.map(str::to_string);
+    }
+
+    pub fn split_frames(&self, on: bool) {
+        self.split_frames.store(on, Ordering::SeqCst);
     }
 
     pub fn sent(&self) -> usize {
@@ -59,7 +64,11 @@ impl Transport for GatedTransport {
     }
 
     async fn recv(&self) -> Result<Frame, TransportError> {
-        self.inner.recv().await
+        let frame = self.inner.recv().await?;
+        while self.gate.split_frames.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        Ok(frame)
     }
 
     async fn close(&self) {

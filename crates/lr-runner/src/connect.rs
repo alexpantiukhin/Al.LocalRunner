@@ -285,12 +285,35 @@ pub(crate) async fn give_up(shared: &Arc<Shared>, slot: &mut JobSlot, e: &Protoc
     }
 }
 
+const READ_AHEAD: usize = 64;
+
+struct Reader(tokio::task::JoinHandle<()>);
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+fn read_frames(t: Arc<dyn Transport>) -> (Reader, mpsc::Receiver<Frame>) {
+    let (tx, rx) = mpsc::channel(READ_AHEAD);
+    let task = tokio::spawn(async move {
+        while let Ok(frame) = t.recv().await {
+            if tx.send(frame).await.is_err() {
+                return;
+            }
+        }
+    });
+    (Reader(task), rx)
+}
+
 pub(crate) async fn session(
     shared: &Arc<Shared>,
-    t: &dyn Transport,
+    transport: Arc<dyn Transport>,
     slot: &mut JobSlot,
     control: &mut mpsc::Receiver<Control>,
 ) -> End {
+    let t = transport.as_ref();
     let heartbeat = match hello(shared, t).await {
         Ok(h) => h,
         Err(End::Refused(e)) => {
@@ -327,6 +350,7 @@ pub(crate) async fn session(
     if shared.state().draining && !s.send(&RunnerToBroker::Drain).await {
         return lost();
     }
+    let (_reader, mut frames) = read_frames(transport.clone());
     let clock = shared.deps.clock.clone();
     let mut next_beat = after(shared.now(), heartbeat);
     let mut last_rx = shared.now();
@@ -342,14 +366,14 @@ pub(crate) async fn session(
         }
         let deadline = after(last_rx, silence);
         tokio::select! {
-            f = t.recv() => match f {
-                Ok(frame) => {
+            f = frames.recv() => match f {
+                Some(frame) => {
                     last_rx = shared.now();
                     if let Step::End(end) = s.handle(frame).await {
                         return end;
                     }
                 }
-                Err(_) => return lost(),
+                None => return lost(),
             },
             _ = shared.wake.notified() => {
                 if !s.flush().await {

@@ -169,12 +169,6 @@ async fn mirror_is_indexed_and_expires_with_workspace_retention() {
 async fn runner_never_listens() {
     let rig = Rig::new();
     rig.files.mkdir(Path::new("/w/tree"));
-    rig.script(
-        "job-1",
-        lr_abstractions::fakes::JobScript::new(vec![lr_abstractions::fakes::StepScript::new(
-            SEC, 0,
-        )]),
-    );
     let (_c, _h) = rig.start();
     let b = Broker::accept(&rig).await;
     b.assign(
@@ -264,4 +258,31 @@ async fn another_refusal_at_the_handshake_is_retried() {
     let again = rig.listener.accept().await.unwrap();
     let hello = decode::<RunnerToBroker>(again.recv().await.unwrap().as_bytes()).unwrap();
     assert!(matches!(hello, RunnerToBroker::Hello(_)));
+}
+
+#[tokio::test]
+async fn a_frame_arriving_in_parts_survives_the_heartbeat_wake() {
+    let rig = Rig::new();
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    rig.settle().await;
+    rig.gate.split_frames(true);
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    rig.settle().await;
+    rig.advance(Duration::from_secs(16)).await;
+    rig.gate.split_frames(false);
+    let started = tokio::select! {
+        m = b.until(|m| matches!(m, RunnerToBroker::Started(_))) => Some(m),
+        _ = async {
+            for _ in 0..20 {
+                rig.settle().await;
+            }
+        } => None,
+    };
+    assert!(started.is_some(), "the assignment was lost mid-frame");
 }

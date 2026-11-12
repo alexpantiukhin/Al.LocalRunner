@@ -359,7 +359,7 @@ async fn connect_once(
         .dial(&b.address, b.fingerprint.as_deref())
         .await
     {
-        Ok(t) => Some(session(shared, t.as_ref(), slot, control).await),
+        Ok(t) => Some(session(shared, Arc::from(t), slot, control).await),
         Err(e) => {
             if let Some(refusal) = handshake_refusal(&e) {
                 give_up(shared, slot, &refusal).await;
