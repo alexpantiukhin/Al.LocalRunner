@@ -123,14 +123,17 @@ async fn events_report_step_boundaries_and_output_in_order() {
     );
     let (_, output) = run(runner, &manual, spec, secs(10)).await;
     let events = output.events();
-    assert_eq!(events.len(), 6);
+    assert_eq!(events.len(), 8);
     assert!(matches!(&events[0], JobEvent::StepStarted { index: 0, name, .. } if name == "a"));
-    assert!(matches!(&events[1], JobEvent::Output { index: 0, data } if data == b"hello\n"));
+    assert!(
+        matches!(&events[1], JobEvent::StepProcess { index: 0, process } if process.start.is_some())
+    );
+    assert!(matches!(&events[2], JobEvent::Output { index: 0, data } if data == b"hello\n"));
     assert!(matches!(
-        &events[2],
+        &events[3],
         JobEvent::StepFinished { index: 0, .. }
     ));
-    assert!(matches!(&events[3], JobEvent::StepStarted { index: 1, .. }));
+    assert!(matches!(&events[4], JobEvent::StepStarted { index: 1, .. }));
     assert_eq!(output.text(), "hello\nbye\n");
 }
 

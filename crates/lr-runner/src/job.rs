@@ -204,7 +204,10 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
     if let Err(e) = shared
         .deps
         .files
-        .write(&shared.marker(), a.job.0.as_bytes())
+        .write(
+            &shared.marker(),
+            &crate::background::marker_text(&a.job, None),
+        )
         .await
     {
         let detail = format!("active job marker not written: {e}");

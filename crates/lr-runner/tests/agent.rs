@@ -1,7 +1,7 @@
 mod common;
 
 use common::*;
-use lr_abstractions::fakes::{JobScript, StepScript};
+use lr_abstractions::fakes::{JobScript, StepScript, FAKE_STEP_PID};
 use lr_abstractions::{Clock, DEFAULT_CANCEL_GRACE};
 use lr_core::{JobId, JobState, StepState};
 use lr_proto::{
@@ -143,11 +143,25 @@ async fn runner_restart_reports_runner_restarted() {
     .await;
     b.next_job_msg().await.unwrap();
     rig.settle().await;
+    let root = format!("{FAKE_STEP_PID} 1");
+    assert_eq!(
+        rig.files.file(&state_dir().join("active-job")),
+        Some(format!("job-1\n{root}").into_bytes()),
+        "the marker names the root process of the running step"
+    );
     h.abort();
     rig.settle().await;
     rig.net.cut(BROKER);
     let (_c2, _h2) = rig.start();
     let b2 = Broker::accept(&rig).await;
+    assert_eq!(
+        rig.process.kills(),
+        vec![lr_abstractions::ProcessRef {
+            pid: FAKE_STEP_PID,
+            start: Some(1)
+        }],
+        "what the job left behind is killed at the start"
+    );
     let r = result_of(&b2.until_result().await);
     assert_eq!(r.state, JobState::Failed);
     assert_eq!(r.reason, Some(ReasonCode::RunnerRestarted));

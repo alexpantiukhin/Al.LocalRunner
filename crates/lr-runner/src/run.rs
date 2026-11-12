@@ -37,7 +37,7 @@ async fn run_phase(
             ("cwd".to_string(), phase.cwd.display().to_string()),
         ],
     };
-    let forward = Forward::new(&shared.outbox, p.job.clone(), phase.ords);
+    let forward = Forward::new(shared, p.job.clone(), phase.ords);
     let outcome = shared.deps.process.run_job(spec, &forward, stop).await;
     forward.report_rest(&outcome).await;
     outcome

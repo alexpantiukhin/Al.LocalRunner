@@ -1,6 +1,8 @@
+use crate::agent::Shared;
+use crate::background::marker_text;
 use crate::outbox::Outbox;
 use async_trait::async_trait;
-use lr_abstractions::{JobEvent, JobOutcome, JobOutput, StepOutcome};
+use lr_abstractions::{JobEvent, JobOutcome, JobOutput, Level, ProcessRef, StepOutcome};
 use lr_core::JobId;
 use lr_proto::{split_text, Chunk, RunnerToBroker, StepResult, CHUNK_TEXT_LIMIT};
 use std::collections::{HashMap, HashSet};
@@ -51,6 +53,7 @@ impl Utf8Stream {
 }
 
 pub(crate) struct Forward<'a> {
+    pub(crate) shared: &'a Shared,
     pub(crate) outbox: &'a Outbox,
     pub(crate) job: JobId,
     pub(crate) ords: Vec<Option<u32>>,
@@ -59,9 +62,10 @@ pub(crate) struct Forward<'a> {
 }
 
 impl<'a> Forward<'a> {
-    pub(crate) fn new(outbox: &'a Outbox, job: JobId, ords: Vec<Option<u32>>) -> Forward<'a> {
+    pub(crate) fn new(shared: &'a Shared, job: JobId, ords: Vec<Option<u32>>) -> Forward<'a> {
         Forward {
-            outbox,
+            shared,
+            outbox: &shared.outbox,
             job,
             ords,
             streams: Mutex::new(HashMap::new()),
@@ -102,6 +106,18 @@ impl<'a> Forward<'a> {
         }
     }
 
+    async fn remember(&self, process: &ProcessRef) {
+        let marker = self.shared.marker();
+        let text = marker_text(&self.job, Some(process));
+        if let Err(e) = self.shared.deps.files.write(&marker, &text).await {
+            self.shared.diag.event(
+                Level::Error,
+                "step process not recorded in the active job marker",
+                &[("job", &self.job.0), ("error", &e.to_string())],
+            );
+        }
+    }
+
     async fn finished(&self, index: usize, outcome: StepOutcome) {
         if let Ok(mut r) = self.reported.lock() {
             r.insert(index);
@@ -133,6 +149,7 @@ impl JobOutput for Forward<'_> {
     async fn emit(&self, event: JobEvent) {
         match event {
             JobEvent::StepStarted { .. } => {}
+            JobEvent::StepProcess { process, .. } => self.remember(&process).await,
             JobEvent::Output { index, data } => {
                 let text = self.decode(index, Some(&data));
                 self.chunks(index, &text).await;

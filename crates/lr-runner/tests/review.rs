@@ -176,10 +176,8 @@ async fn marker_exists_when_the_assign_is_acked() {
     )
     .await;
     b.until(|m| matches!(m, RunnerToBroker::Ack(_))).await;
-    assert_eq!(
-        rig.files.file(&state_dir().join("active-job")),
-        Some(b"job-1".to_vec())
-    );
+    let marker = rig.files.file(&state_dir().join("active-job")).unwrap();
+    assert!(marker.starts_with(b"job-1"), "{marker:?}");
 }
 
 #[tokio::test]

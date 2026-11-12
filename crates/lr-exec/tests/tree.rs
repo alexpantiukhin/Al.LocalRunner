@@ -293,3 +293,42 @@ async fn linux_scope_probe_does_not_stall_a_single_threaded_runtime() {
         .expect("the job finished");
     assert_eq!(outcome.state, JobState::Passed);
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kill_tree_of_a_root_gone_after_a_crash_kills_the_group_it_left() {
+    use std::os::unix::process::CommandExt;
+    let marker = fresh_file("tree", "left-group.pid");
+    let script = format!("sleep 300 & echo $! > '{}'", marker.display());
+    let mut root = std::process::Command::new("sh")
+        .args(["-c", &script])
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = root.id();
+    root.wait().unwrap();
+    let left: u32 = loop {
+        if let Some(p) = std::fs::read_to_string(&marker)
+            .ok()
+            .and_then(|t| t.trim().parse().ok())
+        {
+            break p;
+        }
+        real_sleep(20).await;
+    };
+    assert!(pid_alive(left));
+    let (_manual, clock) = clock();
+    let runner = ExecRunner::new(clock);
+    let gone = lr_abstractions::ProcessRef {
+        pid,
+        start: Some(1),
+    };
+    runner.kill_tree(&gone).await.unwrap();
+    for _ in 0..100 {
+        if !pid_alive(left) {
+            return;
+        }
+        real_sleep(20).await;
+    }
+    panic!("the process {left} left by the gone root {pid} survived");
+}

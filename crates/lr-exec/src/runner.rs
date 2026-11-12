@@ -38,6 +38,10 @@ struct Service {
 /// without it a child that detaches (`setsid`, double fork) and loses its parent between two
 /// scans (100 ms) escapes the kill.
 ///
+/// After a crash of the runner, [`ProcessRunner::kill_tree`] on the recorded root also kills
+/// the process group the root leaves behind, and [`ProcessRunner::sweep_orphans`] kills the
+/// scopes of runner processes that are gone (Linux).
+///
 /// Stops: a step timeout kills the tree at once without a soft signal; a
 /// [`lr_abstractions::Stop::Cancel`] sends Ctrl+Break to the process group on Windows or
 /// SIGTERM to the group and the tracked descendants elsewhere, then kills the tree after
@@ -183,8 +187,15 @@ impl ProcessRunner for ExecRunner {
         match probe(process.pid) {
             Probe::Alive(s) if s == start => kill_unmanaged(process.pid, start).await,
             Probe::Unreadable => return Err(ProcessError::Unverifiable(process.pid)),
+            #[cfg(unix)]
+            Probe::Gone => crate::os_unix::kill_left_group(process.pid),
             _ => {}
         }
         Ok(())
+    }
+
+    async fn sweep_orphans(&self) {
+        #[cfg(target_os = "linux")]
+        let _ = tokio::task::spawn_blocking(crate::scope_linux::sweep_orphans).await;
     }
 }

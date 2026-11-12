@@ -21,7 +21,7 @@ pub use host::{FakeDiskSpace, FakeKeepAwake};
 pub use hub_runner_store::{MemoryHubStore, MemoryRunnerStore};
 pub use misc::{FakeDataSource, MemoryLogSink, MemoryMeter, MemorySecrets, MeterUpdate};
 pub use process::{
-    FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript,
+    FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript, FAKE_STEP_PID,
 };
 pub use repository::MemoryRepository;
 pub use transport::{

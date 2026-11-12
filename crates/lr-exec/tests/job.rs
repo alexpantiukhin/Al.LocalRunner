@@ -342,6 +342,31 @@ async fn windows_system_variables_reach_the_step_from_the_runner_environment() {
 }
 
 #[tokio::test]
+async fn the_root_process_of_every_step_is_reported_after_its_start() {
+    let spec = job(
+        "roots",
+        60,
+        vec![step("a", "echo a", 30), step("b", "echo b", 30)],
+    );
+    let (outcome, events) = run(spec).await;
+    assert_eq!(outcome.state, JobState::Passed);
+    let mut started = Vec::new();
+    let mut roots = Vec::new();
+    for e in &events {
+        match e {
+            JobEvent::StepStarted { index, .. } => started.push(*index),
+            JobEvent::StepProcess { index, process } => {
+                assert_eq!(started.last(), Some(index));
+                assert!(process.pid > 0 && process.start.is_some(), "{process:?}");
+                roots.push(*index);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(roots, vec![0, 1]);
+}
+
+#[tokio::test]
 async fn secrets_reach_only_their_step_and_are_masked() {
     let mut spec = job(
         "sec",

@@ -113,6 +113,14 @@ pub enum JobEvent {
         /// Start time.
         at: Timestamp,
     },
+    /// The root process of step `index` runs: its pid and start fingerprint, which the runner
+    /// keeps so that after its own crash it can kill what the step left behind (spec 3.11).
+    StepProcess {
+        /// Step index.
+        index: usize,
+        /// The root process of the step.
+        process: ProcessRef,
+    },
     /// Raw output of step `index`, secrets already masked.
     Output {
         /// Step index.
@@ -315,6 +323,11 @@ pub trait ProcessRunner: Send + Sync {
     /// fingerprint); a process already gone is not an error. Refuses a reference without a
     /// fingerprint.
     async fn kill_tree(&self, process: &ProcessRef) -> Result<(), ProcessError>;
+
+    /// Kills what runs of an earlier, crashed runner process left in containers that outlive
+    /// their root process (Linux: `lr-<pid>-<n>` cgroup scopes whose runner pid is gone).
+    /// Nothing to do where the container dies with the runner (Windows Job Object).
+    async fn sweep_orphans(&self) {}
 }
 
 /// Whether a process recorded earlier still runs.

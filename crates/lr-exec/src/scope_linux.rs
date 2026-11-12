@@ -105,6 +105,35 @@ fn systemd_for_job() -> Option<&'static Systemd> {
     }
 }
 
+/// The runner pid in a scope name `lr-<pid>-<n>.scope`.
+pub(crate) fn owner_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix(UNIT_PREFIX)?.strip_suffix(".scope")?;
+    let (pid, n) = rest.split_once('-')?;
+    n.parse::<u64>().ok()?;
+    pid.parse().ok()
+}
+
+/// Kills the `lr-<pid>-<n>` scopes of this user whose runner process is gone: what a crashed
+/// runner left behind, detached descendants included (spec 3.11). Scopes of live runner
+/// processes are left alone.
+pub(crate) fn sweep_orphans() {
+    let Some(systemd) = systemd_blocking() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&systemd.slice) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(owner_pid) else {
+            continue;
+        };
+        if pid == std::process::id() || crate::probe::probe(pid) != crate::probe::Probe::Gone {
+            continue;
+        }
+        Scope { dir: entry.path() }.signal(libc::SIGKILL);
+    }
+}
+
 /// Whether job trees go into their own cgroup v2 scope (`systemd-run --user --scope`).
 pub(crate) fn available() -> bool {
     systemd_blocking().is_some()
@@ -215,6 +244,15 @@ mod tests {
             Path::new("/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/lr-7-1.scope")
         );
         assert_eq!(cgroup_dir("1:cpu:/x\n"), None);
+    }
+
+    #[test]
+    fn the_runner_pid_is_read_from_our_scope_names_only() {
+        assert_eq!(owner_pid("lr-4242-7.scope"), Some(4242));
+        assert_eq!(owner_pid("lr-4242.scope"), None);
+        assert_eq!(owner_pid("lr-4242-x.scope"), None);
+        assert_eq!(owner_pid("app-4242-7.scope"), None);
+        assert_eq!(owner_pid("lr-4242-7.service"), None);
     }
 
     #[test]

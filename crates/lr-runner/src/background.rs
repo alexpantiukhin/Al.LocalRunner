@@ -1,7 +1,7 @@
 use crate::agent::{after, Shared, SWEEP_EVERY};
 use crate::service_stop::service_reaper;
 use lr_abstractions::metric::OUTBOX_SAMPLE_S;
-use lr_abstractions::{Level, OutboxKind, Stop};
+use lr_abstractions::{Level, OutboxKind, ProcessRef, Stop};
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{JobResult, ReasonCode, RunnerToBroker};
 use std::sync::Arc;
@@ -71,11 +71,52 @@ async fn lost_killer<T>(shared: &Shared) -> T {
     }
 }
 
+/// The active job marker: the job id, then `pid start` of the root of its running step.
+pub(crate) fn marker_text(job: &JobId, process: Option<&ProcessRef>) -> Vec<u8> {
+    let mut text = job.0.clone();
+    if let Some(ProcessRef {
+        pid,
+        start: Some(start),
+    }) = process
+    {
+        text.push_str(&format!("\n{pid} {start}"));
+    }
+    text.into_bytes()
+}
+
+fn parse_marker(bytes: &[u8]) -> (JobId, Option<ProcessRef>) {
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines = text.lines();
+    let job = JobId(lines.next().unwrap_or_default().trim().to_string());
+    let process = lines.next().and_then(|l| {
+        let (pid, start) = l.trim().split_once(' ')?;
+        Some(ProcessRef {
+            pid: pid.parse().ok()?,
+            start: Some(start.parse().ok()?),
+        })
+    });
+    (job, process)
+}
+
+async fn kill_left(shared: &Shared, job: &JobId, process: &ProcessRef) {
+    if let Err(e) = shared.deps.process.kill_tree(process).await {
+        shared.diag.event(
+            Level::Error,
+            "processes of the job from before the restart not killed",
+            &[("job", &job.0), ("error", &e.to_string())],
+        );
+    }
+}
+
 pub(crate) async fn recover(shared: &Shared) {
     let marker = shared.marker();
+    shared.deps.process.sweep_orphans().await;
     match shared.deps.files.read(&marker).await {
         Ok(Some(bytes)) => {
-            let job = JobId(String::from_utf8_lossy(&bytes).trim().to_string());
+            let (job, process) = parse_marker(&bytes);
+            if let Some(process) = &process {
+                kill_left(shared, &job, process).await;
+            }
             restarted(shared, job).await;
             if let Err(e) = shared.deps.files.remove_file(&marker).await {
                 shared.diag.event(

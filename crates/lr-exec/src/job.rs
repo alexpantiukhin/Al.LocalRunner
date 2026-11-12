@@ -2,8 +2,8 @@ use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
 use lr_abstractions::{
-    mask_secrets, Clock, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, SecretValue,
-    StepOutcome, StopSignal,
+    mask_secrets, Clock, JobEvent, JobOutcome, JobOutput, JobSpec, JobStep, ProcessRef,
+    SecretValue, StepOutcome, StopSignal,
 };
 use lr_core::{JobState, StepState};
 use std::time::Duration;
@@ -71,6 +71,14 @@ impl<'a> Job<'a> {
                 return (StepState::Failed, None);
             }
         };
+        if let Some(start) = spawned.tree.start() {
+            let process = ProcessRef {
+                pid: spawned.child.id().unwrap_or(0),
+                start: Some(start),
+            };
+            let event = JobEvent::StepProcess { index, process };
+            self.emitter.send(event, stop).await;
+        }
         let limits = Limits {
             deadline,
             grace: self.spec.cancel_grace,

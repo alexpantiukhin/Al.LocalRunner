@@ -12,6 +12,17 @@ pub(crate) fn signal(pid: u32, start: u64, signal: libc::c_int) {
     }
 }
 
+/// Kills process group `pgid` whose leader is gone: a pid is not handed out again while a
+/// process group with that id exists, so a group named after a vanished root is that root's.
+pub(crate) fn kill_left_group(pgid: u32) {
+    if pgid <= 1 || pgid > i32::MAX as u32 || probe(pgid) != Probe::Gone {
+        return;
+    }
+    unsafe {
+        libc::killpg(pgid as libc::pid_t, libc::SIGKILL);
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod imp {
     use super::Probe;

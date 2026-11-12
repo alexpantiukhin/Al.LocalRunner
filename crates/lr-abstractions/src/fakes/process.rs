@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::Duration;
 
+/// The pid the fake reports for the root of step 0 (step `i` gets this plus `i`), start 1.
+pub const FAKE_STEP_PID: u32 = 50_000;
+
 /// How one scripted step behaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepScript {
@@ -267,6 +270,11 @@ impl ProcessRunner for FakeProcessRunner {
                     at: now,
                 })
                 .await;
+            let process = ProcessRef {
+                pid: FAKE_STEP_PID + u32::try_from(index).unwrap_or(0),
+                start: Some(1),
+            };
+            output.emit(JobEvent::StepProcess { index, process }).await;
             if !step_script.output.is_empty() {
                 let data = mask_secrets(&step_script.output, &secrets);
                 output.emit(JobEvent::Output { index, data }).await;
