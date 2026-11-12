@@ -346,6 +346,8 @@ Only the broker needs an incoming port. There is no automatic broker discovery o
 
 Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary and does not run as root. Add the project's tools to your own image `FROM al-localrunner:<version>`. Always give the image tag explicitly.
 
+A custom image must create these directories and give them to the user the process runs as (the official image uses `65532:65532`): `/var/lib/al-localrunner` (state, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (configuration, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (Unix sockets). Without them the process stops with `cannot create /run/al-localrunner: Permission denied`.
+
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443

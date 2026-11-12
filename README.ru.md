@@ -348,6 +348,8 @@ build = "make all"
 
 Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. В образе только бинарник, он работает не от root. Инструменты проекта добавляйте в свой образ `FROM al-localrunner:<версия>`. Тег образа всегда указывается явно.
 
+Собственный образ должен создать эти каталоги и отдать их пользователю, от имени которого работает процесс (в официальном образе это `65532:65532`): `/var/lib/al-localrunner` (состояние, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (конфигурация, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (сокеты Unix). Без них процесс останавливается с `cannot create /run/al-localrunner: Permission denied`.
+
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443

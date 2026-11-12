@@ -192,6 +192,19 @@ impl Layout {
         if cfg!(windows) {
             return Ok(());
         }
-        std::fs::create_dir_all(&self.ipc_dir)
+        std::fs::create_dir_all(&self.ipc_dir).map_err(|e| {
+            let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
+                format!(
+                    "; the directory must exist and be writable by the user running localrunner (for the official image: `mkdir -p {0} && chown <user> {0}` in the Dockerfile)",
+                    self.ipc_dir.display()
+                )
+            } else {
+                String::new()
+            };
+            std::io::Error::new(
+                e.kind(),
+                format!("cannot create {}: {e}{hint}", self.ipc_dir.display()),
+            )
+        })
     }
 }
