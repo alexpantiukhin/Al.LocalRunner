@@ -40,10 +40,11 @@ pub(super) fn page<T>(
         .as_deref()
         .and_then(|c| c.parse::<usize>().ok())
         .unwrap_or(0);
-    let limit = limit as usize;
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
     let total = items.len();
     let out: Vec<T> = items.into_iter().skip(start).take(limit).collect();
-    let next = (start + limit < total).then(|| (start + limit).to_string());
+    let end = start.saturating_add(limit);
+    let next = (end < total).then(|| end.to_string());
     (out, next)
 }
 

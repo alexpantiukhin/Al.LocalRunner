@@ -189,3 +189,29 @@ async fn history_mine_shows_only_the_askers_runs_whatever_the_visibility() {
         "mine wins over a named client"
     );
 }
+
+#[tokio::test]
+async fn a_cursor_at_the_top_of_the_range_ends_the_listing() {
+    let h = Harness::start("");
+    let (_r, mut alex) = running(&h).await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let reply = alex
+        .read(ReadRequest::Status(StatusFilter {
+            limit: Some(5),
+            cursor: Some(u64::MAX.to_string()),
+            ..StatusFilter::default()
+        }))
+        .await;
+    match reply {
+        ReadReply::Status(s) => assert!(s.queue.is_empty() && s.next.is_none(), "{s:?}"),
+        other => panic!("expected status, got {other:?}"),
+    }
+    let after = alex
+        .read(ReadRequest::Status(StatusFilter::default()))
+        .await;
+    assert!(
+        matches!(after, ReadReply::Status(_)),
+        "the engine keeps running"
+    );
+}
