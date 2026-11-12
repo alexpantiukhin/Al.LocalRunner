@@ -23,6 +23,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show
       - run: cargo build --release --locked -p lr-cli
+      - name: Binary version matches the tag
+        shell: bash
+        run: |
+          exe=target/release/localrunner
+          [ -x "$exe.exe" ] && exe="$exe.exe"
+          got=$("$exe" --version | awk '{print $2}')
+          want="${GITHUB_REF_NAME#v}"
+          if [ "$got" != "$want" ]; then echo "binary reports $got, tag is $GITHUB_REF_NAME"; exit 1; fi
       - name: Pack (unix)
         if: matrix.ext == 'tar.gz'
         run: |
