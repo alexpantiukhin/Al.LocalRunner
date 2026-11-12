@@ -91,6 +91,7 @@ macro_rules! broker_store_contract {
             broker_history::prune_by_total_log_size_removes_oldest_first,
             broker_history::prune_never_touches_active_runs,
             broker_registry::join_records_key_and_spends_single_use,
+            broker_registry::issuing_a_code_drops_used_up_and_expired_codes,
             broker_registry::multi_use_code_counts_down_per_join,
             broker_registry::named_code_admits_only_its_name,
             broker_registry::code_label_applied_to_joining_machine,

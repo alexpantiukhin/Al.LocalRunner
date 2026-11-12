@@ -193,6 +193,8 @@ impl BrokerStore for MemoryBrokerStore {
 
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {
         let mut s = self.lock();
+        s.codes
+            .retain(|_, c| c.uses_left > 0 && c.expires_at > code.issued_at);
         if s.codes.contains_key(&code.code_hash) {
             return Err(StoreError::Duplicate("join code".into()));
         }

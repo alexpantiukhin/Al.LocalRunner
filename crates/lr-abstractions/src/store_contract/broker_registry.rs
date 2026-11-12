@@ -47,6 +47,30 @@ pub async fn join_records_key_and_spends_single_use(store: &dyn BrokerStore) {
     );
 }
 
+/// Issuing a code drops the codes that are used up or expired by then, and keeps open ones.
+pub async fn issuing_a_code_drops_used_up_and_expired_codes(store: &dyn BrokerStore) {
+    joined(store, "spent", MachineKind::Runner).await;
+    let mut old = code("old", MachineKind::Runner, 1);
+    old.expires_at = at(10);
+    store.issue_code(old).await.unwrap();
+    store
+        .issue_code(code("open", MachineKind::Runner, 1))
+        .await
+        .unwrap();
+    let mut late = code("late", MachineKind::Hub, 1);
+    late.issued_at = at(10);
+    store.issue_code(late).await.unwrap();
+    let mut hashes: Vec<String> = store
+        .join_codes()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.code_hash)
+        .collect();
+    hashes.sort();
+    assert_eq!(hashes, vec!["late".to_string(), "open".to_string()]);
+}
+
 /// A code for N runners counts down one use per join.
 pub async fn multi_use_code_counts_down_per_join(store: &dyn BrokerStore) {
     store

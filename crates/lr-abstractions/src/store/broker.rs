@@ -114,7 +114,8 @@ pub trait BrokerStore: Send + Sync {
     /// Removes old logs and rows of final runs, oldest first.
     async fn prune(&self, limits: PruneLimits) -> Result<PruneReport, StoreError>;
 
-    /// Stores a newly issued join code.
+    /// Stores a newly issued join code and drops the codes that are used up or expired at its
+    /// issue time.
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError>;
 
     /// The join code with this hash.

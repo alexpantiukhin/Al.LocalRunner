@@ -71,6 +71,10 @@ fn runner_row(r: &Row<'_>) -> rusqlite::Result<RunnerRow> {
 
 pub(crate) fn issue_code(conn: &mut Connection, c: JoinCodeRow) -> R<()> {
     write(conn, |tx| {
+        tx.execute(
+            "DELETE FROM join_code WHERE uses_left = 0 OR expires_at <= ?1",
+            [time(c.issued_at)],
+        )?;
         let taken = tx
             .query_row(
                 "SELECT 1 FROM join_code WHERE code_hash = ?1",
