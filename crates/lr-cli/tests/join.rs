@@ -95,6 +95,11 @@ async fn hub_and_runners_join_with_codes_and_keep_the_pinned_broker() {
             std::env::var("PATH").ok().as_deref(),
             "runner join writes [env] path from the shell PATH"
         );
+        assert_eq!(
+            parsed["env"]["TEMP"].as_str(),
+            std::env::temp_dir().to_str(),
+            "runner join writes [env] TEMP from the temp directory of the process"
+        );
     }
     assert_eq!(
         admin(&layout, AdminRequest::RunnerList).await,

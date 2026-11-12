@@ -78,14 +78,27 @@ pub const HUB_POLICY_TEMPLATE: &str =
 /// `runner.toml` template of the runners of this installation. `[env] path` is set to `path`
 /// (the `PATH` of the shell that runs `init`): jobs get `PATH` only from it and the runner does
 /// not start without it (spec 13.4). Without `path` the entry stays a comment to fill in.
-pub fn runner_template(path: Option<&str>) -> String {
+/// `home` and `temp` are written as `HOME` and `TEMP` next to it, so the values jobs see are in
+/// the file and do not depend on who starts the runner process later.
+pub fn runner_template(path: Option<&str>, home: Option<&str>, temp: Option<&str>) -> String {
+    let quoted = |v: &str| toml::Value::String(v.to_string());
     let env = match path {
-        Some(p) => format!(
-            "[env]                            # PATH of every job (spec 13.4)\npath = {}\n",
-            toml::Value::String(p.to_string())
-        ),
+        Some(p) => {
+            let mut env = format!(
+                "[env]                            # PATH of every job (spec 13.4)\npath = {}\n",
+                quoted(p)
+            );
+            for (name, value) in [("HOME", home), ("TEMP", temp)] {
+                if let Some(v) = value {
+                    env.push_str(&format!("{name} = {}\n", quoted(v)));
+                }
+            }
+            env
+        }
         None => "# [env]                          # required: PATH of every job (spec 13.4)\n\
-                 # path = \"/usr/local/bin:/usr/bin:/bin\"\n"
+                 # path = \"/usr/local/bin:/usr/bin:/bin\"\n\
+                 # HOME = \"/home/ci\"             # optional: default is the home of the runner's OS user\n\
+                 # TEMP = \"/tmp\"                 # optional: default is the temp directory of the runner process\n"
             .to_string(),
     };
     format!(
@@ -108,6 +121,20 @@ pub fn runner_template(path: Option<&str>) -> String {
          # max_job_timeout_s = 3600\n\
          \n\
          {env}"
+    )
+}
+
+/// `runner_template` filled from this process: its `PATH`, its home directory (`HOME`, else
+/// `USERPROFILE`) and its temp directory.
+pub fn runner_template_here() -> String {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    let temp = std::env::temp_dir().to_string_lossy().into_owned();
+    runner_template(
+        std::env::var("PATH").ok().as_deref(),
+        home.as_deref(),
+        Some(&temp),
     )
 }
 
@@ -174,10 +201,9 @@ pub fn init(layout: &Layout, roles: &[NodeRole], user: &str) -> Result<Vec<Creat
                 write_new(layout.config_file("policy.toml"), &policy_template(user))?
             }
             NodeRole::Hub => write_new(layout.config_file("hub-policy.toml"), HUB_POLICY_TEMPLATE)?,
-            NodeRole::Runner => write_new(
-                layout.config_file("runner.toml"),
-                &runner_template(std::env::var("PATH").ok().as_deref()),
-            )?,
+            NodeRole::Runner => {
+                write_new(layout.config_file("runner.toml"), &runner_template_here())?
+            }
         });
     }
     let mut all = self::roles(layout);
