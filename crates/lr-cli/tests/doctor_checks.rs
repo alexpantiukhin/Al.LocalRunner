@@ -113,3 +113,39 @@ async fn doctor_names_elevation_busy_ports_and_a_broker_with_another_certificate
     );
     drop(busy);
 }
+
+fn broker_and_runner(name: &str, policy: &str) -> (TempDir, Layout) {
+    let dir = TempDir::new(name);
+    let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
+    std::fs::create_dir_all(&layout.config).unwrap();
+    std::fs::write(layout.config_file("policy.toml"), policy).unwrap();
+    let runner = layout.runner_dir("r1");
+    std::fs::create_dir_all(&runner).unwrap();
+    std::fs::write(runner.join("runner.toml"), "mem_mb = 1024\ncpu = 1\n").unwrap();
+    (dir, layout)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doctor_warns_about_a_runner_under_the_brokers_user_that_runs_any_command() {
+    let (_dir, layout) = broker_and_runner("doctor-same-user", "");
+    let all = checks_with(&layout, false).await;
+    let risk = find(&all, "broker and runner user");
+    assert_eq!(risk.status, Status::Warn);
+    assert!(risk.detail.contains("spec 3.12"), "{risk:?}");
+    assert!(lr_cli::doctor::same_user_risk(&layout, true).is_some());
+    assert_eq!(
+        lr_cli::doctor::same_user_risk(&layout, false),
+        None,
+        "up without a runner in the plan says nothing"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn named_commands_for_every_client_need_no_warning() {
+    let (_dir, layout) = broker_and_runner("doctor-named", "[commands]\ndefault = \"named\"\n");
+    let all = checks_with(&layout, false).await;
+    assert!(
+        all.iter().all(|c| c.name != "broker and runner user"),
+        "{all:?}"
+    );
+}

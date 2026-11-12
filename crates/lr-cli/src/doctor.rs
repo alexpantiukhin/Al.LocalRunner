@@ -126,6 +126,35 @@ fn policy(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// The risk of spec 3.12 when the broker of `layout` runs under this OS user, not as an OS
+/// service, next to a runner of the same user (`with_runner`) while its policy lets some
+/// client run any command: the job of a remote client then acts as the pool owner (admin
+/// channel, broker key and databases). `None` when that is not the case.
+pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
+    use lr_broker::policy::CommandMode;
+    if !with_runner || layout.broker_is_service() {
+        return None;
+    }
+    let text = std::fs::read_to_string(layout.config_file("policy.toml")).ok()?;
+    let file = lr_broker::policy::load(&text).ok()?;
+    let any = file.commands.default == CommandMode::Any
+        || file
+            .commands
+            .client
+            .iter()
+            .any(|c| c.mode == CommandMode::Any);
+    any.then(|| {
+        "the broker and a runner run under the same OS user and the policy lets clients run any          command: a job of another client can use the broker admin channel, its key and its          databases (spec 3.12); run the runner under its own OS user, or the broker as an OS          service, or set [commands] default = \"named\""
+            .to_string()
+    })
+}
+
+fn same_user(layout: &Layout, out: &mut Vec<Check>) {
+    if let Some(risk) = same_user_risk(layout, !layout.runner_names().is_empty()) {
+        out.push(check("broker and runner user", Status::Warn, risk));
+    }
+}
+
 fn runners(layout: &Layout, out: &mut Vec<Check>) {
     let host = crate::host::resources();
     for name in layout.runner_names() {
@@ -223,6 +252,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     basics(layout, elevated, &mut out);
     policy(layout, &mut out);
     runners(layout, &mut out);
+    same_user(layout, &mut out);
     brokers(layout, &mut out).await;
     out
 }

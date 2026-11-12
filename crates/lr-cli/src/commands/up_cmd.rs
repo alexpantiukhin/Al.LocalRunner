@@ -264,6 +264,12 @@ pub async fn up_with(
     if plan.is_empty() {
         return Ok(code);
     }
+    let broker_here = roles.contains(&NodeRole::Broker);
+    if let Some(risk) =
+        crate::doctor::same_user_risk(layout, broker_here && roles.contains(&NodeRole::Runner))
+    {
+        eprintln!("warning: {risk}");
+    }
     let planned_broker = plan.iter().any(|argv| argv[0] == "broker");
     let mut started = Vec::new();
     let mut waited = false;
