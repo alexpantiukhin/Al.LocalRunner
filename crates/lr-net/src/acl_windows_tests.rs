@@ -6,6 +6,35 @@ use windows_sys::Win32::Security::Authorization::ConvertSecurityDescriptorToStri
 const FILE_CREATE_PIPE_INSTANCE: u32 = 0x0004;
 const USERS_SID: &str = "S-1-5-32-545";
 
+pub(crate) fn skip_elevated(test: &str) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token: HANDLE = std::ptr::null_mut();
+    let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut len = 0u32;
+    let read = unsafe {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 && {
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut len,
+            );
+            CloseHandle(token);
+            ok != 0
+        }
+    };
+    let elevated = !read || elevation.TokenIsElevated != 0;
+    if elevated {
+        eprintln!("SKIPPED: {test}: an elevated token owns new files as Administrators, the test expects the user");
+    }
+    elevated
+}
+
 fn own_sid() -> String {
     token_sid_string(&process_token().unwrap()).unwrap()
 }
@@ -86,6 +115,9 @@ fn sddl_grants_owner_alone_or_listed_sids_with_client_rights() {
 
 #[tokio::test]
 async fn owner_only_pipe_has_the_owner_alone() {
+    if skip_elevated("owner_only_pipe_has_the_owner_alone") {
+        return;
+    }
     let sddl = pipe_sddl_of(IpcAccess::OwnerOnly).await;
     let own = own_sid();
     assert!(sddl.starts_with(&format!("O:{own}D:P")), "{sddl}");
@@ -99,6 +131,9 @@ async fn owner_only_pipe_has_the_owner_alone() {
 
 #[tokio::test]
 async fn admin_channel_pipe_admits_owner_system_and_administrators_only() {
+    if skip_elevated("admin_channel_pipe_admits_owner_system_and_administrators_only") {
+        return;
+    }
     let sddl = pipe_sddl_of(IpcAccess::OwnerAndAdmins).await;
     let own = own_sid();
     assert!(sddl.starts_with(&format!("O:{own}D:P")), "{sddl}");
@@ -112,6 +147,9 @@ async fn admin_channel_pipe_admits_owner_system_and_administrators_only() {
 
 #[tokio::test]
 async fn listed_principal_gets_client_rights_only() {
+    if skip_elevated("listed_principal_gets_client_rights_only") {
+        return;
+    }
     let sddl = pipe_sddl_of(IpcAccess::Principals(vec![USERS_SID.into()])).await;
     let own = own_sid();
     assert!(sddl.starts_with(&format!("O:{own}D:P")), "{sddl}");
@@ -186,6 +224,9 @@ fn private_file_needs_a_trusted_owner_and_trusted_entries() {
 
 #[test]
 fn own_key_file_reads_back_as_private() {
+    if skip_elevated("own_key_file_reads_back_as_private") {
+        return;
+    }
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../temp")
         .join(format!("lr-acl-own-{}", std::process::id()));

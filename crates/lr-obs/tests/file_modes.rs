@@ -29,8 +29,41 @@ fn new_log_directories_are_private_to_the_owner_on_unix() {
 }
 
 #[cfg(windows)]
+fn skip_elevated(test: &str) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token: HANDLE = std::ptr::null_mut();
+    let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut len = 0u32;
+    let read = unsafe {
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) != 0 && {
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut len,
+            );
+            CloseHandle(token);
+            ok != 0
+        }
+    };
+    let elevated = !read || elevation.TokenIsElevated != 0;
+    if elevated {
+        eprintln!("SKIPPED: {test}: an elevated token owns new files as Administrators, the test expects the user");
+    }
+    elevated
+}
+
+#[cfg(windows)]
 #[test]
 fn new_log_directories_and_files_only_inherit_the_acl_on_windows() {
+    if skip_elevated("new_log_directories_and_files_only_inherit_the_acl_on_windows") {
+        return;
+    }
     let root = fresh_root("acl");
     let logs = root.join("logs");
     OsLogFs.create_dir_all(&logs).unwrap();

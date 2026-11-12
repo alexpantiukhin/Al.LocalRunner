@@ -259,4 +259,4 @@ pub(crate) fn handle_owner(handle: HANDLE) -> Result<String, NetError> {
 
 #[cfg(test)]
 #[path = "acl_windows_tests.rs"]
-mod tests;
+pub(crate) mod tests;
