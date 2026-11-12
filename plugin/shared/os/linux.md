@@ -10,7 +10,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 | Free memory and CPU | `MemAvailable` in `/proc/meminfo`, `nproc` |
 
 ## ci runner
-1. Download `actions-runner-linux-x64-<ver>.tar.gz` (or `linux-arm64`) from the `actions/runner` releases; unpack into `<state>/runners/ci-1`.
+1. Download `actions-runner-linux-x64-<ver>.tar.gz` (or `linux-arm64`) from the `actions/runner` releases; unpack into `<state>/github-runners/ci-1`.
 2. `./config.sh --url <repo-url> --token <token> --name <host>-ci-1 --labels al-ci --unattended --replace`.
 3. Start as a systemd user unit (`~/.config/systemd/user/al-localrunner-ci-1.service`, `ExecStart=<dir>/run.sh`, `Restart=on-failure`), enable with `systemctl --user enable --now`. Run `loginctl enable-linger $USER` only if it must survive logout. A system-wide unit under another user loses the user toolchains and caches.
 4. PATH: take it from the login shell (`bash -lc 'echo $PATH'`) and set it in the unit with `Environment=PATH=...`.
