@@ -303,6 +303,7 @@ pub(crate) struct Job {
     pub(crate) platform_label: Option<String>,
     pub(crate) confirmed: bool,
     pub(crate) gone_since: Option<Timestamp>,
+    pub(crate) lost_floor: Option<Timestamp>,
 }
 
 pub(crate) struct Engine {

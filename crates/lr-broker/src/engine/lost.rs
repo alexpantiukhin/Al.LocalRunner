@@ -19,7 +19,11 @@ pub(crate) fn held_deadline(job: &Job, grace_s: u64) -> Option<Timestamp> {
 pub(crate) fn lost_deadline(job: &Job, grace_s: u64) -> Option<Timestamp> {
     let started = job.started_at?;
     let timeout_s = job.entry.order.requirements.timeout_s;
-    Some(started.plus_secs(timeout_s).plus_secs(grace_s))
+    let due = started.plus_secs(timeout_s).plus_secs(grace_s);
+    Some(
+        job.lost_floor
+            .map_or(due, |f| due.max(f.plus_secs(grace_s))),
+    )
 }
 
 fn absence_cancel() -> Cancel {

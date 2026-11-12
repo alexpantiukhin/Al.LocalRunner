@@ -273,3 +273,23 @@ async fn a_hub_message_not_kept_in_the_outbox_is_retried() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_repeated_order_of_a_run_parked_by_a_failed_requeue_makes_no_second_run() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    r.assign().await;
+    FaultyStore::set(&h.faults.fail_requeue);
+    r.close().await;
+    hub.until_runner("r1", false).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    retried(&h, &h.faults.fail_requeue).await;
+    match hub.read(ReadRequest::Status(StatusFilter::default())).await {
+        ReadReply::Status(s) => assert_eq!(s.queue.len(), 1, "{:?}", s.queue),
+        other => panic!("expected status, got {other:?}"),
+    }
+}

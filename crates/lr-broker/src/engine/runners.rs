@@ -88,6 +88,7 @@ impl Engine {
         if self.runners.get(name).is_some_and(|s| s.owner != owner) {
             return Err(name_taken(name));
         }
+        let first_contact = self.runners.get(name).is_some_and(|s| s.restored);
         if let Some(old) = self.runners.get(name).and_then(|s| s.conn) {
             if old != conn {
                 if let Some(c) = self.conns.get_mut(&old) {
@@ -137,6 +138,9 @@ impl Engine {
         for job in self.active.iter_mut() {
             if job.runner.as_deref() == Some(name) {
                 job.gone_since = None;
+                if first_contact && job.lost_floor.is_some() {
+                    job.lost_floor = Some(now);
+                }
             }
         }
         self.publish(

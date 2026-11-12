@@ -312,6 +312,7 @@ impl Engine {
             platform_label: None,
             confirmed: false,
             gone_since: None,
+            lost_floor: None,
         }
     }
 
@@ -352,6 +353,7 @@ impl Engine {
 
     async fn order(&mut self, conn: ConnId, client: &Client, mut o: Order) {
         let trimmed = self.trim_timeout(&mut o.spec);
+        o.spec.enqueued_at = self.now();
         let key = JobKey {
             client: client.key.clone(),
             job: o.job.clone(),
@@ -424,7 +426,8 @@ impl Engine {
                 return self.unavailable(conn, key, "record the order seq", &e);
             }
         }
-        if rec.job.state == JobState::Queued && self.find(key).is_none() {
+        let parked = self.parked_keys().any(|k| k == key);
+        if rec.job.state == JobState::Queued && self.find(key).is_none() && !parked {
             let job = match self.stored_job(&rec) {
                 Some(mut job) => {
                     job.runner = None;
@@ -432,7 +435,9 @@ impl Engine {
                     job
                 }
                 None => {
-                    let job = self.job_of(client, key, *o.spec.clone());
+                    let mut spec = *o.spec.clone();
+                    spec.enqueued_at = rec.job.queued_at;
+                    let job = self.job_of(client, key, spec);
                     if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
                         self.count_rejected(&job);
                         self.note_rejected(&job, &reason);

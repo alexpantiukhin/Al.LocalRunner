@@ -128,8 +128,9 @@ async fn show_needs_the_client_when_two_clients_use_one_job_id() {
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut alex = h.local_hub("alex").await;
     let mut bob = h.local_hub("bob").await;
-    for (c, at) in [(&mut alex, START), (&mut bob, START + 5)] {
-        c.send(&order_at("j1", req(512, 1, 60), at)).await;
+    for (c, later_ms) in [(&mut alex, 0), (&mut bob, 5)] {
+        h.clock.advance(std::time::Duration::from_millis(later_ms));
+        c.send(&order("j1", req(512, 1, 60))).await;
         c.accepted().await;
         let a = r.assign().await;
         r.send(&started("j1", 1)).await;
