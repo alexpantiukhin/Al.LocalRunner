@@ -1,0 +1,107 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_TERM_COLOR: never
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.f.outputs.rust }}
+      docs: ${{ steps.f.outputs.docs }}
+      plugin: ${{ steps.f.outputs.plugin }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: f
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            files="$(git ls-files)"
+          else
+            files="$(git diff --name-only "$BASE" "$GITHUB_SHA")"
+          fi
+          echo "$files"
+          hit() { echo "$files" | grep -Eq "$1" && echo true || echo false; }
+          echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
+          echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')" >> "$GITHUB_OUTPUT"
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - name: Loopback aliases (macOS has only 127.0.0.1)
+        if: runner.os == 'macOS'
+        run: for a in 127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5 127.0.0.9; do sudo ifconfig lo0 alias $a up; done
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked --no-fail-fast
+
+  skills:
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true' && needs.changes.outputs.rust != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show
+      - run: cargo test -p lr-cli --locked --test skills_lint
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: README pair and architecture pair stay parallel
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          def read(p):
+              return open(p, encoding="utf-8").read().replace("\r\n", "\n")
+          bad = []
+          en, ru = read("README.md"), read("README.ru.md")
+          h = lambda s: len(re.findall(r"(?m)^## ", s))
+          if h(en) != h(ru):
+              bad.append(f"README sections differ: {h(en)} vs {h(ru)}")
+          ru_html, en_html = read("docs/architecture.html"), read("docs/architecture.en.html")
+          if ru_html.count("\n") != en_html.count("\n"):
+              bad.append("architecture html pair: line counts differ")
+          ids = lambda s: re.findall(r'\bid="([^"]+)"', s)
+          if ids(ru_html) != ids(en_html):
+              bad.append("architecture html pair: ids differ")
+          for t in ("h2", "h3", "table", "tr", "svg", "li", "pre"):
+              a = len(re.findall(rf"<{t}[\s>]", ru_html))
+              b = len(re.findall(rf"<{t}[\s>]", en_html))
+              if a != b:
+                  bad.append(f"architecture html pair: <{t}> {a} vs {b}")
+          if re.search(r"[А-Яа-яЁё]", en_html):
+              bad.append("architecture.en.html contains Cyrillic")
+          print("\n".join(bad) or "ok")
+          sys.exit(1 if bad else 0)
+          PY
+
+  ci-ok:
+    if: always()
+    needs: [changes, rust, skills, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '${{ toJSON(needs) }}'
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ]; then exit 1; fi

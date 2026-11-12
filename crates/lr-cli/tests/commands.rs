@@ -17,6 +17,7 @@ use std::time::Duration;
 fn localrunner(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_localrunner"))
         .args(args)
+        .env_remove("GITHUB_ACTIONS")
         .env(
             "LOCALRUNNER_STATE_DIR",
             std::env::temp_dir().join("lr-cli-no-state"),
@@ -463,4 +464,16 @@ fn jobs_mine_prints_project_source_and_label_together() {
     let mut bare = summary("j2", JobState::Queued);
     (bare.project, bare.source, bare.label) = (None, None, None);
     assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-");
+}
+
+#[cfg(unix)]
+#[test]
+fn prepare_ipc_failure_names_the_directory() {
+    let dir = common::TempDir::new("ipc-dir");
+    let root = dir.path().join("state");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("ipc"), b"").unwrap();
+    let layout = lr_cli::paths::Layout::new(root.clone(), dir.path().join("config"));
+    let e = layout.prepare_ipc().unwrap_err().to_string();
+    assert!(e.contains(&root.join("ipc").display().to_string()), "{e}");
 }

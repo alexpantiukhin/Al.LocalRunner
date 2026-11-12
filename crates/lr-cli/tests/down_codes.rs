@@ -110,3 +110,33 @@ async fn down_drain_waits_until_ctrl_c_with_no_time_limit_and_then_exits_1() {
         "the broker stops after its runners"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn down_of_a_runner_alone_reports_stopped_and_for_a_slow_one_still_running() {
+    let dir = TempDir::new("down-named");
+    let layout = with_runner(&dir);
+    let gone = FakeRoles::new(false, 2);
+    let start = tokio::time::Instant::now();
+    let code = down_with(&layout, vec!["r1".into()], false, &gone, pending::<()>()).await;
+    assert_eq!(code, Ok(0));
+    assert!(
+        start.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        start.elapsed()
+    );
+    assert_eq!(gone.broker_stops(), 0);
+
+    let busy = FakeRoles::new(false, usize::MAX);
+    let start = tokio::time::Instant::now();
+    let code = down_with(&layout, vec!["r1".into()], false, &busy, pending::<()>()).await;
+    assert_eq!(
+        code,
+        Ok(0),
+        "a runner finishing its job is not a failed down"
+    );
+    let took = start.elapsed();
+    assert!(
+        took >= Duration::from_secs(3) && took < Duration::from_secs(4),
+        "{took:?}"
+    );
+}

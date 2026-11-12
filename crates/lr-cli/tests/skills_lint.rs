@@ -6,13 +6,14 @@ fn plugin() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugin")
 }
 
-const SKILLS: [&str; 6] = [
+const SKILLS: [&str; 7] = [
     "autostart-runner",
     "down-runner",
     "install-runner",
     "run",
     "status-runner",
     "up-runner",
+    "upgrade-runner",
 ];
 
 fn skill(name: &str) -> String {
@@ -111,6 +112,7 @@ fn every_skill_names_real_commands_and_reads_the_os_files() {
         "up-runner",
         "down-runner",
         "autostart-runner",
+        "upgrade-runner",
     ] {
         assert!(
             skill(name).contains("`../../shared/os/<windows|linux|macos>.md`"),

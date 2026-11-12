@@ -163,3 +163,44 @@ async fn broker_add_prints_the_address_given_or_the_first_listen_address() {
     );
     broker.stop();
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn policy_check_names_the_file_the_running_broker_uses() {
+    let dir = TempDir::new("policy-path");
+    let layout = layout(&dir, "[]");
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let reply = admin(&layout, AdminRequest::PolicyCheck).await;
+    let AdminReply::Policy { path, .. } = reply else {
+        panic!("{reply:?}");
+    };
+    assert_eq!(
+        std::path::PathBuf::from(path),
+        layout.config_file("policy.toml")
+    );
+    let asked = lr_cli::commands::admin_cmd::broker_policy(&layout).await;
+    assert!(matches!(asked, Some(Ok(_))), "{asked:?}");
+    assert_eq!(
+        lr_cli::commands::admin_cmd::policy_check(&layout, None).await,
+        Ok(0)
+    );
+    std::fs::write(layout.config_file("policy.toml"), "[grace]\nlost_min = 0\n").unwrap();
+    assert_eq!(
+        lr_cli::commands::admin_cmd::policy_check(&layout, None).await,
+        Ok(1),
+        "the file the broker reads is broken, whatever a copy elsewhere says"
+    );
+    broker.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn policy_check_without_a_broker_reads_the_local_file() {
+    let dir = TempDir::new("policy-local");
+    let layout = layout(&dir, "[]");
+    assert!(lr_cli::commands::admin_cmd::broker_policy(&layout)
+        .await
+        .is_none());
+    assert_eq!(
+        lr_cli::commands::admin_cmd::policy_check(&layout, None).await,
+        Ok(0)
+    );
+}

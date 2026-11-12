@@ -21,11 +21,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Tag matches the crate version
-        shell: bash
-        run: |
-          crate=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="lr-cli"))')
-          if [ "v${crate}" != "${GITHUB_REF_NAME}" ] && [ "${GITHUB_REF_NAME%%-*}" != "v${crate}" ]; then echo "tag ${GITHUB_REF_NAME} does not match lr-cli ${crate}"; exit 1; fi
       - run: rustup show
       - name: Build (static musl)
         if: matrix.triple
@@ -38,6 +33,14 @@ jobs:
       - name: Build
         if: ${{ !matrix.triple }}
         run: cargo build --release --locked -p lr-cli
+      - name: Binary version matches the tag
+        shell: bash
+        run: |
+          exe=target/release/localrunner
+          [ -x "$exe.exe" ] && exe="$exe.exe"
+          got=$("$exe" --version | awk '{print $2}')
+          want="${GITHUB_REF_NAME#v}"
+          if [ "$got" != "$want" ]; then echo "binary reports $got, tag is $GITHUB_REF_NAME"; exit 1; fi
       - name: Pack (unix)
         if: matrix.ext == 'tar.gz'
         run: |

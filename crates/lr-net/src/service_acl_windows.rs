@@ -387,6 +387,11 @@ mod tests {
 
     #[test]
     fn a_new_directory_has_only_inherited_entries_and_an_explicit_grant_shows() {
+        if crate::acl_windows::tests::skip_elevated(
+            "a_new_directory_has_only_inherited_entries_and_an_explicit_grant_shows",
+        ) {
+            return;
+        }
         let dir = temp_dir("explicit");
         let own = token_sid_string(&process_token().unwrap()).unwrap();
         let fresh = file_security(&dir).unwrap();

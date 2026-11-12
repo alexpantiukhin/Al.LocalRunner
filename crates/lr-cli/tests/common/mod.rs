@@ -16,6 +16,15 @@ pub fn env_path_toml() -> String {
     format!("[env]\npath = {}\n", toml::Value::String(path))
 }
 
+fn base_dir() -> PathBuf {
+    let short = Path::new("/tmp");
+    if cfg!(unix) && short.is_dir() {
+        short.to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
+}
+
 pub struct TempDir(PathBuf);
 
 impl TempDir {
@@ -30,7 +39,7 @@ impl TempDir {
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         );
-        let path = std::env::temp_dir().join(unique).join(name);
+        let path = base_dir().join(unique).join(name);
         std::fs::create_dir_all(&path).unwrap();
         TempDir(path)
     }
