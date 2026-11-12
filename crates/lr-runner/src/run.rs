@@ -32,7 +32,7 @@ async fn run_phase(
     if !matches!(p.spec.code, WireCode::WorkTree { .. }) {
         dirs.push(phase.cwd.to_path_buf());
     }
-    dirs.extend(job_temp(shared, &p.job));
+    dirs.push(job_temp(shared, &p.job));
     let limits = job_limits(
         &p.spec.requirements,
         p.spec.limits.as_ref(),
@@ -98,10 +98,13 @@ fn failed_step(outcome: &JobOutcome) -> Option<&StepOutcome> {
     outcome.steps.iter().find(|s| s.state == StepState::Failed)
 }
 
+const TEMP_RETRIES: u32 = 8;
+const TEMP_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
 struct Cleanup<'a> {
     shared: &'a Shared,
     checkout: Option<PathBuf>,
-    temp: Option<PathBuf>,
+    temp: PathBuf,
     mirror: Option<(CacheKey, PathBuf)>,
     caches: Vec<CacheKey>,
 }
@@ -121,17 +124,24 @@ impl Cleanup<'_> {
                 );
             }
         }
-        if let Some(dir) = &self.temp {
-            if let Err(e) = s.deps.files.remove_dir_all(dir).await {
-                s.diag.event(
-                    Level::Error,
-                    "job temp not removed",
-                    &[
-                        ("path", &dir.display().to_string()),
-                        ("error", &e.to_string()),
-                    ],
-                );
+        let dir = &self.temp;
+        let mut removed = s.deps.files.remove_dir_all(dir).await;
+        for _ in 0..TEMP_RETRIES {
+            if removed.is_ok() {
+                break;
             }
+            s.deps.clock.sleep(TEMP_RETRY_PAUSE).await;
+            removed = s.deps.files.remove_dir_all(dir).await;
+        }
+        if let Err(e) = removed {
+            s.diag.event(
+                Level::Error,
+                "job temp not removed",
+                &[
+                    ("path", &dir.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            );
         }
         let caches = s.caches();
         let now = s.now();
@@ -250,11 +260,9 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         }
     };
     let temp = job_temp(shared, &p.job);
-    if let Some(dir) = &temp {
-        if let Err(e) = shared.deps.files.create_dir_all(dir).await {
-            skip_steps(shared, &p.job, &spec.steps, 0).await;
-            return Final::failed(format!("job temp directory not created: {}", e.0));
-        }
+    if let Err(e) = shared.deps.files.create_dir_all(&temp).await {
+        skip_steps(shared, &p.job, &spec.steps, 0).await;
+        return Final::failed(format!("job temp directory not created: {}", e.0));
     }
     let cleanup = Cleanup {
         shared,

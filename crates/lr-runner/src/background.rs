@@ -133,6 +133,18 @@ pub(crate) async fn recover(shared: &Shared) {
             &[("error", &e.to_string())],
         ),
     }
+    if let Err(e) = shared
+        .deps
+        .files
+        .remove_dir_all(&crate::prepare::jobs_temp(shared))
+        .await
+    {
+        shared.diag.event(
+            Level::Error,
+            "job temp directories from before the restart not removed",
+            &[("error", &e.to_string())],
+        );
+    }
     shared.caches().remove_left_checkouts().await;
     shared.release_disk().await;
     shared.forget_undeclared_services().await;

@@ -300,9 +300,7 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
                 }
                 Ok(()) => {
                     let mut env = job_env(shared, &job);
-                    if let Some(temp) = job_temp(shared, &job) {
-                        apply_job_temp(&mut env, &temp);
-                    }
+                    apply_job_temp(&mut env, &job_temp(shared, &job));
                     let prepared = Prepared {
                         job: job.clone(),
                         spec: &a.spec,

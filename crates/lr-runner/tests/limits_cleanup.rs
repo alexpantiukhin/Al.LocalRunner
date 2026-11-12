@@ -189,12 +189,23 @@ async fn a_job_gets_a_private_temp_that_is_measured_and_removed() {
     b.assign("job-1", 1, job(4000, 1000)).await;
     assert_eq!(result_of(&b.until_result().await).state, JobState::Passed);
     let run = &rig.process.runs()[0];
-    let temp = Path::new("/tmp/runner").join("lr-job-1");
+    let temp = state_dir().join("tmp").join("lr-job-1");
     assert!(run.limits.disk_dirs.contains(&temp));
     let dir = temp.to_string_lossy().into_owned();
     assert!(run.env.contains(&("TEMP".into(), dir.clone())));
     assert!(run.env.contains(&("TMPDIR".into(), dir)));
     assert!(!rig.files.is_dir(&temp));
+}
+
+#[tokio::test]
+async fn temp_directories_left_by_a_crash_are_removed_at_start() {
+    let rig = Rig::new();
+    let left = state_dir().join("tmp").join("lr-dead-job");
+    rig.files.mkdir(&left);
+    assert!(rig.files.is_dir(&left));
+    let (_c, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    assert!(!rig.files.is_dir(&left));
 }
 
 #[tokio::test]
