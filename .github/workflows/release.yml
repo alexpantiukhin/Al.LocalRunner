@@ -126,7 +126,7 @@ jobs:
           done
           chmod 0755 dist/install.sh
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
-          sed -E "s#^( *image:).*# ${repo}:${GITHUB_REF_NAME#v}#; /^ *build:/,/dockerfile:/d" src/install/compose.yaml > dist/compose.yaml
+          sed -E "s#^( *image:).*#\1 ${repo}:${GITHUB_REF_NAME#v}#; /^ *build:/,/dockerfile:/d" src/install/compose.yaml > dist/compose.yaml
       - name: Sums
         working-directory: dist
         run: sha256sum al-localrunner-* install.sh install.ps1 compose.yaml > SHA256SUMS
