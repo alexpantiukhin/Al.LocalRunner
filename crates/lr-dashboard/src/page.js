@@ -82,10 +82,12 @@
   function renderTable(body, cols) {
     var rows = visible();
     S.rows = rows;
+    S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
         var v = c === "queued" ? when(r.queued) : c === "duration" ? dur(r.duration) : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
+        if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
         if (c === "source" && r.j.detail.github_run_url && /^https:\/\//.test(r.j.detail.github_run_url)) {
           td.replaceChildren(el("a", { href: r.j.detail.github_run_url, rel: "noreferrer noopener", target: "_blank", text: v }));
@@ -221,6 +223,7 @@
     dl.replaceChildren();
     f.forEach(function (p) { if (p[1] != null && p[1] !== "") { dl.appendChild(el("dt", { text: p[0] })); dl.appendChild(el("dd", { text: String(p[1]) })); } });
     var steps = $("card-steps");
+    S.stepCells = [];
     steps.replaceChildren.apply(steps, (d.steps || []).map(function (st) {
       var spent = st.started_at ? (st.finished_at || t) - st.started_at : 0;
       var state = st.state === "queued" && FINAL.indexOf(s.state) >= 0 ? "skipped" : st.state;
@@ -228,6 +231,7 @@
       fill.style.width = (state === "skipped" ? 100 : Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0)) + "%";
       var row = el("button", { type: "button", cls: "step" + (st.name === S.step ? " chosen" : ""), "aria-pressed": String(st.name === S.step), title: "Show the log of this step" },
         [el("span", { text: st.name + " · " + state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
+      if (state === "running") S.stepCells.push({ label: row.children[2], fill: fill, st: st });
       row.addEventListener("click", function () { S.stepAuto = false; S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
       return row;
     }));
@@ -321,6 +325,17 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
+  function tickTime() {
+    if (S.paused || !config.live) return;
+    (S.waitCells || []).forEach(function (c) { c.td.textContent = row(c.j).wait; });
+    var t = now();
+    (S.stepCells || []).forEach(function (c) {
+      var spent = (c.st.finished_at || t) - c.st.started_at;
+      c.label.textContent = dur(spent) + " / " + dur(c.st.timeout_s * 1000);
+      c.fill.style.width = Math.min(100, c.st.timeout_s ? 100 * spent / (c.st.timeout_s * 1000) : 0) + "%";
+    });
+  }
+
   var timer = null;
   function refresh() {
     if (!config.live) return;
@@ -391,5 +406,9 @@
   if (!config.live) document.querySelectorAll(".live-only").forEach(function (n) { n.classList.add("hidden-mode"); });
   restoreState();
   render();
-  if (config.live) { connect(); setInterval(function () { if (S.open && $("log-follow").checked && !S.paused) loadLog(); }, 2000); }
+  if (config.live) {
+    connect();
+    setInterval(function () { if (S.open && $("log-follow").checked && !S.paused) loadLog(); }, 2000);
+    setInterval(tickTime, 1000);
+  }
 }());

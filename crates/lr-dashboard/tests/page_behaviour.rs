@@ -95,6 +95,40 @@ fn the_card_shows_the_log_of_the_running_step_and_of_the_step_clicked() {
     assert_eq!(out["unpicked"]["log"], LOG);
 }
 
+const CLOCK: &str = r#"
+  var clock = 1700000030000;
+  Date.now = function () { return clock; };
+  var cell = function () {
+    var tds = $("queue-body").children[0].children;
+    return tds.filter(function (td) { return td.getAttribute("data-col") === "wait"; })[0].textContent;
+  };
+  var bar = function () { return $("card-steps").children[0].children[2].textContent; };
+  var tickSecond = function () { intervals.filter(function (i) { return i.ms === 1000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await tick();
+  logText = LOG;
+  $("queue-body").children[0].fire("click"); await tick();
+  out.before = { grid: cell(), card: bar() };
+  clock += 5000;
+  tickSecond();
+  out.after = { grid: cell(), card: bar() };
+  $("pause").fire("click");
+  clock += 5000;
+  tickSecond();
+  out.paused = { grid: cell(), card: bar() };
+"#;
+
+#[test]
+fn the_time_of_a_running_job_ticks_in_the_grid_and_in_the_card_without_a_new_snapshot() {
+    let Some(out) = run(CLOCK, "the_time_of_a_running_job_ticks") else {
+        return;
+    };
+    assert_eq!(out["before"]["grid"], "30s / 20m0s", "{out}");
+    assert_eq!(out["before"]["card"], "30s / 10m0s");
+    assert_eq!(out["after"]["grid"], "35s / 20m0s", "{out}");
+    assert_eq!(out["after"]["card"], "35s / 10m0s");
+    assert_eq!(out["paused"], out["after"], "a paused page stands still");
+}
+
 #[test]
 fn the_chosen_step_follows_the_run_and_a_missing_section_is_said() {
     let next = running(StepState::Passed, StepState::Running, JobState::Running);
