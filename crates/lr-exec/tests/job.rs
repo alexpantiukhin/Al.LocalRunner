@@ -319,6 +319,28 @@ async fn environment_is_only_the_job_env_and_cache_vars_reach_the_step() {
     assert!(text.contains("[cache-dir-1]"), "{text}");
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_system_variables_reach_the_step_from_the_runner_environment() {
+    let names = ["SystemRoot", "windir", "ComSpec", "PATHEXT"];
+    let steps = names
+        .iter()
+        .map(|n| step(&n.to_lowercase(), &show(n), 30))
+        .collect();
+    let spec = job("os", 60, steps);
+    assert!(spec
+        .env
+        .iter()
+        .all(|(k, _)| !names.iter().any(|n| k.eq_ignore_ascii_case(n))));
+    let (outcome, events) = run(spec).await;
+    assert_eq!(outcome.state, JobState::Passed);
+    let text = text(&events);
+    for n in names {
+        let value = std::env::var(n).expect("set on Windows");
+        assert!(text.contains(&format!("[{value}]")), "{n}: {text}");
+    }
+}
+
 #[tokio::test]
 async fn secrets_reach_only_their_step_and_are_masked() {
     let mut spec = job(

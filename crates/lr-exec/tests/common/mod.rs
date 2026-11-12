@@ -56,7 +56,7 @@ pub fn step(name: &str, command: &str, timeout_s: u64) -> StepSpec {
 }
 
 pub fn base_env() -> Vec<(String, String)> {
-    let keep = ["PATH", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP", "HOME"];
+    let keep = ["PATH", "TEMP", "TMP", "HOME"];
     std::env::vars()
         .filter(|(k, _)| keep.contains(&k.as_str()))
         .collect()

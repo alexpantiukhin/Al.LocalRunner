@@ -33,6 +33,23 @@ pub(crate) struct Launch<'a> {
     pub(crate) secrets: &'a [(String, SecretValue)],
 }
 
+#[cfg(windows)]
+const OS_ENV: [&str; 4] = ["SystemRoot", "windir", "ComSpec", "PATHEXT"];
+
+#[cfg(windows)]
+fn os_env(given: &[(String, String)]) -> Vec<(String, String)> {
+    OS_ENV
+        .iter()
+        .filter(|n| !given.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)))
+        .filter_map(|n| std::env::var(n).ok().map(|v| (n.to_string(), v)))
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn os_env(_given: &[(String, String)]) -> Vec<(String, String)> {
+    Vec::new()
+}
+
 fn command(launch: &Launch<'_>) -> (Command, Placement) {
     let names: Vec<&str> = launch
         .env
@@ -43,6 +60,7 @@ fn command(launch: &Launch<'_>) -> (Command, Placement) {
     let (mut cmd, extra, placement) = Tree::shell(launch.command, &names);
     cmd.current_dir(launch.cwd)
         .env_clear()
+        .envs(os_env(launch.env))
         .envs(launch.env.iter().map(|(k, v)| (k, v)))
         .envs(launch.secrets.iter().map(|(k, v)| (k, v.expose())))
         .envs(extra)

@@ -24,16 +24,19 @@ struct Service {
 ///
 /// Every command runs through the platform shell (`%ComSpec% /D /S /C` on Windows,
 /// `/bin/sh -c` elsewhere) in the job directory with exactly the environment of the spec plus
-/// the secrets of that step; nothing of the runner environment is inherited (spec 3.13).
+/// the secrets of that step; nothing else of the runner environment is inherited (spec 3.13),
+/// except on Windows `SystemRoot`, `windir`, `ComSpec` and `PATHEXT`, without which the OS
+/// itself does not work (spec 13.4).
 ///
 /// Containers: Windows puts the process, created suspended, into a Job Object that kills
 /// every descendant, detached ones included (full guarantee). Unix starts a new process group
 /// and also tracks descendants by walking parent links (`/proc` on Linux, `proc_pidinfo` on
 /// macOS), so children that leave the group are killed while they were seen (best effort).
 ///
-/// Known limitation: Linux cgroup v2 (`systemd-run --user --scope`, the full guarantee of
-/// spec 6 and 10) is not used yet, so on Linux a child that detaches (`setsid`, double fork)
-/// and loses its parent between two scans (100 ms) escapes the kill.
+/// On Linux with cgroup v2 and a user manager the tree is put into its own transient scope
+/// (`systemd-run --user --scope`, the full guarantee of spec 6 and 10) and killed through it;
+/// without it a child that detaches (`setsid`, double fork) and loses its parent between two
+/// scans (100 ms) escapes the kill.
 ///
 /// Stops: a step timeout kills the tree at once without a soft signal; a
 /// [`lr_abstractions::Stop::Cancel`] sends Ctrl+Break to the process group on Windows or
