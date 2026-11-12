@@ -4,11 +4,13 @@ $LocalRunnerSigNamespace = 'al-localrunner-release'
 $LocalRunnerArchive = 'al-localrunner-windows-x64.zip'
 $LocalRunnerUsage = @'
 Usage: install.ps1 [--version X.Y.Z] [--dir DIR] [--offline ARCHIVE]
-                   [--role hub|broker|runner|all] [--allow-elevated]
+                   [--role hub|broker|runner|all] [--allow-elevated] [--upgrade]
 
 Installs localrunner.exe for the current user after checking the signature
 of SHA256SUMS and the SHA-256 of the archive. --offline takes a downloaded
-archive with SHA256SUMS and SHA256SUMS.sig next to it.
+archive with SHA256SUMS and SHA256SUMS.sig next to it. --upgrade runs
+`localrunner upgrade` instead of `install`: it replaces an installed binary and
+restarts the roles that run (it asks first; see --help of upgrade).
 '@
 
 function Stop-Install {
@@ -23,7 +25,7 @@ function Write-Step {
 
 function Read-InstallArgs {
     param([string[]]$Arguments)
-    $opts = @{ Version = ''; Dir = ''; Offline = ''; Role = 'all'; AllowElevated = $false; Help = $false }
+    $opts = @{ Version = ''; Dir = ''; Offline = ''; Role = 'all'; AllowElevated = $false; Upgrade = $false; Help = $false }
     if ($null -eq $Arguments) {
         $Arguments = @()
     }
@@ -50,6 +52,7 @@ function Read-InstallArgs {
             'offline' { $opts.Offline = $value }
             'role' { $opts.Role = $value.ToLowerInvariant() }
             'allow-elevated' { $opts.AllowElevated = $true }
+            'upgrade' { $opts.Upgrade = $true }
             'h' { $opts.Help = $true }
             'help' { $opts.Help = $true }
             default { Stop-Install "unknown argument: $given (see --help)" }
@@ -176,17 +179,22 @@ function Test-ReleaseChecksum {
 
 function Invoke-LocalRunnerInstall {
     param([string]$Exe, [hashtable]$Opts)
+    $verb = 'install'
     $installArgs = @('install', '--role', $Opts.Role)
+    if ($Opts.Upgrade) {
+        $verb = 'upgrade'
+        $installArgs = @('upgrade')
+    }
     if ($Opts.Dir) {
         $installArgs += "--dir=$($Opts.Dir)"
     }
     if ($Opts.AllowElevated) {
         $installArgs += '--allow-elevated'
     }
-    Write-Step 'running localrunner install'
+    Write-Step "running localrunner $verb"
     & $Exe @installArgs
     if ($LASTEXITCODE -ne 0) {
-        Stop-Install 'localrunner install failed'
+        Stop-Install "localrunner $verb failed"
     }
     Write-Step 'running localrunner doctor'
     & $Exe 'doctor'

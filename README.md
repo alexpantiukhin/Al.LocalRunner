@@ -72,6 +72,7 @@ Restart the agent session, then ask in plain words:
 | Say | Skill | What it does |
 |---|---|---|
 | "install the runner" | `install-runner` | gets the binary from a release, runs `init` and `doctor` |
+| "update localrunner" | `upgrade-runner` | takes the new version from a signed release and replaces the binary with `upgrade`, restarting the roles |
 | "start the runners" | `up-runner` | starts the hub, the broker and the runners |
 | "run the tests through the runner" | `run` | puts the task into the queue and reads the result |
 | "show the queue" | `status-runner` | queue, jobs, runners, history, dashboard |
@@ -125,7 +126,7 @@ The skills never raise rights on their own and never print join codes or tokens.
 
 ### Release scripts
 
-Copies with the release public key built in are attached to every release (https://github.com/alexpantiukhin/Al.LocalRunner/releases); take the script from there, not from a branch. The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`; `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
+Copies with the release public key built in are attached to every release (https://github.com/alexpantiukhin/Al.LocalRunner/releases); take the script from there, not from a branch. The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`, `--upgrade` (update an installed copy, see "Update"); `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
 
 ### From source
 
@@ -346,6 +347,8 @@ Only the broker needs an incoming port. There is no automatic broker discovery o
 
 Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary and does not run as root. Add the project's tools to your own image `FROM al-localrunner:<version>`. Always give the image tag explicitly.
 
+A custom image must create these directories and give them to the user the process runs as (the official image uses `65532:65532`): `/var/lib/al-localrunner` (state, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (configuration, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (Unix sockets). Without them the process stops with `cannot create /run/al-localrunner: Permission denied`.
+
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443
@@ -410,7 +413,8 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 
 - Autostart is off by default. It runs as the user who enabled it: a scheduler task on Windows, a systemd user unit on Linux, a LaunchAgent on macOS. `autostart on broker` is the same as `broker install-service`.
 - `down` by default (`--drain`) waits for current jobs; `--cancel` cancels them and waits for the runners no longer than 30 seconds. The broker stops after the runners. `--cancel` (like `cancel --mine`) asks for confirmation; without a terminal (scripts, agents) it needs `--yes`.
-- Update: stop the runners (`down`), replace the binary, `up` again. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported.
+- Update: `install.sh --upgrade` (or `install.ps1 --upgrade`; add `--version X.Y.Z` for a version other than the latest). The script checks the signature as for the installation, then runs `localrunner upgrade` of the downloaded binary: it prints the installed and the new version and the running jobs and waiting orders, asks (with running jobs: wait for them to finish, cancel them, or abort), stops the runners first (they finish their jobs, or with `--cancel` cancel them and exit within 30 s), then the hub and a broker started by hand, copies itself over the installed binary and starts the same roles again from it. `upgrade --dry-run` shows the plan; `--yes` skips the question and, with running jobs, waits for them (`--yes --cancel` cancels them); Ctrl+C while waiting replaces nothing and leaves the hub and the broker running; an older binary is refused. The same by hand: `down`, replace the binary, `up`. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported. When the major protocol version changes, upgrade the broker, the hubs and the runners of other machines in the same window; every machine is upgraded the same way, one by one.
+- The broker as an OS service keeps its own copy of the binary (Windows: `%ProgramFiles%\Al.LocalRunner\localrunner.exe`; Linux and macOS: `/usr/local/libexec/al-localrunner/localrunner`), and `upgrade` does not touch it. With administrator rights: stop the service (`AlLocalRunnerBroker` on Windows, `al-localrunner-broker` on Linux), copy the new binary over that file, start the service.
 - `uninstall` stops the roles and removes autostart, the service, the binary and the PATH entry. Keys and history stay; `--purge` removes the state too, after confirmation.
 
 ## Troubleshooting

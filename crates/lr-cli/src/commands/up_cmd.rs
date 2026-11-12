@@ -11,7 +11,7 @@ use crate::paths::Layout;
 use lr_abstractions::Dialer;
 use lr_proto::IpcChannel;
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -78,6 +78,24 @@ pub async fn running_roles(layout: &Layout) -> RunningRoles {
         }
     }
     out
+}
+
+/// A line per broker the running hub is not connected to: the process is alive, the link is not.
+async fn hub_unlinked(layout: &Layout) -> Vec<String> {
+    let Ok(principal) = lr_net::current_os_principal() else {
+        return Vec::new();
+    };
+    let Ok(c) = IpcClient::connect(&layout.hub_ipc(&principal), IpcChannel::Cli).await else {
+        return Vec::new();
+    };
+    let brokers = super::view::known_brokers(&c).await;
+    c.close().await;
+    brokers
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| !b.available)
+        .map(|b| super::view::unreachable_line(&b.name))
+        .collect()
 }
 
 fn dirs(layout: &Layout) -> Vec<String> {
@@ -233,6 +251,15 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
     up_with(layout, role, STARTED_WITHIN, &start).await
 }
 
+/// A starter of roles that runs `exe` detached, for [`up_with`].
+pub fn starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
+    move |argv: &[String]| {
+        #[cfg(windows)]
+        keep_std_handles_from_children();
+        spawn(&exe, argv)
+    }
+}
+
 /// `up [role]` that starts each role through `start` and waits for it at most `within`. When
 /// its plan has both the broker and the hub, the hub starts only once the broker answers, so
 /// the hub lists it as `local`. A broker that could not be started, or that is silent for
@@ -264,6 +291,9 @@ pub async fn up_with(
     }
     if roles.contains(&NodeRole::Hub) && before.hub {
         println!("hub: already running");
+        for line in hub_unlinked(layout).await {
+            eprintln!("hub: {line}");
+        }
     }
     for r in &before.runners {
         println!("runner {r}: already running");
