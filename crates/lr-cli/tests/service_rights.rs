@@ -2,7 +2,8 @@ mod common;
 
 use common::TempDir;
 use lr_cli::commands::service_cmd::{
-    autostart, autostart_with, install_service, install_service_with,
+    admin_left, autostart, autostart_with, broker_left_for_admin, install_service,
+    install_service_with,
 };
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::os_service::{service_installed, Os};
@@ -66,4 +67,16 @@ fn the_commands_read_the_rights_of_this_process() {
         autostart(&layout, Switch::Off, Some(RoleArg::Broker), None, false),
         Err(OFF.to_string())
     );
+}
+
+#[test]
+fn a_run_for_all_roles_leaves_only_the_broker_service_to_an_administrator() {
+    assert!(broker_left_for_admin(None, false, false));
+    assert!(broker_left_for_admin(Some(RoleArg::All), false, false));
+    assert!(!broker_left_for_admin(Some(RoleArg::Broker), false, false));
+    assert!(!broker_left_for_admin(None, false, true));
+    assert!(!broker_left_for_admin(None, true, false));
+    let on = admin_left(true);
+    assert!(on.contains("autostart on broker"), "{on}");
+    assert!(admin_left(false).contains("autostart off broker"));
 }
