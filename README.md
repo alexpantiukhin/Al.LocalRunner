@@ -24,6 +24,7 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Security](#security)
 - [Plugin details](#plugin-details)
 - [Usage](#usage)
+- [Releasing](#releasing)
 - [License](#license)
 
 ## How it works
@@ -413,8 +414,7 @@ localrunner uninstall [--purge] [--yes] [--dry-run]
 
 - Autostart is off by default. It runs as the user who enabled it: a scheduler task on Windows, a systemd user unit on Linux, a LaunchAgent on macOS. `autostart on broker` is the same as `broker install-service`.
 - `down` by default (`--drain`) waits for current jobs; `--cancel` cancels them and waits for the runners no longer than 30 seconds. The broker stops after the runners. `--cancel` (like `cancel --mine`) asks for confirmation; without a terminal (scripts, agents) it needs `--yes`.
-- Update: `install.sh --upgrade` (or `install.ps1 --upgrade`; add `--version X.Y.Z` for a version other than the latest). The script checks the signature as for the installation, then runs `localrunner upgrade` of the downloaded binary: it prints the installed and the new version and the running jobs and waiting orders, asks (with running jobs: wait for them to finish, cancel them, or abort), stops the runners first (they finish their jobs, or with `--cancel` cancel them and exit within 30 s), then the hub and a broker started by hand, copies itself over the installed binary and starts the same roles again from it. `upgrade --dry-run` shows the plan; `--yes` skips the question and, with running jobs, waits for them (`--yes --cancel` cancels them); Ctrl+C while waiting replaces nothing and leaves the hub and the broker running; an older binary is refused. The same by hand: `down`, replace the binary, `up`. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported. When the major protocol version changes, upgrade the broker, the hubs and the runners of other machines in the same window; every machine is upgraded the same way, one by one.
-- The broker as an OS service keeps its own copy of the binary (Windows: `%ProgramFiles%\Al.LocalRunner\localrunner.exe`; Linux and macOS: `/usr/local/libexec/al-localrunner/localrunner`), and `upgrade` does not touch it. With administrator rights: stop the service (`AlLocalRunnerBroker` on Windows, `al-localrunner-broker` on Linux), copy the new binary over that file, start the service.
+- Update: `install.sh --upgrade` (or `install.ps1 --upgrade`; add `--version X.Y.Z` for a version other than the latest). The script checks the signature as for the installation, then runs `localrunner upgrade` of the downloaded binary: it prints the installed and the new version and the running jobs and waiting orders, asks (with running jobs: wait for them to finish, cancel them, or abort), stops the runners first (they finish their jobs, or with `--cancel` cancel them and exit within 30 s), then the hub and a broker started by hand, copies itself over the installed binary and starts the same roles again from it. `upgrade --dry-run` shows the plan; `--yes` skips the question and, with running jobs, waits for them (`--yes --cancel` cancels them); Ctrl+C while waiting replaces nothing and leaves the hub and the broker running; an older binary is refused. The same by hand: `down`, replace the binary, `up`. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported. When the major protocol version changes, upgrade the broker, the hubs and the runners of other machines in the same window; every machine is upgraded the same way, one by one. The broker as an OS service keeps its own copy of the binary (Windows: `%ProgramFiles%\Al.LocalRunner\localrunner.exe`; Linux and macOS: `/usr/local/libexec/al-localrunner/localrunner`), and `upgrade` does not touch it. With administrator rights: stop the service (`AlLocalRunnerBroker` on Windows, `al-localrunner-broker` on Linux), copy the new binary over that file, start the service.
 - `uninstall` stops the roles and removes autostart, the service, the binary and the PATH entry. Keys and history stay; `--purge` removes the state too, after confirmation.
 
 ## Troubleshooting
@@ -492,6 +492,14 @@ All commands:
 | `dashboard` | a page on 127.0.0.1 |
 
 Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+
+## Releasing
+
+1. Put one version `X.Y.Z` everywhere: `version` of every `crates/*/Cargo.toml`, `image: al-localrunner:X.Y.Z` in `install/compose.yaml`, `version` of `plugin/.claude-plugin/plugin.json` and `plugin/.codex-plugin/plugin.json`. Run `cargo build` so `Cargo.lock` follows (CI and the release build use `--locked`). A pre-release carries the suffix in all of them, for example `0.2.0-rc1`.
+2. Open a pull request and wait for `ci-ok`: it is required for `main`, nothing is merged before it passes.
+3. Tag the merge commit `vX.Y.Z` and push the tag. The `release` workflow builds the archives for five platforms and fails when `localrunner --version` differs from the tag, then (environment `release`, which may wait for approval) signs `SHA256SUMS` with the release key and publishes the archives with `install.sh` and `install.ps1`. `latest` does not point to a pre-release.
+4. Check the release on one machine with `install.sh --upgrade --version X.Y.Z` (or `install.ps1`), then `localrunner doctor`. The broker OS service keeps its own copy of the binary and is updated by hand (see "Autostart, stop, update, uninstall"); other machines follow one by one, the broker first unless the major protocol version changes.
+5. A plugin update reaches users only with a new plugin `version`: change the plugin files only together with a version bump.
 
 ## License
 
