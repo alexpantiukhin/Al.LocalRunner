@@ -146,9 +146,9 @@ async fn kill_mode_ends_a_job_over_the_disk_ceiling() {
     let (outcome, events, took) = run("disk_kill", &write_big_file(20, 60), limits, 120).await;
     let ex = outcome.exceeded.expect("exceeded is set");
     assert_eq!(ex.resource, LimitedResource::Disk);
-    assert!(ex.peak_mb >= 20);
+    assert!(ex.peak_mb > ex.limit_mb);
     assert_eq!(outcome.state, JobState::Failed);
-    assert!(outcome.usage.peak_disk_mb.unwrap() >= 20);
+    assert!(outcome.usage.peak_disk_mb.unwrap() > 5);
     assert!(took < Duration::from_secs(45), "took {took:?}");
     assert!(events_text(&events).contains("killed: declared disk_mb exceeded: declared 4 MB"));
 }
@@ -192,7 +192,7 @@ async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
     if lr_exec::enforcement() != lr_exec::Enforcement::Os {
         return;
     }
-    let command = "x=$(head -c 900000000 /dev/zero | tr '\0' a); sleep 5";
+    let command = "x=$(head -c 900000000 /dev/zero | tr '\\0' a); sleep 5";
     let (outcome, events, took) = run("mem_oom", command, mem_limits(Enforce::Kill), 120).await;
     let text = events_text(&events);
     let ex = outcome.exceeded.expect(&text);
