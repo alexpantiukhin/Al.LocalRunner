@@ -68,6 +68,7 @@ pub fn read_replies() -> Vec<ReadReply> {
                 summary: summary(),
                 position: 1,
                 wait_reason: Some("runner busy".into()),
+                wait_code: None,
             }],
             recent: vec![summary()],
             pool: PoolLoad {

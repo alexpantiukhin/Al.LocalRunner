@@ -122,6 +122,11 @@ impl Track {
             note: spec.and_then(|s| s.identity.note.clone()),
             branch: spec.and_then(|s| s.identity.branch.clone()),
             cwd: spec.map(|s| s.identity.cwd.display().to_string()),
+            timeout_s: spec.map(|s| s.requirements.timeout_s),
+            github_run_url: spec.and_then(|s| match &s.identity.source {
+                lr_core::Source::Github(g) => Some(g.run_url.clone()),
+                lr_core::Source::Session => None,
+            }),
         }
     }
 }

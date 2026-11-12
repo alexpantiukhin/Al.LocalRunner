@@ -39,6 +39,9 @@ pub struct DashboardJob {
     /// The broker is unreachable and this row is the last known value.
     #[serde(default)]
     pub stale: bool,
+    /// The kind of the wait of a queued job, as [`crate::QueueItem::wait_code`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_code: Option<String>,
 }
 
 /// The runners of one broker with its pool load.

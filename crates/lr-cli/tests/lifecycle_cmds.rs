@@ -130,6 +130,8 @@ fn status_masks_the_last_lines_of_running_jobs() {
         note: None,
         branch: None,
         cwd: None,
+        timeout_s: None,
+        github_run_url: None,
     };
     let view = StatusView {
         running: vec![RunningView {

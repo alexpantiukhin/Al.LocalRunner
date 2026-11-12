@@ -209,6 +209,7 @@ impl Engine {
         match self.store.transition(&job.key, t).await {
             Ok(applied) => {
                 self.waits.remove(&job.key);
+                self.wait_codes.remove(&job.key);
                 if applied == Applied::Changed {
                     self.finish(
                         &job,

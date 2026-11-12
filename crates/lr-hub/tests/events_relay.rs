@@ -28,6 +28,8 @@ fn queued(job: &str) -> QueueEvent {
             note: None,
             branch: None,
             cwd: None,
+            timeout_s: None,
+            github_run_url: None,
         }),
     }
 }

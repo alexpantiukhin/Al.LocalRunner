@@ -69,6 +69,8 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         note: None,
         branch: None,
         cwd: None,
+        timeout_s: None,
+        github_run_url: None,
     }
 }
 
@@ -84,6 +86,7 @@ fn status_json_has_project_source_label() {
             summary: summary("j2", JobState::Queued),
             position: 1,
             wait_reason: Some("runner busy".into()),
+            wait_code: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -120,6 +123,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             summary: queued,
             position: 1,
             wait_reason: None,
+            wait_code: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {

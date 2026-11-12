@@ -129,6 +129,9 @@ pub enum ReadRequest {
     Status(StatusFilter),
     /// Finished and active runs.
     History(HistoryFilter),
+    /// Like `history`, with the full record of each run (steps, canceller); answered with
+    /// [`ReadReply::Details`], by an older broker with [`ReadReply::Unknown`].
+    HistoryDetails(HistoryFilter),
     /// The full record of one run.
     HistoryShow {
         /// The job.
@@ -227,6 +230,12 @@ pub struct JobSummary {
     /// Working directory of the submitter; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Job timeout in seconds; hidden at `summary`. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_s: Option<u64>,
+    /// Link to the GitHub run of a `github` job; hidden at `summary`. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_run_url: Option<String>,
 }
 
 /// A step of a run.
@@ -297,6 +306,10 @@ pub struct QueueItem {
     pub position: u32,
     /// Why it waits.
     pub wait_reason: Option<String>,
+    /// The kind of the wait (`runner_busy`, `memory`, `cpu`, `tag`, `rule`, `no_runner`,
+    /// `offline`, `reserved`), hidden with the reason. Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_code: Option<String>,
 }
 
 /// Pool load.
@@ -376,6 +389,13 @@ pub enum ReadReply {
     },
     /// Answer to `history_show`.
     Job(Box<JobDetail>),
+    /// Answer to `history_details`.
+    Details {
+        /// Runs, newest first.
+        jobs: Vec<JobDetail>,
+        /// Token for the next page, `None` at the end.
+        next: Option<String>,
+    },
     /// Answer to `explain`.
     Explain {
         /// The job.

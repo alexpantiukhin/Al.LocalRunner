@@ -8,16 +8,16 @@ use crate::MAX_SUBSCRIPTIONS;
 use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
-    split_text, BrokerToHub, HistoryFilter, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer,
-    ReadCall, ReadReply, ReadRequest, RunningView, StatsFilter, StatusFilter, StatusView,
-    WireSource, CHUNK_TEXT_LIMIT,
+    split_text, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall,
+    ReadReply, ReadRequest, RunningView, StatsFilter, StatusFilter, StatusView, WireSource,
+    CHUNK_TEXT_LIMIT,
 };
 
-const SCAN_LIMIT: usize = 10_000;
+pub(super) const SCAN_LIMIT: usize = 10_000;
 const TAIL_BYTES: u64 = 64 * 1024;
 const HEADER: &str = "=== step ";
 
-fn passes(
+pub(super) fn passes(
     project: &Option<String>,
     source: &Option<WireSource>,
     label: &Option<String>,
@@ -31,7 +31,11 @@ fn passes(
         && source.is_none_or(|w| s_source == Some(w))
 }
 
-fn page<T>(items: Vec<T>, cursor: &Option<String>, limit: u64) -> (Vec<T>, Option<String>) {
+pub(super) fn page<T>(
+    items: Vec<T>,
+    cursor: &Option<String>,
+    limit: u64,
+) -> (Vec<T>, Option<String>) {
     let start = cursor
         .as_deref()
         .and_then(|c| c.parse::<usize>().ok())
@@ -95,6 +99,7 @@ impl Engine {
         let reply = match call.request {
             ReadRequest::Status(f) => ReadReply::Status(self.status(&viewer, f).await),
             ReadRequest::History(f) => self.history(&viewer, f).await,
+            ReadRequest::HistoryDetails(f) => self.history_details(&viewer, f).await,
             ReadRequest::HistoryShow { job, client } => {
                 match self.run_of(&viewer, &job, client.as_deref()).await {
                     Ok((rec, a)) => {
@@ -201,7 +206,11 @@ impl Engine {
             }
             let rec = self.store.job(&job.key).await.ok().flatten();
             let steps = match (&rec, a.sees_fields()) {
-                (Some(r), true) => r.steps.iter().map(crate::api::step_view).collect(),
+                (Some(r), true) => crate::api::live_steps(
+                    r.steps.iter().map(crate::api::step_view).collect(),
+                    summary.state,
+                    job.started_at,
+                ),
                 _ => Vec::new(),
             };
             let last_lines = if a.sees_log() {
@@ -239,6 +248,10 @@ impl Engine {
                     .sees_fields()
                     .then(|| self.waits.get(&job.key).cloned())
                     .flatten(),
+                wait_code: a
+                    .sees_fields()
+                    .then(|| self.wait_codes.get(&job.key).map(|c| c.to_string()))
+                    .flatten(),
             });
         }
         let (queue, next) = page(queue, &f.cursor, limit as u64);
@@ -269,49 +282,6 @@ impl Engine {
             },
             next,
         }
-    }
-
-    async fn history(&self, viewer: &Viewer, f: HistoryFilter) -> ReadReply {
-        let client = match f.mine {
-            true => Some(viewer.key.clone()),
-            false => f.client.clone(),
-        };
-        let filter = JobFilter {
-            client,
-            project: f.project.clone(),
-            source: f.source.map(|s| match s {
-                WireSource::Session => lr_abstractions::SourceKind::Session,
-                WireSource::Github => lr_abstractions::SourceKind::Github,
-            }),
-            label: f.label.clone(),
-            profile: f.profile.clone(),
-            state: f.state,
-            platform: f.platform.clone(),
-            runner: f.runner.clone(),
-            since: f.since,
-            active_only: f.active_only,
-            limit: Some(SCAN_LIMIT),
-        };
-        let Ok(rows) = self.store.jobs(&filter).await else {
-            return ReadReply::Failed {
-                message: "history is unavailable".into(),
-            };
-        };
-        let jobs: Vec<JobSummary> = rows
-            .iter()
-            .filter_map(|rec| {
-                let a = self.access_to(viewer, &rec.job.key.client);
-                let s = mask_summary(summary_of(&rec.job), a)?;
-                let source = a.sees_fields().then(|| wire_source(rec.job.source));
-                let profile_ok = f
-                    .profile
-                    .as_ref()
-                    .is_none_or(|p| s.profile.as_ref() == Some(p));
-                (profile_ok && passes(&f.project, &f.source, &f.label, &s, source)).then_some(s)
-            })
-            .collect();
-        let (jobs, next) = page(jobs, &f.cursor, f.effective_limit());
-        ReadReply::History { jobs, next }
     }
 
     pub(crate) async fn run_of(

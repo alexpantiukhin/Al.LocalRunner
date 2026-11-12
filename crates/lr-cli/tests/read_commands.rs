@@ -32,6 +32,8 @@ fn summary(job: &str, queued: u64) -> JobSummary {
         note: None,
         branch: None,
         cwd: None,
+        timeout_s: None,
+        github_run_url: None,
     }
 }
 
@@ -414,6 +416,7 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
         detail: detail_of(summary(job, 0), Vec::new(), None),
         last_lines: Vec::new(),
         stale: false,
+        wait_code: None,
     };
     let snap = DashboardSnapshot {
         taken_at: Timestamp(0),

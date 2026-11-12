@@ -67,6 +67,8 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         note: None,
         branch: None,
         cwd: None,
+        timeout_s: None,
+        github_run_url: None,
     }
 }
 
@@ -90,6 +92,7 @@ fn status(name: &str) -> StatusView {
             summary: summary(&format!("wait-{name}"), JobState::Queued),
             position: 1,
             wait_reason: Some(format!("runner of {name} busy")),
+            wait_code: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {

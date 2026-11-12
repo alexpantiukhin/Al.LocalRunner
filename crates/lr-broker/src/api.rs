@@ -4,7 +4,7 @@
 use crate::engine::Job;
 use crate::policy::OthersOrders;
 use lr_abstractions::{JobRecord, JobRow, SourceKind, Spread, Stats, StepRow};
-use lr_core::JobState;
+use lr_core::{JobState, StepState, Timestamp};
 use lr_proto::{
     ClientUsageView, JobDetail, JobSummary, ProfileStatsView, QueueEvent, ReasonCode, SpreadView,
     StatsView, StepStatsView, StepView, Topic, WireSource,
@@ -69,6 +69,8 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.note = None;
             s.branch = None;
             s.cwd = None;
+            s.timeout_s = None;
+            s.github_run_url = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -158,6 +160,8 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         note: row.note.clone(),
         branch: row.branch.clone(),
         cwd: Some(row.cwd.clone()),
+        timeout_s: None,
+        github_run_url: None,
     }
 }
 
@@ -174,11 +178,42 @@ pub fn step_view(row: &StepRow) -> StepView {
     }
 }
 
+/// Steps as they stand while the job runs: the first queued step after only ended ones (none
+/// skipped or cancelled) is the one executing, started when the step before it ended, the
+/// first one when the job started. The runner reports a step only once it ends.
+pub fn live_steps(
+    mut steps: Vec<StepView>,
+    state: JobState,
+    started: Option<Timestamp>,
+) -> Vec<StepView> {
+    if !matches!(state, JobState::Running | JobState::Cancelling) || started.is_none() {
+        return steps;
+    }
+    if steps.iter().any(|s| s.state == StepState::Running) {
+        return steps;
+    }
+    let Some(i) = steps.iter().position(|s| s.state == StepState::Queued) else {
+        return steps;
+    };
+    let before = &steps[..i];
+    let blocked = before
+        .iter()
+        .any(|s| matches!(s.state, StepState::Skipped | StepState::Cancelled));
+    if !blocked {
+        let since = before.last().map_or(started, |s| s.finished_at.or(started));
+        steps[i].state = StepState::Running;
+        steps[i].started_at = since;
+    }
+    steps
+}
+
 /// The unmasked full record of a stored run.
 pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
     let row = &rec.job;
+    let mut summary = summary_of(row);
+    summary.github_run_url = rec.github.as_ref().map(|g| g.run_url.clone());
     JobDetail {
-        summary: summary_of(row),
+        summary,
         note: row.note.clone(),
         branch: row.branch.clone(),
         cwd: Some(row.cwd.clone()),
@@ -186,7 +221,11 @@ pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
         os_user: Some(row.os_user.clone()),
         source: Some(wire_source(row.source)),
         github_run_url: rec.github.as_ref().map(|g| g.run_url.clone()),
-        steps: rec.steps.iter().map(step_view).collect(),
+        steps: live_steps(
+            rec.steps.iter().map(step_view).collect(),
+            row.state,
+            row.started_at,
+        ),
         secrets: row.secrets.clone(),
         cancelled_by: row.cancelled_by.clone(),
         wait_reason,
@@ -220,6 +259,11 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         note: job.spec.identity.note.clone(),
         branch: job.spec.identity.branch.clone(),
         cwd: Some(job.spec.identity.cwd.display().to_string()),
+        timeout_s: Some(job.entry.order.requirements.timeout_s),
+        github_run_url: match &job.spec.identity.source {
+            lr_core::Source::Github(g) => Some(g.run_url.clone()),
+            lr_core::Source::Session => None,
+        },
     }
 }
 

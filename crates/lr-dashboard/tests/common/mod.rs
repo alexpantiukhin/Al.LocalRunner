@@ -44,6 +44,8 @@ fn job(
                 note: None,
                 branch: None,
                 cwd: None,
+                timeout_s: None,
+                github_run_url: None,
             },
             note: Some(XSS.into()),
             branch: Some("main".into()),
@@ -71,6 +73,7 @@ fn job(
             Vec::new()
         },
         stale: false,
+        wait_code: None,
     }
 }
 

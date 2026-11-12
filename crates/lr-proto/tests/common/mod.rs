@@ -154,6 +154,8 @@ pub fn summary() -> JobSummary {
         note: None,
         branch: None,
         cwd: None,
+        timeout_s: None,
+        github_run_url: None,
     }
 }
 

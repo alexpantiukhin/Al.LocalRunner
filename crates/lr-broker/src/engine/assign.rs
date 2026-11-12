@@ -55,6 +55,14 @@ impl Engine {
                 Some((key, self.wait_text(wait)))
             })
             .collect();
+        self.wait_codes = plan
+            .waiting
+            .iter()
+            .filter_map(|(id, wait)| {
+                let key = self.queue.iter().find(|j| &j.internal == id)?.key.clone();
+                Some((key, super::metrics::wait_code(wait)))
+            })
+            .collect();
         self.evict_idle(plan.waiting.first().map(|(_, w)| w));
         self.note_waits(&plan.waiting);
         self.note_rules(&plan.waiting);
@@ -117,6 +125,7 @@ impl Engine {
         job.runner = Some(a.runner);
         job.assigned_at = now;
         self.waits.remove(&job.key);
+        self.wait_codes.remove(&job.key);
         self.active.push(job);
     }
 
@@ -320,11 +329,13 @@ impl Engine {
             .steps
             .get(s.ord as usize)
             .map_or(0, |st| st.timeout_s);
+        let begun = Timestamp(now.0.saturating_sub(s.duration_ms));
+        let started_at = Some(self.active[i].started_at.map_or(begun, |j| begun.max(j)));
         let update = StepUpdate {
             ord: s.ord,
             state: s.state,
             exit_code: s.exit_code,
-            started_at: None,
+            started_at,
             finished_at: Some(now),
         };
         if !matches!(
@@ -348,7 +359,7 @@ impl Engine {
                     name: s.name.clone(),
                     state: s.state,
                     exit_code: s.exit_code,
-                    started_at: None,
+                    started_at,
                     finished_at: Some(now),
                     timeout_s,
                 },

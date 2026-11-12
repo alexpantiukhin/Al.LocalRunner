@@ -11,6 +11,7 @@ mod drain;
 mod events;
 mod follow;
 mod hello;
+mod history;
 mod idle_free;
 mod inspect;
 mod journal;
@@ -136,6 +137,7 @@ impl Broker {
                 active: Vec::new(),
                 served: ServeLog::default(),
                 waits: HashMap::new(),
+                wait_codes: HashMap::new(),
                 held_by: HashMap::new(),
                 slow_peers: AtomicU64::new(0),
                 next_id: 0,
@@ -318,6 +320,7 @@ pub(crate) struct Engine {
     pub(crate) active: Vec<Job>,
     pub(crate) served: ServeLog,
     pub(crate) waits: HashMap<JobKey, String>,
+    pub(crate) wait_codes: HashMap<JobKey, &'static str>,
     pub(crate) held_by: HashMap<JobKey, String>,
     pub(crate) slow_peers: AtomicU64,
     next_id: u64,

@@ -7,6 +7,7 @@ pub mod build;
 pub mod commands;
 pub mod control;
 pub mod dashboard;
+pub mod dashboard_model;
 pub mod doctor;
 pub mod facts;
 pub mod fs_files;

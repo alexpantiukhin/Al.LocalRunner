@@ -39,6 +39,17 @@ pub(crate) fn saturation_reason(wait: &Wait) -> Option<&'static str> {
     }
 }
 
+/// The kind of a wait as the dashboard groups it: the saturation reason, else `no_runner`,
+/// `offline` or `reserved`.
+pub(crate) fn wait_code(wait: &Wait) -> &'static str {
+    match wait {
+        Wait::RunnerOffline => "offline",
+        Wait::NoRunner => "no_runner",
+        Wait::HeadReserved { .. } => "reserved",
+        other => saturation_reason(other).unwrap_or("rule"),
+    }
+}
+
 fn label_of(job: &Job, known: &BTreeSet<&str>) -> String {
     match &job.entry.order.requirements.platform {
         None => SAME_MACHINE.to_string(),
