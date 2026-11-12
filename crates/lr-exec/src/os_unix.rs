@@ -27,7 +27,7 @@ pub(crate) fn kill_left_group(pgid: u32, start: u64) {
     if pgid <= 1 || pgid > i32::MAX as u32 || probe(pgid) != Probe::Gone {
         return;
     }
-    if !may_kill_left_group(start, imp::boot(), in_scope()) {
+    if !may_kill_left_group(start, imp::boot(), in_scope) {
         return;
     }
     unsafe {
@@ -57,22 +57,17 @@ mod imp {
         })
     }
 
-    use crate::boot::{Boot, TICK_BITS};
+    use crate::boot::{tag_of, Boot, TICK_BITS};
 
     pub(crate) fn boot() -> Boot {
-        Boot::Tag(boot_tag())
+        boot_tag().map_or(Boot::Unknown, Boot::Tag)
     }
 
-    fn boot_tag() -> u64 {
-        static CACHE: OnceLock<u64> = OnceLock::new();
+    fn boot_tag() -> Option<u64> {
+        static CACHE: OnceLock<Option<u64>> = OnceLock::new();
         *CACHE.get_or_init(|| {
-            let id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            for byte in id.trim().bytes() {
-                hash ^= u64::from(byte);
-                hash = hash.wrapping_mul(0x0100_0000_01b3);
-            }
-            hash >> TICK_BITS
+            let id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok();
+            tag_of(id.as_deref())
         })
     }
 
@@ -91,7 +86,9 @@ mod imp {
         if stat.state == 'Z' || stat.state == 'X' {
             return Probe::Gone;
         }
-        Probe::Alive((boot_tag() << TICK_BITS) | (stat.start_ticks & ((1 << TICK_BITS) - 1)))
+        Probe::Alive(
+            (boot_tag().unwrap_or(0) << TICK_BITS) | (stat.start_ticks & ((1 << TICK_BITS) - 1)),
+        )
     }
 
     pub(crate) fn parents() -> HashMap<u32, u32> {
@@ -141,7 +138,7 @@ mod imp {
                 0,
             )
         };
-        if got != 0 || size != size_of::<libc::timeval>() || at.tv_sec < 0 {
+        if got != 0 || size != size_of::<libc::timeval>() || at.tv_sec < 0 || at.tv_usec < 0 {
             return Boot::Unknown;
         }
         Boot::Since(at.tv_sec as u64 * 1_000_000 + at.tv_usec as u64)
