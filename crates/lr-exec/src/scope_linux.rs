@@ -167,6 +167,7 @@ pub(crate) fn properties(limits: &ResourceLimits, controllers: &[String]) -> Vec
         let bytes = crate::limits::bytes_of(crate::limits::backstop_mb(mem));
         out.push(format!("MemoryMax={bytes}"));
         out.push("MemorySwapMax=0".to_string());
+        out.push("OOMPolicy=continue".to_string());
     }
     if let (Some(millis), true) = (limits.cpu_millis, has("cpu")) {
         out.push(format!("CPUQuota={}%", (millis / 10).max(1)));
@@ -464,6 +465,7 @@ mod tests {
             [
                 "MemoryMax=1153433600",
                 "MemorySwapMax=0",
+                "OOMPolicy=continue",
                 "CPUQuota=400%",
                 "TasksMax=64"
             ]
