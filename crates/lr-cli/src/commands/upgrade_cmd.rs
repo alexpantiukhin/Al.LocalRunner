@@ -110,6 +110,21 @@ pub fn restart_roles(running: &RunningRoles, service: bool) -> Vec<RoleArg> {
     out
 }
 
+/// The roles started again as the plan prints them: the runners by name.
+pub fn restart_summary(running: &RunningRoles, service: bool) -> String {
+    restart_roles(running, service)
+        .iter()
+        .map(|r| match r {
+            RoleArg::Runner => {
+                let names: Vec<&str> = running.runners.iter().map(String::as_str).collect();
+                format!("runner ({})", names.join(", "))
+            }
+            other => format!("{other:?}").to_lowercase(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Applies the copies; a stopped role may hold its binary for a few seconds more, so a failure
 /// is retried for [`BUSY_FOR`] before it is reported.
 async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), String> {
@@ -270,11 +285,7 @@ impl Job<'_> {
             false => println!(
                 "stops: {}; starts again: {}",
                 stop.join(", "),
-                again
-                    .iter()
-                    .map(|r| format!("{r:?}").to_lowercase())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                restart_summary(self.running, service)
             ),
         }
         let copies: Vec<Action> = install_plan(self.exe.to_path_buf(), self.dir.to_path_buf())
