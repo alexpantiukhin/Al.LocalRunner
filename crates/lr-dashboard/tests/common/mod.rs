@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod http;
+pub mod node;
 
 use lr_abstractions::fakes::FakeDataSource;
 use lr_core::{JobId, JobState, StepState, Timestamp, Zone};

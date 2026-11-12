@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", step: "", as: params.get("as") || ""
+    sel: -1, open: null, paused: false, missed: 0, log: "", step: "", stepAuto: true, as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -17,11 +17,6 @@
       if (k === "text") { n.textContent = attrs[k]; } else if (k === "cls") { n.className = attrs[k]; } else { n.setAttribute(k, attrs[k]); }
     });
     (kids || []).forEach(function (c) { if (c != null) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
-    return n;
-  }
-  function svg(tag, attrs) {
-    var n = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    Object.keys(attrs).forEach(function (k) { if (k === "text") { n.textContent = attrs[k]; } else { n.setAttribute(k, attrs[k]); } });
     return n;
   }
   function now() { return config.live ? Date.now() : S.data.taken_at; }
@@ -210,7 +205,11 @@
 
   function fillCard(j) {
     S.open = j;
-    var d = j.detail, s = d.summary, t = now();
+    var d = j.detail, s = d.summary, t = now(), was = S.step;
+    if (S.stepAuto) {
+      var live = (d.steps || []).filter(function (st) { return st.state === "running"; })[0];
+      S.step = live ? live.name : "";
+    }
     $("card-title").textContent = s.job + " · " + s.state + (j.stale ? " (stale)" : "");
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Commit", d.commit], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
@@ -226,15 +225,16 @@
       fill.style.width = Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0) + "%";
       var row = el("button", { type: "button", cls: "step" + (st.name === S.step ? " chosen" : ""), "aria-pressed": String(st.name === S.step), title: "Show the log of this step" },
         [el("span", { text: st.name + " · " + st.state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
-      row.addEventListener("click", function () { S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
+      row.addEventListener("click", function () { S.stepAuto = false; S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
       return row;
     }));
     $("card-cancel").hidden = !config.live || FINAL.indexOf(s.state) >= 0;
     $("card").hidden = false;
+    if (S.step !== was && S.log) showLog();
   }
   function openCard(j) {
-    var live = (j.detail.steps || []).filter(function (st) { return st.state === "running"; })[0];
-    S.step = live ? live.name : "";
+    S.stepAuto = true;
+    S.log = "";
     fillCard(j);
     S.log = (j.last_lines || []).join("\n");
     showLog();
@@ -243,19 +243,20 @@
   function stepLog(text, name) {
     if (!name) return text;
     var out = [], on = false, found = false, head = "=== step ";
+    var mine = /^( \|| ===| cancelled at | (passed|failed|timeout|skipped|cancelled)[ ,])/;
     text.split("\n").forEach(function (l) {
       if (l.indexOf(head) === 0 && /===\s*$/.test(l)) {
         var rest = l.slice(head.length);
-        on = rest.indexOf(name) === 0 && /^( \|| ===| cancelled at )/.test(rest.slice(name.length));
+        on = rest.indexOf(name) === 0 && mine.test(rest.slice(name.length));
         found = found || on;
       }
       if (on) out.push(l);
     });
-    return found ? out.join("\n") : text;
+    return found ? out.join("\n") : null;
   }
   function showLog() {
-    var q = $("log-search").value.toLowerCase(), all = stepLog(S.log, S.step);
-    $("log-title").textContent = S.step ? "Log · step " + S.step : "Log";
+    var q = $("log-search").value.toLowerCase(), part = stepLog(S.log, S.step), all = part == null ? S.log : part;
+    $("log-title").textContent = !S.step ? "Log" : part == null ? "Log (step " + S.step + " is not in the loaded part)" : "Log · step " + S.step;
     var text = q ? all.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : all;
     var pre = $("log");
     pre.textContent = text;

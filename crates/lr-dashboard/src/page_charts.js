@@ -43,7 +43,8 @@ var LRCharts = (function () {
     var from = now - span, lw = 120, bw = 480, w = lw + bw + 10, rows = {}, names = [], waits = [];
     jobs.forEach(function (j) {
       var s = j.detail.summary;
-      if (s.queued_at < now && (s.started_at || now) > from) waits.push([s.queued_at, s.started_at || now]);
+      var waited = s.started_at || s.finished_at || now;
+      if (s.queued_at < now && waited > from) waits.push([s.queued_at, waited]);
       if (!s.runner || !s.started_at || (s.finished_at || now) < from) return;
       if (!rows[s.runner]) { rows[s.runner] = []; names.push(s.runner); }
       rows[s.runner].push(s);

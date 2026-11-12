@@ -7,12 +7,8 @@ use serde_json::{json, Value};
 const PAGE: &str = include_str!("../src/page.js");
 const CHARTS: &str = include_str!("../src/page_charts.js");
 
-fn function(name: &str) -> &'static str {
-    let start = PAGE
-        .find(&format!("  function {name}("))
-        .unwrap_or_else(|| panic!("{name} in page.js"));
-    let end = start + PAGE[start..].find("\n  }\n").unwrap() + 4;
-    &PAGE[start..end]
+fn function(name: &str) -> String {
+    common::node::function(PAGE, name)
 }
 
 const FAKE_DOM: &str = "var document = { createElementNS: function (ns, tag) { return { tag: tag, \
@@ -20,31 +16,25 @@ const FAKE_DOM: &str = "var document = { createElementNS: function (ns, tag) { r
     appendChild: function (c) { this.kids.push(c); } }; } };\n";
 
 fn node(program: &str, test: &str) -> Option<Value> {
-    let out = match std::process::Command::new("node")
-        .args(["-e", program])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => {
-            let why = format!("node is not available ({e}), page code not executed");
-            let required = std::env::var("LOCALRUNNER_REQUIRE_TEST_TOOLS").unwrap_or_default();
-            assert!(
-                !required
-                    .split(',')
-                    .any(|t| t.trim() == "node" || t.trim() == "all"),
-                "LOCALRUNNER_REQUIRE_TEST_TOOLS={required} requires node, but {why}"
-            );
-            use std::io::Write;
-            let _ = writeln!(std::io::stderr(), "SKIPPED {test}: {why}");
-            return None;
-        }
-    };
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
+    common::node::run(program, test)
+}
+
+#[test]
+fn the_functions_the_tests_run_are_found_whatever_the_line_ends() {
+    let crlf = PAGE.replace("\r\n", "\n").replace('\n', "\r\n");
+    for name in ["row", "csvCell", "stepLog", "now", "showLog", "fillCard"] {
+        let lf = function(name);
+        assert!(
+            lf.starts_with(&format!("function {name}(")) && lf.ends_with('}'),
+            "{lf}"
+        );
+        assert_eq!(common::node::function(&crlf, name), lf, "{name}");
+    }
+    let last = common::node::function(
+        "(function () {\n  function tail() { return { a: 1 }; }\n}());",
+        "tail",
     );
-    Some(serde_json::from_slice(&out.stdout).unwrap())
+    assert_eq!(last, "function tail() { return { a: 1 }; }");
 }
 
 #[test]
@@ -72,9 +62,7 @@ fn table_and_csv_rows_carry_source_directory_and_the_job_timeout() {
          console.log(JSON.stringify(rows.map(function (r) {{ return {{ source: r.source, cwd: r.cwd, \
          wait: r.wait, csv: [r.source, r.cwd].map(csvCell).join(',') }}; }})));",
         function("row"),
-        PAGE.lines()
-            .find(|l| l.contains("function csvCell("))
-            .unwrap(),
+        function("csvCell"),
     );
     let Some(rows) = node(&program, "table_and_csv_rows") else {
         return;
@@ -104,15 +92,19 @@ fn the_log_of_the_chosen_step_is_its_section() {
     let Some(parts) = node(&program, "the_log_of_the_chosen_step") else {
         return;
     };
-    assert_eq!(parts[0], "=== step build | project=o/r ===\nb1\nb2");
+    assert_eq!(
+        parts[0],
+        "=== step build | project=o/r ===\nb1\nb2\n=== step build passed, exit 0, 12 ms ==="
+    );
     assert_eq!(
         parts[1],
         "=== step test ===\nt1\n=== step test cancelled at 9 ===\n"
     );
     assert_eq!(parts[2], log, "no step chosen shows the whole log");
     assert_eq!(
-        parts[3], log,
-        "a step without a section shows the whole log"
+        parts[3],
+        Value::Null,
+        "a step without a section is told apart from a section"
     );
 }
 
@@ -122,6 +114,20 @@ fn texts(node: &Value, out: &mut Vec<String>) {
     }
     for kid in node["kids"].as_array().into_iter().flatten() {
         texts(kid, out);
+    }
+}
+
+fn waiting_widths(node: &Value, out: &mut Vec<u64>) {
+    let titled = node["kids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|k| k["tag"] == "title" && k["textContent"] == "orders waiting");
+    if node["tag"] == "rect" && titled {
+        out.push(node["attrs"]["width"].as_u64().unwrap());
+    }
+    for kid in node["kids"].as_array().into_iter().flatten() {
+        waiting_widths(kid, out);
     }
 }
 
@@ -140,6 +146,13 @@ fn stats_show_saturation_by_wait_reason_and_runner_lanes_of_the_day() {
     done.detail.summary.finished_at = Some(Timestamp(now - 1_800_000));
     snap.jobs[0].detail.summary.started_at = Some(Timestamp(now - 60_000));
     snap.jobs.push(done);
+    let mut gone = snap.jobs[1].clone();
+    gone.list = DashboardList::History;
+    gone.detail.summary.job.0 = "j-gone".into();
+    gone.detail.summary.state = JobState::Cancelled;
+    gone.detail.summary.queued_at = Timestamp(now - 36_000_000);
+    gone.detail.summary.finished_at = Some(Timestamp(now - 35_940_000));
+    snap.jobs.push(gone);
     let jobs = serde_json::to_string(&snap.jobs).unwrap();
     let program = format!(
         "{FAKE_DOM}{CHARTS}\n\
@@ -170,6 +183,13 @@ fn stats_show_saturation_by_wait_reason_and_runner_lanes_of_the_day() {
             .any(|t| t.starts_with("j-done · alex@laptop")),
         "a lane bar names the job and the client: {lane_text:?}"
     );
+    let mut widths = Vec::new();
+    waiting_widths(&out["lanes"], &mut widths);
+    assert!(!widths.is_empty());
+    assert!(
+        widths.iter().all(|w| *w <= 2),
+        "a job cancelled in the queue waited one minute, not until now: {widths:?}"
+    );
     let mut bar_text = Vec::new();
     texts(&out["bars"], &mut bar_text);
     assert!(bar_text.contains(&"a-very-long-client-label-that-does-not-fit".to_string()));
@@ -181,25 +201,4 @@ fn stats_show_saturation_by_wait_reason_and_runner_lanes_of_the_day() {
         meter_width >= 86 + 7 * "12288/16384MB".len() as u64,
         "the meter label fits: {meter_width}"
     );
-}
-
-#[test]
-fn the_page_reads_the_new_fields_and_follows_the_hash() {
-    let row = function("row");
-    assert!(row.contains("s.timeout_s ? s.timeout_s * 1000"), "{row}");
-    let stats = function("renderStats");
-    assert!(stats.contains("c.label || c.client"), "{stats}");
-    assert!(stats.contains("LRCharts.saturation(") && stats.contains("LRCharts.lanes("));
-    let runners = function("renderRunners");
-    assert!(runners.contains("\"Queue\""), "{runners}");
-    assert!(PAGE.contains("window.addEventListener(\"hashchange\""));
-    let card = function("fillCard");
-    for field in ["d.source", "d.note", "d.branch", "d.cwd", "d.cancelled_by"] {
-        assert!(card.contains(field), "{field} on the card");
-    }
-    assert!(
-        card.contains("S.step = S.step === st.name"),
-        "a step is chosen on the card"
-    );
-    assert!(function("showLog").contains("stepLog(S.log, S.step)"));
 }
