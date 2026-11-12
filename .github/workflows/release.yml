@@ -52,9 +52,21 @@ jobs:
           pattern: dist-*
           merge-multiple: true
           path: dist
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Install scripts with the release public key
+        env:
+          RELEASE_PUBKEY: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJuy6/QUZNtaQ5Zq26RMxU6aEEO0UoEE8B8Fud5jL8kg al-localrunner-release"
+        run: |
+          for f in install.sh install.ps1; do
+            awk -v key="$RELEASE_PUBKEY" '{ gsub(/@RELEASE_PUBKEY@/, key); print }' "src/install/$f" > "dist/$f"
+            if grep -q '@RELEASE_PUBKEY@' "dist/$f"; then echo "placeholder left in $f"; exit 1; fi
+          done
+          chmod 0755 dist/install.sh
       - name: Sums
         working-directory: dist
-        run: sha256sum al-localrunner-* > SHA256SUMS
+        run: sha256sum al-localrunner-* install.sh install.ps1 > SHA256SUMS
       - name: Sign
         working-directory: dist
         env:
