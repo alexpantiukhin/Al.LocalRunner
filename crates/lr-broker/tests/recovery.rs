@@ -239,3 +239,67 @@ async fn after_a_restart_runner_silence_counts_from_its_first_heartbeat() {
     h.local_hub("alex").await.until_runner("r1", false).await;
     assert!(r.closed().await);
 }
+
+fn ack(job: &str, seq: u64) -> RunnerToBroker {
+    RunnerToBroker::Ack(Ack {
+        job: JobId(job.into()),
+        seq,
+    })
+}
+
+async fn confirmed_on_vanished_runner(h: &Harness) {
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r1.assign().await.seq, 1);
+    r1.send(&ack("j1", 1)).await;
+    r1.close().await;
+    hub.until_runner("r1", false).await;
+}
+
+#[tokio::test]
+async fn a_confirmed_assignment_is_not_given_to_another_runner_while_its_runner_may_run_it() {
+    let h = Harness::start(GRACE);
+    confirmed_on_vanished_runner(&h).await;
+    let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;
+    r2.quiet().await;
+    let mut back = rejoin(&h, "r1").await;
+    back.quiet().await;
+    back.send(&started("j1", 1)).await;
+    back.acked(1).await;
+    let row = h.until_state(ALEX, "j1", JobState::Running).await;
+    assert_eq!(row.job.runner.as_deref(), Some("r1"));
+    r2.quiet().await;
+}
+
+#[tokio::test]
+async fn a_confirmed_assignment_returns_to_the_queue_once_the_runner_killed_it() {
+    let h = Harness::start(GRACE);
+    confirmed_on_vanished_runner(&h).await;
+    h.clock.advance(Duration::from_millis(120_000 - 1));
+    let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;
+    r2.quiet().await;
+    h.clock.advance(Duration::from_millis(1));
+    h.poke().await;
+    let a = r2.assign().await;
+    assert_eq!((a.job, a.seq), (JobId("j1".into()), 1));
+}
+
+#[tokio::test]
+async fn re_hello_after_a_confirmed_assignment_keeps_it_with_the_runner() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.seq, 1);
+    r.send(&ack("j1", 1)).await;
+    r.send(&RunnerToBroker::Heartbeat).await;
+    h.poke().await;
+    let mut again = rejoin(&h, "r1").await;
+    again.quiet().await;
+    again.send(&started("j1", 1)).await;
+    again.acked(1).await;
+    h.until_state(ALEX, "j1", JobState::Running).await;
+}

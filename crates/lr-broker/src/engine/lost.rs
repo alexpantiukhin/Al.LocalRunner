@@ -9,6 +9,13 @@ use std::collections::BTreeSet;
 
 const BROKER: &str = "broker";
 
+pub(crate) fn held_deadline(job: &Job, grace_s: u64) -> Option<Timestamp> {
+    if job.started_at.is_some() {
+        return None;
+    }
+    Some(job.gone_since?.plus_secs(grace_s))
+}
+
 pub(crate) fn lost_deadline(job: &Job, grace_s: u64) -> Option<Timestamp> {
     let started = job.started_at?;
     let timeout_s = job.entry.order.requirements.timeout_s;
@@ -36,6 +43,14 @@ impl Engine {
         for i in due.into_iter().rev() {
             let job = self.active.remove(i);
             self.lose(job, now, ReasonCode::RunnerLost).await;
+        }
+        let held: Vec<usize> = (0..self.active.len())
+            .filter(|&i| held_deadline(&self.active[i], grace_s).is_some_and(|d| now >= d))
+            .collect();
+        changed |= !held.is_empty();
+        for i in held.into_iter().rev() {
+            let job = self.active.remove(i);
+            self.requeue_or_retry(job).await;
         }
         let past_grace = now >= self.booted_at.plus_secs(grace_s);
         if past_grace {

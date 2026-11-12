@@ -310,6 +310,8 @@ impl Engine {
             start_unsaved: false,
             queued_since: self.now(),
             platform_label: None,
+            confirmed: false,
+            gone_since: None,
         }
     }
 

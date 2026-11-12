@@ -305,6 +305,7 @@ impl Engine {
                 self.ack_runner(conn, &r.job, r.seq);
                 self.plan().await;
             }
+            RunnerToBroker::Ack(a) => self.confirm_assign(&name, &a.job),
             RunnerToBroker::Drain => self.drain(&name).await,
             RunnerToBroker::CapabilitiesUpdate(u) => {
                 self.capabilities_update(&name, u.capabilities).await

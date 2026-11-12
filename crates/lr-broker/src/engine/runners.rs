@@ -134,6 +134,11 @@ impl Engine {
         if let Some(c) = self.conns.get_mut(&conn) {
             c.role = Role::Runner(name.to_string());
         }
+        for job in self.active.iter_mut() {
+            if job.runner.as_deref() == Some(name) {
+                job.gone_since = None;
+            }
+        }
         self.publish(
             None,
             QueueEvent::RunnerOnline {
@@ -141,6 +146,16 @@ impl Engine {
             },
         );
         Ok(())
+    }
+
+    pub(crate) fn confirm_assign(&mut self, runner: &str, job: &lr_core::JobId) {
+        if let Some(j) = self
+            .active
+            .iter_mut()
+            .find(|j| j.runner.as_deref() == Some(runner) && &j.key.job == job)
+        {
+            j.confirmed = true;
+        }
     }
 
     pub(crate) async fn resend_cancels(&mut self, name: &str) {
@@ -220,14 +235,18 @@ impl Engine {
                 name: name.to_string(),
             },
         );
-        let (back, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.active)
-            .into_iter()
-            .partition(|j| j.runner.as_deref() == Some(name) && j.started_at.is_none());
+        let (back, keep): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.active).into_iter().partition(|j| {
+                j.runner.as_deref() == Some(name) && j.started_at.is_none() && !j.confirmed
+            });
         self.active = keep;
         for job in self.active.iter_mut() {
             if job.runner.as_deref() == Some(name) {
                 if let Some(c) = job.cancel.as_mut() {
                     c.sent = false;
+                }
+                if job.started_at.is_none() && job.gone_since.is_none() {
+                    job.gone_since = Some(now);
                 }
             }
         }

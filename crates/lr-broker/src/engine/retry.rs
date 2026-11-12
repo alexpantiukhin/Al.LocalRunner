@@ -94,6 +94,8 @@ impl Engine {
             return self.retry_later("put a run back into the queue", &e, Retry::Requeue(job));
         }
         job.runner = None;
+        job.confirmed = false;
+        job.gone_since = None;
         job.queued_since = self.now();
         match job.cancel.take() {
             Some(cancel) => self.cancel_waiting(job, cancel).await,
