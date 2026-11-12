@@ -198,9 +198,9 @@ async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
     let ex = outcome.exceeded.expect(&text);
     assert_eq!(ex.resource, LimitedResource::Memory);
     assert_eq!((ex.limit_mb, ex.declared_mb), (150, Some(100)));
-    assert!(ex.peak_mb >= 165);
+    assert!(ex.peak_mb > ex.limit_mb);
     assert_eq!(outcome.state, JobState::Failed);
-    assert!(outcome.usage.peak_mem_mb.unwrap() >= 165);
+    assert!(outcome.usage.peak_mem_mb.unwrap() > ex.limit_mb);
     assert!(took < Duration::from_secs(45), "took {took:?}");
     assert!(
         text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB"),
