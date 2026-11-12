@@ -3,7 +3,7 @@ mod common;
 use common::TempDir;
 use lr_cli::commands::service_cmd::{
     admin_left, autostart, autostart_with, broker_left_for_admin, install_service,
-    install_service_with,
+    install_service_with, update_service_with,
 };
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::os_service::{service_installed, Os};
@@ -79,4 +79,18 @@ fn a_run_for_all_roles_leaves_only_the_broker_service_to_an_administrator() {
     let on = admin_left(true);
     assert!(on.contains("autostart on broker"), "{on}");
     assert!(admin_left(false).contains("autostart off broker"));
+}
+
+#[test]
+fn updating_the_service_needs_administrator_rights_and_an_installed_service() {
+    assert_eq!(
+        update_service_with(false, false, true),
+        Err(
+            "broker update-service needs administrator rights (run it elevated or with sudo)"
+                .to_string()
+        )
+    );
+    assert!(update_service_with(false, true, false)
+        .unwrap_err()
+        .contains("install-service"));
 }

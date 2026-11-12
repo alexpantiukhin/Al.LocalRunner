@@ -87,6 +87,13 @@ pub enum BrokerAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Replace the broker service's own copy of the binary with this one and restart the
+    /// service (administrator).
+    UpdateService {
+        /// Print what would be done and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Print a join code.
     Add {
         /// Client name.

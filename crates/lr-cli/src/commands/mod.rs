@@ -398,6 +398,7 @@ pub async fn run(cli: Cli) -> i32 {
             BrokerAction::InstallService { dry_run } => {
                 service_cmd::install_service(&layout, dry_run)
             }
+            BrokerAction::UpdateService { dry_run } => service_cmd::update_service(dry_run),
             BrokerAction::Add {
                 name,
                 label,

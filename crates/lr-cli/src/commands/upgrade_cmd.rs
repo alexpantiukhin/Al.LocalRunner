@@ -273,7 +273,7 @@ impl Job<'_> {
         let again = restart_roles(self.running, service);
         if self.running.broker && service {
             println!(
-                "the broker runs as an OS service with its own copy of the binary: this command does not touch it; update it with administrator rights afterwards (see README, \"Update\")"
+                "the broker runs as an OS service with its own copy of the binary: this command does not touch it; update it afterwards with `localrunner broker update-service`, which needs administrator rights (see README, \"Update\")"
             );
         }
         println!("directory: {}", self.dir.display());

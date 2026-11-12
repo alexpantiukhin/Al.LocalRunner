@@ -96,6 +96,35 @@ pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> R
     Ok(0)
 }
 
+/// `broker update-service [--dry-run]`.
+pub fn update_service(dry_run: bool) -> Result<i32, String> {
+    update_service_with(
+        dry_run,
+        crate::host::is_elevated(),
+        service_installed(Os::current()),
+    )
+}
+
+/// `broker update-service` in a process whose rights are `elevated`, on a machine where the
+/// service `installed` or not: it replaces the service's own copy of the binary with this one
+/// and restarts the service. Without administrator rights it is refused before any change.
+pub fn update_service_with(dry_run: bool, elevated: bool, installed: bool) -> Result<i32, String> {
+    needs_admin("broker update-service", dry_run, elevated)?;
+    if !installed {
+        return Err(
+            "the broker is not installed as a service: run `broker install-service`".into(),
+        );
+    }
+    let os = Os::current();
+    let plan = plans::update_service(os, &exe()?, &service_binary(os));
+    admin_marker(dry_run, elevated);
+    apply(&plan, dry_run)?;
+    if !dry_run {
+        println!("the broker service runs the binary of {}", exe()?.display());
+    }
+    Ok(0)
+}
+
 /// The plan that removes the broker service.
 pub fn uninstall_service_plan() -> Vec<Action> {
     let os = Os::current();
