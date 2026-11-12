@@ -260,12 +260,12 @@ Joining members:
 localrunner broker add --name office --label dev              # for a hub: prints the address, the code and the certificate fingerprint
 localrunner broker add --runners 2 --address 192.168.1.10:7443  # for runners: a code for 2 joins
 localrunner runner list
-localrunner runner remove <name>     # remove a runner and revoke its key
+localrunner runner remove <name> [--yes]   # remove a runner and revoke its key
 localrunner client list
-localrunner client remove <name>     # revoke a hub's key
+localrunner client remove <name> [--yes]   # revoke a hub's key
 ```
 
-A code is valid for 1 hour and for the given number of joins. The address with the port must be reachable by the member. The certificate fingerprint is part of the code, so there is nothing to compare by hand.
+A code is valid for 1 hour and for the given number of joins. The address with the port must be reachable by the member. The certificate fingerprint is part of the code, so there is nothing to compare by hand. `runner remove` and `client remove` ask for confirmation; without a terminal (scripts, agents) they need `--yes`.
 
 ## Runner
 
@@ -409,12 +409,12 @@ The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the 
 localrunner autostart on [hub|broker|runner|all] [--dry-run]
 localrunner autostart on runner <name>
 localrunner autostart off [...]
-localrunner down [names] [--drain | --cancel]
+localrunner down [names] [--drain | --cancel [--yes]]
 localrunner uninstall [--purge] [--yes] [--dry-run]
 ```
 
 - Autostart is off by default. It runs as the user who enabled it: a scheduler task on Windows, a systemd user unit on Linux, a LaunchAgent on macOS. `autostart on broker` is the same as `broker install-service`.
-- `down` by default (`--drain`) waits for current jobs; `--cancel` cancels them and waits for the runners no longer than 30 seconds. The broker stops after the runners.
+- `down` by default (`--drain`) waits for current jobs; `--cancel` cancels them and waits for the runners no longer than 30 seconds. The broker stops after the runners. `--cancel` (like `cancel --mine`) asks for confirmation; without a terminal (scripts, agents) it needs `--yes`.
 - Update: stop the runners (`down`), replace the binary, `up` again. Database schemas are upgraded at start with a backup; rolling back to an older version is not supported.
 - `uninstall` stops the roles and removes autostart, the service, the binary and the PATH entry. Keys and history stay; `--purge` removes the state too, after confirmation.
 
@@ -474,7 +474,7 @@ Order of a typical session:
 1. Put the task in the queue: `localrunner run [profile] --as label` (waits and returns the exit code) or `submit` (returns the job id at once). Profiles come from [`.localrunner/profiles.toml`](#project-profiles).
 2. Follow it: `wait <job>` or `log <job> -f`.
 3. If it waits: `explain <job>` says why; `status` shows the whole queue.
-4. If the result no longer matters: `cancel <job> --as label` or `cancel --mine --as label`.
+4. If the result no longer matters: `cancel <job> --as label` or `cancel --mine --as label [--yes]`.
 5. Afterwards: `history`, `stats`, `dashboard`.
 
 All commands:
@@ -485,7 +485,7 @@ All commands:
 | `run [profile] --as label` | the same, but show the output and return the exit code |
 | `wait <job>` | follow a job; interrupting cancels nothing |
 | `log <job> [--step name] [--tail N] [-f]` | the job log |
-| `cancel <job> --as label`, `cancel --mine --as label` | cancel |
+| `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `explain <job>` | the queue; why an order waits |
 | `history [--all]`, `history show <job>` | history |

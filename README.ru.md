@@ -253,12 +253,12 @@ localrunner logging reload        # перечитать logging.toml во вс�
 localrunner broker add --name office --label dev              # для hub: печатает адрес, код и отпечаток сертификата
 localrunner broker add --runners 2 --address 192.168.1.10:7443  # для раннеров: код на 2 вступления
 localrunner runner list
-localrunner runner remove <имя>     # удалить раннер и отозвать его ключ
+localrunner runner remove <имя> [--yes]   # удалить раннер и отозвать его ключ
 localrunner client list
-localrunner client remove <имя>     # отозвать ключ hub
+localrunner client remove <имя> [--yes]   # отозвать ключ hub
 ```
 
-Код действует 1 час и на указанное число вступлений. Адрес с портом должен быть доступен участнику. Отпечаток сертификата входит в код, поэтому вручную его сверять не нужно.
+Код действует 1 час и на указанное число вступлений. Адрес с портом должен быть доступен участнику. Отпечаток сертификата входит в код, поэтому вручную его сверять не нужно. `runner remove` и `client remove` спрашивают подтверждение; без терминала (скрипты, агенты) нужен `--yes`.
 
 ## Раннер
 
@@ -402,12 +402,12 @@ kind = "console"       # только на переднем плане
 localrunner autostart on [hub|broker|runner|all] [--dry-run]
 localrunner autostart on runner <имя>
 localrunner autostart off [...]
-localrunner down [имена] [--drain | --cancel]
+localrunner down [имена] [--drain | --cancel [--yes]]
 localrunner uninstall [--purge] [--yes] [--dry-run]
 ```
 
 - Автозапуск по умолчанию выключен. Он работает под пользователем, который его включил: задача планировщика на Windows, пользовательский юнит systemd на Linux, LaunchAgent на macOS. `autostart on broker` то же, что `broker install-service`.
-- `down` по умолчанию (`--drain`) дожидается текущих джоб; `--cancel` отменяет их и ждёт раннеры не дольше 30 секунд. Брокер останавливается после раннеров.
+- `down` по умолчанию (`--drain`) дожидается текущих джоб; `--cancel` отменяет их и ждёт раннеры не дольше 30 секунд. Брокер останавливается после раннеров. `--cancel` (как и `cancel --mine`) спрашивает подтверждение; без терминала (скрипты, агенты) нужен `--yes`.
 - Обновление: остановить раннеры (`down`), заменить бинарник, снова `up`. Схемы баз обновляются при старте с резервной копией; откат на более старую версию не поддерживается.
 - `uninstall` останавливает роли, снимает автозапуск, службу, бинарник и запись в PATH. Ключи и история остаются; `--purge` удаляет и состояние после подтверждения.
 
@@ -467,7 +467,7 @@ codex plugin marketplace remove al-localrunner
 1. Поставьте задачу в очередь: `localrunner run [профиль] --as метка` (ждёт и возвращает код выхода) или `submit` (сразу печатает id джобы). Профили берутся из [`.localrunner/profiles.toml`](#профили-проекта).
 2. Следите за ней: `wait <job>` или `log <job> -f`.
 3. Если она ждёт: `explain <job>` скажет почему; `status` покажет всю очередь.
-4. Если результат уже не нужен: `cancel <job> --as метка` или `cancel --mine --as метка`.
+4. Если результат уже не нужен: `cancel <job> --as метка` или `cancel --mine --as метка [--yes]`.
 5. Потом: `history`, `stats`, `dashboard`.
 
 Все команды:
@@ -478,7 +478,7 @@ codex plugin marketplace remove al-localrunner
 | `run [профиль] --as метка` | то же, но показывать вывод и вернуть код выхода |
 | `wait <job>` | следить за джобой; прерывание ничего не отменяет |
 | `log <job> [--step имя] [--tail N] [-f]` | лог джобы |
-| `cancel <job> --as метка`, `cancel --mine --as метка` | отменить |
+| `cancel <job> --as метка`, `cancel --mine --as метка [--yes]` | отменить |
 | `jobs --mine [--active] [--as метка]` | свои джобы |
 | `status`, `explain <job>` | очередь; почему заказ ждёт |
 | `history [--all]`, `history show <job>` | история |
