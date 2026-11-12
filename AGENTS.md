@@ -7,7 +7,7 @@ See `README.md` and `docs/architecture.html`: the single design document (archit
 - Respond in Russian; write AGENTS.md and all AI instructions in English
 - Do not add comments to code unless requested, except doc comments on public items
 - Do not create files unless strictly necessary; read a file before modifying it
-- Keep files under 500 lines; decompose by responsibility
+- Keep files under 500 lines; decompose by responsibility (exception: `docs/architecture.html`, the single design document)
 - Save temporary files to `temp/` (gitignored)
 - Never read, print or copy files under `secrets/`
 - No agent attribution (`Co-Authored-By`, "Generated with") in commits and pull requests

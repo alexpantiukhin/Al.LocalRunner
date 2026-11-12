@@ -107,7 +107,7 @@ Priority, visibility and which clients may use which runners are set by the owne
 
 - The dashboard listens on loopback only (127.0.0.1, ::1); nothing leaves the machine except the optional OTLP sink the owner enables.
 - A machine joins a broker with a one-time code that expires (1 hour by default) and is limited to N joins; the broker certificate fingerprint is shown by `broker add`. Each hub and runner then has its own revocable key (`client remove`, `runner remove`).
-- Job output, secrets and join codes are masked in logs and CLI output; `status --html` leaves logs out unless `--with-logs` is given.
+- Secret values in job output, secrets and join codes are masked in logs and CLI output; `status --html` leaves logs out unless `--with-logs` is given.
 - The broker never runs as a privileged account.
 
 ## Claude Code plugin
