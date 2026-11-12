@@ -37,11 +37,11 @@ fn without_the_section_there_are_no_resources() {
 fn the_section_is_read_with_its_defaults() {
     let f = ok("[resources]\n");
     let r = f.resources.expect("section present");
-    assert_eq!(r.mode, ResourceMode::Off);
+    assert_eq!(r.mode, ResourceMode::Warn);
     assert_eq!(r.mem_headroom.percent(), 125);
     assert_eq!(r.disk_headroom.percent(), 125);
     let w = r.wire();
-    assert_eq!(w.mode, WireEnforce::Off);
+    assert_eq!(w.mode, WireEnforce::Warn);
     assert_eq!((w.mem_headroom_pct, w.disk_headroom_pct), (125, 125));
 }
 
@@ -80,7 +80,7 @@ fn invalid_values_are_refused_with_table_key_and_line() {
 fn kill_mode_is_not_a_warning_but_a_headroom_without_effect_is() {
     assert!(check(&ok("[resources]\nmode = \"kill\"\n"), &HOST).is_empty());
     assert!(check(&ok("[resources]\nmode = \"off\"\n"), &HOST).is_empty());
-    let w = check(&ok("[resources]\nmem_headroom = 2.0\n"), &HOST);
+    let w = check(&ok("[resources]\nmode = \"off\"\nmem_headroom = 2.0\n"), &HOST);
     assert_eq!(w.len(), 1, "{w:?}");
     assert_eq!(w[0].table.as_deref(), Some("resources"));
     assert_eq!(w[0].key.as_deref(), Some("mem_headroom"));
@@ -98,7 +98,7 @@ async fn no_limits_are_sent_without_the_section() {
 
 #[tokio::test]
 async fn limits_are_sent_when_the_section_exists_even_in_off_mode() {
-    let h = Harness::start("[resources]\n");
+    let h = Harness::start("[resources]\nmode = \"off\"\n");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut hub = h.local_hub("alex").await;
     hub.send(&order("j1", req(512, 1, 60))).await;

@@ -10,10 +10,10 @@ const MAX_HEADROOM: f64 = 100.0;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ResourceMode {
-    /// Only the peaks are recorded (default).
-    #[default]
+    /// Only the peaks are recorded.
     Off,
-    /// A warning goes to the job log.
+    /// A warning goes to the job log (default).
+    #[default]
     Warn,
     /// The job is killed with the reason `resource_exceeded`.
     Kill,
@@ -57,12 +57,12 @@ impl TryFrom<f64> for Headroom {
 }
 
 /// `[resources]`: enforcement of the declared `mem_mb` and `disk_mb`. Without the table the
-/// broker sends no limits and the runner only records peaks. Declared CPU and the process count
+/// broker sends no limits and the runner uses its own default (`warn`). Declared CPU and the process count
 /// are limited by the runner whenever its OS supports it and are not set here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ResourcesSection {
-    /// `mode`, default `off`.
+    /// `mode`, default `warn`.
     pub mode: ResourceMode,
     /// `mem_headroom`: memory ceiling as a factor of the declared `mem_mb`, default 1.25.
     pub mem_headroom: Headroom,
@@ -73,7 +73,7 @@ pub struct ResourcesSection {
 impl Default for ResourcesSection {
     fn default() -> Self {
         ResourcesSection {
-            mode: ResourceMode::Off,
+            mode: ResourceMode::Warn,
             mem_headroom: Headroom::default(),
             disk_headroom: Headroom::default(),
         }

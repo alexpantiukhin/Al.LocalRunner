@@ -162,8 +162,9 @@ async fn limits_reach_the_process_runner_and_peaks_are_reported() {
 }
 
 #[tokio::test]
-async fn without_any_policy_nothing_is_limited() {
-    let rig = Rig::new();
+async fn with_enforce_off_nothing_is_limited() {
+    let mut rig = Rig::new();
+    rig.settings.enforce = Some(Enforce::Off);
     rig.files.mkdir(Path::new("/w/tree"));
     rig.disk.set(Path::new("/"), 100_000);
     let (_c, _h) = rig.start();

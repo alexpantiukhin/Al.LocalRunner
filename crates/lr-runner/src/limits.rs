@@ -12,7 +12,8 @@ fn mode(broker: Option<&WireLimits>, settings: &RunnerSettings) -> Enforce {
     settings.enforce.unwrap_or(match broker.map(|l| l.mode) {
         Some(WireEnforce::Warn) => Enforce::Warn,
         Some(WireEnforce::Kill) => Enforce::Kill,
-        Some(WireEnforce::Off) | None => Enforce::Off,
+        Some(WireEnforce::Off) => Enforce::Off,
+        None => Enforce::Warn,
     })
 }
 
@@ -119,8 +120,22 @@ mod tests {
     }
 
     #[test]
-    fn nothing_configured_limits_nothing_but_measures_disk() {
+    fn nothing_configured_warns_with_the_default_headroom() {
         let l = job_limits(&req(4000, 4, 2000), None, &settings(), dirs());
+        assert_eq!(l.mode, Enforce::Warn);
+        assert_eq!(
+            (l.mem_mb, l.cpu_millis, l.procs, l.disk_mb),
+            (Some(5000), Some(4000), Some(1024), Some(2500))
+        );
+        assert_eq!(l.disk_dirs, dirs());
+        assert_eq!(l.declared_mem_mb, Some(4000));
+    }
+
+    #[test]
+    fn the_owner_can_turn_enforcement_off() {
+        let mut s = settings();
+        s.enforce = Some(Enforce::Off);
+        let l = job_limits(&req(4000, 4, 2000), None, &s, dirs());
         assert_eq!(l.mode, Enforce::Off);
         assert_eq!(
             (l.mem_mb, l.cpu_millis, l.procs, l.disk_mb),

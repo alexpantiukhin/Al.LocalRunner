@@ -5,11 +5,13 @@ platforms = ["linux"]
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"
 
-# Resource limits (optional). enforce replaces the broker policy mode: "off", "warn" or "kill".
+# Resource limits (optional). Without them the default is "warn" (peaks, warnings, CPU cap,
+# process limit; nothing is killed). enforce replaces the broker policy mode: "off" (nothing
+# is limited), "warn" or "kill".
 # mem_headroom and disk_headroom are factors of the declared mem_mb and disk_mb (the ceiling,
 # and for disk also the free space required before a job starts).
 # [limits]
-# enforce = "kill"
+# enforce = "off"
 # mem_headroom = 1.25
 # disk_headroom = 1.5
 
