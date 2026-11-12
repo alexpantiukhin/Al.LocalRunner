@@ -22,12 +22,13 @@ pub async fn hub(layout: &Layout) -> Result<IpcClient, String> {
         .map_err(|e| format!("the hub is not reachable ({e}); start it: localrunner up"))
 }
 
-fn identity(label: &str, note: Option<&str>) -> Result<Identity, String> {
+fn identity(label: Option<&str>, note: Option<&str>) -> Result<Identity, String> {
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    let result = if env.get("GITHUB_ACTIONS").map(String::as_str) == Some("true") {
-        collect_github(&env, Some(label), note, &cwd)
+    let result = if env.get("GITHUB_ACTIONS").map(|v| v.trim()) == Some("true") {
+        collect_github(&env, label, note, &cwd)
     } else {
+        let label = label.ok_or("--as LABEL is required outside GitHub Actions (spec 7.1)")?;
         collect_session(label, note, &cwd)
     };
     result.map_err(|e| e.to_string())
@@ -119,7 +120,7 @@ pub async fn submit(
     wait: bool,
     json: bool,
 ) -> Result<i32, String> {
-    let identity = identity(&args.label, args.note.as_deref())?;
+    let identity = identity(args.label.as_deref(), args.note.as_deref())?;
     let client = hub(layout).await?;
     let req = SubmitRequest {
         identity,
@@ -293,7 +294,7 @@ pub async fn cancel(
         (None, true) => CancelTarget::Mine,
         _ => return Err("name one job or give --mine".into()),
     };
-    let actor = identity(label, None)?;
+    let actor = identity(Some(label), None)?;
     let client = hub(layout).await?;
     let req = CliRequest::Cancel(CancelRequest {
         actor,

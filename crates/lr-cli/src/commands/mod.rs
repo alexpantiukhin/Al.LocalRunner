@@ -45,9 +45,9 @@ pub struct Cli {
 pub struct OrderArgs {
     /// Profile name; the only profile when omitted.
     pub profile: Option<String>,
-    /// Submitter label (required).
-    #[arg(long = "as", value_name = "LABEL", required = true)]
-    pub label: String,
+    /// Submitter label: required, except inside GitHub Actions (`github:<workflow>/<job>`).
+    #[arg(long = "as", value_name = "LABEL")]
+    pub label: Option<String>,
     /// Free note stored with the run.
     #[arg(long)]
     pub note: Option<String>,

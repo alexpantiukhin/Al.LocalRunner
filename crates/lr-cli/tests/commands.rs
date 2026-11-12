@@ -36,6 +36,26 @@ fn submit_without_as_refused() {
 }
 
 #[test]
+fn inside_github_actions_submit_needs_no_as() {
+    let out = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["submit", "unit"])
+        .env(
+            "LOCALRUNNER_STATE_DIR",
+            std::env::temp_dir().join("lr-cli-no-state"),
+        )
+        .env("GITHUB_ACTIONS", "true")
+        .env("GITHUB_REPOSITORY", "acme/app")
+        .env("GITHUB_WORKFLOW", "ci")
+        .env("GITHUB_JOB", "test")
+        .env("GITHUB_RUN_ID", "42")
+        .output()
+        .expect("the binary runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("--as"), "{err}");
+    assert!(err.contains("hub is not reachable"), "{err}");
+}
+
+#[test]
 fn version_prints_binary_and_protocol_version() {
     let out = localrunner(&["--version"]);
     assert!(out.status.success());
