@@ -122,6 +122,7 @@ pub(crate) async fn run_job(
         }
         if stop.current().is_some() {
             state = JobState::Cancelled;
+            exit_code = None;
             halted = true;
             steps.push(not_run(step, StepState::Skipped));
             continue;
@@ -129,6 +130,7 @@ pub(crate) async fn run_job(
         let now = clock.now();
         if now >= budget_end {
             state = JobState::Timeout;
+            exit_code = None;
             halted = true;
             steps.push(not_run(step, StepState::Timeout));
             continue;
@@ -166,10 +168,12 @@ pub(crate) async fn run_job(
             }
             StepState::Timeout => {
                 state = JobState::Timeout;
+                exit_code = code;
                 halted = true;
             }
             StepState::Cancelled => {
                 state = JobState::Cancelled;
+                exit_code = code;
                 halted = true;
             }
             _ => {}

@@ -152,6 +152,24 @@ async fn kill_during_grace_kills_at_once() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_job_cancelled_in_its_second_step_has_no_exit_code_of_the_first() {
+    let (_manual, clock) = clock();
+    let cmd = helper_command(&Helper::new("ignore"));
+    let spec = job(
+        "kc",
+        600,
+        vec![step("first", "echo first", 30), step("s", &cmd, 300)],
+    );
+    let (task, out, stop) = start(spec, clock);
+    out.pid_of("child").await;
+    stop.stop(Stop::Kill);
+    let outcome = finish(task).await;
+    assert_eq!(outcome.state, JobState::Cancelled);
+    assert_eq!(outcome.steps[0].exit_code, Some(0));
+    assert_eq!(outcome.exit_code, None, "{outcome:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn leftover_descendants_in_the_group_die_when_the_step_exits() {
     let (_manual, clock) = clock();
     let cmd = helper_command(&Helper::new("spawn-exit").in_group());
