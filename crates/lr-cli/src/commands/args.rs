@@ -152,6 +152,15 @@ pub enum RunnerAction {
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
     },
+    /// Show the `runner.toml` a runner reads, or with `--diff` how its own copy differs from
+    /// the template.
+    Config {
+        /// Runner name.
+        name: String,
+        /// Compare the own copy with the template.
+        #[arg(long)]
+        diff: bool,
+    },
     /// Runners of the pool (on the broker).
     List,
     /// Remove a runner and revoke its key (on the broker; asks for confirmation).

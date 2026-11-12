@@ -12,6 +12,7 @@ pub mod logging_cmd;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
+pub mod runner_config_cmd;
 pub mod service_cmd;
 pub mod setup;
 pub mod snapshot_cmd;
@@ -436,6 +437,17 @@ pub async fn run(cli: Cli) -> i32 {
                     Ok(join) => join_cmd::runner_join(&layout, join).await,
                     Err(e) => Err(e),
                 }
+            }
+            RunnerAction::Config { name, diff } => {
+                let text = if diff {
+                    runner_config_cmd::diff(&layout, &name)
+                } else {
+                    runner_config_cmd::show(&layout, &name)
+                };
+                text.map(|t| {
+                    println!("{t}");
+                    0
+                })
             }
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
