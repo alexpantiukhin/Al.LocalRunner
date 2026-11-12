@@ -10,6 +10,11 @@ die() {
     exit 1
 }
 
+step() {
+    printf 'install.sh: %s
+' "$*" >&2
+}
+
 usage() {
     cat <<'EOF'
 Usage: install.sh [--version X.Y.Z] [--dir DIR] [--offline ARCHIVE]
@@ -93,6 +98,7 @@ detect_target() {
 }
 
 fetch() {
+    step "downloading $1"
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$2" "$1" || die "download failed: $1"
     elif command -v wget >/dev/null 2>&1; then
@@ -115,6 +121,7 @@ sha256_of() {
 }
 
 verify_signature() {
+    step "checking the signature of SHA256SUMS"
     case "$RELEASE_KEY" in
         "" | @*@) die "this install.sh carries no release key: take install.sh from the release page" ;;
     esac
@@ -132,6 +139,7 @@ verify_signature() {
 }
 
 verify_checksum() {
+    step "checking SHA-256 of $3"
     expected=$(awk -v n="$3" '$2 == n || $2 == "*" n { print tolower($1); exit }' "$1")
     [ -n "$expected" ] || die "$3 is not listed in SHA256SUMS: nothing installed"
     actual=$(sha256_of "$2" | tr 'A-F' 'a-f')
@@ -139,6 +147,7 @@ verify_checksum() {
 }
 
 extract() {
+    step "unpacking the archive"
     mkdir "$WORK/bin"
     tar -xzf "$1" -C "$WORK/bin" localrunner || die "cannot unpack $1"
     [ -f "$WORK/bin/localrunner" ] || die "$1 has no localrunner binary"
@@ -146,6 +155,7 @@ extract() {
 }
 
 run_install() {
+    step "running localrunner install"
     set -- install --role "$ROLE"
     if [ -n "$DIR" ]; then
         set -- "$@" --dir="$DIR"
@@ -157,6 +167,7 @@ run_install() {
 }
 
 run_doctor() {
+    step "running localrunner doctor"
     if ! "$WORK/bin/localrunner" doctor; then
         printf 'install.sh: warning: localrunner doctor reported problems (above); the installation is kept\n' >&2
     fi
