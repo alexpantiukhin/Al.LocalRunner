@@ -2,7 +2,7 @@ mod common;
 
 use common::dir;
 use lr_abstractions::store_contract::fixtures::{at, intake};
-use lr_abstractions::{BrokerStore, JobKey, PruneLimits, StepUpdate, Transition};
+use lr_abstractions::{BrokerStore, JobKey, OutboxKind, PruneLimits, StepUpdate, Transition};
 use lr_core::{JobState, StepState, Timestamp};
 use lr_store::SqliteBrokerStore;
 use rusqlite::Connection;
@@ -126,10 +126,26 @@ async fn prune_by_age_and_size_skips_active_jobs() {
 async fn pruning_a_row_removes_its_child_rows_by_cascade() {
     let d = dir();
     let store = SqliteBrokerStore::open(&d.path().join("broker.db")).unwrap();
-    run(&store, "gone", 0, Some(1), 10).await;
+    let gone = run(&store, "gone", 0, Some(1), 10).await;
     let keep = run(&store, "keep", 0, None, 10).await;
+    for key in [&gone, &keep] {
+        let machine = format!("m-{}", key.client);
+        store
+            .push_result(
+                &machine,
+                &key.job,
+                OutboxKind::JobResult,
+                "{}".into(),
+                at(1),
+                1 << 20,
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.ack_results(&machine, &key.job, 1).await.unwrap(), 1);
+    }
     let conn = Connection::open(store.path()).unwrap();
     assert_eq!(count(&conn, "step"), 4);
+    assert_eq!(count(&conn, "result_outbox"), 2);
     let limits = PruneLimits {
         now: Timestamp(at(0).0 + 400 * DAY_MS),
         log_max_age_ms: 30 * DAY_MS,
@@ -142,6 +158,11 @@ async fn pruning_a_row_removes_its_child_rows_by_cascade() {
     assert_eq!(count(&conn, "step"), 2);
     assert_eq!(count(&conn, "job_spec"), 1);
     assert_eq!(count(&conn, "job_log"), 1);
+    assert_eq!(
+        count(&conn, "result_outbox"),
+        1,
+        "the closed marker goes with its row"
+    );
     assert!(store.job(&keep).await.unwrap().is_some());
 }
 

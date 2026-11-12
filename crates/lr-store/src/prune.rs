@@ -14,6 +14,7 @@ const ORPHAN_GRACE_MS: u64 = 24 * 60 * 60 * 1000;
 
 struct Doomed {
     client: String,
+    machine: String,
     job: String,
     path: Option<String>,
     bytes: u64,
@@ -25,7 +26,7 @@ fn clamp(v: u64) -> i64 {
 
 fn select(tx: &Transaction<'_>, extra: &str, args: &[i64]) -> R<Vec<Doomed>> {
     let sql = format!(
-        "SELECT j.client_key, j.id, l.path, l.bytes FROM job j \
+        "SELECT j.client_key, j.id, l.path, l.bytes, j.client_machine FROM job j \
          LEFT JOIN job_log l ON l.client_key = j.client_key AND l.job_id = j.id \
          WHERE j.state IN {} \
          AND j.finished_at IS NOT NULL {extra} \
@@ -38,6 +39,7 @@ fn select(tx: &Transaction<'_>, extra: &str, args: &[i64]) -> R<Vec<Doomed>> {
             let bytes: Option<i64> = r.get(3)?;
             Ok(Doomed {
                 client: r.get(0)?,
+                machine: r.get(4)?,
                 job: r.get(1)?,
                 path: r.get(2)?,
                 bytes: bytes.unwrap_or(0) as u64,
@@ -83,6 +85,12 @@ pub(crate) fn prune(conn: &mut Connection, dir: &Path, limits: PruneLimits) -> R
             tx.execute(
                 "DELETE FROM job WHERE client_key = ?1 AND id = ?2",
                 [&d.client, &d.job],
+            )?;
+            tx.execute(
+                "DELETE FROM result_outbox WHERE client_machine = ?1 AND job_id = ?2 \
+                 AND acked_at IS NOT NULL AND NOT EXISTS \
+                 (SELECT 1 FROM job WHERE client_machine = ?1 AND id = ?2)",
+                [&d.machine, &d.job],
             )?;
             work.report.rows_removed += 1;
         }
