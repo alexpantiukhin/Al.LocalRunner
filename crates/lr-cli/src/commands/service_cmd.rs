@@ -148,8 +148,21 @@ fn task_hint(e: String) -> String {
     )
 }
 
+fn runner_may_start(layout: &Layout, name: &str) -> Result<(), String> {
+    let allowed = crate::doctor::runner_allows_same_user(layout, name);
+    match crate::doctor::same_user_verdict(layout, allowed) {
+        Ok(Some(risk)) => {
+            eprintln!("runner {name}: warning: {risk}");
+            Ok(())
+        }
+        Ok(None) => Ok(()),
+        Err(refusal) => Err(format!("autostart runner {name}: {refusal}")),
+    }
+}
+
 /// `autostart on|off [role [runner-name]] [--dry-run]`: the broker becomes or stops being the
-/// OS service, hubs and runners start at the user's logon; `runner <name>` is one runner.
+/// OS service, hubs and runners start at the user's logon; `runner <name>` is one runner. A
+/// runner the same-user rule of spec 3.12 refuses gets no autostart entry.
 pub fn autostart(
     layout: &Layout,
     switch: Switch,
@@ -185,6 +198,9 @@ pub fn autostart_with(
             );
         }
         crate::runner_config::check_runner_name(&name)?;
+        if on {
+            runner_may_start(layout, &name)?;
+        }
         let entry = Entry::Runner(Some(name));
         let label = entry.name();
         apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
@@ -204,6 +220,12 @@ pub fn autostart_with(
             continue;
         }
         for entry in entries(layout, role) {
+            if let (true, Entry::Runner(runner)) = (on, &entry) {
+                let name = runner
+                    .clone()
+                    .unwrap_or_else(|| crate::roles::runner_base_name(layout, None, None));
+                runner_may_start(layout, &name)?;
+            }
             let name = entry.name();
             apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
             if !dry_run {

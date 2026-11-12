@@ -173,6 +173,13 @@ async fn broker_ready(layout: &Layout, within: Duration) -> bool {
     }
 }
 
+fn planned_runner(layout: &Layout, argv: &[String]) -> String {
+    match argv.iter().position(|a| a == "--name") {
+        Some(i) => argv.get(i + 1).cloned().unwrap_or_default(),
+        None => crate::roles::runner_base_name(layout, None, None),
+    }
+}
+
 fn missing(plan: &[Vec<String>], now: &RunningRoles) -> Vec<String> {
     let mut out = Vec::new();
     for argv in plan {
@@ -230,7 +237,8 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
 /// its plan has both the broker and the hub, the hub starts only once the broker answers, so
 /// the hub lists it as `local`. A broker that could not be started, or that is silent for
 /// `within`, is an error and the hub is left down; after a silent broker the started roles are
-/// not waited for again, and a broker that was not started is not waited for at all.
+/// not waited for again, and a broker that was not started is not waited for at all. A runner
+/// refused by [`crate::doctor::same_user_verdict`] is not started and makes the exit code 1.
 pub async fn up_with(
     layout: &Layout,
     role: Option<RoleArg>,
@@ -260,16 +268,33 @@ pub async fn up_with(
     for r in &before.runners {
         println!("runner {r}: already running");
     }
-    let plan = up_plan(layout, &roles, &before);
+    let mut plan = up_plan(layout, &roles, &before);
     if plan.is_empty() {
         return Ok(code);
     }
-    let broker_here = roles.contains(&NodeRole::Broker);
-    if let Some(risk) =
-        crate::doctor::same_user_risk(layout, broker_here && roles.contains(&NodeRole::Runner))
-    {
-        eprintln!("warning: {risk}");
-    }
+    let mut warned = false;
+    plan.retain(|argv| {
+        if argv[0] != "runner" {
+            return true;
+        }
+        let name = planned_runner(layout, argv);
+        let allowed = crate::doctor::runner_allows_same_user(layout, &name);
+        match crate::doctor::same_user_verdict(layout, allowed) {
+            Ok(None) => true,
+            Ok(Some(risk)) => {
+                if !warned {
+                    eprintln!("warning: {risk}");
+                    warned = true;
+                }
+                true
+            }
+            Err(refusal) => {
+                eprintln!("runner {name}: not started: {refusal}");
+                code = 1;
+                false
+            }
+        }
+    });
     let planned_broker = plan.iter().any(|argv| argv[0] == "broker");
     let mut started = Vec::new();
     let mut waited = false;

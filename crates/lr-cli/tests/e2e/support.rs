@@ -46,10 +46,12 @@ pub fn layout(dir: &TempDir, name: &str, policy_extra: &str) -> Layout {
 }
 
 /// The `runner.toml` of the test runners: jobs get the `PATH` of the test process through
-/// `[env] path`, the only source of `PATH` of a job.
+/// `[env] path`, the only source of `PATH` of a job. Every machine of a test runs under the OS
+/// user of the test next to a broker that admits other clients, so the runners accept that
+/// (`allow_same_user_as_broker`, spec 3.12).
 pub fn runner_toml() -> String {
     format!(
-        "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n\n{}\n\
+        "allow_elevated = true\nallow_same_user_as_broker = true\nmem_mb = 1024\ncpu = 1\n\n{}\n\
          [secret.{SECRET_NAME}]\nfrom = \"env:{SECRET_VAR}\"\n",
         common::env_path_toml()
     )

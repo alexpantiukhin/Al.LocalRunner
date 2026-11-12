@@ -98,6 +98,8 @@ pub fn runner_template(path: Option<&str>) -> String {
          # mem_mb = 16384                 # default: all memory of the host\n\
          # cpu = 8                        # default: all cores of the host\n\
          # allow_elevated = false         # running as root or administrator needs true\n\
+         # allow_same_user_as_broker = false  # true: run under the broker's OS user although\n\
+         #                                    # it admits other clients (spec 3.12)\n\
          \n\
          # [programs]                     # looked up in [env] path\n\
          # git = {{}}\n\

@@ -270,3 +270,23 @@ fn programs_are_looked_up_in_env_path_not_in_the_process_path() {
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("program git:"), "{problems:?}");
 }
+
+#[test]
+fn allow_same_user_as_broker_is_false_by_default_and_must_be_a_boolean() {
+    assert!(!parse("", None).allow_same_user_as_broker);
+    assert!(parse("allow_same_user_as_broker = true\n", None).allow_same_user_as_broker);
+    assert!(lr_cli::runner_config::allows_same_user_as_broker(
+        "allow_same_user_as_broker = true\n"
+    ));
+    assert!(!lr_cli::runner_config::allows_same_user_as_broker(
+        "allow_same_user_as_broker = \"yes\"\n"
+    ));
+    let typo = RunnerConfig::parse(
+        &with_path("allow_same_user_as_broker = \"yes\"\n"),
+        None,
+        "host-pc",
+        PathBuf::from("/state/r"),
+        HOST,
+    );
+    assert!(typo.is_err(), "{typo:?}");
+}

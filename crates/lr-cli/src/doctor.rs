@@ -126,12 +126,30 @@ fn policy(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+fn names_another_user(entry: &lr_broker::policy::LocalUserEntry, owner: Option<&str>) -> bool {
+    let Some(owner) = owner else {
+        return true;
+    };
+    let users = lr_net::LocalUsers::new(vec![lr_net::LocalUser {
+        name: entry.name.clone(),
+        label: entry.label.clone(),
+    }]);
+    let me = lr_abstractions::Peer {
+        endpoint: lr_core::Endpoint::Ipc {
+            os_user: owner.to_string(),
+        },
+        key: None,
+        access: lr_abstractions::PeerAccess::Local,
+    };
+    users.admit(&me).is_err()
+}
+
 /// The risk of spec 3.12 when the broker of `layout` runs under this OS user, not as an OS
 /// service, next to a runner of the same user (`with_runner`) while its policy (the default
 /// one without `policy.toml`) admits clients other than the owner (a `[listen]` address or a
-/// `[[local_user]]`) and lets some client run any command: the job of such a client then acts
-/// as the pool owner (admin channel, broker key and databases). `None` when that is not the
-/// case or the policy is unreadable.
+/// `[[local_user]]` naming another OS user) and lets some client run any command: the job of
+/// such a client then acts as the pool owner (admin channel, broker key and databases). `None`
+/// when that is not the case or the policy is unreadable.
 pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
     use lr_broker::policy::CommandMode;
     if !with_runner || layout.broker_is_service() {
@@ -143,7 +161,12 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
         Err(_) => return None,
     };
     let file = lr_broker::policy::load(&text).ok()?;
-    if file.listen.addresses.is_empty() && file.local_users.is_empty() {
+    let owner = lr_net::current_os_user().ok();
+    let others = file
+        .local_users
+        .iter()
+        .any(|u| names_another_user(u, owner.as_deref()));
+    if file.listen.addresses.is_empty() && !others {
         return None;
     }
     let any = file.commands.default == CommandMode::Any
@@ -163,9 +186,41 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
     })
 }
 
+/// Whether a runner of `layout` may start next to the broker of its OS user (spec 3.12): with
+/// the risk of [`same_user_risk`] it is refused unless its `runner.toml` sets
+/// `allow_same_user_as_broker = true` (`allowed`), which keeps the risk as a warning. `Ok(None)`
+/// when there is no risk.
+pub fn same_user_verdict(layout: &Layout, allowed: bool) -> Result<Option<String>, String> {
+    match same_user_risk(layout, true) {
+        None => Ok(None),
+        Some(risk) if allowed => Ok(Some(risk)),
+        Some(risk) => Err(format!(
+            "the runner refuses to start: {risk}; or set allow_same_user_as_broker = true in \
+             runner.toml to accept the risk"
+        )),
+    }
+}
+
+/// `allow_same_user_as_broker` of the `runner.toml` runner `name` of `layout` uses; `false`
+/// when the file is absent, unreadable or does not set it.
+pub fn runner_allows_same_user(layout: &Layout, name: &str) -> bool {
+    crate::build::runner_config_path(layout, name, None)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .is_some_and(|text| crate::runner_config::allows_same_user_as_broker(&text))
+}
+
 fn same_user(layout: &Layout, out: &mut Vec<Check>) {
-    if let Some(risk) = same_user_risk(layout, !layout.runner_names().is_empty()) {
-        out.push(check("broker and runner user", Status::Warn, risk));
+    for name in layout.runner_names() {
+        let label = format!("runner {name} and broker user");
+        match same_user_verdict(layout, runner_allows_same_user(layout, &name)) {
+            Ok(None) => {}
+            Ok(Some(risk)) => out.push(check(
+                label,
+                Status::Warn,
+                format!("{risk} (allow_same_user_as_broker = true accepts it)"),
+            )),
+            Err(refusal) => out.push(check(label, Status::Fail, refusal)),
+        }
     }
 }
 

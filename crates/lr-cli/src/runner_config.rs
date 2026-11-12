@@ -47,6 +47,8 @@ struct Extra {
     #[serde(default)]
     allow_elevated: bool,
     #[serde(default)]
+    allow_same_user_as_broker: bool,
+    #[serde(default)]
     programs: BTreeMap<String, ProgramSpec>,
     #[serde(default)]
     secret: BTreeMap<String, SecretEntry>,
@@ -60,6 +62,9 @@ pub struct RunnerConfig {
     pub settings: RunnerSettings,
     /// `allow_elevated = true`: the owner allows running as root or administrator.
     pub allow_elevated: bool,
+    /// `allow_same_user_as_broker = true`: the owner accepts the risk of running next to the
+    /// broker of the same OS user while it admits other clients (spec 3.12).
+    pub allow_same_user_as_broker: bool,
     /// `[programs]` as written.
     pub programs: BTreeMap<String, ProgramSpec>,
     /// `[secret.*]` sources.
@@ -126,6 +131,7 @@ impl RunnerConfig {
         Ok(RunnerConfig {
             settings,
             allow_elevated: extra.allow_elevated,
+            allow_same_user_as_broker: extra.allow_same_user_as_broker,
             programs: extra.programs,
             secrets,
         })
@@ -199,6 +205,18 @@ pub fn elevation_allowed(elevated: bool, allow_elevated: bool) -> Result<(), Str
             .into());
     }
     Ok(())
+}
+
+/// `allow_same_user_as_broker` of a `runner.toml` text; `false` when the text is not TOML or
+/// the key is absent or not `true`.
+pub fn allows_same_user_as_broker(text: &str) -> bool {
+    toml::from_str::<toml::Table>(text)
+        .ok()
+        .and_then(|t| {
+            t.get("allow_same_user_as_broker")
+                .and_then(toml::Value::as_bool)
+        })
+        .unwrap_or(false)
 }
 
 fn declared(key: &str, value: Option<u64>, host: u64) -> Result<u64, SettingsError> {

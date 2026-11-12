@@ -27,7 +27,7 @@ fn layout(dir: &TempDir) -> Layout {
     std::fs::write(
         runner.join("runner.toml"),
         format!(
-            "allow_elevated = true\nmem_mb = 1024\ncpu = 1\n{}",
+            "allow_elevated = true\nallow_same_user_as_broker = true\nmem_mb = 1024\ncpu = 1\n{}",
             common::env_path_toml()
         ),
     )

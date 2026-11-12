@@ -344,7 +344,8 @@ fn broker_address(dir: &Path, layout: &Layout) -> Result<BrokerAddress, String> 
 }
 
 /// Builds runner `name`: `runner.toml` (resources default to the whole host), the elevation
-/// guarantee (spec 3.12), program checks, free disk, `runner.db`, real processes, secrets
+/// guarantee and the refusal to run next to the broker of the same OS user while it admits
+/// other clients without `allow_same_user_as_broker` (spec 3.12), program checks, free disk, `runner.db`, real processes, secrets
 /// masked in diagnostics, and its control channel.
 pub async fn runner(
     layout: &Layout,
@@ -365,6 +366,11 @@ pub async fn runner(
         .map_err(|e| e.to_string())?;
     elevation_allowed(host::is_elevated(), cfg.allow_elevated)
         .map_err(|e| format!("runner {name}: {e}"))?;
+    if let Some(risk) = crate::doctor::same_user_verdict(layout, cfg.allow_same_user_as_broker)
+        .map_err(|e| format!("runner {name}: {e}"))?
+    {
+        eprintln!("runner {name}: warning: {risk}");
+    }
     let problems = cfg.check_programs();
     cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
     cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
