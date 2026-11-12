@@ -9,7 +9,11 @@ mod cache;
 mod connect;
 mod diag;
 mod disk;
+mod hooks;
+mod hooks_config;
 mod job;
+mod limits;
+mod load;
 mod metrics;
 mod outbox;
 mod output;
@@ -25,6 +29,10 @@ mod source;
 
 pub use agent::{AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps};
 pub use cache::{plan_sweep, CacheLayout, WORKSPACE_CLIENT};
+pub use hooks_config::{
+    apply_owner_env, CleanupHook, CleanupOn, DEFAULT_CLEANUP_TIMEOUT_S, DEFAULT_HEADROOM_PCT,
+    MAX_CLEANUP_TIMEOUT_S,
+};
 pub use service_config::{
     Lifetime, Reuse, ServiceSpec, DEFAULT_READY_TIMEOUT_S, DEFAULT_RESTARTS, DEFAULT_STOP_TIMEOUT_S,
 };

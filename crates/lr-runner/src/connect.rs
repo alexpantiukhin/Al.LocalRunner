@@ -390,7 +390,11 @@ pub(crate) async fn session(
             }
             _ = clock.sleep_until(next_beat) => {
                 next_beat = after(next_beat, heartbeat);
-                if !s.send(&RunnerToBroker::Heartbeat).await {
+                if !s
+                    .send(&RunnerToBroker::Heartbeat {
+                        load: shared.machine_load(),
+                    })
+                    .await {
                     return lost();
                 }
             }

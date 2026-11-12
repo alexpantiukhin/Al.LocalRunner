@@ -53,6 +53,10 @@ impl Policy for HeldPool<'_> {
     fn group_of(&self, client: &ClientView) -> String {
         self.inner.group_of(client)
     }
+
+    fn admission(&self) -> lr_core::Admission {
+        self.inner.admission()
+    }
 }
 
 fn live(state: ServiceState) -> bool {

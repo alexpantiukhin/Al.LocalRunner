@@ -286,6 +286,37 @@ pub async fn cancelling_run_of_vanished_runner_ends_lost(store: &dyn BrokerStore
     assert_eq!(record.job.cancel_reason.as_deref(), Some("runner_lost"));
 }
 
+/// Peaks reported with a final state are stored with the run; a run without them has none, and
+/// a late report cannot change them.
+pub async fn peaks_are_stored_with_the_final_state(store: &dyn BrokerStore) {
+    let plain = running(store, "c1", "j1").await;
+    store
+        .transition(&plain, Transition::to(JobState::Passed, at(20)))
+        .await
+        .unwrap();
+    let job = store.job(&plain).await.unwrap().unwrap().job;
+    assert_eq!((job.peak_mem_mb, job.peak_disk_mb), (None, None));
+    let key = running(store, "c1", "j2").await;
+    let mut over = Transition::to(JobState::Failed, at(30));
+    over.cancel_reason = Some("resource_exceeded: declared 100, peak 150".into());
+    over.peak_mem_mb = Some(150);
+    over.peak_disk_mb = Some(7);
+    store.transition(&key, over).await.unwrap();
+    let mut late = Transition::to(JobState::Passed, at(40));
+    late.peak_mem_mb = Some(1);
+    assert_eq!(
+        store.transition(&key, late).await.unwrap(),
+        Applied::Ignored
+    );
+    let job = store.job(&key).await.unwrap().unwrap().job;
+    assert_eq!(job.state, JobState::Failed);
+    assert_eq!((job.peak_mem_mb, job.peak_disk_mb), (Some(150), Some(7)));
+    assert!(job
+        .cancel_reason
+        .as_deref()
+        .is_some_and(|r| r.starts_with("resource_exceeded: ")));
+}
+
 /// A granted run that never started goes back to the queue with its runner cleared; the store
 /// rebuilds the order row it stored at accept, `same_machine` and priority hint included.
 pub async fn unstarted_granted_run_can_be_requeued(store: &dyn BrokerStore) {

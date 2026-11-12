@@ -82,7 +82,7 @@ async fn huge_welcome_values_are_clamped_without_panic() {
     rig.settle().await;
     loop {
         let m = decode::<RunnerToBroker>(t.recv().await.unwrap().as_bytes()).unwrap();
-        if m == RunnerToBroker::Heartbeat {
+        if matches!(m, RunnerToBroker::Heartbeat { .. }) {
             break;
         }
     }
@@ -439,7 +439,8 @@ async fn refusal_with_a_failing_store_does_not_block_the_session() {
     b.assign("job-2", 1, spec).await;
     rig.settle().await;
     rig.advance(15 * SEC).await;
-    b.until(|m| matches!(m, RunnerToBroker::Heartbeat)).await;
+    b.until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
+        .await;
     assert!(rig.logs_text().contains("job result not stored"));
 }
 

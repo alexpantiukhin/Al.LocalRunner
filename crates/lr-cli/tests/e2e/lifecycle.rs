@@ -235,13 +235,19 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
         .expect("a newer broker.db stops the start");
     assert!(refused.contains("is newer"), "{refused}");
     assert_eq!(schema_version(&broker_db), 99, "left untouched");
-    sql(&broker_db, "PRAGMA user_version = 1;").await;
+    sql(
+        &broker_db,
+        "ALTER TABLE job DROP COLUMN peak_mem_mb; ALTER TABLE job DROP COLUMN peak_disk_mb;          ALTER TABLE runner DROP COLUMN enforcement; PRAGMA user_version = 1;",
+    )
+    .await;
 
     let [broker, hub, runner] = start_all(&main).await;
     let backup = main.root.join("hub.db.bak-1");
     assert!(backup.is_file(), "a backup before the migration");
     assert_eq!(schema_version(&backup), 1);
     assert_eq!(schema_version(&hub_db), 2);
+    assert!(main.root.join("broker.db.bak-1").is_file());
+    assert_eq!(schema_version(&broker_db), 2);
     passes(&main, &repo, "quick").await;
     assert_eq!(
         history(&main).await.len(),

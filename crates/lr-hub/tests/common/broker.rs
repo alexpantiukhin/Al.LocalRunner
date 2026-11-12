@@ -40,6 +40,7 @@ pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
         cache_used_mb: None,
         service_mem_mb: Default::default(),
         commands: Default::default(),
+        enforcement: None,
     }
 }
 
@@ -334,6 +335,8 @@ impl FakeBroker {
             exit_code,
             reason: None,
             detail: None,
+            peak_disk_mb: None,
+            peak_mem_mb: None,
         }))
         .await;
     }

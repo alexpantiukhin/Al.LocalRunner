@@ -54,7 +54,7 @@ async fn heartbeats_go_on_while_services_stop_for_a_drain() {
     let bye = drive(&rig, async {
         loop {
             match b.recv().await.expect("connection closed") {
-                RunnerToBroker::Heartbeat => beats += 1,
+                RunnerToBroker::Heartbeat { .. } => beats += 1,
                 m @ RunnerToBroker::Bye(_) => return m,
                 _ => {}
             }

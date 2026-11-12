@@ -1,11 +1,11 @@
 use super::conn::ConnId;
 use super::{Client, Engine};
 use crate::api::{
-    access, detail_of, mask_detail, mask_summary, record_summary, stats_view, summary_of_job,
-    wire_source, Access, Viewer,
+    access, detail_of, mask_detail, mask_summary, peaks_text, record_summary, stats_view,
+    summary_of_job, wire_source, Access, Viewer,
 };
 use crate::MAX_SUBSCRIPTIONS;
-use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, StatsQuery};
+use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, JobRow, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
     split_text, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall,
@@ -349,7 +349,7 @@ impl Engine {
                 "выполняется на раннере {}",
                 j.runner.as_deref().unwrap_or_default()
             ),
-            None => format!("завершена: {}", state_name(rec.job.state)),
+            None => finished_text(&rec.job, a.sees_fields()),
         };
         ReadReply::Explain { job, text }
     }
@@ -431,6 +431,20 @@ fn state_name(s: JobState) -> String {
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
         .unwrap_or_default()
+}
+
+fn finished_text(row: &JobRow, full: bool) -> String {
+    let mut text = format!("завершена: {}", state_name(row.state));
+    if !full {
+        return text;
+    }
+    if let Some(reason) = &row.cancel_reason {
+        text.push_str(&format!(" ({reason})"));
+    }
+    if let Some(peaks) = peaks_text(row) {
+        text.push_str(&format!("; {peaks}"));
+    }
+    text
 }
 
 fn not_found(job: &JobId) -> ReadReply {

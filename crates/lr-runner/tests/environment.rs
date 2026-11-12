@@ -34,10 +34,21 @@ async fn job_environment_is_built_from_scratch() {
     let names: BTreeSet<&str> = env.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names,
-        BTreeSet::from(["PATH", "HOME", "TEMP", "LOCALRUNNER_JOB_ID"])
+        BTreeSet::from([
+            "PATH",
+            "HOME",
+            "TEMP",
+            "TMP",
+            "TMPDIR",
+            "LOCALRUNNER_JOB_ID"
+        ])
     );
     assert!(env.contains(&("PATH".into(), "/usr/bin:/bin".into())));
     assert!(env.contains(&("LOCALRUNNER_JOB_ID".into(), "job-1".into())));
+    let temp = |n: &str| env.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+    assert!(temp("TEMP").unwrap().ends_with("lr-job-1"));
+    assert_eq!(temp("TEMP"), temp("TMP"));
+    assert_eq!(temp("TEMP"), temp("TMPDIR"));
 }
 
 #[tokio::test]

@@ -18,7 +18,7 @@ mod version;
 
 pub use api::*;
 pub use auth::{AuthFromBroker, AuthToBroker};
-pub use caps::{WireCapabilities, WireServiceStatus};
+pub use caps::{WireCapabilities, WireLoad, WireServiceStatus};
 pub use common::*;
 pub use dashboard::*;
 pub use frame::{

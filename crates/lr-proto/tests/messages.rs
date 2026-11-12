@@ -90,7 +90,7 @@ fn read_requests_cover_status_history_explain_log_subscription() {
 #[test]
 fn messages_are_tagged_by_type_in_snake_case() {
     assert_eq!(
-        serde_json::to_value(RunnerToBroker::Heartbeat).unwrap(),
+        serde_json::to_value(RunnerToBroker::Heartbeat { load: None }).unwrap(),
         json!({"type": "heartbeat"})
     );
     assert_eq!(
@@ -299,7 +299,7 @@ fn runner_control_channel_is_local_only() {
 
 #[test]
 fn network_channels_decode_on_both_peer_kinds() {
-    let bytes = encode(&RunnerToBroker::Heartbeat).unwrap();
+    let bytes = encode(&RunnerToBroker::Heartbeat { load: None }).unwrap();
     assert!(decode_for_peer::<RunnerToBroker>(&bytes, PeerKind::Network).is_ok());
     assert!(decode_for_peer::<RunnerToBroker>(&bytes, PeerKind::Ipc).is_ok());
 }

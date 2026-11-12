@@ -1,8 +1,11 @@
 use crate::guard::Reaped;
+use crate::limits::MemoryEvidence;
+use crate::mem_unix::rss_bytes;
 use crate::os_unix::signal;
 use crate::probe::{descendants, probe, Probe};
 #[cfg(target_os = "linux")]
 use crate::scope_linux::Scope;
+use lr_abstractions::{Enforce, ResourceLimits};
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
@@ -17,8 +20,16 @@ type Wrapped = (Command, Vec<(OsString, OsString)>, Scope);
 
 #[cfg(not(target_os = "linux"))]
 impl Scope {
-    fn wrap(_: &str, _: &[&str]) -> Option<Wrapped> {
+    fn wrap(_: &str, _: &[&str], _: &ResourceLimits) -> Option<Wrapped> {
         None
+    }
+
+    fn pids(&self) -> Option<Vec<u32>> {
+        None
+    }
+
+    fn cpu_capped(&self) -> bool {
+        false
     }
 
     fn of_pid(_: u32) -> Option<Scope> {
@@ -29,6 +40,14 @@ impl Scope {
 
     fn is_empty(&self) -> Option<bool> {
         None
+    }
+
+    fn follow_memory(&self) {}
+
+    fn refresh_memory(&self) {}
+
+    fn memory_evidence(&self) -> MemoryEvidence {
+        MemoryEvidence::default()
     }
 }
 
@@ -48,8 +67,9 @@ impl Tree {
     pub(crate) fn shell(
         command: &str,
         job_vars: &[&str],
+        limits: &ResourceLimits,
     ) -> (Command, Vec<(OsString, OsString)>, Placement) {
-        if let Some((cmd, extra, scope)) = Scope::wrap(command, job_vars) {
+        if let Some((cmd, extra, scope)) = Scope::wrap(command, job_vars, limits) {
             return (cmd, extra, Placement(Some(scope)));
         }
         let mut cmd = Command::new("/bin/sh");
@@ -57,11 +77,24 @@ impl Tree {
         (cmd, Vec::new(), Placement(None))
     }
 
-    pub(crate) fn prepare(cmd: &mut Command) {
+    pub(crate) fn prepare(cmd: &mut Command, limits: &ResourceLimits, placement: &Placement) {
         cmd.process_group(0);
+        let capped = placement.0.as_ref().is_some_and(|s| s.cpu_capped());
+        if limits.cpu_millis.is_some() && limits.mode != Enforce::Off && !capped {
+            unsafe {
+                cmd.pre_exec(|| {
+                    libc::setpriority(libc::PRIO_PROCESS as _, 0, 10);
+                    Ok(())
+                });
+            }
+        }
     }
 
-    pub(crate) fn attach(child: &Child, placement: Placement) -> io::Result<Tree> {
+    pub(crate) fn attach(
+        child: &Child,
+        placement: Placement,
+        limits: &ResourceLimits,
+    ) -> io::Result<Tree> {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("process already exited"))?;
@@ -71,6 +104,11 @@ impl Tree {
         };
         let mut tree = Tree::new(pid, start, true, true);
         tree.scope = placement.0;
+        if limits.mode == Enforce::Kill && limits.mem_mb.is_some() {
+            if let Some(scope) = &tree.scope {
+                scope.follow_memory();
+            }
+        }
         Ok(tree)
     }
 
@@ -112,6 +150,30 @@ impl Tree {
         for (pid, start) in descendants(&roots) {
             known.insert(pid, start);
         }
+    }
+
+    pub(crate) fn memory_mb(&self) -> Option<u64> {
+        let pids = match self.scope.as_ref().and_then(|s| s.pids()) {
+            Some(pids) => pids,
+            None => {
+                self.observe();
+                let known = self.known.lock().unwrap_or_else(|e| e.into_inner());
+                known.keys().copied().collect()
+            }
+        };
+        Some(crate::limits::mb_of(rss_bytes(&pids)))
+    }
+
+    pub(crate) fn refresh_memory_evidence(&self) {
+        if let Some(scope) = &self.scope {
+            scope.refresh_memory();
+        }
+    }
+
+    pub(crate) fn memory_evidence(&self) -> MemoryEvidence {
+        self.scope
+            .as_ref()
+            .map_or_else(MemoryEvidence::default, |s| s.memory_evidence())
     }
 
     fn signal_all(&self, sig: libc::c_int) {

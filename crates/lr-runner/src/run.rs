@@ -1,11 +1,14 @@
 use crate::agent::Shared;
 use crate::cache::WORKSPACE_CLIENT;
+use crate::hooks_config::apply_owner_env;
 use crate::job::{skip_steps, Final};
+use crate::limits::{exceeded_detail, job_limits};
 use crate::output::Forward;
-use crate::prepare::Prepared;
+use crate::prepare::{job_temp, Prepared};
 use crate::source::{plan_source, SourceInput, SourcePlan, WorkspaceLayout};
 use lr_abstractions::{
-    CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, DEFAULT_CANCEL_GRACE,
+    CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, Usage,
+    DEFAULT_CANCEL_GRACE,
 };
 use lr_core::{JobState, StepState};
 use lr_proto::{ReasonCode, WireCode};
@@ -25,6 +28,17 @@ async fn run_phase(
     phase: Phase<'_>,
     stop: StopSignal,
 ) -> JobOutcome {
+    let mut dirs = Vec::new();
+    if !matches!(p.spec.code, WireCode::WorkTree { .. }) {
+        dirs.push(phase.cwd.to_path_buf());
+    }
+    dirs.push(job_temp(shared, &p.job));
+    let limits = job_limits(
+        &p.spec.requirements,
+        p.spec.limits.as_ref(),
+        &shared.deps.settings,
+        dirs,
+    );
     let spec = JobSpec {
         job: p.job.clone(),
         steps: phase.steps,
@@ -32,6 +46,7 @@ async fn run_phase(
         cwd: phase.cwd.to_path_buf(),
         env: phase.env.to_vec(),
         cancel_grace: DEFAULT_CANCEL_GRACE,
+        limits,
         header: vec![
             ("project".to_string(), p.spec.project.clone()),
             ("cwd".to_string(), phase.cwd.display().to_string()),
@@ -41,6 +56,26 @@ async fn run_phase(
     let outcome = shared.deps.process.run_job(spec, &forward, stop).await;
     forward.report_rest(&outcome).await;
     outcome
+}
+
+fn merge_peaks(into: &mut Usage, from: &Usage) {
+    into.peak_mem_mb = into.peak_mem_mb.max(from.peak_mem_mb);
+    into.peak_disk_mb = into.peak_disk_mb.max(from.peak_disk_mb);
+}
+
+fn final_of(out: &JobOutcome, peaks: &Usage, detail: Option<String>) -> Final {
+    let (reason, detail) = match &out.exceeded {
+        Some(e) => (Some(ReasonCode::ResourceExceeded), Some(exceeded_detail(e))),
+        None => (None, detail),
+    };
+    Final {
+        state: out.state,
+        exit_code: out.exit_code,
+        reason,
+        detail,
+        peak_mem_mb: peaks.peak_mem_mb,
+        peak_disk_mb: peaks.peak_disk_mb,
+    }
 }
 
 fn mirror_key(layout: &WorkspaceLayout, project: &str, url: &str) -> CacheKey {
@@ -63,9 +98,13 @@ fn failed_step(outcome: &JobOutcome) -> Option<&StepOutcome> {
     outcome.steps.iter().find(|s| s.state == StepState::Failed)
 }
 
+const TEMP_RETRIES: u32 = 8;
+const TEMP_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
+
 struct Cleanup<'a> {
     shared: &'a Shared,
     checkout: Option<PathBuf>,
+    temp: PathBuf,
     mirror: Option<(CacheKey, PathBuf)>,
     caches: Vec<CacheKey>,
 }
@@ -84,6 +123,25 @@ impl Cleanup<'_> {
                     ],
                 );
             }
+        }
+        let dir = &self.temp;
+        let mut removed = s.deps.files.remove_dir_all(dir).await;
+        for _ in 0..TEMP_RETRIES {
+            if removed.is_ok() {
+                break;
+            }
+            s.deps.clock.sleep(TEMP_RETRY_PAUSE).await;
+            removed = s.deps.files.remove_dir_all(dir).await;
+        }
+        if let Err(e) = removed {
+            s.diag.event(
+                Level::Error,
+                "job temp not removed",
+                &[
+                    ("path", &dir.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            );
         }
         let caches = s.caches();
         let now = s.now();
@@ -185,7 +243,10 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         .open(cache_client, &spec.project, &spec.requirements.cache, now)
         .await
     {
-        Ok((_, cache_env)) => env.extend(cache_env),
+        Ok((_, cache_env)) => {
+            env.extend(cache_env);
+            apply_owner_env(&mut env, &shared.deps.settings.job_env);
+        }
         Err(detail) => {
             skip_steps(shared, &p.job, &spec.steps, 0).await;
             return Final::failed(detail);
@@ -198,12 +259,19 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             return Final::failed(detail);
         }
     };
+    let temp = job_temp(shared, &p.job);
+    if let Err(e) = shared.deps.files.create_dir_all(&temp).await {
+        skip_steps(shared, &p.job, &spec.steps, 0).await;
+        return Final::failed(format!("job temp directory not created: {}", e.0));
+    }
     let cleanup = Cleanup {
         shared,
         checkout: plan.remove_after.clone(),
+        temp,
         mirror: mirror_key.zip(mirror),
         caches: keys,
     };
+    let mut peaks = Usage::default();
     let started = shared.now();
     let total_s = spec.requirements.timeout_s;
     if !plan.source_steps.is_empty() {
@@ -231,6 +299,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             env: &env,
         };
         let out = run_phase(shared, &p, phase, stop.clone()).await;
+        merge_peaks(&mut peaks, &out.usage);
         if out.state != JobState::Passed {
             skip_steps(shared, &p.job, &spec.steps, plan.first_ord).await;
             cleanup.run().await;
@@ -240,12 +309,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
                 }
                 _ => None,
             };
-            return Final {
-                state: out.state,
-                exit_code: out.exit_code,
-                reason: None,
-                detail,
-            };
+            return final_of(&out, &peaks, detail);
         }
     }
     let spent_ms = shared.now().millis_since(started);
@@ -264,11 +328,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
         env: &env,
     };
     let out = run_phase(shared, &p, phase, stop).await;
+    merge_peaks(&mut peaks, &out.usage);
     cleanup.run().await;
-    Final {
-        state: out.state,
-        exit_code: out.exit_code,
-        reason: None,
-        detail: None,
-    }
+    final_of(&out, &peaks, None)
 }

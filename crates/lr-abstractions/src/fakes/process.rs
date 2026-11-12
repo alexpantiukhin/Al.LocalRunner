@@ -1,7 +1,7 @@
 use crate::clock::Clock;
 use crate::process::{
-    mask_secrets, JobEvent, JobOutcome, JobOutput, JobSpec, Liveness, ProcessError,
-    ProcessInspector, ProcessRef, ProcessRunner, SpawnSpec, StepOutcome, Stop, StopSignal,
+    mask_secrets, Exceeded, JobEvent, JobOutcome, JobOutput, JobSpec, Liveness, ProcessError,
+    ProcessInspector, ProcessRef, ProcessRunner, SpawnSpec, StepOutcome, Stop, StopSignal, Usage,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, JobState, StepState};
@@ -57,12 +57,32 @@ impl StepScript {
 pub struct JobScript {
     /// Steps in order.
     pub steps: Vec<StepScript>,
+    /// Peaks the job reports.
+    pub usage: Usage,
+    /// The ceiling the job reports as exceeded; the job then ends `Failed`.
+    pub exceeded: Option<Exceeded>,
 }
 
 impl JobScript {
     /// A script from its steps.
     pub fn new(steps: Vec<StepScript>) -> JobScript {
-        JobScript { steps }
+        JobScript {
+            steps,
+            usage: Usage::default(),
+            exceeded: None,
+        }
+    }
+
+    /// Sets the peaks the job reports.
+    pub fn usage(mut self, usage: Usage) -> JobScript {
+        self.usage = usage;
+        self
+    }
+
+    /// Makes the job report `exceeded` and end `Failed`.
+    pub fn exceeded(mut self, exceeded: Exceeded) -> JobScript {
+        self.exceeded = Some(exceeded);
+        self
     }
 }
 
@@ -312,10 +332,15 @@ impl ProcessRunner for FakeProcessRunner {
                 .await;
             steps.push(outcome);
         }
+        if script.exceeded.is_some() && state == JobState::Passed {
+            state = JobState::Failed;
+        }
         JobOutcome {
             state,
             exit_code,
             steps,
+            usage: script.usage,
+            exceeded: script.exceeded.clone(),
         }
     }
 

@@ -133,6 +133,18 @@ pub(crate) async fn recover(shared: &Shared) {
             &[("error", &e.to_string())],
         ),
     }
+    if let Err(e) = shared
+        .deps
+        .files
+        .remove_dir_all(&crate::prepare::jobs_temp(shared))
+        .await
+    {
+        shared.diag.event(
+            Level::Error,
+            "job temp directories from before the restart not removed",
+            &[("error", &e.to_string())],
+        );
+    }
     shared.caches().remove_left_checkouts().await;
     shared.release_disk().await;
     shared.forget_undeclared_services().await;
@@ -171,6 +183,8 @@ async fn restarted(shared: &Shared, job: JobId) {
         exit_code: None,
         reason: Some(ReasonCode::RunnerRestarted),
         detail: Some("the runner restarted while the job ran".into()),
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     });
     shared.outbox.push_until_stored(&job, &msg).await;
 }

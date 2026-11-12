@@ -235,7 +235,7 @@ async fn after_a_restart_runner_silence_counts_from_its_first_heartbeat() {
     let h = h.restart().await;
     let mut r = rejoin(&h, "r1").await;
     h.clock.advance(Duration::from_secs(10));
-    r.send(&RunnerToBroker::Heartbeat).await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
     h.local_hub("alex").await.until_runner("r1", true).await;
     h.clock.advance(Duration::from_millis(45_000 - 1));
     h.local_hub("alex").await.until_runner("r1", true).await;
@@ -299,7 +299,7 @@ async fn re_hello_after_a_confirmed_assignment_keeps_it_with_the_runner() {
     hub.accepted().await;
     assert_eq!(r.assign().await.seq, 1);
     r.send(&ack("j1", 1)).await;
-    r.send(&RunnerToBroker::Heartbeat).await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
     h.poke().await;
     let mut again = rejoin(&h, "r1").await;
     again.quiet().await;
@@ -363,7 +363,7 @@ async fn a_runner_that_resumes_the_job_keeps_it_past_the_grace() {
     .await;
     for _ in 0..4 {
         h.clock.advance(Duration::from_secs(40));
-        back.send(&RunnerToBroker::Heartbeat).await;
+        back.send(&RunnerToBroker::Heartbeat { load: None }).await;
         h.poke().await;
     }
     let mut r2 = h.member_runner("r2", "10.0.0.8", linux()).await;

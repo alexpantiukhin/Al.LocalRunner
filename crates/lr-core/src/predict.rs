@@ -1,3 +1,4 @@
+use crate::admission::{same_host, ForeignLoadMode};
 use crate::model::{JobId, Timestamp, Zone};
 use crate::policy::Policy;
 use crate::queue::{Assignment, QueueEntry, Reservation, RunnerView, RunningJob, ServeLog};
@@ -85,6 +86,54 @@ impl<'a> Planner<'a> {
         Ok(free)
     }
 
+    fn admit_load(
+        &self,
+        entry: &QueueEntry,
+        candidates: Vec<(&'a RunnerView, Zone)>,
+        slots: &[Slot<'_>],
+        running: usize,
+    ) -> Result<Vec<(&'a RunnerView, Zone)>, Wait> {
+        let admission = self.policy.admission();
+        if admission.foreign_load == ForeignLoadMode::Off {
+            return Ok(candidates);
+        }
+        let req = &entry.order.requirements;
+        let mut refused = None;
+        let mut kept = Vec::with_capacity(candidates.len());
+        for (runner, zone) in candidates {
+            let Some(load) = runner.load else {
+                kept.push((runner, zone));
+                continue;
+            };
+            let mut own_cpu = 0u32;
+            let mut fresh_mem = 0u64;
+            for (i, slot) in slots.iter().enumerate() {
+                let here = self.runners.iter().any(|r| {
+                    r.name == slot.runner
+                        && same_host(&r.endpoint, &runner.endpoint, &self.site.broker_addrs)
+                });
+                if !here {
+                    continue;
+                }
+                let req = &slot.entry.order.requirements;
+                own_cpu = own_cpu.saturating_add(req.cpu);
+                if i >= running {
+                    fresh_mem = fresh_mem.saturating_add(req.mem_mb);
+                }
+            }
+            match admission.check(&load, req, own_cpu, fresh_mem) {
+                Ok(()) => kept.push((runner, zone)),
+                Err(w) => {
+                    refused.get_or_insert(w);
+                }
+            }
+        }
+        match refused {
+            Some(w) if kept.is_empty() => Err(w),
+            _ => Ok(kept),
+        }
+    }
+
     fn earliest(&self, entry: &QueueEntry, slots: &[Slot<'_>]) -> Option<Timestamp> {
         if self.start_now(entry, slots).is_ok() {
             return Some(self.now);
@@ -148,13 +197,17 @@ pub fn pick_next(policy: &dyn Policy, site: &Site, state: &QueueState<'_>, now: 
         now,
     };
     let mut slots: Vec<Slot<'_>> = state.running.iter().map(slot_of).collect();
+    let running = slots.len();
     let mut plan = Plan::default();
     let mut head: Option<(&QueueEntry, Timestamp)> = None;
     for i in policy.order(state.queue, state.served, now) {
         let entry = &state.queue[i];
         let job = &entry.order.job;
         let end = now.plus_secs(entry.order.requirements.timeout_s);
-        let chosen = match planner.start_now(entry, &slots) {
+        let startable = planner
+            .start_now(entry, &slots)
+            .and_then(|c| planner.admit_load(entry, c, &slots, running));
+        let chosen = match startable {
             Ok(candidates) => match head {
                 None => Ok(candidates[0]),
                 Some((h, at)) => candidates
@@ -174,7 +227,7 @@ pub fn pick_next(policy: &dyn Policy, site: &Site, state: &QueueState<'_>, now: 
                     }),
             },
             Err(wait) => {
-                if head.is_none() {
+                if head.is_none() && !matches!(wait, Wait::ForeignLoad { .. }) {
                     if let Some(at) = planner.earliest(entry, &slots) {
                         head = Some((entry, at));
                         plan.reservation = Some(Reservation {

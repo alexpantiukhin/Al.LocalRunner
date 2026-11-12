@@ -52,6 +52,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         cache_used_mb: None,
         service_mem_mb: Default::default(),
         commands: Default::default(),
+        enforcement: None,
     }
 }
 
@@ -163,6 +164,8 @@ pub fn result(job: &str, seq: u64, state: lr_core::JobState, exit: i32) -> Runne
         exit_code: Some(exit),
         reason: None,
         detail: None,
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     })
 }
 

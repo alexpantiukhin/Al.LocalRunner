@@ -1,3 +1,4 @@
+use crate::admission::LoadResource;
 use crate::matching::Mismatch;
 use crate::model::{JobId, Timestamp};
 use crate::requirements::Requirements;
@@ -88,6 +89,15 @@ pub enum Wait {
         /// Its reserved start.
         at: Timestamp,
     },
+    /// The machine of every suitable runner is busy with processes outside localrunner.
+    ForeignLoad {
+        /// The resource that is short.
+        resource: LoadResource,
+        /// Needed MB (with the headroom) or CPU.
+        needed: u64,
+        /// Free MB, or foreign CPU busy percent.
+        level: u64,
+    },
 }
 
 impl fmt::Display for Wait {
@@ -135,6 +145,22 @@ impl fmt::Display for Wait {
             Self::HeadReserved { head, at } => {
                 write!(f, "старт зарезервирован для {head} на {at}")
             }
+            Self::ForeignLoad {
+                resource: LoadResource::Memory,
+                needed,
+                level,
+            } => write!(
+                f,
+                "занято чужими процессами: свободно {level} МБ, нужно {needed}"
+            ),
+            Self::ForeignLoad {
+                resource: LoadResource::Cpu,
+                needed,
+                level,
+            } => write!(
+                f,
+                "занято чужими процессами: CPU {level}%, нужно {needed} ядер"
+            ),
         }
     }
 }

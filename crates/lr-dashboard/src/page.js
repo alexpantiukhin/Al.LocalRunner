@@ -135,7 +135,7 @@
     var kids = (S.data.runners || []).map(function (b) {
       var p = b.pool;
       var queued = S.data.jobs.filter(function (j) { return j.list === "queued" && j.broker === b.broker; });
-      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
+      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Enforcement", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
@@ -146,6 +146,7 @@
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
+          el("td", { text: r.caps.enforcement || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));
       });
@@ -214,6 +215,7 @@
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Commit", d.commit], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
       ["Broker", j.broker], ["Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
+      ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
       ["Cancelled by", d.cancelled_by], ["Secrets", (d.secrets || []).join(", ")]];
     var dl = $("card-fields");
     dl.replaceChildren();

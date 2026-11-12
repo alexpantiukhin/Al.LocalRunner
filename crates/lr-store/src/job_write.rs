@@ -76,8 +76,8 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
             "INSERT INTO job (client_key, id, project, source, label, note, branch, cwd, profile, \
              platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, \
              code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
-             cancel_reason) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,\
-             ?18,?19,?20,?21,?22,?23,?24)",
+             cancel_reason, peak_mem_mb, peak_disk_mb) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,\
+             ?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)",
             params![
                 j.key.client,
                 j.key.job.0,
@@ -102,7 +102,9 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
                 j.state.text(),
                 j.exit_code,
                 j.cancelled_by,
-                j.cancel_reason
+                j.cancel_reason,
+                opt_int(j.peak_mem_mb),
+                opt_int(j.peak_disk_mb)
             ],
         )?;
         for s in &intake.steps {
@@ -260,6 +262,11 @@ pub(crate) fn transition(conn: &mut Connection, key: &JobKey, change: Transition
             s if s.is_final() => (None, Some(time(change.at)), change.exit_code),
             _ => (None, None, None),
         };
+        let (peak_mem, peak_disk) = if change.state.is_final() {
+            (opt_int(change.peak_mem_mb), opt_int(change.peak_disk_mb))
+        } else {
+            (None, None)
+        };
         let cancel = if outlives_cancel(state, change.state) {
             "cancelled_by = ?7, cancel_reason = ?8"
         } else {
@@ -269,6 +276,8 @@ pub(crate) fn transition(conn: &mut Connection, key: &JobKey, change: Transition
             &format!(
                 "UPDATE job SET state = ?3, started_at = COALESCE(?4, started_at), \
                  finished_at = COALESCE(?5, finished_at), exit_code = COALESCE(?6, exit_code), \
+                 peak_mem_mb = COALESCE(?9, peak_mem_mb), \
+                 peak_disk_mb = COALESCE(?10, peak_disk_mb), \
                  {cancel} WHERE client_key = ?1 AND id = ?2"
             ),
             params![
@@ -279,7 +288,9 @@ pub(crate) fn transition(conn: &mut Connection, key: &JobKey, change: Transition
                 finished,
                 exit,
                 change.cancelled_by,
-                change.cancel_reason
+                change.cancel_reason,
+                peak_mem,
+                peak_disk
             ],
         )?;
         if change.state.is_final() {

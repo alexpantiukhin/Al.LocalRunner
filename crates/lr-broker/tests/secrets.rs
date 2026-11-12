@@ -75,6 +75,8 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
         exit_code: None,
         reason: Some(ReasonCode::SecretMissing),
         detail: Some("секрет не найден: registry_auth".into()),
+        peak_disk_mb: None,
+        peak_mem_mb: None,
     }))
     .await;
     r.acked(1).await;

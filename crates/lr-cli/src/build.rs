@@ -5,6 +5,7 @@ use crate::broker_admin::{ipc_access, listen_addresses, BrokerAdmin, TlsListenin
 use crate::fs_files::StdFiles;
 use crate::git_repo::GitRepository;
 use crate::host;
+use crate::host_load;
 use crate::net::{MergedListener, NetAdmission, RoutingDialer};
 use crate::paths::Layout;
 use crate::runner_config::{check_runner_name, elevation_allowed, RunnerConfig};
@@ -383,6 +384,13 @@ pub async fn runner(
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
     cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
+    cfg.settings.enforcement = Some(
+        match lr_exec::enforcement() {
+            lr_exec::Enforcement::Os => "os",
+            lr_exec::Enforcement::Watcher => "watcher",
+        }
+        .to_string(),
+    );
     let clock = clock();
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =
@@ -409,6 +417,7 @@ pub async fn runner(
         settings: cfg.settings,
         disk: Arc::new(host::HostDiskSpace),
         awake: Arc::new(lr_exec::system_keep_awake()),
+        load: Some(Arc::new(host_load::SystemHostLoad::new())),
     });
     Ok(RunnerParts {
         agent,

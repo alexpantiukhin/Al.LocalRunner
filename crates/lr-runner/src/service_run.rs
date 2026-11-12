@@ -37,6 +37,8 @@ fn cancelled(name: &str) -> Final {
         exit_code: None,
         reason: None,
         detail: Some(format!("cancelled while service {name} started")),
+        peak_mem_mb: None,
+        peak_disk_mb: None,
     }
 }
 

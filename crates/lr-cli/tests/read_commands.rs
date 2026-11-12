@@ -34,6 +34,8 @@ fn summary(job: &str, queued: u64) -> JobSummary {
         cwd: None,
         timeout_s: None,
         github_run_url: None,
+        peak_mem_mb: None,
+        peak_disk_mb: None,
     }
 }
 
@@ -319,6 +321,7 @@ fn stats_and_runners_print_per_broker() {
             cache_used_mb: None,
             service_mem_mb: Default::default(),
             commands: Default::default(),
+            enforcement: None,
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 1024,
