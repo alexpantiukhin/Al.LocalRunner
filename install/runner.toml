@@ -1,0 +1,6 @@
+# Runner settings in a container (spec 3.10, 10.4). The image has only localrunner: tools of
+# jobs come from an image built FROM it.
+platforms = ["linux"]
+
+[env]
+path = "/usr/local/bin:/usr/bin:/bin"

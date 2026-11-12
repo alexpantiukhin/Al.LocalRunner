@@ -5,3 +5,4 @@ temp/
 secrets/
 .claude/settings.local.json
 .claude/worktrees/
+target/

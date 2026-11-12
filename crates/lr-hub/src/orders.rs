@@ -1,0 +1,296 @@
+use crate::handles::checked_dir;
+use lr_abstractions::{Files, Frame, Repository, MAX_FRAME_BYTES};
+use lr_core::{
+    parse_profiles, resolve_for_platform, validate_label, JobId, MachineRef, Profile, Requirements,
+    Timestamp,
+};
+use lr_proto::{
+    HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, ResourceOverride, SubmitRequest,
+    WireCode,
+};
+use std::path::{Path, PathBuf};
+
+pub(crate) const PROFILES_PATH: &str = ".localrunner/profiles.toml";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Refusal {
+    Rejected(ReasonCode, String),
+    Invalid(String),
+}
+
+fn invalid(text: impl Into<String>) -> Refusal {
+    Refusal::Invalid(text.into())
+}
+
+pub(crate) struct Built {
+    pub(crate) spec: OrderSpec,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) dirty_check_failed: Option<String>,
+}
+
+#[derive(Default)]
+struct Notes {
+    warnings: Vec<String>,
+    dirty_check_failed: Option<String>,
+}
+
+pub(crate) fn local_machine(os_user: &str) -> MachineRef {
+    MachineRef(format!("local:{os_user}"))
+}
+
+fn pick(profiles: Vec<Profile>, wanted: Option<&str>, origin: &str) -> Result<Profile, Refusal> {
+    if let Some(name) = wanted {
+        return profiles
+            .into_iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| invalid(format!("profile `{name}` is not in {origin}")));
+    }
+    let names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
+    let mut all = profiles.into_iter();
+    match (all.next(), all.next()) {
+        (Some(only), None) => Ok(only),
+        _ => Err(invalid(format!(
+            "{origin} has {} profiles; name one: {}",
+            names.len(),
+            names.join(", ")
+        ))),
+    }
+}
+
+fn parse(bytes: &[u8], origin: &str) -> Result<Vec<Profile>, Refusal> {
+    let text = std::str::from_utf8(bytes).map_err(|_| invalid(format!("{origin} is not UTF-8")))?;
+    parse_profiles(text).map_err(|e| invalid(format!("{origin}: {e}")))
+}
+
+fn platform_of(profile: &Profile, flag: Option<&str>) -> Result<Option<String>, Refusal> {
+    if let Some(p) = flag {
+        return Ok(Some(p.to_string()));
+    }
+    let mut listed: Vec<&String> = profile
+        .platforms
+        .iter()
+        .chain(profile.platform_overrides.keys())
+        .collect();
+    listed.sort();
+    listed.dedup();
+    match listed.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some((*one).clone())),
+        many => Err(invalid(format!(
+            "profile `{}` lists several platforms ({}); choose one with --platform",
+            profile.name,
+            many.iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+fn uncommitted_warning(sha: &str) -> String {
+    format!(
+        "warning: uncommitted changes are ignored: the runner checks out the pushed commit {sha}"
+    )
+}
+
+async fn committed(
+    repo: &dyn Repository,
+    root: &Path,
+    name: &str,
+    notes: &mut Notes,
+) -> Result<(String, Profile, Option<String>), Refusal> {
+    let repo_err = |e: lr_abstractions::RepositoryError| invalid(e.to_string());
+    let sha = repo
+        .head(root)
+        .await
+        .map_err(repo_err)?
+        .ok_or_else(|| invalid(format!("{} has no commit", root.display())))?;
+    if !repo.is_pushed(root, &sha).await.map_err(repo_err)? {
+        return Err(Refusal::Rejected(
+            ReasonCode::Rejected(RejectReason::CommitNotPushed),
+            format!("HEAD {sha} не запушен: закоммитьте и запушьте ветку (MR не нужен)"),
+        ));
+    }
+    match repo.has_uncommitted(root).await {
+        Ok(true) => notes.warnings.push(uncommitted_warning(&sha)),
+        Ok(false) => {}
+        Err(e) => notes.dirty_check_failed = Some(e.to_string()),
+    }
+    let origin = format!("{PROFILES_PATH} of commit {sha}");
+    let bytes = repo
+        .show(root, &sha, PROFILES_PATH)
+        .await
+        .map_err(repo_err)?
+        .ok_or_else(|| invalid(format!("{origin} does not exist")))?;
+    let profile = pick(parse(&bytes, &origin)?, Some(name), &origin)?;
+    let url = repo.origin_url(root).await.map_err(repo_err)?;
+    Ok((sha, profile, url))
+}
+
+fn lower_timeout(
+    spec: &mut OrderSpec,
+    profile_timeout: u64,
+    flag: Option<u64>,
+) -> Result<(), Refusal> {
+    let Some(t) = flag else {
+        return Ok(());
+    };
+    if t == 0 || t > profile_timeout {
+        return Err(invalid(format!(
+            "--timeout {t} must be between 1 and the profile timeout {profile_timeout} s: it only lowers"
+        )));
+    }
+    spec.requirements.timeout_s = t;
+    for step in &mut spec.steps {
+        step.timeout_s = step.timeout_s.min(t);
+    }
+    Ok(())
+}
+
+fn override_resources(spec: &mut OrderSpec, req: &SubmitRequest) -> Result<(), Refusal> {
+    if req.mem_mb == Some(0) {
+        return Err(invalid("--mem must be at least 1 MB"));
+    }
+    if req.cpu == Some(0) {
+        return Err(invalid("--cpu must be at least 1 core"));
+    }
+    if let Some(mem) = req.mem_mb {
+        spec.requirements.mem_mb = mem;
+    }
+    if let Some(cpu) = req.cpu {
+        spec.requirements.cpu = cpu;
+    }
+    spec.overrides = ResourceOverride {
+        mem_mb: req.mem_mb,
+        cpu: req.cpu,
+    };
+    Ok(())
+}
+
+pub(crate) async fn build(
+    req: &SubmitRequest,
+    files: &dyn Files,
+    repo: &dyn Repository,
+    now: Timestamp,
+) -> Result<Built, Refusal> {
+    let id = &req.identity;
+    validate_label(&id.label).map_err(|e| invalid(e.to_string()))?;
+    checked_dir(&id.cwd).map_err(invalid)?;
+    let root: PathBuf = match &id.worktree_root {
+        Some(r) => {
+            checked_dir(r).map_err(invalid)?;
+            r.clone()
+        }
+        None => id.cwd.clone(),
+    };
+    let path = root.join(".localrunner").join("profiles.toml");
+    let origin = path.display().to_string();
+    let bytes = files
+        .read(&path)
+        .await
+        .map_err(|e| invalid(e.to_string()))?
+        .ok_or_else(|| invalid(format!("{origin} does not exist")))?;
+    let tree_profile = pick(parse(&bytes, &origin)?, req.profile.as_deref(), &origin)?;
+    let platform = platform_of(&tree_profile, req.platform.as_deref())?;
+    let mut notes = Notes::default();
+    let (profile, code) = match &platform {
+        None => (
+            tree_profile,
+            WireCode::WorkTree {
+                cwd: id.cwd.display().to_string(),
+            },
+        ),
+        Some(_) => {
+            let (sha, profile, repo_url) =
+                committed(repo, &root, &tree_profile.name, &mut notes).await?;
+            (
+                profile,
+                WireCode::Commit {
+                    sha,
+                    repo_url,
+                    branch: id.branch.clone(),
+                },
+            )
+        }
+    };
+    let requirements = Requirements::from_profile(
+        &profile,
+        platform.as_deref(),
+        Some(local_machine(&id.os_user)),
+    )
+    .map_err(|e| invalid(e.to_string()))?;
+    let resolved = match &platform {
+        Some(p) => resolve_for_platform(&profile, p).map_err(|e| invalid(e.to_string()))?,
+        None => profile.clone(),
+    };
+    let mut spec = OrderSpec {
+        profile: profile.name.clone(),
+        requirements,
+        steps: resolved.steps,
+        enqueued_at: now,
+        identity: id.clone(),
+        code,
+        wanted_priority: None,
+        overrides: ResourceOverride::default(),
+    };
+    lower_timeout(&mut spec, resolved.timeout_s, req.timeout_s)?;
+    override_resources(&mut spec, req)?;
+    let probe = order_payload(&JobId("probe".into()), &spec);
+    if Frame::json(&probe).map_or(true, |f| f.len() > MAX_FRAME_BYTES / 2) {
+        return Err(invalid("the order is too large for one protocol frame"));
+    }
+    Ok(Built {
+        spec,
+        warnings: notes.warnings,
+        dirty_check_failed: notes.dirty_check_failed,
+    })
+}
+
+pub(crate) fn order_payload(job: &JobId, spec: &OrderSpec) -> HubToBroker {
+    HubToBroker::Order(Order {
+        job: job.clone(),
+        seq: 0,
+        spec: Box::new(spec.clone()),
+    })
+}
+
+#[derive(Default)]
+pub(crate) struct JobIds {
+    last_ms: u64,
+    counter: u32,
+}
+
+impl JobIds {
+    pub(crate) fn above(floor: u64) -> JobIds {
+        JobIds {
+            last_ms: if floor == 0 {
+                0
+            } else {
+                floor.saturating_add(1)
+            },
+            counter: 0,
+        }
+    }
+
+    pub(crate) fn last_ms(&self) -> u64 {
+        self.last_ms
+    }
+
+    pub(crate) fn time_of(job: &JobId) -> Option<u64> {
+        let (ms, _) = job.0.strip_prefix('j')?.split_once('-')?;
+        u64::from_str_radix(ms, 16).ok()
+    }
+
+    pub(crate) fn next(&mut self, now: Timestamp) -> JobId {
+        if now.0 > self.last_ms {
+            self.last_ms = now.0;
+            self.counter = 0;
+        } else {
+            self.counter = self.counter.wrapping_add(1);
+            if self.counter == 0 {
+                self.last_ms = self.last_ms.saturating_add(1);
+            }
+        }
+        JobId(format!("j{:x}-{:x}", self.last_ms, self.counter))
+    }
+}

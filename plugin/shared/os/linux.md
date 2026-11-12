@@ -1,11 +1,11 @@
 # Linux
 
-Used by `install-runner`, `up-runner`, `down-runner`. Shell: bash.
+Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell: bash.
 
 | Item | Value |
 |---|---|
-| State and runner directories | `${XDG_DATA_HOME:-~/.local/share}/al-localrunner` |
-| IPC | Unix socket `$XDG_RUNTIME_DIR/al-localrunner.sock`, mode 0600 |
+| State directory | `~/.local/share/al-localrunner` (`XDG_DATA_HOME` is not read; `LOCALRUNNER_STATE_DIR` overrides it); runners in `runner/<name>/` of it; broker service: `/var/lib/al-localrunner` |
+| IPC | Unix sockets in `ipc/` of the state directory (closed to the user, 0700): `hub-<user>.sock`, `runner-<user>-<name>.sock`, `broker.sock`, `broker-admin.sock`; broker service: `/run/al-localrunner/broker.sock` (group `al-localrunner`); not `$XDG_RUNTIME_DIR`, which autostart without login, containers and `sudo -u` lack |
 | Process-tree kill | own process group or cgroup, `killpg` then SIGKILL after a grace period |
 | Free memory and CPU | `MemAvailable` in `/proc/meminfo`, `nproc` |
 

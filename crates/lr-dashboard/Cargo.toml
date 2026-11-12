@@ -1,0 +1,23 @@
+[package]
+name = "lr-dashboard"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+lr-core.workspace = true
+lr-abstractions.workspace = true
+lr-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "net", "macros"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+
+[dev-dependencies]
+lr-abstractions = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread", "net", "macros", "io-util", "time"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }

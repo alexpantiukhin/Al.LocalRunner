@@ -1,0 +1,27 @@
+[package]
+name = "lr-obs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+lr-core.workspace = true
+lr-abstractions.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+aho-corasick = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_EventLog"] }
+
+[dev-dependencies]
+lr-abstractions = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "crypto"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

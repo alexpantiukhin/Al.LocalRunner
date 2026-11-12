@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.dependencies]
+lr-core = { path = "crates/lr-core" }
+lr-abstractions = { path = "crates/lr-abstractions" }
+lr-proto = { path = "crates/lr-proto" }
+lr-net = { path = "crates/lr-net" }
+lr-store = { path = "crates/lr-store" }
+lr-exec = { path = "crates/lr-exec" }
+lr-obs = { path = "crates/lr-obs" }
+lr-broker = { path = "crates/lr-broker" }
+lr-hub = { path = "crates/lr-hub" }
+lr-runner = { path = "crates/lr-runner" }
+lr-dashboard = { path = "crates/lr-dashboard" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "1"
+ipnet = "2"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+libc = "0.2"
+async-trait = "0.1"
+tokio = { version = "1", default-features = false }
+rusqlite = { version = "0.41", features = ["bundled"] }
+tempfile = "3"

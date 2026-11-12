@@ -1,0 +1,44 @@
+name: al-localrunner
+
+services:
+  broker:
+    # Both services run the image al-localrunner:<version> with an explicit tag (never latest).
+    # `build` makes it from the repository: its context is the repository root (`..` from
+    # install/). With the published image and no repository, remove `build`; the image is pulled.
+    image: al-localrunner:0.1.0
+    build:
+      context: ..
+      dockerfile: install/Dockerfile
+    command: ["localrunner", "broker", "run"]
+    user: "65532:65532"
+    ports: ["127.0.0.1:7443:7443"]
+    volumes:
+      - broker-state:/var/lib/al-localrunner
+      - ./policy.toml:/etc/al-localrunner/policy.toml:ro
+    networks: [pool]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+  runner:
+    image: al-localrunner:0.1.0
+    command: ["localrunner", "runner", "run"]
+    user: "65532:65532"
+    hostname: runner
+    volumes:
+      - runner-state:/var/lib/al-localrunner
+      - ./runner.toml:/etc/al-localrunner/runner.toml:ro
+    networks: [pool]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [broker]
+    restart: unless-stopped
+
+networks:
+  pool:
+    ipam:
+      config:
+        - subnet: 172.30.57.0/24
+
+volumes:
+  broker-state: {}
+  runner-state: {}

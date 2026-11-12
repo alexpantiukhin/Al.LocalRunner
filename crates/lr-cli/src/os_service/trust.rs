@@ -1,0 +1,192 @@
+//! The broker service's state directory must be controlled by the service and the
+//! administrators only (spec 10.3): one that someone else created, linked elsewhere or opened
+//! up is refused before anything is copied into it, then it is closed.
+
+use std::path::Path;
+
+/// What decides whether a file or directory can be trusted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Facts {
+    /// A symbolic link, junction or other reparse point.
+    pub link: bool,
+    /// Owner principal (SID on Windows, uid on Unix).
+    pub owner: Option<String>,
+    /// Who else may write: SIDs of explicit allow entries on Windows, `group` or `others` for
+    /// write bits on Unix; `None` when anyone may (no DACL) or the list cannot be read.
+    pub writers: Option<Vec<String>>,
+    /// Hard links of a file (1 for a directory): a second name may be someone else's file.
+    pub hard_links: u64,
+}
+
+/// `Ok` when `facts` show `path` is controlled by `trusted` principals only.
+pub fn judge(path: &Path, facts: &Facts, trusted: &[String]) -> Result<(), String> {
+    let known = |p: &str| trusted.iter().any(|t| t.eq_ignore_ascii_case(p));
+    let fix = "remove it (or fix it as administrator) and install again";
+    if facts.link {
+        return Err(format!("{} is a link or junction; {fix}", path.display()));
+    }
+    if facts.hard_links > 1 {
+        return Err(format!(
+            "{} has {} hard links; {fix}",
+            path.display(),
+            facts.hard_links
+        ));
+    }
+    match &facts.owner {
+        Some(o) if known(o) => {}
+        Some(o) => {
+            return Err(format!(
+                "{} is owned by {o}, not by an administrator or the service; {fix}",
+                path.display()
+            ))
+        }
+        None => return Err(format!("{} has no owner; {fix}", path.display())),
+    }
+    match &facts.writers {
+        None => Err(format!(
+            "{} lets anyone in or its access list cannot be read; {fix}",
+            path.display()
+        )),
+        Some(w) => match w.iter().find(|w| !known(w)) {
+            Some(other) => Err(format!(
+                "{} grants access to {other}; {fix}",
+                path.display()
+            )),
+            None => Ok(()),
+        },
+    }
+}
+
+/// The facts of `path` itself (a link is not followed).
+#[cfg(windows)]
+pub fn facts(path: &Path) -> Result<Facts, String> {
+    use std::os::windows::fs::MetadataExt;
+    const REPARSE_POINT: u32 = 0x400;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let link = meta.file_type().is_symlink() || meta.file_attributes() & REPARSE_POINT != 0;
+    let security = lr_net::file_security(path).map_err(|e| e.to_string())?;
+    let hard_links = if meta.is_dir() || link {
+        1
+    } else {
+        u64::from(lr_net::hard_links(path).map_err(|e| e.to_string())?)
+    };
+    Ok(Facts {
+        link,
+        hard_links,
+        owner: security.owner,
+        writers: security.explicit_allowed,
+    })
+}
+
+/// The facts of `path` itself (a link is not followed).
+#[cfg(unix)]
+pub fn facts(path: &Path) -> Result<Facts, String> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut writers = Vec::new();
+    if meta.mode() & 0o020 != 0 {
+        writers.push("group".to_string());
+    }
+    if meta.mode() & 0o002 != 0 {
+        writers.push("others".to_string());
+    }
+    Ok(Facts {
+        hard_links: if meta.is_dir() { 1 } else { meta.nlink() },
+        link: meta.file_type().is_symlink(),
+        owner: Some(meta.uid().to_string()),
+        writers: Some(writers),
+    })
+}
+
+/// Checks everything below `root` (not `root` itself); links are refused, never followed.
+pub fn check_children(root: &Path, trusted: &[String]) -> Result<(), String> {
+    let entries = std::fs::read_dir(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        let f = facts(&path)?;
+        judge(&path, &f, trusted)?;
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir()) {
+            check_children(&path, trusted)?;
+        }
+    }
+    Ok(())
+}
+
+/// The principals that may control the service's files: Administrators and SYSTEM (Windows) or
+/// root (Unix), the user running this (the administrator installing), and the service account
+/// once it exists.
+pub fn trusted_principals(account: &str) -> Vec<String> {
+    let mut out: Vec<String> = if cfg!(windows) {
+        vec!["S-1-5-32-544".into(), "S-1-5-18".into()]
+    } else {
+        vec!["0".into()]
+    };
+    out.extend(lr_net::current_os_principal().ok());
+    out.extend(lr_net::account_principal(account).ok());
+    out
+}
+
+/// `Ok` when `path` does not exist or can be trusted.
+pub fn require_trusted(path: &Path, account: &str) -> Result<(), String> {
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(());
+    }
+    judge(path, &facts(path)?, &trusted_principals(account))
+}
+
+/// Creates the service directory `path` with mode 0700 (its parents as needed). Only `path`
+/// itself is created exclusively: one that appeared meanwhile is judged like an existing
+/// directory instead of being taken over.
+#[cfg(unix)]
+pub fn create_service_leaf(path: &Path, trusted: &[String]) -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            judge(path, &facts(path)?, trusted)
+        }
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Checks and closes the service state directory `path`; a missing one is created already
+/// closed (Windows: with the service's protected security descriptor, Unix: mode 0700).
+/// Windows: an existing directory is checked and closed first, so nobody can add to it, then
+/// everything below is checked (links and files with several hard links refused) and finally
+/// reset to the directory's DACL and owner. Unix: the directory gets mode 0700 first, then
+/// everything below is checked.
+pub fn secure_service_dir(path: &Path, account: &str) -> Result<(), String> {
+    let trusted = trusted_principals(account);
+    let exists = std::fs::symlink_metadata(path).is_ok();
+    if exists {
+        judge(path, &facts(path)?, &trusted)?;
+    }
+    #[cfg(windows)]
+    {
+        let sid = lr_net::account_principal(account)
+            .map_err(|e| format!("service account {account}: {e}"))?;
+        if !exists {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+            lr_net::create_service_dir(path, &sid).map_err(|e| e.to_string())?;
+        }
+        lr_net::lock_service_dir(path, &sid, false).map_err(|e| e.to_string())?;
+        check_children(path, &trusted)?;
+        lr_net::lock_service_dir(path, &sid, true).map_err(|e| e.to_string())
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if !exists {
+            create_service_leaf(path, &trusted)?;
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        check_children(path, &trusted)
+    }
+}
