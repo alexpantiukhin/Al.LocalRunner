@@ -134,6 +134,15 @@ pub fn reason_of(cancel_reason: Option<&str>) -> Option<ReasonCode> {
     code.parse().ok()
 }
 
+/// The explanation stored with a rejected order (`rejected_*: text`).
+fn rejection_text(row: &JobRow) -> Option<String> {
+    let text = row.cancel_reason.as_deref()?;
+    let Some(ReasonCode::Rejected(_)) = reason_of(Some(text)) else {
+        return None;
+    };
+    text.split_once(": ").map(|(_, d)| d.to_string())
+}
+
 /// The sentence about the peaks of a finished run, `None` when the runner reported none.
 pub fn peaks_text(row: &JobRow) -> Option<String> {
     let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} МБ"));
@@ -250,6 +259,7 @@ pub fn live_steps(
 /// The unmasked full record of a stored run.
 pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
     let row = &rec.job;
+    let wait_reason = wait_reason.or_else(|| rejection_text(row));
     let summary = record_summary(rec);
     JobDetail {
         summary,

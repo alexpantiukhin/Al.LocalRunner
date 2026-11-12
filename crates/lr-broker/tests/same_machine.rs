@@ -47,7 +47,8 @@ async fn same_machine_rejected_if_runner_offline_or_gone_before_start() {
     hub.until_runner("local:lr", false).await;
     hub.send(&order("offline", same_machine_req())).await;
     assert_eq!(hub.rejected().await.code.as_str(), NO_RUNNER);
-    assert!(h.job_row(ALEX, "offline").await.is_none());
+    h.assert_recorded_rejection(ALEX, "offline", NO_RUNNER)
+        .await;
 
     let mut r = h.local_runner("alex", "lr", linux()).await;
     hub.send(&order("s1", same_machine_req())).await;

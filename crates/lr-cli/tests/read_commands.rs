@@ -461,3 +461,22 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     assert_eq!(cols[8], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
 }
+
+#[test]
+fn a_cancelled_run_with_a_rejection_reason_is_shown_and_filtered_as_rejected() {
+    use lr_cli::commands::history_cmd::{is_rejected, shown_state};
+    use lr_proto::{ReasonCode, RejectReason};
+    let mut refused = summary("j9", H);
+    refused.state = lr_core::JobState::Cancelled;
+    refused.reason = Some(ReasonCode::Rejected(RejectReason::PoolMemory));
+    let mut plain = summary("j8", H);
+    plain.state = lr_core::JobState::Cancelled;
+    assert!(is_rejected(&refused));
+    assert!(!is_rejected(&plain));
+    assert_eq!(shown_state(&refused), "rejected");
+    assert_eq!(shown_state(&plain), "cancelled");
+    let lines = history_lines(&[("local".into(), refused)]);
+    assert!(lines[1].contains("\trejected\t"), "{}", lines[1]);
+    let parsed = Cli::try_parse_from(["localrunner", "history", "--result", "rejected"]);
+    assert!(parsed.is_ok());
+}

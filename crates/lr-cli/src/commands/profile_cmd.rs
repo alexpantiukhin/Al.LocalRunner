@@ -136,7 +136,7 @@ fn runner_sources(layout: &Layout) -> Vec<(String, BTreeMap<String, SecretFrom>)
                 Some(name.as_str()).filter(|n| *n != "(template)"),
                 &host_name,
                 layout.root.clone(),
-                host.clone(),
+                host,
             )
             .ok()?;
             Some((name, cfg.secrets))

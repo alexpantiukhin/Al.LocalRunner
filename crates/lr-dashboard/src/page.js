@@ -10,6 +10,8 @@
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
+  function isRejected(s) { return s.state === "cancelled" && typeof s.reason === "string" && s.reason.indexOf("rejected_") === 0; }
+  function shown(s) { return isRejected(s) ? "rejected" : s.state; }
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -39,7 +41,7 @@
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
       : (d.wait_reason || "") + (s.started_at ? "" : " (" + dur(t - s.queued_at) + ")");
     return {
-      j: j, position: j.position || "", job: s.job, state: s.state, project: s.project || "",
+      j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
       source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
       queued: s.queued_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
@@ -214,10 +216,10 @@
       var live = (d.steps || []).filter(function (st) { return st.state === "running"; })[0];
       S.step = live ? live.name : "";
     }
-    $("card-title").textContent = s.job + " · " + s.state + (j.stale ? " (stale)" : "");
+    $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Commit", d.commit], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
-      ["Broker", j.broker], ["Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
+      ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
       ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
       ["Cancelled by", d.cancelled_by], ["Secrets", (d.secrets || []).join(", ")]];
     var dl = $("card-fields");

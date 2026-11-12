@@ -49,6 +49,10 @@ fn run(scenario: &str, test: &str) -> Option<Value> {
 
 fn run_with(config: &str, scenario: &str, test: &str) -> Option<Value> {
     let first = running(StepState::Running, StepState::Queued, JobState::Running);
+    run_snapshot(config, &first, scenario, test)
+}
+
+fn run_snapshot(config: &str, first: &str, scenario: &str, test: &str) -> Option<Value> {
     let program = format!(
         "{DOM}\nstart({config}, {first});\n{CHARTS}\n{PAGE}\n\
          var $ = function (id) {{ return document.getElementById(id); }};\n\
@@ -234,4 +238,29 @@ fn a_snapshot_without_logs_says_so_once_and_offers_nothing_to_copy() {
     assert_eq!(out["log"], "(logs are not included in this snapshot)");
     assert_eq!(out["copy"], true);
     assert_eq!(out["download"], true);
+}
+
+#[test]
+fn a_refused_order_is_shown_as_rejected_not_as_cancelled() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Cancelled,
+    ))
+    .unwrap();
+    v["jobs"][0]["detail"]["summary"]["reason"] = serde_json::json!("rejected_pool_memory");
+    let scenario = r#"
+      sources[0].onopen(); await tick();
+      var tr = $("queue-body").children[0];
+      out.states = tr.children.filter(function (c) { return c.className && c.className.indexOf("state-") === 0; }).map(function (c) { return c.className; });
+    "#;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "rejected",
+    ) else {
+        return;
+    };
+    assert_eq!(out["states"][0], "state-rejected", "{out}");
 }

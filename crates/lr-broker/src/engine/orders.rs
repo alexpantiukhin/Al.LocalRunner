@@ -38,6 +38,20 @@ fn rejected(o: &Order, reason: RejectReason, detail: String) -> BrokerToHub {
     })
 }
 
+/// The refusal kept for a run that `record_rejected` stored, so an order sent again after the
+/// answer got lost is refused again instead of being taken for an accepted one.
+fn recorded_rejection(rec: &JobRecord) -> Option<(RejectReason, String)> {
+    if rec.job.state != JobState::Cancelled {
+        return None;
+    }
+    let text = rec.job.cancel_reason.as_deref()?;
+    let Some(ReasonCode::Rejected(reason)) = crate::api::reason_of(Some(text)) else {
+        return None;
+    };
+    let detail = text.split_once(": ").map_or("", |(_, d)| d).to_string();
+    Some((reason, detail))
+}
+
 pub(super) fn overridden(
     r: &Reject,
     over: &ResourceOverride,
@@ -353,6 +367,40 @@ impl Engine {
         Some(max)
     }
 
+    /// Keeps a refused order in the history as a cancelled run whose reason is the rejection
+    /// code and the explanation, so `history`, `stats` and the dashboard can answer what was
+    /// asked for and why it was refused. A storage failure only costs the record.
+    async fn record_rejected(
+        &mut self,
+        client: &Client,
+        job: &Job,
+        reason: &RejectReason,
+        detail: &str,
+    ) {
+        let code = ReasonCode::Rejected(reason.clone());
+        let stored = intake(&job.key, client, &job.spec, &job.entry);
+        let recorded = match self.store.accept(stored).await {
+            Ok(_) => {
+                let mut end = Transition::to(JobState::Cancelled, self.now());
+                end.cancelled_by = Some("broker".into());
+                end.cancel_reason = Some(format!("{code}: {detail}"));
+                self.store.transition(&job.key, end).await.map(|_| ())
+            }
+            Err(e) => Err(e),
+        };
+        if let Err(e) = recorded {
+            self.diag(
+                Level::Warn,
+                "storage failed: the rejected order is not in the history",
+                &[
+                    ("client", &job.key.client),
+                    ("job", &job.key.job.0),
+                    ("error", &e.to_string()),
+                ],
+            );
+        }
+    }
+
     async fn order(&mut self, conn: ConnId, client: &Client, mut o: Order) {
         let trimmed = self.trim_timeout(&mut o.spec);
         o.spec.enqueued_at = self.now();
@@ -386,6 +434,7 @@ impl Engine {
         if let Err((reason, detail)) = self.admit(&job.entry, &job.spec) {
             self.count_rejected(&job);
             self.note_rejected(&job, &reason);
+            self.record_rejected(client, &job, &reason, &detail).await;
             return self.send(conn, &rejected(&o, reason, detail));
         }
         let intake = intake(&key, client, &job.spec, &job.entry);
@@ -424,6 +473,9 @@ impl Engine {
             );
         }
         if last == 0 {
+            if let Some((reason, detail)) = recorded_rejection(&rec) {
+                return self.send(conn, &rejected(&o, reason, detail));
+            }
             if let Err(e) = self.store.accept_seq(key, Inbound::Hub, o.seq).await {
                 return self.unavailable(conn, key, "record the order seq", &e);
             }

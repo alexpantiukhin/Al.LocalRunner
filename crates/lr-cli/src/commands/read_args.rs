@@ -24,6 +24,8 @@ pub enum ResultArg {
     Timeout,
     /// Cancelled.
     Cancelled,
+    /// Refused at intake and never run.
+    Rejected,
     /// No news from the runner.
     Lost,
 }
@@ -38,7 +40,7 @@ impl ResultArg {
             ResultArg::Passed => JobState::Passed,
             ResultArg::Failed => JobState::Failed,
             ResultArg::Timeout => JobState::Timeout,
-            ResultArg::Cancelled => JobState::Cancelled,
+            ResultArg::Cancelled | ResultArg::Rejected => JobState::Cancelled,
             ResultArg::Lost => JobState::Lost,
         }
     }

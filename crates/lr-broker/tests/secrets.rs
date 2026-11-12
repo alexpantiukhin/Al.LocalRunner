@@ -27,7 +27,8 @@ async fn secret_not_allowed_for_label_rejected() {
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
     assert_eq!(r.detail, "секрет signing_key не разрешён ярлыку agent");
-    assert!(h.job_row("laptop", "j1").await.is_none());
+    h.assert_recorded_rejection("laptop", "j1", "rejected_secret_not_allowed")
+        .await;
 }
 
 #[tokio::test]
