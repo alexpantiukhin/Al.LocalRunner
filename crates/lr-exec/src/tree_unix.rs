@@ -13,8 +13,11 @@ use tokio::process::{Child, Command};
 struct Scope;
 
 #[cfg(not(target_os = "linux"))]
+type Wrapped = (Command, Vec<(OsString, OsString)>, Scope);
+
+#[cfg(not(target_os = "linux"))]
 impl Scope {
-    fn wrap(_: &str, _: &[&str]) -> Option<(Command, Vec<(OsString, OsString)>, Scope)> {
+    fn wrap(_: &str, _: &[&str]) -> Option<Wrapped> {
         None
     }
 

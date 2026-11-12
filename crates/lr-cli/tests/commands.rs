@@ -17,6 +17,7 @@ use std::time::Duration;
 fn localrunner(args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_localrunner"))
         .args(args)
+        .env_remove("GITHUB_ACTIONS")
         .env(
             "LOCALRUNNER_STATE_DIR",
             std::env::temp_dir().join("lr-cli-no-state"),
