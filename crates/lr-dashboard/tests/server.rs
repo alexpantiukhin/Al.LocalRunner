@@ -141,6 +141,11 @@ async fn queue_page_lists_jobs_with_project_source_label() {
     assert!(csp.contains("script-src 'self'"), "{csp}");
     assert!(!csp.contains("unsafe-inline"), "{csp}");
     assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+    assert!(
+        page.contains("<link rel=\"icon\" href=\"data:,\">")
+            && csp.contains("img-src 'self' data:"),
+        "an inline icon, so the browser asks for no /favicon.ico"
+    );
 
     let row = page.find("data-job=\"j-queued\"").expect("queued row");
     let row = &page[row..row + page[row..].find("</tr>").unwrap()];

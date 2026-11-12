@@ -120,6 +120,10 @@ fn snapshot_is_single_file() {
     assert!(html.contains("data-job=\"j-queued\""));
     assert!(html.contains("<td data-col=\"project\">alpha</td>"));
     assert!(html.contains("\"live\":false"));
+    assert!(
+        html.contains("var LRCharts = (function"),
+        "the chart code is inlined under the same hash"
+    );
     assert!(html.contains("content=\"\""), "no CSRF token in a snapshot");
     assert!(!html.contains("<script>alert"));
     assert!(html.contains("\\u003cscript\\u003ealert(1)"));

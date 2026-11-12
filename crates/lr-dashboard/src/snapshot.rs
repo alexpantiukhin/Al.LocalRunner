@@ -7,7 +7,7 @@ const PAGE: &str = include_str!("page.html");
 /// The page stylesheet, served at `/app.css` and inlined into snapshots.
 pub(crate) const STYLE: &str = include_str!("page.css");
 /// The page code, served at `/app.js` and inlined into snapshots.
-pub(crate) const SCRIPT: &str = include_str!("page.js");
+pub(crate) const SCRIPT: &str = concat!(include_str!("page_charts.js"), include_str!("page.js"));
 
 fn csp_hash(text: &str) -> String {
     use base64::Engine;
@@ -134,7 +134,8 @@ pub(crate) enum Mode<'a> {
 pub(crate) fn render(snapshot: &DashboardSnapshot, mode: Mode<'_>) -> String {
     let (style, script, csp, csrf, config) = match mode {
         Mode::Live { csrf } => (
-            "<link rel=\"stylesheet\" href=\"/app.css\">".to_string(),
+            "<link rel=\"icon\" href=\"data:,\"><link rel=\"stylesheet\" href=\"/app.css\">"
+                .to_string(),
             "<script src=\"/app.js\" defer></script>".to_string(),
             String::new(),
             csrf.to_string(),

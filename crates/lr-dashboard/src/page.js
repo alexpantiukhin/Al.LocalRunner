@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", as: params.get("as") || ""
+    sel: -1, open: null, paused: false, missed: 0, log: "", step: "", as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -38,7 +38,7 @@
 
   function row(j) {
     var d = j.detail, s = d.summary, steps = d.steps || [];
-    var budget = steps.reduce(function (a, st) { return a + st.timeout_s * 1000; }, 0);
+    var budget = s.timeout_s ? s.timeout_s * 1000 : steps.reduce(function (a, st) { return a + st.timeout_s * 1000; }, 0);
     var t = now();
     var info = j.list === "running" && s.started_at
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
@@ -107,19 +107,7 @@
   var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
   var HCOLS = ["job", "state", "project", "source", "label", "profile", "runner", "queued", "duration"];
 
-  function bars(title, items) {
-    var w = 320, h = 18 * items.length + 20, max = Math.max.apply(null, items.map(function (i) { return i.v || 0; }).concat([1]));
-    var g = svg("svg", { "class": "chart", width: w, height: h, role: "img", "aria-label": title });
-    g.appendChild(svg("text", { x: 0, y: 12, text: title }));
-    items.forEach(function (it, i) {
-      var y = 18 + i * 18;
-      g.appendChild(svg("rect", { "class": "bg", x: 90, y: y, width: 180, height: 12 }));
-      g.appendChild(svg("rect", { "class": it.cls, x: 90, y: y, width: Math.round(180 * (it.v || 0) / max), height: 12 }));
-      g.appendChild(svg("text", { x: 0, y: y + 10, text: it.k }));
-      g.appendChild(svg("text", { x: 275, y: y + 10, text: it.t }));
-    });
-    return g;
-  }
+  var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
     var root = $("tab-stats"), st = S.data.stats || { profiles: [], clients: [] };
     var want = (S.filters.profile || "").toLowerCase();
@@ -137,27 +125,28 @@
       ]);
     });
     if (st.clients.length) {
-      kids.push(el("div", { cls: "group" }, [bars("Pool time by client", st.clients.map(function (c) { return { k: c.label, v: c.busy_ms, cls: "m", t: dur(c.busy_ms) + " / " + c.runs }; }))]));
+      kids.push(el("div", { cls: "group" }, [bars("Pool time by client", st.clients.map(function (c) { return { k: c.label || c.client, v: c.busy_ms, cls: "m", t: dur(c.busy_ms) + " / " + c.runs + " runs" }; }))]));
     }
-    root.replaceChildren.apply(root, kids.length ? kids : [el("p", { text: "No statistics yet." })]);
-  }
-  function meter(used, total, unit) {
-    var g = svg("svg", { "class": "chart meter", width: 140, height: 14, role: "img", "aria-label": used + " of " + total + " " + unit });
-    g.appendChild(svg("rect", { "class": "bg", x: 0, y: 1, width: 80, height: 12 }));
-    g.appendChild(svg("rect", { "class": "m", x: 0, y: 1, width: total ? Math.round(80 * Math.min(used, total) / total) : 0, height: 12 }));
-    g.appendChild(svg("text", { x: 84, y: 11, text: used + "/" + total + unit }));
-    return g;
+    var sat = LRCharts.saturation(S.data.jobs, now());
+    kids.push(el("div", { cls: "group" }, [el("h2", { text: "Saturation of the queue now, by wait reason" }), sat.length
+      ? el("div", {}, [bars("Waiting jobs", sat.map(function (w) { return { k: w.name, v: w.jobs, cls: "p", t: String(w.jobs) }; })),
+        bars("Time waited", sat.map(function (w) { return { k: w.name, v: w.ms, cls: "p", t: dur(w.ms) }; }))])
+      : el("p", { text: "No job waits now." })]));
+    kids.push(el("div", { cls: "group scroll" }, [LRCharts.lanes(S.data.jobs, now(), 86400000)]));
+    root.replaceChildren.apply(root, kids);
   }
   function renderRunners() {
     var root = $("tab-runners");
     var kids = (S.data.runners || []).map(function (b) {
       var p = b.pool;
-      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Free mem", "Free CPU", "Tags held", "Services", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
+      var queued = S.data.jobs.filter(function (j) { return j.list === "queued" && j.broker === b.broker; });
+      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
           el("td", { text: (r.online ? "online" : "offline") + (r.last_seen ? " · " + when(r.last_seen) : "") }),
           el("td", { text: (r.caps.platforms || []).join(", ") }),
+          el("td", { text: String(queued.filter(function (j) { var p = j.detail.summary.platform; return !p || (r.caps.platforms || []).indexOf(p) >= 0; }).length) }),
           el("td", {}, [meter(r.free_mem_mb, r.caps.mem_mb, "MB")]),
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
@@ -166,7 +155,7 @@
         ]));
       });
       return el("div", { cls: "group" + (b.stale ? " stale" : "") }, [
-        el("h2", { text: b.broker + (b.stale ? " (stale)" : "") }),
+        el("h2", { text: b.broker + " · queue " + queued.length + (b.stale ? " (stale)" : "") }),
         el("p", {}, ["Pool memory ", meter(p.used_mem_mb, p.total_mem_mb, "MB"), " CPU ", meter(p.used_cpu, p.total_cpu, "")]),
         el("div", { cls: "scroll" }, [t])
       ]);
@@ -235,20 +224,39 @@
       var spent = st.started_at ? (st.finished_at || t) - st.started_at : 0;
       var fill = el("div", { cls: "fill " + st.state });
       fill.style.width = Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0) + "%";
-      return el("div", { cls: "step" }, [el("span", { text: st.name + " · " + st.state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
+      var row = el("button", { type: "button", cls: "step" + (st.name === S.step ? " chosen" : ""), "aria-pressed": String(st.name === S.step), title: "Show the log of this step" },
+        [el("span", { text: st.name + " · " + st.state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
+      row.addEventListener("click", function () { S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
+      return row;
     }));
     $("card-cancel").hidden = !config.live || FINAL.indexOf(s.state) >= 0;
     $("card").hidden = false;
   }
   function openCard(j) {
+    var live = (j.detail.steps || []).filter(function (st) { return st.state === "running"; })[0];
+    S.step = live ? live.name : "";
     fillCard(j);
     S.log = (j.last_lines || []).join("\n");
     showLog();
     loadLog();
   }
+  function stepLog(text, name) {
+    if (!name) return text;
+    var out = [], on = false, found = false, head = "=== step ";
+    text.split("\n").forEach(function (l) {
+      if (l.indexOf(head) === 0 && /===\s*$/.test(l)) {
+        var rest = l.slice(head.length);
+        on = rest.indexOf(name) === 0 && /^( \|| ===| cancelled at )/.test(rest.slice(name.length));
+        found = found || on;
+      }
+      if (on) out.push(l);
+    });
+    return found ? out.join("\n") : text;
+  }
   function showLog() {
-    var q = $("log-search").value.toLowerCase();
-    var text = q ? S.log.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : S.log;
+    var q = $("log-search").value.toLowerCase(), all = stepLog(S.log, S.step);
+    $("log-title").textContent = S.step ? "Log · step " + S.step : "Log";
+    var text = q ? all.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : all;
     var pre = $("log");
     pre.textContent = text;
     if ($("log-follow").checked && !q) pre.scrollTop = pre.scrollHeight;
@@ -372,6 +380,7 @@
     if (!S.paused) { S.missed = 0; refresh(); }
   });
 
+  window.addEventListener("hashchange", function () { restoreState(); S.sel = -1; render(); });
   if (!config.live) document.querySelectorAll(".live-only").forEach(function (n) { n.classList.add("hidden-mode"); });
   restoreState();
   render();

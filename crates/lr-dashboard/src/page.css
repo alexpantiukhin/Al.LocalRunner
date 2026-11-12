@@ -52,7 +52,8 @@ tr.stale, .stale { opacity: 0.6; font-style: italic; }
 .card dt { color: var(--muted); }
 .card dd { margin: 0; overflow-wrap: anywhere; }
 .steps { padding: 8px 12px; display: grid; gap: 4px; }
-.step { display: grid; grid-template-columns: 10em 1fr 7em; gap: 8px; align-items: center; }
+.step { display: grid; grid-template-columns: 10em 1fr 7em; gap: 8px; align-items: center; width: 100%; text-align: left; background: none; }
+.step.chosen { background: var(--sel); border-color: var(--accent); }
 .track { height: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
 .fill { height: 100%; background: var(--accent); }
 .fill.passed { background: var(--ok); }
