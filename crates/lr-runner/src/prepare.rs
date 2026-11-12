@@ -4,6 +4,7 @@ use lr_abstractions::{JobStep, Level, SecretValue};
 use lr_core::{JobId, StepSpec};
 use lr_proto::{AssignSpec, ReasonCode};
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct Prepared<'a> {
     pub(crate) job: JobId,
@@ -154,6 +155,22 @@ pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
         env.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
     }
     env
+}
+
+/// The private temporary directory of a job, inside the runner's temp: what the job writes
+/// there is measured against its `disk_mb` and removed with it.
+pub(crate) fn job_temp(shared: &Shared, job: &JobId) -> Option<PathBuf> {
+    let base = shared.deps.settings.temp.as_ref()?;
+    Some(Path::new(base).join(job_label(job)))
+}
+
+/// Points `TEMP`, `TMP` and `TMPDIR` of a job at its private temporary directory.
+pub(crate) fn apply_job_temp(env: &mut Vec<(String, String)>, temp: &Path) {
+    let value = temp.to_string_lossy().into_owned();
+    env.retain(|(k, _)| !["TEMP", "TMP", "TMPDIR"].contains(&k.as_str()));
+    for name in ["TEMP", "TMP", "TMPDIR"] {
+        env.push((name.to_string(), value.clone()));
+    }
 }
 
 /// A short label unique per job, for cleanup hooks to find what the job left behind.

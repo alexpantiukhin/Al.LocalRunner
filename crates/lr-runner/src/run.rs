@@ -4,7 +4,7 @@ use crate::hooks_config::apply_owner_env;
 use crate::job::{skip_steps, Final};
 use crate::limits::{exceeded_detail, job_limits};
 use crate::output::Forward;
-use crate::prepare::Prepared;
+use crate::prepare::{job_temp, Prepared};
 use crate::source::{plan_source, SourceInput, SourcePlan, WorkspaceLayout};
 use lr_abstractions::{
     CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, Usage,
@@ -32,7 +32,7 @@ async fn run_phase(
     if !matches!(p.spec.code, WireCode::WorkTree { .. }) {
         dirs.push(phase.cwd.to_path_buf());
     }
-    dirs.extend(shared.deps.settings.temp.iter().map(PathBuf::from));
+    dirs.extend(job_temp(shared, &p.job));
     let limits = job_limits(
         &p.spec.requirements,
         p.spec.limits.as_ref(),
@@ -101,6 +101,7 @@ fn failed_step(outcome: &JobOutcome) -> Option<&StepOutcome> {
 struct Cleanup<'a> {
     shared: &'a Shared,
     checkout: Option<PathBuf>,
+    temp: Option<PathBuf>,
     mirror: Option<(CacheKey, PathBuf)>,
     caches: Vec<CacheKey>,
 }
@@ -113,6 +114,18 @@ impl Cleanup<'_> {
                 s.diag.event(
                     Level::Error,
                     "job checkout not removed",
+                    &[
+                        ("path", &dir.display().to_string()),
+                        ("error", &e.to_string()),
+                    ],
+                );
+            }
+        }
+        if let Some(dir) = &self.temp {
+            if let Err(e) = s.deps.files.remove_dir_all(dir).await {
+                s.diag.event(
+                    Level::Error,
+                    "job temp not removed",
                     &[
                         ("path", &dir.display().to_string()),
                         ("error", &e.to_string()),
@@ -236,9 +249,17 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             return Final::failed(detail);
         }
     };
+    let temp = job_temp(shared, &p.job);
+    if let Some(dir) = &temp {
+        if let Err(e) = shared.deps.files.create_dir_all(dir).await {
+            skip_steps(shared, &p.job, &spec.steps, 0).await;
+            return Final::failed(format!("job temp directory not created: {}", e.0));
+        }
+    }
     let cleanup = Cleanup {
         shared,
         checkout: plan.remove_after.clone(),
+        temp,
         mirror: mirror_key.zip(mirror),
         caches: keys,
     };

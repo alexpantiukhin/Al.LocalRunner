@@ -1,7 +1,7 @@
 use crate::agent::{Current, Shared};
 use crate::connect::Session;
 use crate::hooks_config::CleanupOn;
-use crate::prepare::{job_env, resolve_commands, step_secrets, Prepared};
+use crate::prepare::{apply_job_temp, job_env, job_temp, resolve_commands, step_secrets, Prepared};
 use crate::run::run_phases;
 use lr_abstractions::{stop_signal, Level, Stop, StoreError};
 use lr_core::{JobId, JobState, StepState};
@@ -299,7 +299,10 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
                     f
                 }
                 Ok(()) => {
-                    let env = job_env(shared, &job);
+                    let mut env = job_env(shared, &job);
+                    if let Some(temp) = job_temp(shared, &job) {
+                        apply_job_temp(&mut env, &temp);
+                    }
                     let prepared = Prepared {
                         job: job.clone(),
                         spec: &a.spec,
