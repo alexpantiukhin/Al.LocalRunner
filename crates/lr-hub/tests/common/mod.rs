@@ -39,6 +39,26 @@ command = "make check"
 timeout_s = 900
 mem_mb = 2048
 platforms = ["linux"]
+
+[profile.targeted]
+command = "cargo test {? -p {pkg}} {target}"
+timeout_s = 600
+mem_mb = 1024
+
+[profile.targeted.args.target]
+one_of = ["all", "alpha", "beta"]
+default = "all"
+
+[profile.targeted.args.pkg]
+pattern = "[a-z-]+"
+
+[profile.targeted-remote]
+command = "cargo test {target}"
+timeout_s = 600
+platforms = ["linux"]
+
+[profile.targeted-remote.args.target]
+default = "all"
 "#;
 
 pub fn repo_root() -> PathBuf {

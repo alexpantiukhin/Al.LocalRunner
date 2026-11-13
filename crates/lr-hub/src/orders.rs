@@ -1,8 +1,8 @@
 use crate::handles::checked_dir;
 use lr_abstractions::{Files, Frame, Repository, MAX_FRAME_BYTES};
 use lr_core::{
-    parse_profiles, resolve_for_platform, validate_label, JobId, MachineRef, Profile, Requirements,
-    Timestamp,
+    bind_args, parse_profiles, resolve_for_platform, validate_label, JobId, MachineRef, Profile,
+    Requirements, Timestamp,
 };
 use lr_proto::{
     HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, ResourceOverride, SubmitRequest,
@@ -219,10 +219,11 @@ pub(crate) async fn build(
         Some(local_machine(&id.os_user)),
     )
     .map_err(|e| invalid(e.to_string()))?;
-    let resolved = match &platform {
+    let mut resolved = match &platform {
         Some(p) => resolve_for_platform(&profile, p).map_err(|e| invalid(e.to_string()))?,
         None => profile.clone(),
     };
+    bind_args(&mut resolved.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
     let mut spec = OrderSpec {
         profile: profile.name.clone(),
         requirements,
@@ -232,7 +233,7 @@ pub(crate) async fn build(
         code,
         wanted_priority: None,
         overrides: ResourceOverride::default(),
-        args: Vec::new(),
+        args: req.args.clone(),
     };
     lower_timeout(&mut spec, resolved.timeout_s, req.timeout_s)?;
     override_resources(&mut spec, req)?;
