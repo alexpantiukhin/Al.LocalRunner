@@ -35,6 +35,7 @@ pub(super) fn old_name(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+#[cfg(any(windows, test))]
 pub(super) fn cleanup_command(old: &Path) -> String {
     let dir = old.parent().unwrap_or_else(|| Path::new("."));
     format!(
