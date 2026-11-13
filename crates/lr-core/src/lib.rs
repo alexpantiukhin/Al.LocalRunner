@@ -1,6 +1,7 @@
 //! Generic core model: jobs, profiles, requirements and runner capabilities.
 
 pub mod admission;
+mod condition;
 pub mod error;
 pub mod identity;
 pub mod matching;
@@ -29,8 +30,9 @@ pub use identity::{
 };
 pub use matching::{satisfies, Accept, Capabilities, Mismatch, MismatchReason, ServiceStatus};
 pub use model::{JobId, JobState, StepState, Timestamp, Zone, MAX_FRAME_BYTES};
+pub use condition::{glob_match, Condition, NumAttr, NumTest, StrAttr, StrTest, Term};
 pub use policy::{
-    Condition, GroupBy, Policy, Quota, Reserve, Rule, RulePolicy, Strategy, DEFAULT_AGE_AFTER_MIN,
+    GroupBy, Policy, Quota, Reserve, Rule, RulePolicy, Strategy, DEFAULT_AGE_AFTER_MIN,
 };
 pub use predict::{earliest_start, pick_next, Plan, QueueState};
 pub use profile::{resolve_for_platform, PlatformOverride, Profile, Program, StepSpec};

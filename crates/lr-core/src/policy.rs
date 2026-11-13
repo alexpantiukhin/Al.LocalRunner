@@ -1,4 +1,5 @@
 use crate::admission::Admission;
+use crate::condition::Condition;
 use crate::model::{Timestamp, Zone};
 use crate::queue::{ClientView, Order, QueueEntry, ServeLog};
 use crate::scheduler::{PoolLimits, Reject, Scheduler, Wait};
@@ -51,58 +52,6 @@ impl FromStr for GroupBy {
             "label" => Ok(GroupBy::Label),
             other => Err(format!("unknown group_by `{other}`, expected key or label")),
         }
-    }
-}
-
-/// `when` of a rule: every set field must match.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Condition {
-    /// Trusted: client label.
-    pub client_label: Option<String>,
-    /// Trusted: client key.
-    pub client_key: Option<String>,
-    /// Trusted: MachineId of the client.
-    pub machine_id: Option<String>,
-    /// Declared: source.
-    pub source: Option<String>,
-    /// Declared: project.
-    pub project: Option<String>,
-    /// Declared: label `--as`.
-    pub submitter_label: Option<String>,
-    /// Declared: a tag the order holds.
-    pub tag: Option<String>,
-    /// Declared size: the order needs at least this much memory.
-    pub min_mem_mb: Option<u64>,
-}
-
-impl Condition {
-    /// Whether the condition holds for `order` from `client`.
-    pub fn matches(&self, order: &Order, client: &ClientView) -> bool {
-        let eq = |want: &Option<String>, have: Option<&str>| {
-            want.as_deref().is_none_or(|w| have == Some(w))
-        };
-        eq(&self.client_label, Some(&client.label))
-            && eq(&self.client_key, Some(&client.key))
-            && eq(&self.machine_id, Some(&client.machine_id))
-            && eq(&self.source, order.declared.source.as_deref())
-            && eq(&self.project, order.declared.project.as_deref())
-            && eq(&self.submitter_label, order.declared.label.as_deref())
-            && self.tag.as_ref().is_none_or(|t| {
-                order.requirements.tags.contains(t) || order.requirements.exclusive.contains(t)
-            })
-            && self
-                .min_mem_mb
-                .is_none_or(|m| order.requirements.mem_mb >= m)
-    }
-
-    /// Whether the condition names a declared attribute (spec 3.5: such rules need a trusted
-    /// label condition too; the loader enforces it).
-    pub fn uses_declared(&self) -> bool {
-        self.source.is_some()
-            || self.project.is_some()
-            || self.submitter_label.is_some()
-            || self.tag.is_some()
-            || self.min_mem_mb.is_some()
     }
 }
 
