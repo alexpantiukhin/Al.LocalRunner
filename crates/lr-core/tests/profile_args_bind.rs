@@ -163,3 +163,12 @@ fn applies_to_every_step() {
     assert_eq!(steps[0].command, "one v");
     assert_eq!(steps[1].command, "two v");
 }
+
+#[test]
+fn dropped_segment_keeps_whitespace_that_belongs_to_a_value() {
+    let specs = [spec("a"), spec("pkg")];
+    let glued = bound("echo {a}{? -p {pkg}}", &specs, &[("a", "hi  ")]);
+    assert_eq!(glued.unwrap(), "echo hi  ");
+    let spaced = bound("echo {a} {? -p {pkg}}", &specs, &[("a", "hi  ")]);
+    assert_eq!(spaced.unwrap(), "echo hi  ");
+}

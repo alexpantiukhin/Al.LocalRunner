@@ -99,6 +99,7 @@ fn render_top(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, 
 
 fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, String> {
     let mut out = String::new();
+    let mut floor = 0;
     let mut i = 0;
     while i < text.len() {
         let rest = &text[i..];
@@ -108,10 +109,13 @@ fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, Stri
                 let inner = inner.strip_prefix(' ').unwrap_or(inner);
                 let after = &rest[end + 1..];
                 match render(inner, specs, values) {
-                    Ok(s) => out.push_str(&s),
+                    Ok(s) => {
+                        out.push_str(&s);
+                        floor = out.len();
+                    }
                     Err(_) => {
                         if after.is_empty() || after.starts_with(char::is_whitespace) {
-                            out.truncate(out.trim_end().len());
+                            out.truncate(out.trim_end().len().max(floor));
                         }
                     }
                 }
@@ -123,7 +127,10 @@ fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, Stri
                 let name = &body[..close];
                 if specs.iter().any(|s| s.name == name) {
                     match values.get(name) {
-                        Some(v) => out.push_str(v),
+                        Some(v) => {
+                            out.push_str(v);
+                            floor = out.len();
+                        }
                         None => return Err(name.to_string()),
                     }
                     i += close + 2;
