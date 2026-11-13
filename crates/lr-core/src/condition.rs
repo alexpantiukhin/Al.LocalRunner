@@ -228,14 +228,142 @@ impl Condition {
             && self.not.as_ref().is_none_or(|c| !c.matches(order, client))
     }
 
-    /// Whether the condition names a declared attribute (spec 3.5: such rules need a trusted
-    /// label condition too; the loader enforces it).
+    /// Whether the condition names a declared attribute anywhere in its tree (spec 3.5: such
+    /// rules need a trusted label condition too; the loader enforces it).
     pub fn uses_declared(&self) -> bool {
-        self.source.is_some()
-            || self.project.is_some()
-            || self.submitter_label.is_some()
-            || self.tag.is_some()
-            || self.min_mem_mb.is_some()
+        !self.declared_names().is_empty()
+    }
+
+    /// Sorted, deduplicated keys of the declared attributes named anywhere in the tree.
+    pub fn declared_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        self.collect_declared(&mut names);
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
+    fn collect_declared(&self, out: &mut Vec<&'static str>) {
+        let flat = [
+            (&self.source, "source"),
+            (&self.project, "project"),
+            (&self.submitter_label, "submitter_label"),
+            (&self.tag, "tag"),
+        ];
+        out.extend(flat.iter().filter(|(v, _)| v.is_some()).map(|(_, n)| *n));
+        if self.min_mem_mb.is_some() {
+            out.push("min_mem_mb");
+        }
+        for term in &self.terms {
+            match term {
+                Term::Str(attr, _) if !attr.is_trusted() => out.push(attr.name()),
+                Term::Str(..) => {}
+                Term::Num(attr, _) => out.push(attr.name()),
+            }
+        }
+        for child in self.any.iter().chain(self.not.as_deref()) {
+            child.collect_declared(out);
+        }
+    }
+
+    /// Whether the top-level conjunction has a positive restriction on the trusted client
+    /// label: an equality, `in`, `prefix` or `glob`, or an `any` whose every branch has one.
+    /// `ne` and `not` never count.
+    pub fn guarded_by_label(&self) -> bool {
+        self.client_label.is_some()
+            || self.terms.iter().any(|t| {
+                matches!(
+                    t,
+                    Term::Str(
+                        StrAttr::ClientLabel,
+                        StrTest::Eq(_) | StrTest::In(_) | StrTest::Prefix(_) | StrTest::Glob(_)
+                    )
+                )
+            })
+            || (!self.any.is_empty() && self.any.iter().all(Condition::guarded_by_label))
+    }
+
+    /// Conservative "every order matching `later` also matches `self`": `false` whenever that
+    /// cannot be shown from equal parts.
+    pub fn covers(&self, later: &Condition) -> bool {
+        let same = |a: &Option<String>, b: &Option<String>| a.is_none() || a == b;
+        same(&self.client_label, &later.client_label)
+            && same(&self.client_key, &later.client_key)
+            && same(&self.machine_id, &later.machine_id)
+            && same(&self.source, &later.source)
+            && same(&self.project, &later.project)
+            && same(&self.submitter_label, &later.submitter_label)
+            && same(&self.tag, &later.tag)
+            && self
+                .min_mem_mb
+                .is_none_or(|m| later.min_mem_mb.is_some_and(|l| l >= m))
+            && self.terms.iter().all(|t| later.terms.contains(t))
+            && (self.any.is_empty()
+                || (!later.any.is_empty() && later.any.iter().all(|c| self.any.contains(c))))
+            && (self.not.is_none() || self.not == later.not)
+    }
+
+    /// A one-line description for `policy check`; an empty condition is `everyone`.
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let flat = [
+            ("client_label", &self.client_label),
+            ("client_key", &self.client_key),
+            ("machine_id", &self.machine_id),
+            ("source", &self.source),
+            ("project", &self.project),
+            ("submitter_label", &self.submitter_label),
+            ("tag", &self.tag),
+        ];
+        parts.extend(
+            flat.iter()
+                .filter_map(|(n, v)| v.as_ref().map(|v| format!("{n} = {v:?}"))),
+        );
+        if let Some(m) = self.min_mem_mb {
+            parts.push(format!("mem_mb >= {m}"));
+        }
+        parts.extend(self.terms.iter().map(Term::describe));
+        if !self.any.is_empty() {
+            let inner: Vec<String> = self.any.iter().map(Condition::describe).collect();
+            parts.push(format!("any of ({})", inner.join(" | ")));
+        }
+        if let Some(n) = &self.not {
+            parts.push(format!("not ({})", n.describe()));
+        }
+        if parts.is_empty() {
+            "everyone".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+}
+
+impl Term {
+    fn describe(&self) -> String {
+        match self {
+            Term::Str(attr, test) => {
+                let n = attr.name();
+                match test {
+                    StrTest::Eq(v) => format!("{n} = {v:?}"),
+                    StrTest::Ne(v) => format!("{n} != {v:?}"),
+                    StrTest::In(vs) => format!("{n} in {vs:?}"),
+                    StrTest::Prefix(v) => format!("{n} prefix {v:?}"),
+                    StrTest::Glob(v) => format!("{n} glob {v:?}"),
+                }
+            }
+            Term::Num(attr, test) => {
+                let n = attr.name();
+                match test {
+                    NumTest::Eq(v) => format!("{n} = {v}"),
+                    NumTest::Ne(v) => format!("{n} != {v}"),
+                    NumTest::In(vs) => format!("{n} in {vs:?}"),
+                    NumTest::Lt(v) => format!("{n} < {v}"),
+                    NumTest::Le(v) => format!("{n} <= {v}"),
+                    NumTest::Gt(v) => format!("{n} > {v}"),
+                    NumTest::Ge(v) => format!("{n} >= {v}"),
+                }
+            }
+        }
     }
 }
 

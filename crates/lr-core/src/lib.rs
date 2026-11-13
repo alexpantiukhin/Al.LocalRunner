@@ -23,6 +23,7 @@ pub mod zone;
 pub use admission::{
     same_host, Admission, ForeignLoadMode, LoadResource, MachineLoad, DEFAULT_MEM_HEADROOM_MB,
 };
+pub use condition::{glob_match, Condition, NumAttr, NumTest, StrAttr, StrTest, Term};
 pub use error::ProfileError;
 pub use identity::{
     identity_from_session, may_cancel, normalize_origin, project_name, validate_label,
@@ -30,7 +31,6 @@ pub use identity::{
 };
 pub use matching::{satisfies, Accept, Capabilities, Mismatch, MismatchReason, ServiceStatus};
 pub use model::{JobId, JobState, StepState, Timestamp, Zone, MAX_FRAME_BYTES};
-pub use condition::{glob_match, Condition, NumAttr, NumTest, StrAttr, StrTest, Term};
 pub use policy::{
     GroupBy, Policy, Quota, Reserve, Rule, RulePolicy, Strategy, DEFAULT_AGE_AFTER_MIN,
 };

@@ -179,3 +179,130 @@ fn tag_is_multi_valued() {
 fn empty_condition_matches_everyone() {
     assert!(Condition::default().matches(&order(), &c("anyone")));
 }
+
+fn tag(t: &str) -> Condition {
+    Condition {
+        tag: Some(t.into()),
+        ..Condition::default()
+    }
+}
+
+#[test]
+fn declared_inside_any_and_not_is_found() {
+    let not = Condition {
+        not: Some(Box::new(project("x"))),
+        ..Condition::default()
+    };
+    assert!(not.uses_declared());
+    assert_eq!(not.declared_names(), vec!["project"]);
+    let any = Condition {
+        any: vec![tag("gpu")],
+        ..Condition::default()
+    };
+    assert!(any.uses_declared());
+    assert_eq!(any.declared_names(), vec!["tag"]);
+    let num = num_term(NumAttr::MemMb, NumTest::Ge(1));
+    assert!(num.uses_declared());
+    assert_eq!(num.declared_names(), vec!["mem_mb"]);
+    assert!(!label("ci").uses_declared());
+    assert!(label("ci").declared_names().is_empty());
+}
+
+#[test]
+fn guard_requires_positive_label_test() {
+    assert!(label("ci").guarded_by_label());
+    for t in [
+        StrTest::In(vec!["a".into()]),
+        StrTest::Prefix("a".into()),
+        StrTest::Glob("a*".into()),
+        StrTest::Eq("a".into()),
+    ] {
+        assert!(str_term(StrAttr::ClientLabel, t).guarded_by_label());
+    }
+    let any = |a: Vec<Condition>| Condition {
+        any: a,
+        ..Condition::default()
+    };
+    assert!(any(vec![label("a"), label("b")]).guarded_by_label());
+    assert!(!any(vec![label("a"), project("p")]).guarded_by_label());
+    assert!(!str_term(StrAttr::ClientLabel, StrTest::Ne("x".into())).guarded_by_label());
+    let not = Condition {
+        not: Some(Box::new(label("x"))),
+        ..Condition::default()
+    };
+    assert!(!not.guarded_by_label());
+    let key = Condition {
+        client_key: Some("k".into()),
+        ..Condition::default()
+    };
+    assert!(!key.guarded_by_label());
+    assert!(!Condition::default().guarded_by_label());
+}
+
+#[test]
+fn covers_is_conservative() {
+    let both = Condition {
+        client_label: Some("ci".into()),
+        project: Some("p".into()),
+        ..Condition::default()
+    };
+    assert!(label("ci").covers(&both));
+    assert!(!label("ci").covers(&project("p")));
+    let any = |a: Vec<Condition>| Condition {
+        any: a,
+        ..Condition::default()
+    };
+    let ab = any(vec![label("a"), label("b")]);
+    assert!(ab.covers(&ab));
+    assert!(ab.covers(&any(vec![label("a")])));
+    assert!(!ab.covers(&any(vec![label("a"), label("b"), label("c")])));
+    assert!(!ab.covers(&Condition::default()));
+    let ge = |n| num_term(NumAttr::MemMb, NumTest::Ge(n));
+    assert!(ge(1024).covers(&ge(1024)));
+    assert!(!ge(1024).covers(&ge(4096)));
+    let not = Condition {
+        not: Some(Box::new(project("a"))),
+        ..Condition::default()
+    };
+    assert!(!not.covers(&project("b")));
+    assert!(not.covers(&not));
+    let min = |n| Condition {
+        min_mem_mb: Some(n),
+        ..Condition::default()
+    };
+    assert!(min(1024).covers(&min(2048)));
+    assert!(!min(2048).covers(&min(1024)));
+}
+
+#[test]
+fn describe_names_every_part() {
+    assert_eq!(label("ci").describe(), "client_label = \"ci\"");
+    assert_eq!(Condition::default().describe(), "everyone");
+    let cond = Condition {
+        client_label: Some("ci".into()),
+        min_mem_mb: Some(8192),
+        terms: vec![
+            Term::Str(StrAttr::Project, StrTest::In(vec!["a".into(), "b".into()])),
+            Term::Str(StrAttr::Source, StrTest::Prefix("g".into())),
+            Term::Str(StrAttr::Tag, StrTest::Glob("x*".into())),
+            Term::Str(StrAttr::Platform, StrTest::Ne("mac".into())),
+            Term::Num(NumAttr::Cpu, NumTest::Lt(4)),
+            Term::Num(NumAttr::DiskMb, NumTest::In(vec![1, 2])),
+            Term::Num(NumAttr::TimeoutS, NumTest::Le(9)),
+            Term::Num(NumAttr::MemMb, NumTest::Gt(1)),
+            Term::Num(NumAttr::MemMb, NumTest::Ge(2)),
+            Term::Num(NumAttr::MemMb, NumTest::Eq(3)),
+            Term::Num(NumAttr::MemMb, NumTest::Ne(4)),
+        ],
+        any: vec![label("a"), project("p")],
+        not: Some(Box::new(tag("t"))),
+        ..Condition::default()
+    };
+    assert_eq!(
+        cond.describe(),
+        "client_label = \"ci\", mem_mb >= 8192, project in [\"a\", \"b\"], source prefix \"g\", \
+         tag glob \"x*\", platform != \"mac\", cpu < 4, disk_mb in [1, 2], timeout_s <= 9, \
+         mem_mb > 1, mem_mb >= 2, mem_mb = 3, mem_mb != 4, \
+         any of (client_label = \"a\" | project = \"p\"), not (tag = \"t\")"
+    );
+}
