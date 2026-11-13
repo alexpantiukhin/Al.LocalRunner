@@ -12,6 +12,7 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Quick start with an AI agent](#quick-start-with-an-ai-agent)
 - [Quick start by hand (one machine)](#quick-start-by-hand-one-machine)
 - [Installation](#installation)
+- [Updating](#updating)
 - [Hub](#hub)
 - [Broker](#broker)
 - [Runner](#runner)
@@ -132,7 +133,7 @@ The skills never raise rights on their own and never print join codes or tokens.
 
 ### Release scripts
 
-Copies with the release public key built in are attached to every release (https://github.com/alexpantiukhin/Al.LocalRunner/releases); take the script from there, not from a branch. The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`, `--upgrade` (update an installed copy, see "Update"); `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
+Copies with the release public key built in are attached to every release (https://github.com/alexpantiukhin/Al.LocalRunner/releases); take the script from there, not from a branch. The role is set by `--role hub|broker|runner|all` (default `all`). Other parameters: `--version X.Y.Z`, `--dir DIR`, `--offline ARCHIVE`, `--allow-elevated`, `--upgrade` (update an installed copy, see "Updating"); `--help` lists them. `latest` does not point to a pre-release: use the tag and the version, for example `.../releases/download/v0.1.0-rc1/install.sh` and `--version 0.1.0-rc1`. The script checks the signature of `SHA256SUMS` and the SHA-256 of the archive and installs nothing on any mismatch. While there is no regular release, build from source or use the pre-release link.
 
 ### From source
 
@@ -154,6 +155,34 @@ Check the node with `localrunner doctor`. `install` starts no roles and enables 
 | state of the broker service | `%ProgramData%\Al.LocalRunner` | `/var/lib/al-localrunner` (Linux), `/Library/Application Support/Al.LocalRunner` (macOS) |
 
 The directories can be replaced: `--state-dir` and `--config-dir`, or the variables `LOCALRUNNER_STATE_DIR` and `LOCALRUNNER_CONFIG_DIR`. `localrunner init [--role hub|broker|runner|all]` creates the state directory and the configuration templates. It never overwrites existing files.
+
+## Updating
+
+From the simplest to the most detailed way.
+
+### 1. With the agent
+
+Say to the agent: "update localrunner" (the `upgrade-runner` skill of the plugin). It shows the installed and the latest version, asks what to do with running jobs, takes the new binary only from the signed release, restarts the roles and checks the result with `localrunner doctor`. It asks before anything needs administrator rights (the broker service).
+
+### 2. By hand: `localrunner upgrade`
+
+`localrunner upgrade` is the interactive command that does the update. It is run by the NEW binary (the installed one cannot fetch itself), so the usual way is the release script (`install.sh` or `install.ps1`, see "Release scripts"): with `--upgrade` it downloads the new binary, checks the signature and runs `localrunner upgrade` of it. Add `--version X.Y.Z` for a version other than the latest:
+
+```
+install.sh --upgrade --version X.Y.Z      # Windows: install.ps1 --upgrade --version X.Y.Z
+```
+
+The command shows the installed and the new version, the running jobs and the waiting orders, and asks what to do: wait for the jobs, cancel them, or abort. Then it stops the roles, copies itself over the installed binary and starts the same roles again. If you already have the new binary unpacked, run `./localrunner upgrade` from it (`--dir DIR` names the directory the old binary lives in). Finish with `localrunner --version` and `localrunner doctor`.
+
+### 3. Details and parameters
+
+- **Without a terminal** (a script, an agent, CI): `--yes` skips the question and waits for running jobs; `--yes --cancel` cancels them; `--dry-run` only shows the plan. Ctrl+C while waiting replaces nothing.
+- **Broker as an OS service** keeps its own copy of the binary and `upgrade` does not touch it. With administrator rights run `localrunner broker update-service` from the new binary (`--dry-run` shows the plan).
+- **Several machines:** one by one, the broker first; all in the same window when the major protocol version changes. `localrunner runners` marks a runner whose version differs from the binary.
+- **Docker runners:** change the image tag, `docker compose build`, `docker compose up -d` (see "Docker Compose").
+- **Plugin** (skills for the agent) is updated separately: `claude plugin marketplace update al-localrunner`, then `claude plugin update localrunner@al-localrunner --scope <scope>`, then restart Claude Code.
+- Database schemas are upgraded at start with a backup; rolling back to an older version is not supported.
+- All details: "Autostart, stop, update, uninstall".
 
 ## Hub
 
