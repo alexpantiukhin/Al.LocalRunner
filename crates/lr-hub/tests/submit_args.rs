@@ -66,6 +66,28 @@ async fn commit_order_gets_substitution_too() {
 }
 
 #[tokio::test]
+async fn platform_override_command_gets_substitution() {
+    let mut rig = Rig::new();
+    rig.join("lan1").await;
+    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    eventually("connected", || lan.resumed()).await;
+    rig.cli()
+        .await
+        .submit(with_args(
+            "targeted-override",
+            Some("linux"),
+            &[("target", "beta")],
+        ))
+        .await;
+    eventually("order sent", || lan.orders().len() == 1).await;
+    assert_eq!(
+        lan.orders()[0].spec.steps[0].command,
+        "cargo test --linux beta"
+    );
+}
+
+#[tokio::test]
 async fn bad_arg_is_malformed_and_nothing_is_sent() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());

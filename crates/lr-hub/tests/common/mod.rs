@@ -59,6 +59,17 @@ platforms = ["linux"]
 
 [profile.targeted-remote.args.target]
 default = "all"
+
+[profile.targeted-override]
+command = "cargo test {target}"
+timeout_s = 600
+platforms = ["linux"]
+
+[profile.targeted-override.args.target]
+default = "all"
+
+[profile.targeted-override.platform.linux]
+command = "cargo test --linux {target}"
 "#;
 
 pub fn repo_root() -> PathBuf {
