@@ -33,8 +33,10 @@ fn a_good_file_prints_the_summary_then_the_secrets_report_and_exits_0() {
     let text = out(&o);
     let summary = text
         .find("profile unit: by work tree, timeout 900 s")
-        .expect(&text);
-    let secrets = text.find("no profile asks for a secret").expect(&text);
+        .unwrap_or_else(|| panic!("{text}"));
+    let secrets = text
+        .find("no profile asks for a secret")
+        .unwrap_or_else(|| panic!("{text}"));
     assert!(summary < secrets);
 }
 
@@ -87,7 +89,8 @@ fn json_is_one_document() {
         "[profile.unit]\ncommand = \"cargo test\"\ntimeout_s = 900\nplatforms = [\"linux\"]\n";
     let o = check(dir.path(), text, &["--json"]);
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
-    let v: serde_json::Value = serde_json::from_slice(&o.stdout).expect(&out(&o));
+    let v: serde_json::Value =
+        serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", out(&o)));
     assert_eq!(v["profiles"][0]["platform_mode"], "by commit");
     assert_eq!(v["ok"], true);
     assert_eq!(v["ignored_sections"], serde_json::json!([]));
@@ -99,7 +102,8 @@ fn json_for_zero_profiles_has_ok_false_and_exit_1() {
     let dir = common::TempDir::new("json-zero");
     let o = check(dir.path(), "", &["--json"]);
     assert_eq!(o.status.code(), Some(1));
-    let v: serde_json::Value = serde_json::from_slice(&o.stdout).expect(&out(&o));
+    let v: serde_json::Value =
+        serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", out(&o)));
     assert_eq!(v["ok"], false);
 }
 
