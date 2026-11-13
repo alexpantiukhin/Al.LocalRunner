@@ -395,6 +395,8 @@ pub enum RunnerControl {
     },
     /// Reread the runner's `logging.toml`.
     LoggingReload,
+    /// Ask whether the runner is connected to its broker.
+    Status,
 }
 
 /// Answer of a runner's control channel.
@@ -407,6 +409,14 @@ pub enum ControlReply {
     Failed {
         /// Why.
         message: String,
+    },
+    /// The state of the link to the broker.
+    Link {
+        /// Whether the runner has a welcomed session.
+        connected: bool,
+        /// Start of the current break; `None` while connected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<Timestamp>,
     },
 }
 
@@ -468,7 +478,7 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "status"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed"]);
+message!(ControlReply, local: true, ["ok", "failed", "link"]);

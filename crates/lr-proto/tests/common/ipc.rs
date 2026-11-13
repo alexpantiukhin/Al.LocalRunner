@@ -162,6 +162,7 @@ pub fn controls() -> Vec<RunnerControl> {
             mode: DownMode::Cancel,
         },
         RunnerControl::LoggingReload,
+        RunnerControl::Status,
     ]
 }
 
@@ -170,6 +171,14 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Ok,
         ControlReply::Failed {
             message: "x".into(),
+        },
+        ControlReply::Link {
+            connected: false,
+            since: Some(lr_core::Timestamp(7)),
+        },
+        ControlReply::Link {
+            connected: true,
+            since: None,
         },
     ]
 }

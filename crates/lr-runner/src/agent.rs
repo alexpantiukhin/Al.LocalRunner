@@ -89,17 +89,27 @@ pub(crate) enum Control {
 
 /// Local control of a running agent (`down`, spec 3.9).
 #[derive(Clone)]
-pub struct AgentControl(mpsc::Sender<Control>);
+pub struct AgentControl {
+    tx: mpsc::Sender<Control>,
+    shared: Arc<Shared>,
+}
 
 impl AgentControl {
     /// `down --drain`: take no new orders, finish the current job, then `Bye`.
     pub async fn drain(&self) {
-        let _ = self.0.send(Control::Drain).await;
+        let _ = self.tx.send(Control::Drain).await;
     }
 
     /// `down --cancel`: cancel the current job with `runner_stopped`, then `Bye`.
     pub async fn cancel_and_stop(&self) {
-        let _ = self.0.send(Control::CancelAndStop).await;
+        let _ = self.tx.send(Control::CancelAndStop).await;
+    }
+
+    /// Whether the runner has a welcomed session and, when not, since when it has had none
+    /// (its start while it never had one).
+    pub fn link(&self) -> (bool, Option<Timestamp>) {
+        let since = self.shared.state().lost_since;
+        (since.is_none(), since)
     }
 }
 
@@ -299,7 +309,10 @@ impl RunnerAgent {
 
     /// The local control handle.
     pub fn control(&self) -> AgentControl {
-        AgentControl(self.control_tx.clone())
+        AgentControl {
+            tx: self.control_tx.clone(),
+            shared: self.shared.clone(),
+        }
     }
 
     /// Recovers from the previous run, then keeps a session with the broker, reconnecting with
