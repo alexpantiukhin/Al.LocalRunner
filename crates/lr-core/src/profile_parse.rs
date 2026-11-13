@@ -1,7 +1,7 @@
 use crate::error::ProfileError;
 use crate::model::Zone;
-use crate::profile_args::{build_args, RawArg};
 use crate::profile::{single_step, PlatformOverride, Profile, Program, StepSpec};
+use crate::profile_args::{build_args, RawArg};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 

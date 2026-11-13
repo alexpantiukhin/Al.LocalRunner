@@ -63,7 +63,10 @@ fn build_arg(profile: &str, name: String, a: RawArg) -> Result<ArgSpec, ProfileE
         return bad("", "the name must be letters, digits and `_`");
     }
     if RESERVED_ARG_NAMES.contains(&name.as_str()) {
-        return bad("", "the name is reserved for the runner `source` placeholders");
+        return bad(
+            "",
+            "the name is reserved for the runner `source` placeholders",
+        );
     }
     if a.one_of.is_some() && a.pattern.is_some() {
         return bad("", "`one_of` and `pattern` are mutually exclusive");

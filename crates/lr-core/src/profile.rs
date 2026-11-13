@@ -1,6 +1,6 @@
 use crate::error::ProfileError;
-use crate::profile_args::ArgSpec;
 use crate::model::{StepState, Zone};
+use crate::profile_args::ArgSpec;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
