@@ -5,7 +5,7 @@ use super::resources::{ResourceMode, DEFAULT_HEADROOM};
 use super::rules::{display_name, has_action, RuleEntry};
 use super::sections::{AllowEntry, CacheShare, CommandMode, OthersOrders, TimeoutAboveMax};
 use ipnet::IpNet;
-use lr_core::{Condition, Rule, DEFAULT_MEM_HEADROOM_MB};
+use lr_core::{Condition, NumAttr, NumTest, Rule, Term, DEFAULT_MEM_HEADROOM_MB};
 
 /// IPv4 ranges shorter than this prefix are reported as too wide.
 pub const WIDE_V4_PREFIX: u8 = 16;
@@ -82,20 +82,6 @@ pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
     out
 }
 
-fn implied_by(earlier: &Condition, later: &Condition) -> bool {
-    let same = |a: &Option<String>, b: &Option<String>| a.is_none() || a == b;
-    same(&earlier.client_label, &later.client_label)
-        && same(&earlier.client_key, &later.client_key)
-        && same(&earlier.machine_id, &later.machine_id)
-        && same(&earlier.source, &later.source)
-        && same(&earlier.project, &later.project)
-        && same(&earlier.submitter_label, &later.submitter_label)
-        && same(&earlier.tag, &later.tag)
-        && earlier
-            .min_mem_mb
-            .is_none_or(|e| later.min_mem_mb.is_some_and(|l| l >= e))
-}
-
 type Field = (&'static str, fn(&Rule) -> bool);
 
 const FIELDS: [Field; 4] = [
@@ -112,13 +98,35 @@ fn shadowed_by(rules: &[RuleEntry], index: usize) -> Option<Vec<String>> {
         let earlier = rules[..index]
             .iter()
             .enumerate()
-            .find(|(_, e)| sets(&e.rule) && implied_by(&e.rule.when, &rule.when))?;
+            .find(|(_, e)| sets(&e.rule) && e.rule.when.covers(&rule.when))?;
         let name = display_name(&earlier.1.rule, earlier.0);
         if !by.contains(&name) {
             by.push(name);
         }
     }
     Some(by)
+}
+
+fn oversized(when: &Condition, pool_mem_mb: u64) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(m) = when.min_mem_mb.filter(|m| *m > pool_mem_mb) {
+        out.push(format!("min_mem_mb = {m}"));
+    }
+    for term in &when.terms {
+        match term {
+            Term::Num(NumAttr::MemMb, NumTest::Eq(n)) if *n > pool_mem_mb => {
+                out.push(format!("mem_mb = {n}"));
+            }
+            Term::Num(NumAttr::MemMb, NumTest::Ge(n)) if *n > pool_mem_mb => {
+                out.push(format!("mem_mb >= {n}"));
+            }
+            Term::Num(NumAttr::MemMb, NumTest::Gt(n)) if *n >= pool_mem_mb => {
+                out.push(format!("mem_mb > {n}"));
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 fn rule_warnings(file: &PolicyFile, host: &HostResources, out: &mut Vec<PolicyWarning>) {
@@ -144,12 +152,12 @@ fn rule_warnings(file: &PolicyFile, host: &HostResources, out: &mut Vec<PolicyWa
                 ),
             ));
         }
-        if let Some(m) = rule.when.min_mem_mb.filter(|m| *m > pool.mem_mb) {
+        for text in oversized(&rule.when, pool.mem_mb) {
             out.push(warn(
                 "when",
                 format!(
-                    "rule {name}: min_mem_mb = {m} is more than the pool's {} MB; no order \
-                     that large is ever accepted",
+                    "rule {name}: {text} is more than the pool's {} MB; no order that large \
+                     is ever accepted",
                     pool.mem_mb
                 ),
             ));
