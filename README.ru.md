@@ -216,7 +216,7 @@ localrunner broker install-service
 | `[listen]` | адрес, на котором брокер слушает сеть. Без него сеть не слушается. Подстановочные адреса (`0.0.0.0`, `::`) отвергаются. В контейнере: `address = "container"` |
 | `[networks]` | именованные сети; от них зависит зона hub (`lan` или `remote`) |
 | `[[local_user]]` | кому разрешён локальный IPC: `name`, `label` |
-| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted`; `age_after_min` |
+| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | приоритет, резерв, квота, вес по условию `when` (первое подошедшее правило по каждому полю) |
 | `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; по умолчанию вся память и все ядра машины брокера |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` или `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
@@ -244,9 +244,14 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
+
+[[rule]]
+name     = "nightly"
+when     = { client_label = { in = ["ci", "night"] }, project = { glob = "lr-*" }, mem_mb = { ge = 8192 }, not = { tag = "flaky" } }
+priority = 50
 ```
 
-Правила с условием по заявленным атрибутам (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) допускаются только вместе с условием `client_label`. Неизвестные таблицы и ключи отвергаются с номером строки.
+Значение условия — обычное значение (равенство) или таблица проверок: `in`, `prefix`, `glob`, `ne` для строк и `lt`, `le`, `gt`, `ge` для чисел, а также `any = [...]` и `not = {...}`. Правила с условием по заявленным атрибутам (`source`, `project`, `tag`, `submitter_label`, `platform`, `mem_mb`, `cpu`, `disk_mb`, `timeout_s`, `min_mem_mb`) допускаются только вместе с положительным условием `client_label`. Отрицательный `priority` допускается. Старения нет: при постоянном потоке заказов более высокого приоритета заказ низкого приоритета может ждать неограниченно долго; `[queue] age_after_min` из старых файлов игнорируется с предупреждением. Неизвестные таблицы и ключи отвергаются с номером строки.
 
 Команды:
 
