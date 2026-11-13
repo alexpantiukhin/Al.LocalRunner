@@ -10,6 +10,7 @@ pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
 pub mod profile_cmd;
+pub mod profile_summary;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
