@@ -3,6 +3,7 @@
 
 mod admission;
 mod error;
+mod explain;
 mod file;
 mod listen;
 mod reload;
@@ -14,6 +15,7 @@ mod when;
 
 pub use admission::{AdmissionSection, ForeignLoad};
 pub use error::{PolicyError, PolicyWarning};
+pub use explain::explain_rules;
 pub use file::{load, HostResources, PolicyFile};
 pub use listen::{ListenSection, ListenValue};
 pub use reload::{ActivePolicy, Applied, RestartOnly};

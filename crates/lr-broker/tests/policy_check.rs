@@ -1,7 +1,7 @@
 mod common;
 
 use common::{ok, HOST, SPEC_EXAMPLE};
-use lr_broker::policy::{check, PolicyWarning};
+use lr_broker::policy::{check, explain_rules, PolicyWarning};
 
 fn warnings(text: &str) -> Vec<PolicyWarning> {
     check(&ok(text), &HOST)
@@ -303,4 +303,26 @@ fn memory_term_above_pool_warned() {
         "[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 32768 } }\npriority = 1\n",
     );
     assert!(!has(&ws, "is more than the pool"), "{ws:?}");
+}
+
+#[test]
+fn explain_rules_names_every_rule() {
+    let f = ok(
+        "[[rule]]\nname = \"ci-first\"\nwhen = { client_label = \"ci\" }\npriority = 100\n\n[[rule]]\nwhen = { client_label = \"ci\", project = { in = [\"a\", \"b\"] } }\npriority = -1\nreserve = { cpu = 2, mem_mb = 4096 }\nquota = { max_running = 3 }\nweight = 2\n",
+    );
+    assert_eq!(
+        explain_rules(&f),
+        [
+            "rule 1 ci-first (line 1): when client_label = \"ci\"; priority 100",
+            "rule 2 (line 6): when client_label = \"ci\", project in [\"a\", \"b\"]; priority -1; reserve cpu 2, mem_mb 4096; quota max_running 3; weight 2",
+        ]
+    );
+}
+
+#[test]
+fn explain_rules_default_rule() {
+    assert_eq!(
+        explain_rules(&ok("")),
+        ["rule 1 ci-first: when client_label = \"ci\"; priority 100"]
+    );
 }

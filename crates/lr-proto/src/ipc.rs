@@ -347,6 +347,9 @@ pub enum AdminReply {
         path: String,
         /// Warnings, such as shadowed rules.
         warnings: Vec<String>,
+        /// One line per rule, as `policy check` prints them; absent from older brokers.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        rules: Vec<String>,
     },
     /// A join code.
     JoinCode {
