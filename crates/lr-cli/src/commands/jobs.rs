@@ -13,7 +13,7 @@ use lr_proto::{
     CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, ReasonCode, SubmitRequest,
 };
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -192,6 +192,18 @@ pub fn print_warnings(warnings: &[String], err: &mut impl Write) {
     }
 }
 
+/// The line printed to stderr when an order is submitted without `--detach`, without `--wait`
+/// and without a terminal.
+pub const DETACH_WARNING: &str = "warning: without --detach this order is cancelled when this process exits; pass --detach and then run \"localrunner wait <job-id>\", or use \"localrunner run\"";
+
+/// Writes `DETACH_WARNING` to `err` only when the order is neither detached, nor waited for,
+/// nor submitted from a terminal.
+pub fn warn_if_orphaned(detach: bool, wait: bool, terminal: bool, err: &mut impl Write) {
+    if !detach && !wait && !terminal {
+        let _ = writeln!(err, "{DETACH_WARNING}");
+    }
+}
+
 /// `submit` (and `run` = `submit --wait`).
 pub async fn submit(
     layout: &Layout,
@@ -201,6 +213,7 @@ pub async fn submit(
 ) -> Result<i32, String> {
     let identity = identity(args.label.as_deref(), args.note.as_deref())?;
     let client = hub(layout).await?;
+    let detach = args.detach;
     let req = SubmitRequest {
         identity,
         profile: args.profile,
@@ -209,15 +222,24 @@ pub async fn submit(
         mem_mb: args.mem,
         cpu: args.cpu,
         args: args.args,
-        detach: args.detach,
+        detach,
         wait,
     };
     let mut stdout = std::io::stdout();
-    submit_on(client, req, json, &cli_redactor(layout), &mut |text| {
+    let code = submit_on(client, req, json, &cli_redactor(layout), &mut |text| {
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
     })
-    .await
+    .await?;
+    if code == 0 {
+        warn_if_orphaned(
+            detach,
+            wait,
+            std::io::stdin().is_terminal(),
+            &mut std::io::stderr(),
+        );
+    }
+    Ok(code)
 }
 
 /// Places `req` through the open CLI channel `client`. Without `wait` it says `done` on the
