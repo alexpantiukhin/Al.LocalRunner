@@ -16,6 +16,9 @@ pub enum ProfileError {
         /// What is wrong.
         reason: String,
     },
+    /// Submit arguments do not fit the profile declarations.
+    #[error("arguments: {0}")]
+    Args(String),
     /// The profile does not support the requested platform.
     #[error("profile `{profile}` does not support platform `{platform}`")]
     UnsupportedPlatform {
