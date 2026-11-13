@@ -10,7 +10,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 | Free memory and CPU | `Win32_OperatingSystem.FreePhysicalMemory`, logical processor count |
 
 ## ci runner
-1. Download `actions-runner-win-x64-<ver>.zip` (or `win-arm64`) from the `actions/runner` releases; unpack into `%LOCALAPPDATA%\Al.LocalRunner\runners\ci-1`.
+1. Download `actions-runner-win-x64-<ver>.zip` (or `win-arm64`) from the `actions/runner` releases; unpack into `%LOCALAPPDATA%\Al.LocalRunner\github-runners\ci-1`.
 2. `config.cmd --url <repo-url> --token <token> --name <host>-ci-1 --labels al-ci --unattended --replace`. The default labels already include `self-hosted`, `Windows`, `X64`.
 3. Start from the user session, not as a service: `Start-Process <dir>\run.cmd -WorkingDirectory <dir> -WindowStyle Hidden`. A service runs in another session and loses the user PATH, the user `~/.cargo`, `~/.gradle`, ADB and the interactive desktop.
 4. Put the toolchain `bin` directories on PATH before `Start-Process`; the runner inherits the environment of its parent.

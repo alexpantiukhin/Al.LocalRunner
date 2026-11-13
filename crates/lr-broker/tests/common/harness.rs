@@ -269,6 +269,16 @@ impl Harness {
         panic!("job {job} never became {state:?}");
     }
 
+    pub async fn assert_recorded_rejection(&self, client: &str, job: &str, code: &str) {
+        let row = self
+            .job_row(client, job)
+            .await
+            .expect("a rejected order is recorded");
+        assert_eq!(row.job.state, lr_core::JobState::Cancelled);
+        let reason = row.job.cancel_reason.unwrap_or_default();
+        assert!(reason.starts_with(code), "{reason}");
+    }
+
     pub async fn job_row(&self, client: &str, job: &str) -> Option<lr_abstractions::JobRecord> {
         self.store
             .job(&lr_abstractions::JobKey::new(client, job))

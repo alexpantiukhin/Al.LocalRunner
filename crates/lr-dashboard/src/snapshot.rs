@@ -98,7 +98,17 @@ fn queue_row(out: &mut String, job: &DashboardJob) {
         &job.position.map(|p| p.to_string()).unwrap_or_default(),
     );
     cell(out, "job", &s.job.0);
-    cell(out, "state", &state_name(s.state));
+    let rejected = s.state == JobState::Cancelled
+        && matches!(s.reason, Some(lr_proto::ReasonCode::Rejected(_)));
+    cell(
+        out,
+        "state",
+        &if rejected {
+            "rejected".to_string()
+        } else {
+            state_name(s.state)
+        },
+    );
     cell(out, "project", &opt(&s.project));
     cell(out, "source", source_name(d.source));
     cell(out, "label", &opt(&s.label));

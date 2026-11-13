@@ -76,6 +76,7 @@ impl Engine {
             service_mem_mb: Default::default(),
             commands: Default::default(),
             enforcement: row.enforcement.clone(),
+            version: row.version.clone(),
         }
     }
 

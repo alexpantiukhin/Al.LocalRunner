@@ -15,6 +15,7 @@ jobs:
       rust: ${{ steps.f.outputs.rust }}
       docs: ${{ steps.f.outputs.docs }}
       plugin: ${{ steps.f.outputs.plugin }}
+      workflows: ${{ steps.f.outputs.workflows }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,9 +31,12 @@ jobs:
           fi
           echo "$files"
           hit() { echo "$files" | grep -Eq "$1" && echo true || echo false; }
-          echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')" >> "$GITHUB_OUTPUT"
+          {
+            echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')"
+            echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')"
+            echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')"
+            echo "workflows=$(hit '^\.github/workflows/')"
+          } >> "$GITHUB_OUTPUT"
 
   rust:
     needs: changes
@@ -95,9 +99,31 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+  workflows:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No control characters in a workflow file
+        run: |
+          python3 - <<'PY'
+          import glob, re, sys
+          bad = []
+          for f in sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml")):
+              text = open(f, encoding="utf-8").read()
+              for n, line in enumerate(text.split(chr(10)), 1):
+                  if re.search("[" + chr(0) + "-" + chr(8) + chr(11) + chr(12) + chr(14) + "-" + chr(31) + chr(127) + "]", line):
+                      bad.append(f"{f}:{n}: control character")
+          print(chr(10).join(bad) or "ok")
+          sys.exit(1 if bad else 0)
+          PY
+      - name: actionlint
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -color
+
   ci-ok:
     if: always()
-    needs: [changes, rust, skills, docs]
+    needs: [changes, rust, skills, docs, workflows]
     runs-on: ubuntu-latest
     steps:
       - run: |

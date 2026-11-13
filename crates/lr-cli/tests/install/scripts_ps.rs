@@ -268,3 +268,22 @@ fn powershell_installer_explains_an_ssh_keygen_without_signatures() {
     let out = powershell(exe, &body);
     assert!(out.contains("8.1"), "{out}");
 }
+
+#[test]
+fn powershell_installer_passes_the_upgrade_answers_through_and_keeps_them_off_install() {
+    let Some(exe) = first_powershell(
+        "powershell_installer_passes_the_upgrade_answers_through_and_keeps_them_off_install",
+    ) else {
+        return;
+    };
+    let refused = powershell(exe, "Read-InstallArgs @('--yes') | Out-Null");
+    assert!(refused.contains("go with --upgrade"), "{refused}");
+    assert_eq!(
+        powershell(
+            exe,
+            "$o = Read-InstallArgs @('--upgrade', '--yes', '--cancel', '--dry-run'); \
+             if ($o.Yes -and $o.Cancel -and $o.DryRun) { 'ok' } else { 'flags lost' }"
+        ),
+        "ok"
+    );
+}

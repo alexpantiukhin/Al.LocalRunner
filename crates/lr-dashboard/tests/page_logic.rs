@@ -57,10 +57,12 @@ fn table_and_csv_rows_carry_source_directory_and_the_job_timeout() {
         "var S = {{}}; var config = {{ live: false }};\n\
          function now() {{ return 1700000060000; }}\n\
          function dur(ms) {{ return ms == null ? '' : Math.round(ms / 1000) + 's'; }}\n\
-         {}\n{}\n\
+         {}\n{}\n{}\n{}\n\
          var rows = {jobs}.map(row);\n\
          console.log(JSON.stringify(rows.map(function (r) {{ return {{ source: r.source, cwd: r.cwd, \
          wait: r.wait, csv: [r.source, r.cwd].map(csvCell).join(',') }}; }})));",
+        function("isRejected"),
+        function("shown"),
         function("row"),
         function("csvCell"),
     );

@@ -87,6 +87,13 @@ pub enum BrokerAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Replace the broker service's own copy of the binary with this one and restart the
+    /// service (administrator).
+    UpdateService {
+        /// Print what would be done and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Print a join code.
     Add {
         /// Client name.
@@ -152,6 +159,15 @@ pub enum RunnerAction {
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
     },
+    /// Show the `runner.toml` a runner reads, or with `--diff` how its own copy differs from
+    /// the template.
+    Config {
+        /// Runner name.
+        name: String,
+        /// Compare the own copy with the template.
+        #[arg(long)]
+        diff: bool,
+    },
     /// Runners of the pool (on the broker).
     List,
     /// Remove a runner and revoke its key (on the broker; asks for confirmation).
@@ -161,6 +177,22 @@ pub enum RunnerAction {
         /// Confirm without asking.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+/// `profile ...`.
+#[derive(Subcommand, Debug)]
+pub enum ProfileAction {
+    /// Check the secrets of the profiles of this project: whether the policy lets the client
+    /// request them, whether a runner of this machine has a source for each, and the variable
+    /// each one becomes in the job.
+    Check {
+        /// Profile name; without one, every profile that asks for a secret.
+        profile: Option<String>,
+        /// The client label the policy compares with: the `label` of the `[[local_user]]`
+        /// entry, not the `--as` of a run. Default: the entry of this OS user.
+        #[arg(long)]
+        label: Option<String>,
     },
 }
 

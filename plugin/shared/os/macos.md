@@ -10,7 +10,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 | Free memory and CPU | `vm_stat` (free + inactive + speculative pages), `sysctl -n hw.ncpu` |
 
 ## ci runner
-1. Download `actions-runner-osx-arm64-<ver>.tar.gz` (Apple Silicon) or `osx-x64` (Intel) from the `actions/runner` releases; unpack into `<state>/runners/ci-1`.
+1. Download `actions-runner-osx-arm64-<ver>.tar.gz` (Apple Silicon) or `osx-x64` (Intel) from the `actions/runner` releases; unpack into `<state>/github-runners/ci-1`.
 2. Clear quarantine: `xattr -dr com.apple.quarantine <dir>`.
 3. `./config.sh --url <repo-url> --token <token> --name <host>-ci-1 --labels al-ci --unattended --replace`.
 4. Start as a LaunchAgent in the user GUI domain (`~/Library/LaunchAgents/al.localrunner.ci-1.plist`, `ProgramArguments` = `<dir>/run.sh`, `KeepAlive`, `EnvironmentVariables` with PATH), load with `launchctl bootstrap gui/$(id -u) <plist>`. Do not use a LaunchDaemon: it runs outside the user session and loses the keychain, the toolchains and the simulators.

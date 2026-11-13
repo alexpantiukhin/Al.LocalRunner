@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod plans;
 pub mod programs;
 pub mod quote;
+mod self_remove;
 pub mod service_run;
 pub mod trust;
 #[cfg(windows)]

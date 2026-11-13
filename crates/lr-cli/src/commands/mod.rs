@@ -9,9 +9,11 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod profile_cmd;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
+pub mod runner_config_cmd;
 pub mod service_cmd;
 pub mod setup;
 pub mod snapshot_cmd;
@@ -292,6 +294,12 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Checks of the project profiles.
+    Profile {
+        /// What to check.
+        #[command(subcommand)]
+        action: ProfileAction,
+    },
     /// Check this node and print what is wrong.
     Doctor {
         /// Print JSON.
@@ -390,6 +398,7 @@ pub async fn run(cli: Cli) -> i32 {
             BrokerAction::InstallService { dry_run } => {
                 service_cmd::install_service(&layout, dry_run)
             }
+            BrokerAction::UpdateService { dry_run } => service_cmd::update_service(dry_run),
             BrokerAction::Add {
                 name,
                 label,
@@ -437,6 +446,17 @@ pub async fn run(cli: Cli) -> i32 {
                     Err(e) => Err(e),
                 }
             }
+            RunnerAction::Config { name, diff } => {
+                let text = if diff {
+                    runner_config_cmd::diff(&layout, &name)
+                } else {
+                    runner_config_cmd::show(&layout, &name)
+                };
+                text.map(|t| {
+                    println!("{t}");
+                    0
+                })
+            }
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
             }
@@ -474,6 +494,11 @@ pub async fn run(cli: Cli) -> i32 {
             runner,
             dry_run,
         } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
+        Command::Profile { action } => match action {
+            ProfileAction::Check { profile, label } => {
+                profile_cmd::check(&layout, profile.as_deref(), label.as_deref())
+            }
+        },
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };
     match result {

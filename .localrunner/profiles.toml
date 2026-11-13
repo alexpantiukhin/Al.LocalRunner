@@ -1,7 +1,7 @@
 [profile.rust-unit]
 command   = "cargo test --workspace --locked --no-fail-fast"
 timeout_s = 1800
-mem_mb    = 4096
+mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 
@@ -14,7 +14,7 @@ tags      = ["cargo"]
 
 [profile.rust-gate]
 timeout_s = 3600
-mem_mb    = 4096
+mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 steps = [

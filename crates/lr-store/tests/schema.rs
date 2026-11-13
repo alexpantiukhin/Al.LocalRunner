@@ -53,7 +53,7 @@ fn broker_db_has_the_tables_and_columns_of_the_er_diagram() {
         ("job_log", "client_key, job_id, path, bytes, updated_at"),
         ("machine", "name, machine_id, kind, label, public_key, registered_at, last_seen, revoked_at"),
         ("join_code", "code_hash, kind, name, label, uses_left, issued_at, expires_at, redeemed_at, machine_name"),
-        ("runner", "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement"),
+        ("runner", "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement, version"),
         ("result_outbox", "client_machine, job_id, seq, kind, payload_json, created_at, acked_at"),
         ("order", "client_key, job_id, client_machine, spec_json, platform, same_machine, priority_hint, enqueued_at, state"),
     ]);
@@ -459,6 +459,7 @@ async fn a_version_one_broker_database_gets_the_peak_and_enforcement_columns() {
         "ALTER TABLE job DROP COLUMN peak_mem_mb;
          ALTER TABLE job DROP COLUMN peak_disk_mb;
          ALTER TABLE runner DROP COLUMN enforcement;
+         ALTER TABLE runner DROP COLUMN version;
          PRAGMA user_version = 1;",
     )
     .unwrap();

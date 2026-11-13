@@ -45,7 +45,7 @@ tr.pinned { background: var(--pin); }
 tr.stale, .stale { opacity: 0.6; font-style: italic; }
 .state-passed { color: var(--ok); }
 .state-failed, .state-timeout, .state-lost { color: var(--bad); }
-.state-cancelled, .state-cancelling { color: var(--warn); }
+.state-cancelled, .state-cancelling, .state-rejected { color: var(--warn); }
 .card { position: fixed; right: 0; top: 0; bottom: 0; width: min(720px, 100%); overflow-y: auto;
   background: var(--bg); border-left: 1px solid var(--line); box-shadow: -4px 0 12px rgba(0,0,0,.2); }
 .card dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; padding: 0 12px; margin: 0; }

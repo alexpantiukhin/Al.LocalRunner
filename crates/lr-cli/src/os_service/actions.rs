@@ -277,7 +277,7 @@ impl System for OsSystem {
                 }
                 std::fs::copy(from, to).map(|_| ()).map_err(|e| io(to, e))
             }
-            Action::RemoveFile(p) => match std::fs::remove_file(p) {
+            Action::RemoveFile(p) => match super::self_remove::remove_file(p) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(p, e)),
                 _ => Ok(()),
             },

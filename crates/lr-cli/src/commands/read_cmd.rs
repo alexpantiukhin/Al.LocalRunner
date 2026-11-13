@@ -166,19 +166,25 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
         for r in runners {
             let c = &r.caps;
             out.push(format!(
-                "  {}\t{}\tlast seen {}\tplatforms {}\tmemory free {}/{} MB\tcpu free {}/{}\t\
+                "  {}\t{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
                  tags {}\tprograms {}",
                 r.name,
                 if r.online { "online" } else { "offline" },
                 r.last_seen.map_or("-".into(), format_time),
                 listed(c.platforms.iter()),
-                r.free_mem_mb,
                 c.mem_mb,
-                r.free_cpu,
+                r.free_mem_mb,
                 c.cpu,
+                r.free_cpu,
                 listed(c.tags.iter()),
                 listed(c.programs.iter()),
             ));
+            let mine = env!("CARGO_PKG_VERSION");
+            match c.version.as_deref() {
+                Some(v) if v == mine => out.push(format!("    version {v}")),
+                Some(v) => out.push(format!("    version {v} (this binary: {mine})")),
+                None => out.push(format!("    version unknown (this binary: {mine})")),
+            }
             if let Some(e) = &c.enforcement {
                 out.push(format!("    enforcement {e}"));
             }

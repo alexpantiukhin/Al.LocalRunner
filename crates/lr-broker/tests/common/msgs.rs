@@ -53,6 +53,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         service_mem_mb: Default::default(),
         commands: Default::default(),
         enforcement: None,
+        version: None,
     }
 }
 

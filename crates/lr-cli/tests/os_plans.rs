@@ -469,3 +469,28 @@ fn a_runner_is_never_an_os_service_on_any_os() {
         }
     }
 }
+
+#[test]
+fn updating_the_service_stops_it_copies_the_binary_and_starts_it_without_touching_the_registration()
+{
+    use lr_cli::os_service::plans::update_service;
+    for os in [Os::Windows, Os::Linux, Os::MacOs] {
+        let plan = update_service(
+            os,
+            Path::new("/new/localrunner"),
+            Path::new("/svc/localrunner"),
+        );
+        let text: Vec<String> = plan.iter().map(|a| a.to_string()).collect();
+        assert_eq!(plan.len(), 3, "{text:?}");
+        assert!(
+            matches!(&plan[1], Action::Copy { from, to }
+                if from == Path::new("/new/localrunner") && to == Path::new("/svc/localrunner")),
+            "{text:?}"
+        );
+        let all = text.join(
+            "
+",
+        );
+        assert!(!all.contains("create") && !all.contains("delete"), "{all}");
+    }
+}

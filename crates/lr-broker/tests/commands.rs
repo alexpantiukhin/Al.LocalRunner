@@ -84,7 +84,8 @@ async fn a_name_outside_every_runner_list_is_rejected_with_the_names() {
         "команда rm -rf / не входит в названия раннеров: ярлыку guest разрешены только \
          названия из списка раннера (названия раннеров: build, test)"
     );
-    assert!(h.job_row("visitor", "j1").await.is_none());
+    h.assert_recorded_rejection("visitor", "j1", "rejected_")
+        .await;
 }
 
 #[tokio::test]

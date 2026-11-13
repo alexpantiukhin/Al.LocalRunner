@@ -322,6 +322,7 @@ fn stats_and_runners_print_per_broker() {
             service_mem_mb: Default::default(),
             commands: Default::default(),
             enforcement: None,
+            version: None,
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 1024,
@@ -336,8 +337,8 @@ fn stats_and_runners_print_per_broker() {
         "r1",
         "offline",
         "linux",
-        "1024/4096",
-        "2/4",
+        "memory 4096 MB, free in the pool 1024 MB",
+        "cpu 4, free in the pool 2",
         "gpu",
         "git",
         "program docker",
@@ -459,4 +460,23 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     let cols: Vec<&str> = lines[1].split('\t').collect();
     assert_eq!(cols[8], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
+}
+
+#[test]
+fn a_cancelled_run_with_a_rejection_reason_is_shown_and_filtered_as_rejected() {
+    use lr_cli::commands::history_cmd::{is_rejected, shown_state};
+    use lr_proto::{ReasonCode, RejectReason};
+    let mut refused = summary("j9", H);
+    refused.state = lr_core::JobState::Cancelled;
+    refused.reason = Some(ReasonCode::Rejected(RejectReason::PoolMemory));
+    let mut plain = summary("j8", H);
+    plain.state = lr_core::JobState::Cancelled;
+    assert!(is_rejected(&refused));
+    assert!(!is_rejected(&plain));
+    assert_eq!(shown_state(&refused), "rejected");
+    assert_eq!(shown_state(&plain), "cancelled");
+    let lines = history_lines(&[("local".into(), refused)]);
+    assert!(lines[1].contains("\trejected\t"), "{}", lines[1]);
+    let parsed = Cli::try_parse_from(["localrunner", "history", "--result", "rejected"]);
+    assert!(parsed.is_ok());
 }

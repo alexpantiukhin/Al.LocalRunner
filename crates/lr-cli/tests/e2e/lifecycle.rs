@@ -237,7 +237,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     assert_eq!(schema_version(&broker_db), 99, "left untouched");
     sql(
         &broker_db,
-        "ALTER TABLE job DROP COLUMN peak_mem_mb; ALTER TABLE job DROP COLUMN peak_disk_mb;          ALTER TABLE runner DROP COLUMN enforcement; PRAGMA user_version = 1;",
+        "ALTER TABLE job DROP COLUMN peak_mem_mb; ALTER TABLE job DROP COLUMN peak_disk_mb;          ALTER TABLE runner DROP COLUMN enforcement; ALTER TABLE runner DROP COLUMN version; PRAGMA user_version = 1;",
     )
     .await;
 
@@ -247,7 +247,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     assert_eq!(schema_version(&backup), 1);
     assert_eq!(schema_version(&hub_db), 2);
     assert!(main.root.join("broker.db.bak-1").is_file());
-    assert_eq!(schema_version(&broker_db), 2);
+    assert_eq!(schema_version(&broker_db), 3);
     passes(&main, &repo, "quick").await;
     assert_eq!(
         history(&main).await.len(),

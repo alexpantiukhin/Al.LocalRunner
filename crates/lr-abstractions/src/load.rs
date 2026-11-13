@@ -43,6 +43,60 @@ pub fn mem_available_mb(meminfo: &str) -> Option<u64> {
     Some(kb / 1024)
 }
 
+/// What is left under a cgroup v2 memory limit in MB: `memory.max` minus `memory.current`.
+/// `None` for `max` (no limit) or text that is not a number; a container started with
+/// `mem_limit` has a limit far below the memory of its host or VM.
+pub fn cgroup_free_mb(max: &str, current: &str) -> Option<u64> {
+    let limit: u64 = max.trim().parse().ok()?;
+    let used: u64 = current.trim().parse().ok()?;
+    Some(limit.saturating_sub(used) / (1024 * 1024))
+}
+
+/// Free memory from the output of `vm_stat` on macOS in MB: free, inactive and speculative
+/// pages, which the OS gives to a new process without swapping, times the page size of the
+/// header line.
+pub fn vm_stat_free_mb(text: &str) -> Option<u64> {
+    let header = text.lines().next()?;
+    let size: u64 = header
+        .split("page size of")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    let pages = |name: &str| -> Option<u64> {
+        let line = text.lines().find(|l| l.starts_with(name))?;
+        line.split(':')
+            .nth(1)?
+            .trim()
+            .trim_end_matches('.')
+            .parse()
+            .ok()
+    };
+    let free = pages("Pages free")?;
+    let inactive = pages("Pages inactive").unwrap_or(0);
+    let speculative = pages("Pages speculative").unwrap_or(0);
+    Some((free + inactive + speculative).saturating_mul(size) / (1024 * 1024))
+}
+
+/// The busy share of the CPU from the output of `ps -A -o %cpu` (the sum over all processes
+/// divided by the logical cores), 0 to 100.
+pub fn ps_busy_percent(text: &str, cores: u32) -> Option<u8> {
+    let mut sum = 0.0f64;
+    let mut any = false;
+    for line in text.lines().skip(1) {
+        if let Ok(v) = line.trim().replace(',', ".").parse::<f64>() {
+            sum += v;
+            any = true;
+        }
+    }
+    if !any || cores == 0 {
+        return None;
+    }
+    let share = (sum / f64::from(cores)).clamp(0.0, 100.0).ceil();
+    Some(share as u8)
+}
+
 /// The aggregate `cpu` line of `/proc/stat` as [`CpuTimes`]: idle and iowait count as idle.
 pub fn proc_stat_times(stat: &str) -> Option<CpuTimes> {
     let line = stat.lines().find(|l| l.starts_with("cpu "))?;

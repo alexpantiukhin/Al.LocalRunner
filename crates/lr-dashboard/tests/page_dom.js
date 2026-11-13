@@ -35,7 +35,8 @@ globalThis.window = { addEventListener: function (t, f) { handlers[t] = f; } };
 globalThis.location = { search: "", hash: "" };
 globalThis.history = { replaceState: function (a, b, h) { location.hash = h; } };
 globalThis.localStorage = { getItem: function () { return null; }, setItem: function () {} };
-globalThis.setInterval = function () { return 0; };
+var intervals = [];
+globalThis.setInterval = function (f, ms) { intervals.push({ f: f, ms: ms }); return intervals.length; };
 globalThis.EventSource = function () { this.addEventListener = function () {}; sources.push(this); };
 globalThis.fetch = function (url) {
   return Promise.resolve({

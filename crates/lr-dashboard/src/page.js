@@ -10,6 +10,8 @@
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
+  function isRejected(s) { return s.state === "cancelled" && typeof s.reason === "string" && s.reason.indexOf("rejected_") === 0; }
+  function shown(s) { return isRejected(s) ? "rejected" : s.state; }
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -39,7 +41,7 @@
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
       : (d.wait_reason || "") + (s.started_at ? "" : " (" + dur(t - s.queued_at) + ")");
     return {
-      j: j, position: j.position || "", job: s.job, state: s.state, project: s.project || "",
+      j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
       source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
       queued: s.queued_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
@@ -82,10 +84,12 @@
   function renderTable(body, cols) {
     var rows = visible();
     S.rows = rows;
+    S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
         var v = c === "queued" ? when(r.queued) : c === "duration" ? dur(r.duration) : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
+        if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
         if (c === "source" && r.j.detail.github_run_url && /^https:\/\//.test(r.j.detail.github_run_url)) {
           td.replaceChildren(el("a", { href: r.j.detail.github_run_url, rel: "noreferrer noopener", target: "_blank", text: v }));
@@ -135,7 +139,7 @@
     var kids = (S.data.runners || []).map(function (b) {
       var p = b.pool;
       var queued = S.data.jobs.filter(function (j) { return j.list === "queued" && j.broker === b.broker; });
-      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Enforcement", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
+      var t = el("table", {}, [el("tr", {}, ["Runner", "State", "Platforms", "Queue", "Free mem", "Free CPU", "Tags held", "Services", "Enforcement", "Version", "Unmet"].map(function (h) { return el("th", { text: h }); }))]);
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
@@ -147,6 +151,7 @@
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
           el("td", { text: r.caps.enforcement || "" }),
+          el("td", { text: r.caps.version || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));
       });
@@ -211,16 +216,17 @@
       var live = (d.steps || []).filter(function (st) { return st.state === "running"; })[0];
       S.step = live ? live.name : "";
     }
-    $("card-title").textContent = s.job + " · " + s.state + (j.stale ? " (stale)" : "");
+    $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Commit", d.commit], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
-      ["Broker", j.broker], ["Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
+      ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
       ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
       ["Cancelled by", d.cancelled_by], ["Secrets", (d.secrets || []).join(", ")]];
     var dl = $("card-fields");
     dl.replaceChildren();
     f.forEach(function (p) { if (p[1] != null && p[1] !== "") { dl.appendChild(el("dt", { text: p[0] })); dl.appendChild(el("dd", { text: String(p[1]) })); } });
     var steps = $("card-steps");
+    S.stepCells = [];
     steps.replaceChildren.apply(steps, (d.steps || []).map(function (st) {
       var spent = st.started_at ? (st.finished_at || t) - st.started_at : 0;
       var state = st.state === "queued" && FINAL.indexOf(s.state) >= 0 ? "skipped" : st.state;
@@ -228,6 +234,7 @@
       fill.style.width = (state === "skipped" ? 100 : Math.min(100, st.timeout_s ? 100 * spent / (st.timeout_s * 1000) : 0)) + "%";
       var row = el("button", { type: "button", cls: "step" + (st.name === S.step ? " chosen" : ""), "aria-pressed": String(st.name === S.step), title: "Show the log of this step" },
         [el("span", { text: st.name + " · " + state }), el("div", { cls: "track" }, [fill]), el("span", { text: dur(spent) + " / " + dur(st.timeout_s * 1000) })]);
+      if (state === "running") S.stepCells.push({ label: row.children[2], fill: fill, st: st });
       row.addEventListener("click", function () { S.stepAuto = false; S.step = S.step === st.name ? "" : st.name; fillCard(S.open); showLog(); });
       return row;
     }));
@@ -321,6 +328,17 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
   }
 
+  function tickTime() {
+    if (S.paused || !config.live) return;
+    (S.waitCells || []).forEach(function (c) { c.td.textContent = row(c.j).wait; });
+    var t = now();
+    (S.stepCells || []).forEach(function (c) {
+      var spent = (c.st.finished_at || t) - c.st.started_at;
+      c.label.textContent = dur(spent) + " / " + dur(c.st.timeout_s * 1000);
+      c.fill.style.width = Math.min(100, c.st.timeout_s ? 100 * spent / (c.st.timeout_s * 1000) : 0) + "%";
+    });
+  }
+
   var timer = null;
   function refresh() {
     if (!config.live) return;
@@ -391,5 +409,9 @@
   if (!config.live) document.querySelectorAll(".live-only").forEach(function (n) { n.classList.add("hidden-mode"); });
   restoreState();
   render();
-  if (config.live) { connect(); setInterval(function () { if (S.open && $("log-follow").checked && !S.paused) loadLog(); }, 2000); }
+  if (config.live) {
+    connect();
+    setInterval(function () { if (S.open && $("log-follow").checked && !S.paused) loadLog(); }, 2000);
+    setInterval(tickTime, 1000);
+  }
 }());

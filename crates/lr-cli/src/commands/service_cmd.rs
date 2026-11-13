@@ -25,6 +25,30 @@ fn needs_admin(what: &str, dry_run: bool, elevated: bool) -> Result<(), String> 
     }
 }
 
+fn admin_marker(dry_run: bool, elevated: bool) {
+    if dry_run {
+        let rights = if elevated {
+            "this shell is elevated"
+        } else {
+            "this shell is not elevated: a real run stops before them"
+        };
+        println!("# the steps below need administrator rights ({rights})");
+    }
+}
+
+/// The line `autostart` prints for the part it left to an administrator.
+pub fn admin_left(on: bool) -> String {
+    let (verb, how) = if cfg!(windows) {
+        ("autostart", "in a terminal started as administrator")
+    } else {
+        ("autostart", "with sudo")
+    };
+    format!(
+        "left for an administrator: the broker service. Run `localrunner {verb} {} broker` {how}",
+        if on { "on" } else { "off" }
+    )
+}
+
 fn exe() -> Result<std::path::PathBuf, String> {
     std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))
 }
@@ -53,6 +77,7 @@ pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> R
     needs_admin("broker install-service", dry_run, elevated)?;
     let plan = install_service_plan(layout)?;
     if dry_run {
+        admin_marker(true, elevated);
         apply(&plan, true)?;
     } else {
         let os = Os::current();
@@ -67,6 +92,35 @@ pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> R
         if Os::current() == Os::Linux {
             println!("log in again so that your user's new group membership applies");
         }
+    }
+    Ok(0)
+}
+
+/// `broker update-service [--dry-run]`.
+pub fn update_service(dry_run: bool) -> Result<i32, String> {
+    update_service_with(
+        dry_run,
+        crate::host::is_elevated(),
+        service_installed(Os::current()),
+    )
+}
+
+/// `broker update-service` in a process whose rights are `elevated`, on a machine where the
+/// service `installed` or not: it replaces the service's own copy of the binary with this one
+/// and restarts the service. Without administrator rights it is refused before any change.
+pub fn update_service_with(dry_run: bool, elevated: bool, installed: bool) -> Result<i32, String> {
+    needs_admin("broker update-service", dry_run, elevated)?;
+    if !installed {
+        return Err(
+            "the broker is not installed as a service: run `broker install-service`".into(),
+        );
+    }
+    let os = Os::current();
+    let plan = plans::update_service(os, &exe()?, &service_binary(os));
+    admin_marker(dry_run, elevated);
+    apply(&plan, dry_run)?;
+    if !dry_run {
+        println!("the broker service runs the binary of {}", exe()?.display());
     }
     Ok(0)
 }
@@ -191,6 +245,7 @@ pub fn autostart_with(
     elevated: bool,
 ) -> Result<i32, String> {
     let on = switch == Switch::On;
+    let requested = role;
     if let Some(name) = runner {
         if role != Some(RoleArg::Runner) {
             return Err(
@@ -209,12 +264,18 @@ pub fn autostart_with(
         }
         return Ok(0);
     }
+    let mut left_for_admin = false;
     for role in chosen_roles(layout, role)? {
         if role == NodeRole::Broker {
+            if broker_left_for_admin(requested, dry_run, elevated) {
+                left_for_admin = true;
+                continue;
+            }
             if on {
                 install_service_with(layout, dry_run, elevated)?;
             } else {
                 needs_admin("autostart off broker", dry_run, elevated)?;
+                admin_marker(dry_run, elevated);
                 apply(&uninstall_service_plan(), dry_run)?;
             }
             continue;
@@ -237,7 +298,16 @@ pub fn autostart_with(
     if let Some(hint) = linger_hint(Os::current(), on, dry_run) {
         println!("{hint}");
     }
+    if left_for_admin {
+        println!("{}", admin_left(on));
+    }
     Ok(0)
+}
+
+/// Whether `autostart` leaves the broker service to an administrator: the role was not named
+/// (`all` or the roles of `init`), so the user part still goes ahead, and the shell cannot do it.
+pub fn broker_left_for_admin(requested: Option<RoleArg>, dry_run: bool, elevated: bool) -> bool {
+    !dry_run && !elevated && requested != Some(RoleArg::Broker)
 }
 
 /// The hint `autostart on` prints on Linux once the user units are in place: without

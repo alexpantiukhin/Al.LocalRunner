@@ -254,6 +254,38 @@ pub fn install_service(i: &ServiceInputs) -> Vec<Action> {
     }
 }
 
+/// `broker update-service`: stops the registered service, replaces its own copy of the binary
+/// with `exe` and starts it again; the registration, the state and the keys stay.
+pub fn update_service(os: Os, exe: &Path, binary: &Path) -> Vec<Action> {
+    let name = service_name(os);
+    let copy = Action::Copy {
+        from: exe.to_path_buf(),
+        to: binary.to_path_buf(),
+    };
+    match os {
+        Os::Windows => vec![
+            Action::run("net", &["stop", name]).tolerating(Tolerate::Anything),
+            copy,
+            Action::run("sc.exe", &["start", name]).tolerating(Tolerate::Codes(vec![1056])),
+        ],
+        Os::Linux => vec![
+            Action::run("systemctl", &["stop", &format!("{name}.service")])
+                .tolerating(Tolerate::Anything),
+            copy,
+            Action::run("systemctl", &["start", &format!("{name}.service")]),
+        ],
+        Os::MacOs => {
+            let plist = format!("/Library/LaunchDaemons/{name}.plist");
+            vec![
+                Action::run("launchctl", &["bootout", &format!("system/{name}")])
+                    .tolerating(Tolerate::Anything),
+                copy,
+                Action::run("launchctl", &["bootstrap", "system", &plist]),
+            ]
+        }
+    }
+}
+
 /// Removes the broker service and its binary (`uninstall`, `autostart off broker`); the state
 /// directory, the account and the keys stay (spec 10.5). A service that is not there is fine.
 pub fn uninstall_service(os: Os, binary: &Path) -> Vec<Action> {

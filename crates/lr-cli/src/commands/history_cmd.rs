@@ -5,11 +5,13 @@
 use super::jobs::hub;
 use super::timefmt::{format_ms, format_time, now};
 use super::view::{print_json, problem, reachable, read, source_name};
-use super::{HistoryFilters, ShowArgs, SourceArg};
+use super::{HistoryFilters, ResultArg, ShowArgs, SourceArg};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::{JobId, JobState, Timestamp};
-use lr_proto::{HistoryFilter, JobDetail, JobSummary, ReadReply, ReadRequest, WireSource};
+use lr_proto::{
+    HistoryFilter, JobDetail, JobSummary, ReadReply, ReadRequest, ReasonCode, WireSource,
+};
 use serde_json::{json, Value};
 
 /// The broker's filter from the flags: without `--client` and `--all` only this client's runs.
@@ -31,6 +33,20 @@ pub fn history_filter(f: &HistoryFilters, now: Timestamp) -> HistoryFilter {
         limit: f.limit,
         cursor: None,
         mine: f.client.is_none() && !f.all,
+    }
+}
+
+/// Whether the run was refused at intake and never started.
+pub fn is_rejected(s: &JobSummary) -> bool {
+    s.state == JobState::Cancelled && matches!(s.reason, Some(ReasonCode::Rejected(_)))
+}
+
+/// The state as `history` shows it: a refused order is `rejected`, not a plain cancellation.
+pub fn shown_state(s: &JobSummary) -> String {
+    if is_rejected(s) {
+        "rejected".into()
+    } else {
+        state_name(s.state)
     }
 }
 
@@ -77,7 +93,7 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
         out.push(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
             s.job,
-            state_name(s.state),
+            shown_state(s),
             format_time(s.queued_at),
             span(s.started_at, s.finished_at),
             dash(&s.profile),
@@ -116,7 +132,7 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
         .map_or(String::new(), |r| format!(", {r}"));
     let mut out = vec![
         format!("job       {} (broker {broker})", s.job),
-        format!("state     {}, exit {exit}{reason}", state_name(s.state)),
+        format!("state     {}, exit {exit}{reason}", shown_state(s)),
         format!("project   {}", dash(&s.project)),
         format!("label     {}", dash(&s.label)),
         format!("client    {}", s.client_label),
@@ -196,6 +212,13 @@ pub async fn history(layout: &Layout, f: HistoryFilters) -> Result<i32, String> 
     let filter = history_filter(&f, now());
     let (per, problems) = fetch_history(&client, f.broker.as_deref(), &filter).await?;
     client.close().await;
+    let per = if f.result == Some(ResultArg::Rejected) {
+        per.into_iter()
+            .map(|(b, jobs)| (b, jobs.into_iter().filter(is_rejected).collect()))
+            .collect()
+    } else {
+        per
+    };
     let rows = newest_first(per, filter.effective_limit() as usize);
     if f.json {
         let jobs: Vec<Value> = rows

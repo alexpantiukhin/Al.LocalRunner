@@ -5,7 +5,7 @@ use common::TempDir;
 use lr_cli::commands::confirm::Console;
 use lr_cli::commands::up_cmd::RunningRoles;
 use lr_cli::commands::upgrade_cmd::{
-    parse_version, restart_roles, stop_names, verdict, Job, Verdict,
+    parse_version, restart_roles, restart_summary, stop_names, verdict, Job, Verdict,
 };
 use lr_cli::commands::upgrade_jobs::Activity;
 use lr_cli::commands::RoleArg;
@@ -89,6 +89,13 @@ fn the_service_broker_is_neither_stopped_nor_started() {
     assert_eq!(restart_roles(&all, true), [RoleArg::Hub, RoleArg::Runner]);
     assert!(stop_names(&running(false, false, &[]), false).is_empty());
     assert!(restart_roles(&running(false, false, &[]), false).is_empty());
+}
+
+#[test]
+fn the_plan_names_the_runners_that_start_again() {
+    let all = running(true, false, &["r1", "r2"]);
+    assert_eq!(restart_summary(&all, false), "hub, runner (r1, r2)");
+    assert_eq!(restart_summary(&running(false, false, &[]), false), "");
 }
 
 #[derive(Default)]

@@ -129,6 +129,7 @@ pub fn runner(name: &str, machine_name: &str) -> RunnerRow {
         services: BTreeMap::new(),
         accept_min_mem_mb: None,
         enforcement: None,
+        version: Some("0.2.0".to_string()),
         last_seen: None,
         state: RunnerState::Registered,
     }

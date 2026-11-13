@@ -60,7 +60,25 @@ async fn exceeding_pool_rejected_at_intake() {
         "{}",
         r.detail
     );
-    assert!(h.job_row(ALEX, "j1").await.is_none());
+    h.assert_recorded_rejection(ALEX, "j1", "rejected_pool_memory")
+        .await;
+}
+
+#[tokio::test]
+async fn a_resent_rejected_order_is_refused_again_with_the_same_reason() {
+    let h = Harness::start("");
+    let _r = h
+        .member_runner("r1", "10.0.0.7", caps(&["linux"], 65536, 32))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(20000, 1, 60))).await;
+    let first = hub.rejected().await;
+    hub.send(&order("j1", req(20000, 1, 60))).await;
+    let second = hub.rejected().await;
+    assert_eq!(second.code, first.code);
+    assert_eq!(second.detail, first.detail);
+    h.assert_recorded_rejection(ALEX, "j1", "rejected_pool_memory")
+        .await;
 }
 
 #[tokio::test]

@@ -49,6 +49,10 @@ fn run(scenario: &str, test: &str) -> Option<Value> {
 
 fn run_with(config: &str, scenario: &str, test: &str) -> Option<Value> {
     let first = running(StepState::Running, StepState::Queued, JobState::Running);
+    run_snapshot(config, &first, scenario, test)
+}
+
+fn run_snapshot(config: &str, first: &str, scenario: &str, test: &str) -> Option<Value> {
     let program = format!(
         "{DOM}\nstart({config}, {first});\n{CHARTS}\n{PAGE}\n\
          var $ = function (id) {{ return document.getElementById(id); }};\n\
@@ -93,6 +97,40 @@ fn the_card_shows_the_log_of_the_running_step_and_of_the_step_clicked() {
         "a second click shows the whole log"
     );
     assert_eq!(out["unpicked"]["log"], LOG);
+}
+
+const CLOCK: &str = r#"
+  var clock = 1700000030000;
+  Date.now = function () { return clock; };
+  var cell = function () {
+    var tds = $("queue-body").children[0].children;
+    return tds.filter(function (td) { return td.getAttribute("data-col") === "wait"; })[0].textContent;
+  };
+  var bar = function () { return $("card-steps").children[0].children[2].textContent; };
+  var tickSecond = function () { intervals.filter(function (i) { return i.ms === 1000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await tick();
+  logText = LOG;
+  $("queue-body").children[0].fire("click"); await tick();
+  out.before = { grid: cell(), card: bar() };
+  clock += 5000;
+  tickSecond();
+  out.after = { grid: cell(), card: bar() };
+  $("pause").fire("click");
+  clock += 5000;
+  tickSecond();
+  out.paused = { grid: cell(), card: bar() };
+"#;
+
+#[test]
+fn the_time_of_a_running_job_ticks_in_the_grid_and_in_the_card_without_a_new_snapshot() {
+    let Some(out) = run(CLOCK, "the_time_of_a_running_job_ticks") else {
+        return;
+    };
+    assert_eq!(out["before"]["grid"], "30s / 20m0s", "{out}");
+    assert_eq!(out["before"]["card"], "30s / 10m0s");
+    assert_eq!(out["after"]["grid"], "35s / 20m0s", "{out}");
+    assert_eq!(out["after"]["card"], "35s / 10m0s");
+    assert_eq!(out["paused"], out["after"], "a paused page stands still");
 }
 
 #[test]
@@ -200,4 +238,29 @@ fn a_snapshot_without_logs_says_so_once_and_offers_nothing_to_copy() {
     assert_eq!(out["log"], "(logs are not included in this snapshot)");
     assert_eq!(out["copy"], true);
     assert_eq!(out["download"], true);
+}
+
+#[test]
+fn a_refused_order_is_shown_as_rejected_not_as_cancelled() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Cancelled,
+    ))
+    .unwrap();
+    v["jobs"][0]["detail"]["summary"]["reason"] = serde_json::json!("rejected_pool_memory");
+    let scenario = r#"
+      sources[0].onopen(); await tick();
+      var tr = $("queue-body").children[0];
+      out.states = tr.children.filter(function (c) { return c.className && c.className.indexOf("state-") === 0; }).map(function (c) { return c.className; });
+    "#;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "rejected",
+    ) else {
+        return;
+    };
+    assert_eq!(out["states"][0], "state-rejected", "{out}");
 }

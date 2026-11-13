@@ -1,5 +1,8 @@
 use lr_abstractions::fakes::FakeHostLoad;
-use lr_abstractions::load::{busy_percent, mem_available_mb, proc_stat_times, CpuTimes};
+use lr_abstractions::load::{
+    busy_percent, cgroup_free_mb, mem_available_mb, proc_stat_times, ps_busy_percent,
+    vm_stat_free_mb, CpuTimes,
+};
 use lr_abstractions::{HostLoad, LoadSample};
 
 #[test]
@@ -62,4 +65,88 @@ fn the_fake_returns_what_it_was_given() {
     };
     fake.set(Some(sample));
     assert_eq!(fake.clone().sample(), Some(sample));
+}
+
+#[test]
+fn a_container_memory_limit_caps_the_free_memory() {
+    assert_eq!(
+        cgroup_free_mb(
+            "2147483648
+",
+            "536870912
+"
+        ),
+        Some(1536)
+    );
+    assert_eq!(
+        cgroup_free_mb(
+            "max
+", "1000
+"
+        ),
+        None
+    );
+    assert_eq!(cgroup_free_mb("1048576", "9999999999"), Some(0));
+}
+
+const VM_STAT: &str = "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               10000.
+Pages active:                            200000.
+Pages inactive:                           50000.
+Pages speculative:                         6384.
+Pages wired down:                         90000.
+";
+
+#[test]
+fn vm_stat_free_inactive_and_speculative_pages_are_available_memory() {
+    assert_eq!(vm_stat_free_mb(VM_STAT), Some(1037));
+    assert_eq!(vm_stat_free_mb("nothing useful"), None);
+    assert_eq!(
+        vm_stat_free_mb(
+            "Mach Virtual Memory Statistics: (page size of 4096 bytes)
+Pages free: 256.
+"
+        ),
+        Some(1)
+    );
+}
+
+#[test]
+fn ps_cpu_column_summed_over_cores_is_the_busy_share() {
+    assert_eq!(
+        ps_busy_percent(
+            "%CPU
+ 50.0
+ 150.5
+  0.0
+",
+            4
+        ),
+        Some(51)
+    );
+    assert_eq!(
+        ps_busy_percent(
+            "%CPU
+ 900.0
+",
+            4
+        ),
+        Some(100)
+    );
+    assert_eq!(
+        ps_busy_percent(
+            "%CPU
+", 4
+        ),
+        None
+    );
+    assert_eq!(
+        ps_busy_percent(
+            "%CPU
+ 1.0
+",
+            0
+        ),
+        None
+    );
 }

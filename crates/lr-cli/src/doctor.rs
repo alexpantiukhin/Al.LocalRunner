@@ -95,7 +95,33 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     });
 }
 
+/// The warning for a broker database left in the state directory of a user while the broker
+/// runs as the OS service: nothing uses it, and `up broker --state-dir` would start a second
+/// broker on it.
+pub fn stale_broker_db(
+    root: &Path,
+    broker_is_service: bool,
+    root_is_service: bool,
+) -> Option<Check> {
+    let db = root.join("broker.db");
+    (broker_is_service && !root_is_service && db.exists()).then(|| {
+        check(
+            "broker.db",
+            Status::Warn,
+            format!(
+                "{} is left over: the broker runs as a service with its own state; nothing uses this database, remove it with its -wal/-shm files, certificate and key once you do not need the old history",
+                db.display()
+            ),
+        )
+    })
+}
+
 async fn policy(layout: &Layout, out: &mut Vec<Check>) {
+    out.extend(stale_broker_db(
+        &layout.root,
+        layout.broker_is_service(),
+        layout.is_service(),
+    ));
     match crate::commands::admin_cmd::broker_policy(layout).await {
         Some(Ok((path, warnings))) => {
             out.push(check(
@@ -115,6 +141,14 @@ async fn policy(layout: &Layout, out: &mut Vec<Check>) {
         None => {}
     }
     if let Some(note) = crate::commands::admin_cmd::service_policy_note(layout) {
+        if crate::commands::admin_cmd::service_running(layout).await {
+            out.push(check(
+                "policy.toml",
+                Status::Ok,
+                crate::commands::admin_cmd::service_running_note(),
+            ));
+            return;
+        }
         out.push(check("policy.toml", Status::Warn, note));
     }
     let path = layout.config_file("policy.toml");
@@ -338,6 +372,49 @@ async fn brokers(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// One warning per broker whose registered runners run another version than `mine` (or an
+/// unknown one); nothing when all agree.
+pub fn runner_version_checks(
+    per: &[(String, Vec<lr_proto::RunnerInfo>)],
+    mine: &str,
+) -> Vec<Check> {
+    per.iter()
+        .filter_map(|(broker, runners)| {
+            let off: Vec<String> = runners
+                .iter()
+                .filter(|r| r.caps.version.as_deref() != Some(mine))
+                .map(|r| {
+                    format!(
+                        "{} ({})",
+                        r.name,
+                        r.caps.version.as_deref().unwrap_or("unknown")
+                    )
+                })
+                .collect();
+            (!off.is_empty()).then(|| {
+                check(
+                    format!("broker {broker} runners"),
+                    Status::Warn,
+                    format!(
+                        "runners not on version {mine}: {}; run `localrunner upgrade` on their machines",
+                        off.join(", ")
+                    ),
+                )
+            })
+        })
+        .collect()
+}
+
+async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
+    let Ok(client) = crate::commands::jobs::hub(layout).await else {
+        return;
+    };
+    if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
+        out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
+    }
+    client.close().await;
+}
+
 /// Runs every check of this node.
 pub async fn checks(layout: &Layout) -> Vec<Check> {
     checks_with(layout, crate::host::is_elevated()).await
@@ -351,6 +428,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     runners(layout, &mut out);
     same_user(layout, &mut out);
     brokers(layout, &mut out).await;
+    runner_versions(layout, &mut out).await;
     out
 }
 

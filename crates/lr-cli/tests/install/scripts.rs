@@ -48,6 +48,9 @@ fn shell_installer_has_the_flags_checks_and_order_of_the_spec() {
         "--offline)",
         "--role)",
         "--allow-elevated)",
+        "--yes)",
+        "--cancel)",
+        "--dry-run)",
     ] {
         assert!(text.contains(flag), "flag {flag}");
     }
@@ -106,6 +109,9 @@ fn powershell_installer_has_the_flags_checks_and_order_of_the_spec() {
         "'offline'",
         "'role'",
         "'allow-elevated'",
+        "'yes'",
+        "'cancel'",
+        "'dry-run'",
     ] {
         assert!(text.contains(flag), "flag {flag}");
     }
