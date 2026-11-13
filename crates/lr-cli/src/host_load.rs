@@ -12,7 +12,7 @@ use std::sync::Mutex;
 /// consecutive readings, so the first one carries no load.
 pub struct SystemHostLoad {
     #[cfg_attr(target_os = "macos", allow(dead_code))]
-    previous: Mutex<Option<CpuTimes>>,
+    previous: Mutex<Option<lr_abstractions::load::CpuTimes>>,
 }
 
 impl SystemHostLoad {

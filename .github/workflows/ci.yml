@@ -31,10 +31,12 @@ jobs:
           fi
           echo "$files"
           hit() { echo "$files" | grep -Eq "$1" && echo true || echo false; }
-          echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')" >> "$GITHUB_OUTPUT"
-          echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')" >> "$GITHUB_OUTPUT"
-          echo "workflows=$(hit '^\.github/workflows/')" >> "$GITHUB_OUTPUT"
+          {
+            echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')"
+            echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')"
+            echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')"
+            echo "workflows=$(hit '^\.github/workflows/')"
+          } >> "$GITHUB_OUTPUT"
 
   rust:
     needs: changes
