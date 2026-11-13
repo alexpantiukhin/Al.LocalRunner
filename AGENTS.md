@@ -10,7 +10,7 @@ See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/
 - Do not create files unless strictly necessary; read a file before modifying it
 - No limit on file length; still decompose code by responsibility
 - Save temporary files to `temp/` (gitignored)
-- Run heavy tasks (build, `cargo test`, clippy, the full gate) through `localrunner` using the profiles in `.localrunner/profiles.toml` (`localrunner run rust-unit --as <label>`, `localrunner run rust-gate --as <label>`), not directly, so parallel sessions share the machine. Use the `localrunner:run` skill. A quick single-test run while editing may go directly
+- Run heavy tasks (build, `cargo test`, clippy, the full gate) through `localrunner` using the profiles in `.localrunner/profiles.toml` (`localrunner run rust-unit --as <label>`, `localrunner run rust-gate --as <label>`), not directly, so parallel sessions share the machine. Use the `localrunner:run` skill. There is no direct-run exception: even one test builds the crate and its dependencies on all cores, and a worktree has its own `target`.
 - Never read, print or copy files under `secrets/`
 - No agent attribution (`Co-Authored-By`, "Generated with") in commits and pull requests
 - Plugins are installed at project scope only (`--scope project`)
