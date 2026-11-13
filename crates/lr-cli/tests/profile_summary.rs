@@ -69,10 +69,10 @@ fn the_summary_serializes_with_snake_case_keys() {
 }
 
 #[test]
-fn the_verdict_needs_a_profile_and_good_secrets_but_ignores_warnings() {
+fn the_verdict_needs_a_profile_and_good_secrets() {
     let text = "[profile.t]\ncommand = \"true\"\ntimeout_s = 5\n";
     let profiles = parse_profiles(text).unwrap();
-    assert!(!verdict(&[], &[], true));
-    assert!(!verdict(&profiles, &[], false));
-    assert!(verdict(&profiles, &["profiles".to_string()], true));
+    assert!(!verdict(&[], true));
+    assert!(!verdict(&profiles, false));
+    assert!(verdict(&profiles, true));
 }

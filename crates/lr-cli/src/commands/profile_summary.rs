@@ -127,7 +127,6 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
 }
 
 /// Whether `profile check` passes: there is at least one profile and the secrets are fine.
-/// Ignored sections only warn.
-pub fn verdict(profiles: &[Profile], _ignored: &[String], secrets_ok: bool) -> bool {
+pub fn verdict(profiles: &[Profile], secrets_ok: bool) -> bool {
     !profiles.is_empty() && secrets_ok
 }

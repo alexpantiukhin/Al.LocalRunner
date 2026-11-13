@@ -1,4 +1,4 @@
-//! `profile check`: the secrets a project profile asks for, checked before a run.
+//! `profile check`: a summary of the project profiles and the secrets they ask for, checked before a run.
 
 use super::args::ProfileAction;
 use super::profile_summary::{summarize, summary_lines, verdict, ProfileSummary};
@@ -196,7 +196,7 @@ pub fn check(
         env_set: var_set,
     };
     let (secret_lines, secrets_ok) = report(&profiles, &machine);
-    let ok = verdict(&profiles, &ignored, secrets_ok);
+    let ok = verdict(&profiles, secrets_ok);
     let summaries: Vec<ProfileSummary> = profiles.iter().map(summarize).collect();
     if json {
         let doc = serde_json::json!({
