@@ -172,3 +172,30 @@ fn dropped_segment_keeps_whitespace_that_belongs_to_a_value() {
     let spaced = bound("echo {a} {? -p {pkg}}", &specs, &[("a", "hi  ")]);
     assert_eq!(spaced.unwrap(), "echo hi  ");
 }
+
+#[test]
+fn question_brace_without_a_declared_argument_is_literal() {
+    let out = bound("echo ${?} {a} {?}", &[spec("a")], &[("a", "1")]);
+    assert_eq!(out.unwrap(), "echo ${?} 1 {?}");
+}
+
+#[test]
+fn dropped_leading_segment_leaves_no_leading_space() {
+    let out = bound("{? -p {pkg}} test", &[spec("pkg")], &[]);
+    assert_eq!(out.unwrap(), "test");
+}
+
+#[test]
+fn empty_value_counts_as_not_given() {
+    let optional = bound("x {? -p {pkg}}", &[spec("pkg")], &[("pkg", "")]);
+    assert_eq!(optional.unwrap(), "x");
+    let mut with_default = spec("t");
+    with_default.default = Some("all".into());
+    let defaulted = bound("x {t}", &[with_default], &[("t", "")]);
+    assert_eq!(defaulted.unwrap(), "x all");
+    let required = bound("x {t}", &[spec("t")], &[("t", "")]).unwrap_err();
+    assert!(
+        required.contains("`t`") && required.contains("required"),
+        "{required}"
+    );
+}

@@ -41,6 +41,9 @@ fn resolve(specs: &[ArgSpec], given: &[(String, String)]) -> Result<Values, Prof
                 "unknown argument `{name}`; the profile declares: {list}"
             )));
         };
+        if value.is_empty() {
+            continue;
+        }
         check_value(spec, value)?;
         by_name.entry(&spec.name).or_default().push(value);
     }
@@ -104,10 +107,11 @@ fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, Stri
     while i < text.len() {
         let rest = &text[i..];
         if rest.starts_with("{?") {
-            if let Some(end) = matching_close(rest) {
+            if let Some(end) = matching_close(rest).filter(|e| mentions_arg(&rest[2..*e], specs)) {
                 let inner = &rest[2..end];
                 let inner = inner.strip_prefix(' ').unwrap_or(inner);
                 let after = &rest[end + 1..];
+                let mut skip = 0;
                 match render(inner, specs, values) {
                     Ok(s) => {
                         out.push_str(&s);
@@ -116,10 +120,13 @@ fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, Stri
                     Err(_) => {
                         if after.is_empty() || after.starts_with(char::is_whitespace) {
                             out.truncate(out.trim_end().len().max(floor));
+                            if out.is_empty() {
+                                skip = after.len() - after.trim_start().len();
+                            }
                         }
                     }
                 }
-                i += end + 1;
+                i += end + 1 + skip;
                 continue;
             }
         } else if let Some(body) = rest.strip_prefix('{') {
@@ -143,6 +150,12 @@ fn render(text: &str, specs: &[ArgSpec], values: &Values) -> Result<String, Stri
         i += ch.len_utf8();
     }
     Ok(out)
+}
+
+fn mentions_arg(text: &str, specs: &[ArgSpec]) -> bool {
+    specs
+        .iter()
+        .any(|s| text.contains(&format!("{{{}}}", s.name)))
 }
 
 fn matching_close(rest: &str) -> Option<usize> {
