@@ -111,6 +111,7 @@ mem_mb = 256
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: false,
         wait: true,
     });

@@ -96,6 +96,7 @@ pub fn submit(profile: &str, platform: Option<&str>) -> SubmitRequest {
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: false,
         wait: false,
     }

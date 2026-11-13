@@ -11,6 +11,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
             timeout_s: Some(60),
             mem_mb: None,
             cpu: None,
+            args: Vec::new(),
             detach: true,
             wait: false,
         }),

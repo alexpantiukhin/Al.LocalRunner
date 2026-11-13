@@ -107,6 +107,7 @@ pub fn order_spec() -> OrderSpec {
         },
         wanted_priority: Some(5),
         overrides: ResourceOverride::default(),
+        args: Vec::new(),
     }
 }
 

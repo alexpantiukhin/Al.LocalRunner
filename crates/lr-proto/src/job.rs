@@ -47,6 +47,10 @@ pub struct OrderSpec {
     /// carry them. Absent from older senders and when nothing was overridden.
     #[serde(default, skip_serializing_if = "ResourceOverride::is_empty")]
     pub overrides: ResourceOverride,
+    /// Profile arguments the submitter gave (`--arg`); the steps already carry their values.
+    /// Absent from older senders and when none were given.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<(String, String)>,
 }
 
 /// Per-run replacement of profile resources given by the submitter (spec 5).

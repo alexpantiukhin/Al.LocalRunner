@@ -74,6 +74,7 @@ fn request(wait: bool) -> SubmitRequest {
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: false,
         wait,
     }

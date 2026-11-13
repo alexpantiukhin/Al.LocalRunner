@@ -494,3 +494,31 @@ fn service_memory_in_capabilities_is_optional_both_ways() {
         serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
     assert_eq!(back.service_mem_mb["db"], 2048);
 }
+
+#[test]
+fn submit_and_order_args_are_optional_on_the_wire() {
+    let CliRequest::Submit(mut submit) = cli_requests().remove(0) else {
+        panic!()
+    };
+    assert!(submit.args.is_empty());
+    let old = serde_json::to_value(&submit).unwrap();
+    assert!(old.get("args").is_none());
+    let back: SubmitRequest = serde_json::from_value(old).unwrap();
+    assert!(back.args.is_empty());
+    submit.args = vec![("target".into(), "a".into()), ("target".into(), "b".into())];
+    let v = serde_json::to_value(&submit).unwrap();
+    assert_eq!(v["args"], json!([["target", "a"], ["target", "b"]]));
+    assert_eq!(serde_json::from_value::<SubmitRequest>(v).unwrap(), submit);
+
+    let mut spec = order_spec();
+    let old = serde_json::to_value(&spec).unwrap();
+    assert!(old.get("args").is_none());
+    assert!(serde_json::from_value::<OrderSpec>(old)
+        .unwrap()
+        .args
+        .is_empty());
+    spec.args = vec![("target".into(), "a".into())];
+    let v = serde_json::to_value(&spec).unwrap();
+    assert_eq!(v["args"], json!([["target", "a"]]));
+    assert_eq!(serde_json::from_value::<OrderSpec>(v).unwrap(), spec);
+}

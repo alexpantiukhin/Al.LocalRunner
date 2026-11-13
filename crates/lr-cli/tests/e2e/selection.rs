@@ -112,6 +112,7 @@ async fn refused_at_once(layout: &Layout, repo: &Path, profile: &str) -> (Reason
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: false,
         wait: true,
     });

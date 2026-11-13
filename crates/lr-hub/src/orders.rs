@@ -232,6 +232,7 @@ pub(crate) async fn build(
         code,
         wanted_priority: None,
         overrides: ResourceOverride::default(),
+        args: Vec::new(),
     };
     lower_timeout(&mut spec, resolved.timeout_s, req.timeout_s)?;
     override_resources(&mut spec, req)?;
