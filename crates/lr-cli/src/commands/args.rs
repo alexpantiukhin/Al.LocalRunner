@@ -25,6 +25,14 @@ pub fn parse_mem_mb(text: &str) -> Result<u64, String> {
     Ok(mb)
 }
 
+/// Parses `--arg`: `name=value`, split at the first `=`; the name must not be empty.
+pub fn parse_arg(text: &str) -> Result<(String, String), String> {
+    match text.split_once('=') {
+        Some((name, value)) if !name.is_empty() => Ok((name.to_string(), value.to_string())),
+        _ => Err(format!("`{text}` is not NAME=VALUE")),
+    }
+}
+
 /// `policy ...`.
 #[derive(Subcommand, Debug)]
 pub enum PolicyAction {

@@ -208,7 +208,7 @@ pub async fn submit(
         timeout_s: args.timeout,
         mem_mb: args.mem,
         cpu: args.cpu,
-        args: Vec::new(),
+        args: args.args,
         detach: args.detach,
         wait,
     };
