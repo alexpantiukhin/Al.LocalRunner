@@ -115,6 +115,9 @@ pub struct BrokerStatus {
     pub available: bool,
     /// Messages waiting in the outbox for it.
     pub outbox: u64,
+    /// When `available` last changed; the hub start while it never connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Timestamp>,
 }
 
 /// An active order of a hub (answer to [`CliRequest::Orders`]).

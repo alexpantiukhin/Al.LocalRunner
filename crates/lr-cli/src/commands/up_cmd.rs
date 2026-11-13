@@ -94,7 +94,7 @@ async fn hub_unlinked(layout: &Layout) -> Vec<String> {
         .unwrap_or_default()
         .into_iter()
         .filter(|b| !b.available)
-        .map(|b| super::view::unreachable_line(&b.name))
+        .map(|b| super::view::unreachable_line(&b.name, b.since))
         .collect()
 }
 

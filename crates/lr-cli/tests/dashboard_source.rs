@@ -80,6 +80,7 @@ fn broker(name: &str, available: bool) -> BrokerStatus {
         zone: Some(Zone::Lan),
         available,
         outbox: 0,
+        since: None,
     }
 }
 

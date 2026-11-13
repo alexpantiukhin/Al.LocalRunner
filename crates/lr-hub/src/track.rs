@@ -142,6 +142,7 @@ pub(crate) struct Link {
     pub(crate) resend_at: Option<Timestamp>,
     pub(crate) flush_later: bool,
     pub(crate) refused: Option<ProtocolError>,
+    pub(crate) since: Option<Timestamp>,
 }
 
 impl Link {

@@ -78,6 +78,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 zone: Some(Zone::Local),
                 available: true,
                 outbox: 2,
+                since: Some(lr_core::Timestamp(5)),
             }],
         },
         CliReply::Jobs { jobs: vec![] },

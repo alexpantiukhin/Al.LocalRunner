@@ -35,6 +35,7 @@ fn snapshot() -> DashboardSnapshot {
             zone: Some(Zone::Lan),
             available: false,
             outbox: 1,
+            since: None,
         }],
         jobs: lists
             .iter()

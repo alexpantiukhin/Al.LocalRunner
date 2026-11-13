@@ -38,6 +38,7 @@ async fn fake_hub(answer: Answer) -> IpcClient {
                         zone: Some(Zone::Lan),
                         available: true,
                         outbox: 0,
+                        since: None,
                     }],
                 },
                 CliRequest::Orders => CliReply::Orders {
