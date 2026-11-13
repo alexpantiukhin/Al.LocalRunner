@@ -1,5 +1,6 @@
 use crate::error::ProfileError;
 use crate::model::Zone;
+use crate::profile_args::{build_args, RawArg};
 use crate::profile::{single_step, PlatformOverride, Profile, Program, StepSpec};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -82,6 +83,8 @@ struct RawProfile {
     platforms: Option<Vec<String>>,
     #[serde(default)]
     platform: BTreeMap<String, RawOverride>,
+    #[serde(default)]
+    args: BTreeMap<String, RawArg>,
 }
 
 impl RawNeeds {
@@ -188,6 +191,7 @@ fn build(
         let field = format!("platform.{platform}");
         overrides.insert(platform, build_override(&name, &field, o)?);
     }
+    let args = build_args(&name, raw.args)?;
     Ok(Profile {
         platforms: needs.platforms.unwrap_or_default(),
         timeout_s,
@@ -209,6 +213,7 @@ fn build(
         steps,
         from_command,
         platform_overrides: overrides,
+        args,
         name,
     })
 }

@@ -1,4 +1,5 @@
 use crate::error::ProfileError;
+use crate::profile_args::ArgSpec;
 use crate::model::{StepState, Zone};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -96,6 +97,9 @@ pub struct Profile {
     pub from_command: bool,
     /// Per-platform overrides.
     pub platform_overrides: BTreeMap<String, PlatformOverride>,
+    /// Named arguments the submitter fills into the commands.
+    #[serde(default)]
+    pub args: Vec<ArgSpec>,
 }
 
 impl Profile {
