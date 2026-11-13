@@ -136,8 +136,10 @@ pub(crate) fn job_env_table(
 ) -> Result<BTreeMap<String, String>, SettingsError> {
     for name in raw.keys() {
         let valid = !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            && !name.starts_with(|c: char| c.is_ascii_digit() || c == '(' || c == ')')
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '(' | ')'));
         if !valid {
             return Err(SettingsError(format!(
                 "[job_env] {name} is not a valid variable name"

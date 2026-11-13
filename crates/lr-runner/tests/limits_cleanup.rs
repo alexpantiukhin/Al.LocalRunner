@@ -93,7 +93,14 @@ fn job_env_is_validated() {
         parse("[job_env]\nHOME = \"/data/home\"\n").unwrap().job_env["HOME"],
         "/data/home"
     );
+    assert_eq!(
+        parse("[job_env]\n\"ProgramFiles(x86)\" = 'C:\\Program Files (x86)'\n")
+            .unwrap()
+            .job_env["ProgramFiles(x86)"],
+        "C:\\Program Files (x86)"
+    );
     for bad in [
+        "(X)",
         "PATH",
         "path",
         "TEMP",
