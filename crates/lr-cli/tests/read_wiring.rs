@@ -77,6 +77,7 @@ async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: false,
         wait: true,
     });

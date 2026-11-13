@@ -86,6 +86,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <dl class="gl">
 <dt id="g-job" data-re="jobs?">Job</dt><dd>One run of a profile: queue, steps, result. It has a JobId. A job goes to one platform; a second platform is a second job.</dd>
 <dt id="g-profile" data-re="profiles?">Profile</dt><dd>The description of a run in the project's .localrunner/profiles.toml: a command or steps, a timeout and requirements for the runner (memory, CPU, disk, programs, platforms, tags). These are the requirements of a job, not machine settings.</dd>
+<dt id="g-arg" data-re="profile arguments?">Argument</dt><dd>A named value a profile declares (<code>[profile.X.args.name]</code>) and the submitter fills in per run with <code>--arg name=value</code>; it only changes the text of the commands, never the resources or the priority.</dd>
 <dt id="g-needs" data-re="(?:order )?requirements?">Order requirements</dt><dd>What a job needs from the runner: platform, memory, CPU, disk, programs, tags, timeout ceiling, zone. The order lists them itself; there are no label levels. The hub and the broker pick a runner that has everything required, otherwise they return an error with numbers.</dd>
 <dt id="g-label" data-re="client labels?">Client label</dt><dd>A group tag that the broker owner assigns to a client key when issuing it. It is part of the key record, so the client cannot forge it; the policy uses the label to compute rights, quotas, weights and priority. Not to be confused with the <code>--as</code> tag, which the caller sets itself.</dd>
 <dt id="g-ci" data-re="ci">ci</dt><dd>The client label for GitHub Actions jobs: its owner assigns it to the hub key on the machine with the GitHub runner. The default policy gives it the highest priority (100): such orders are taken first, but jobs that are already running are not preempted.</dd>
@@ -701,6 +702,29 @@ steps = [
 <li>A failed step stops the job, the remaining steps are <code>skipped</code>. <code>continue_on_failure = true</code> allows continuing, and the job result stays <code>failed</code>.</li>
 <li>Branching, conditions and dependencies between steps are not part of the core — use a script inside <code>command</code>.</li>
 <li>Several independent jobs from one session — several <code>submit</code> calls: each is queued separately, and jobs of other sessions can run between them.</li>
+</ul>
+
+<h3>5.2 Arguments</h3>
+<p>One profile can serve many runs when it declares arguments: named values the submitter fills in per run, for example <code>localrunner submit rust-test --arg target=peer_key_store</code>. The profile still fixes the resources, the timeout and the shape of the command; only the declared values change.</p>
+<pre class="code">[profile.rust-test]
+command = "cargo test {? -p {pkg}} {target}"
+timeout_s = 900
+mem_mb = 4096
+
+[profile.rust-test.args.target]
+one_of  = ["all", "peer_key_store", "tab_owner"]
+default = "all"
+
+[profile.rust-test.args.pkg]
+pattern = "[a-z-]+"
+</pre>
+<ul>
+<li><b>Declaration.</b> <code>[profile.X.args.&lt;name&gt;]</code>; the name is letters, digits and <code>_</code>. All keys are optional: <code>one_of</code> (allowed values) or <code>pattern</code> (a regular expression the whole value must match), not both; <code>default</code> (used when the argument is not given; it must satisfy the rule); <code>many = true</code> (the flag may be repeated) with <code>join</code> (the separator, a space by default, only with <code>many</code>). The names <code>repo_url</code>, <code>commit</code>, <code>branch</code>, <code>workspace</code> and <code>job_dir</code> are reserved: the runner fills them in <code>source</code> steps.</li>
+<li><b>Template.</b> In <code>command</code> and in the <code>command</code> of every step, <code>{name}</code> is replaced by the value. <code>{? text}</code> is an optional segment: the single space after <code>{?</code> is a separator, and the whole segment disappears (with the space before it) when any argument inside has no value and no default. Any other braces (<code>${HOME}</code>, <code>{a,b}</code>, the runner placeholders of a <code>source</code> step) are left as written. A profile without <code>args</code> is not treated as a template at all.</li>
+<li><b>Passing.</b> <code>--arg name=value</code>, split at the first <code>=</code>; repeat it for a <code>many</code> argument. The hub fills in the values when it builds the order, so the broker and the runner receive an ordinary order with the final command; the pairs are also kept in the order for the record.</li>
+<li><b>Errors before the queue.</b> An undeclared name, an argument given twice without <code>many</code>, a value outside <code>one_of</code> or not matching <code>pattern</code>, a required argument (no default) outside an optional segment that is not given: the submit is refused with the reason and nothing is sent to the broker.</li>
+<li><b>No sanitizing.</b> A value is substituted verbatim: runs are local, and a submitter who can pass any value can run any command anyway. <code>one_of</code> and <code>pattern</code> only catch typos.</li>
+<li><b>Resources do not depend on arguments.</b> Memory, CPU and the timeout come from the profile; a heavier run raises them with <code>--mem</code> and <code>--cpu</code> as before, and an order above what the pool or a runner can give is rejected as usual. Arguments are declared by the client, so they never affect priority, reserve, quota or admission.</li>
 </ul>
 
 <h2 id="s-queue">6. Queue and scheduling</h2>

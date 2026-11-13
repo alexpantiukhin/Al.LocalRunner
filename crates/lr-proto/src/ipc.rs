@@ -63,6 +63,9 @@ pub struct SubmitRequest {
     /// `--cpu`: replaces the profile CPU for this run; absent from older senders.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu: Option<u32>,
+    /// `--arg name=value`, in the order given; absent from older senders.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<(String, String)>,
     /// `--detach`: the order outlives the sender.
     pub detach: bool,
     /// `--wait`: stream output and end with the exit code.

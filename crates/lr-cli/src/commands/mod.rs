@@ -68,6 +68,9 @@ pub struct OrderArgs {
     /// CPU cores for this run instead of the profile value.
     #[arg(long, value_name = "CORES", value_parser = clap::value_parser!(u32).range(1..))]
     pub cpu: Option<u32>,
+    /// A profile argument, `name=value`; repeat the flag for several values.
+    #[arg(long = "arg", value_name = "NAME=VALUE", value_parser = parse_arg)]
+    pub args: Vec<(String, String)>,
     /// The order outlives the submitting process.
     #[arg(long)]
     pub detach: bool,

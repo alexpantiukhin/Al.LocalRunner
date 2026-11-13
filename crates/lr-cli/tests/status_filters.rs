@@ -64,6 +64,7 @@ async fn place(layout: &Layout, identity: lr_core::Identity) -> JobId {
         timeout_s: None,
         mem_mb: None,
         cpu: None,
+        args: Vec::new(),
         detach: true,
         wait: false,
     });

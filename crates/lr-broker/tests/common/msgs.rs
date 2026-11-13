@@ -130,6 +130,7 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             },
             wanted_priority: None,
             overrides: ResourceOverride::default(),
+            args: Vec::new(),
         }),
     })
 }
