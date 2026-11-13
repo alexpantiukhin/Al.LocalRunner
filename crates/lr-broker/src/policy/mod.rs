@@ -10,6 +10,7 @@ mod resources;
 mod rules;
 mod sections;
 mod validate;
+mod when;
 
 pub use admission::{AdmissionSection, ForeignLoad};
 pub use error::{PolicyError, PolicyWarning};
