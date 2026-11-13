@@ -76,6 +76,7 @@ Restart the agent session, then ask in plain words:
 | "update localrunner" | `upgrade-runner` | takes the new version from a signed release and replaces the binary with `upgrade`, restarting the roles |
 | "start the runners" | `up-runner` | starts the hub, the broker and the runners |
 | "run the tests through the runner" | `run` | puts the task into the queue and reads the result |
+| "set up localrunner in this repository" | `repo-setup` | interviews, writes the profiles file and `temp/` in `.gitignore` after you confirm each diff, checks it with `profile check` |
 | "show the queue" | `status-runner` | queue, jobs, runners, history, dashboard |
 | "stop the runners", "turn autostart on" | `down-runner`, `autostart-runner` | stop the roles, switch autostart |
 
