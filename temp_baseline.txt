@@ -1,0 +1,173 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling foldhash v0.2.0
+   Compiling equivalent v1.0.3
+   Compiling winnow v0.7.15
+   Compiling toml_write v0.1.2
+   Compiling thiserror v1.0.69
+   Compiling ipnet v2.12.2
+   Compiling itoa v1.0.19
+   Compiling zmij v1.0.23
+   Compiling serde_json v1.0.154
+   Compiling memchr v2.8.3
+   Compiling windows-link v0.2.1
+   Compiling windows-sys v0.61.2
+   Compiling bytes v1.12.1
+   Compiling hashbrown v0.17.1
+   Compiling pin-project-lite v0.2.17
+   Compiling cfg-if v1.0.5
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.15
+   Compiling once_cell v1.21.4
+   Compiling windows_x86_64_msvc v0.52.6
+   Compiling getrandom v0.2.17
+   Compiling base64 v0.22.1
+   Compiling zeroize v1.9.1
+   Compiling untrusted v0.9.0
+   Compiling version_check v0.9.5
+   Compiling rustls-pki-types v1.15.1
+   Compiling subtle v2.6.1
+   Compiling rustls v0.23.46
+   Compiling windows-targets v0.52.6
+   Compiling powerfmt v0.2.1
+   Compiling indexmap v2.14.2
+   Compiling cc v1.11.1
+   Compiling num-conv v0.2.2
+   Compiling windows-sys v0.59.0
+   Compiling time-core v0.1.9
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling deranged v0.5.9
+   Compiling smallvec v1.16.5
+   Compiling pem v3.0.6
+   Compiling cpufeatures v0.2.17
+   Compiling vcpkg v0.2.15
+   Compiling pkg-config v0.3.34
+   Compiling semver v1.0.28
+   Compiling hashlink v0.12.2
+   Compiling fallible-iterator v0.3.0
+   Compiling bitflags v2.13.2
+   Compiling syn v3.0.10
+   Compiling syn v2.0.119
+   Compiling rustc_version v0.4.1
+   Compiling fallible-streaming-iterator v0.1.9
+   Compiling futures-core v0.3.34
+   Compiling http v1.5.0
+   Compiling signature v2.2.0
+   Compiling aho-corasick v1.1.5
+   Compiling httparse v1.10.1
+   Compiling time v0.3.55
+   Compiling tower-service v0.3.3
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.4
+   Compiling curve25519-dalek v4.1.3
+   Compiling ed25519 v2.2.3
+   Compiling atomic-waker v1.1.2
+   Compiling futures-task v0.3.34
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling tower-layer v0.3.3
+   Compiling http-body v1.1.0
+   Compiling percent-encoding v2.3.2
+   Compiling digest v0.10.7
+   Compiling sync_wrapper v1.0.2
+   Compiling ring v0.17.14
+   Compiling sha2 v0.10.9
+   Compiling libsqlite3-sys v0.39.1
+   Compiling slab v0.4.12
+   Compiling httpdate v1.0.3
+   Compiling form_urlencoded v1.2.2
+   Compiling yasna v0.5.2
+   Compiling http-body-util v0.1.5
+   Compiling futures-util v0.3.34
+   Compiling ryu v1.0.23
+   Compiling mime v0.3.18
+   Compiling serde_path_to_error v0.1.20
+   Compiling matchit v0.8.4
+   Compiling once_cell_polyfill v1.70.2
+   Compiling utf8parse v0.2.2
+   Compiling anstyle v1.0.14
+   Compiling axum-core v0.5.6
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling clap_lex v1.1.1
+   Compiling heck v0.5.0
+   Compiling strsim v0.11.1
+   Compiling anstyle-wincon v3.0.11
+   Compiling getrandom v0.4.3
+   Compiling fastrand v2.5.0
+   Compiling anstream v1.0.0
+   Compiling clap_builder v4.6.7
+   Compiling tempfile v3.27.0
+   Compiling thiserror-impl v1.0.69
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling serde_derive v1.0.229
+   Compiling tokio-macros v2.7.2
+   Compiling async-trait v0.1.92
+   Compiling clap_derive v4.6.7
+   Compiling tokio v1.54.1
+   Compiling rusqlite v0.41.1
+   Compiling ed25519-dalek v2.2.0
+   Compiling clap v4.6.7
+   Compiling rustls-webpki v0.103.16
+   Compiling rcgen v0.13.2
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling serde_urlencoded v0.7.1
+   Compiling toml_edit v0.22.27
+   Compiling toml v0.8.23
+   Compiling lr-core v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-core)
+   Compiling tokio-rustls v0.26.6
+   Compiling hyper v1.12.0
+   Compiling tower v0.5.3
+   Compiling lr-abstractions v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-abstractions)
+   Compiling lr-proto v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-proto)
+   Compiling hyper-util v0.1.21
+   Compiling axum v0.8.9
+   Compiling lr-store v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-store)
+   Compiling lr-obs v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-obs)
+   Compiling lr-exec v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-exec)
+   Compiling lr-broker v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-broker)
+   Compiling lr-hub v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-hub)
+   Compiling lr-runner v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-runner)
+   Compiling lr-net v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-net)
+   Compiling lr-dashboard v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-dashboard)
+   Compiling lr-cli v0.2.0 (D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\crates\lr-cli)
+error: linking with `link.exe` failed: exit code: 1
+  |
+  = note: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe" "/NOLOGO" "D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps\\rustcmvTW2v\\symbols.o" "<64 object files omitted>" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps/{liblr_cli-f3a1fbcb418a0dc9,liblr_dashboard-2c51a7ef41a46a99,libaxum-ced42d6cd786b465,libserde_urlencoded-3ea9f095bdbed2e0,libryu-36d31055e8dd496f,libform_urlencoded-49613a97fc194bab,libpercent_encoding-e350f14ec4226700,libserde_path_to_error-b90982102b511d72,libhyper_util-dbf9a3d6aa45a84d,libhyper-f9cd026e148f0e01,libhttparse-3934b1481c689a1d,libhttpdate-3aeb53db40540981,libatomic_waker-7b3560d00d4ed6f2,libmatchit-67919318ed28bde8,libaxum_core-87530d14c61ecb8e,libmime-6b59f084310d8003,libhttp_body_util-f05e6316cf0a9c22,libhttp_body-86fe22c188a2b45d,libhttp-8ae0b6807473b3c7,libtower-1fba7ba0bac0884b,libsync_wrapper-53715c137247477a,libtower_layer-b3c7d207747fb5fd,libfutures_util-85db81b229a01161,libslab-73264b5c8c8499bf,libfutures_task-ca7f59fb56774c78,libfutures_core-2af69a2985631efe,libtower_service-07d2747dbba20ec1,libclap-d2f39847a73c83b1,libclap_builder-7b0e481c5d08910a,libstrsim-6b8b9d52dd33408b,libanstream-e93f9359dfe00491,libanstyle_query-bd64363eb1ebb803,libis_terminal_polyfill-ab1c2eb382f982e7,libanstyle_wincon-033e343ba81625fa,libonce_cell_polyfill-990d866dceda10bb,libcolorchoice-abf45bdf062813de,libanstyle_parse-75801883aa74808d,libutf8parse-175d86b34dcd6f45,libclap_lex-9bf5fb5526bbbc1e,libanstyle-51bcfc5ad9e66b49,liblr_store-6a080056ecd53bdd,librusqlite-bfa6dab50e4a7bf9,libbitflags-a43b09208d5f229d,libsmallvec-42b55188e1f5faf6,libhashlink-184538b5eb6bc0e2,liblibsqlite3_sys-9a5646fb59fa7d22,libfallible_streaming_iterator-66f0aef80a9fde2a,libfallible_iterator-9a944c3f9c017601,liblr_runner-c618691bc388e5c3,liblr_hub-736d09d8afbb15be,liblr_exec-d209a588e3b1f55b,liblr_obs-2044289f33ed3c36,libaho_corasick-fb19110c38fed911,liblr_net-08c2b8b7f62947a0,librcgen-2d59045c80275aab,libpem-e7f53f937ffff921,libyasna-760fba58f5f7368c,libtime-1140f3f22ca94847,libpowerfmt-1f0fc4d8029311b6,libnum_conv-db8708ab2cdf9267,libderanged-e443b4804e6da794,libtime_core-dadef32fce72fbc4,libwindows_sys-d609ede8d6ebf70b,libwindows_targets-2151d9fb0231a789,libed25519_dalek-94545a514d5a6d58,libcurve25519_dalek-f267b3ac96507c6f,libed25519-11239e4735d3dfe3,libsignature-281d3eb1b3660500,libtokio_rustls-9d3fa0da53bc749d,librustls-2cc3d2568ca464fc,libsubtle-36aa775a545af48d,libwebpki-7fb4ac2166094dea,libring-162a9a0f755f8f82,libgetrandom-e906227fd47312e4,libuntrusted-886734c3df991993,librustls_pki_types-bd0744e95c4f231a,libzeroize-1011d837bc3a29e1,libsha2-9764ca3e74085be2,libcpufeatures-8304637f10d937ba,libcfg_if-16ed30e64ce9445d,libdigest-80f37901b3c1e6fd,libblock_buffer-c06f5456e3aad1c7,libcrypto_common-ff167ea0e065d883,libgeneric_array-deccbc00565b67c8,libtypenum-c0603a78f2233a30,libbase64-1f9f5300156d97b2,liblr_broker-503c117cb16684b5,liblr_proto-6d97dc3d3ca93ccf,liblr_abstractions-e7d6d34b90491a25,libserde_json-6a881752b50d86b1,libmemchr-323b5da16e32ae70,libitoa-436a90c02accae2d,libzmij-c74556d1f6330f7d,libtokio-489a1162e2f012eb,libsocket2-0ed80183be8164c3,libbytes-0093e1a3fc7eeafd,libmio-61cf1f9e32a44c88,libwindows_sys-352130fbcdd3680c,libwindows_link-68aefdc6edfc1b3d,libpin_project_lite-45cc2132bea4ef6d,liblr_core-0eb69a770753ec55,libtoml-90546fefdc3da8c8,libtoml_edit-2263fc1d33b8f995,libserde_spanned-6cde3325c56e89df,libindexmap-b736f6611384c2b2,libequivalent-819e878cc4e3056c,libhashbrown-5ac082aa68b4933e,libfoldhash-c35afb65b811c99a,libwinnow-3b1c23b97de60474,libtoml_write-8678517ac48dd461,libtoml_datetime-63f5da2c43809402,libipnet-0dda0e0fb18e8282,libserde-4150457e96ed80a7,libserde_core-ab9d2473d75973d0,libthiserror-f7e33b673eb201c1}.rlib" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libstd-*,libpanic_unwind-*,libcfg_if-*,libwindows_link-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libunwind-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "kernel32.lib" "C:\\Users\\Alex\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\windows_x86_64_msvc-0.52.6\\lib\\windows.0.52.0.lib" "bcrypt.lib" "advapi32.lib" "kernel32.lib" "kernel32.lib" "kernel32.lib" "ntdll.lib" "userenv.lib" "ws2_32.lib" "dbghelp.lib" "/defaultlib:msvcrt" "/NXCOMPAT" "/LIBPATH:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\build\\ring-a1b932e209c0de1a\\out" "/LIBPATH:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\build\\libsqlite3-sys-b672acf8b5dae3e2\\out" "/LIBPATH:C:\\Users\\Alex\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\windows_x86_64_msvc-0.52.6\\lib" "/OUT:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps\\source_github-83ecd443ed9b527d.exe" "/OPT:REF,NOICF" "/DEBUG" "/PDBALTPATH:%_PDB%" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\intrinsic.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\liballoc.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libcore.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libstd.natvis"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: 
+
+note: `link.exe` returned an unexpected error
+
+note: the Visual Studio build tools may need to be repaired using the Visual Studio installer
+
+note: or a necessary component may be missing from the "C++ build tools" workload
+
+error: could not compile `lr-cli` (test "source_github") due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `lr-broker` (test "retry_start")
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Alex\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name retry_start --edition=2021 'crates\lr-broker\tests\retry_start.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=2794d2e5a5592123 -C extra-filename=-8c8e7dfdc9a098f1 --out-dir 'D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' -C 'incremental=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\incremental' -L 'dependency=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' --extern 'async_trait=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\async_trait-8e3520819d46ed8e.dll' --extern 'ipnet=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libipnet-0dda0e0fb18e8282.rlib' --extern 'lr_abstractions=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_abstractions-e7d6d34b90491a25.rlib' --extern 'lr_broker=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_broker-503c117cb16684b5.rlib' --extern 'lr_core=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_core-0eb69a770753ec55.rlib' --extern 'lr_proto=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_proto-6d97dc3d3ca93ccf.rlib' --extern 'serde=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde-4150457e96ed80a7.rlib' --extern 'serde_json=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde_json-6a881752b50d86b1.rlib' --extern 'thiserror=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libthiserror-f7e33b673eb201c1.rlib' --extern 'tokio=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtokio-489a1162e2f012eb.rlib' --extern 'toml=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtoml-90546fefdc3da8c8.rlib'` (exit code: 1)
+error: could not compile `lr-broker` (test "read_hidden")
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Alex\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name read_hidden --edition=2021 'crates\lr-broker\tests\read_hidden.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=ca99ade798606eaf -C extra-filename=-96e4c0ac18212e7d --out-dir 'D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' -C 'incremental=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\incremental' -L 'dependency=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' --extern 'async_trait=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\async_trait-8e3520819d46ed8e.dll' --extern 'ipnet=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libipnet-0dda0e0fb18e8282.rlib' --extern 'lr_abstractions=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_abstractions-e7d6d34b90491a25.rlib' --extern 'lr_broker=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_broker-503c117cb16684b5.rlib' --extern 'lr_core=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_core-0eb69a770753ec55.rlib' --extern 'lr_proto=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_proto-6d97dc3d3ca93ccf.rlib' --extern 'serde=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde-4150457e96ed80a7.rlib' --extern 'serde_json=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde_json-6a881752b50d86b1.rlib' --extern 'thiserror=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libthiserror-f7e33b673eb201c1.rlib' --extern 'tokio=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtokio-489a1162e2f012eb.rlib' --extern 'toml=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtoml-90546fefdc3da8c8.rlib'` (exit code: 1)
+error: could not compile `lr-broker` (test "runner_names")
+
+Caused by:
+  process didn't exit successfully: `C:\Users\Alex\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name runner_names --edition=2021 'crates\lr-broker\tests\runner_names.rs' --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=33ce78e68e18d87f -C extra-filename=-3597702a089e5b21 --out-dir 'D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' -C 'incremental=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\incremental' -L 'dependency=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps' --extern 'async_trait=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\async_trait-8e3520819d46ed8e.dll' --extern 'ipnet=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libipnet-0dda0e0fb18e8282.rlib' --extern 'lr_abstractions=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_abstractions-e7d6d34b90491a25.rlib' --extern 'lr_broker=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_broker-503c117cb16684b5.rlib' --extern 'lr_core=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_core-0eb69a770753ec55.rlib' --extern 'lr_proto=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\liblr_proto-6d97dc3d3ca93ccf.rlib' --extern 'serde=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde-4150457e96ed80a7.rlib' --extern 'serde_json=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libserde_json-6a881752b50d86b1.rlib' --extern 'thiserror=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libthiserror-f7e33b673eb201c1.rlib' --extern 'tokio=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtokio-489a1162e2f012eb.rlib' --extern 'toml=D:\GitRepositories\Al.LocalRunner\.claude\worktrees\should-issues\target\debug\deps\libtoml-90546fefdc3da8c8.rlib'` (exit code: 1)
+error: linking with `link.exe` failed: exit code: 1
+  |
+  = note: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe" "/NOLOGO" "D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps\\rustcaX7WfE\\symbols.o" "<61 object files omitted>" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libtest-*,libgetopts-*,librustc_std_workspace_std-*}.rlib" "D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps/{liblr_cli-f3a1fbcb418a0dc9,liblr_dashboard-2c51a7ef41a46a99,libaxum-ced42d6cd786b465,libserde_urlencoded-3ea9f095bdbed2e0,libryu-36d31055e8dd496f,libform_urlencoded-49613a97fc194bab,libpercent_encoding-e350f14ec4226700,libserde_path_to_error-b90982102b511d72,libhyper_util-dbf9a3d6aa45a84d,libhyper-f9cd026e148f0e01,libhttparse-3934b1481c689a1d,libhttpdate-3aeb53db40540981,libatomic_waker-7b3560d00d4ed6f2,libmatchit-67919318ed28bde8,libaxum_core-87530d14c61ecb8e,libmime-6b59f084310d8003,libhttp_body_util-f05e6316cf0a9c22,libhttp_body-86fe22c188a2b45d,libhttp-8ae0b6807473b3c7,libtower-1fba7ba0bac0884b,libsync_wrapper-53715c137247477a,libtower_layer-b3c7d207747fb5fd,libfutures_util-85db81b229a01161,libslab-73264b5c8c8499bf,libfutures_task-ca7f59fb56774c78,libfutures_core-2af69a2985631efe,libtower_service-07d2747dbba20ec1,libclap-d2f39847a73c83b1,libclap_builder-7b0e481c5d08910a,libstrsim-6b8b9d52dd33408b,libanstream-e93f9359dfe00491,libanstyle_query-bd64363eb1ebb803,libis_terminal_polyfill-ab1c2eb382f982e7,libanstyle_wincon-033e343ba81625fa,libonce_cell_polyfill-990d866dceda10bb,libcolorchoice-abf45bdf062813de,libanstyle_parse-75801883aa74808d,libutf8parse-175d86b34dcd6f45,libclap_lex-9bf5fb5526bbbc1e,libanstyle-51bcfc5ad9e66b49,liblr_store-6a080056ecd53bdd,librusqlite-bfa6dab50e4a7bf9,libbitflags-a43b09208d5f229d,libsmallvec-42b55188e1f5faf6,libhashlink-184538b5eb6bc0e2,liblibsqlite3_sys-9a5646fb59fa7d22,libfallible_streaming_iterator-66f0aef80a9fde2a,libfallible_iterator-9a944c3f9c017601,liblr_runner-c618691bc388e5c3,liblr_hub-736d09d8afbb15be,liblr_exec-d209a588e3b1f55b,liblr_obs-2044289f33ed3c36,libaho_corasick-fb19110c38fed911,liblr_net-08c2b8b7f62947a0,librcgen-2d59045c80275aab,libpem-e7f53f937ffff921,libyasna-760fba58f5f7368c,libtime-1140f3f22ca94847,libpowerfmt-1f0fc4d8029311b6,libnum_conv-db8708ab2cdf9267,libderanged-e443b4804e6da794,libtime_core-dadef32fce72fbc4,libwindows_sys-d609ede8d6ebf70b,libwindows_targets-2151d9fb0231a789,libed25519_dalek-94545a514d5a6d58,libcurve25519_dalek-f267b3ac96507c6f,libed25519-11239e4735d3dfe3,libsignature-281d3eb1b3660500,libtokio_rustls-9d3fa0da53bc749d,librustls-2cc3d2568ca464fc,libsubtle-36aa775a545af48d,libwebpki-7fb4ac2166094dea,libring-162a9a0f755f8f82,libgetrandom-e906227fd47312e4,libuntrusted-886734c3df991993,librustls_pki_types-bd0744e95c4f231a,libzeroize-1011d837bc3a29e1,libsha2-9764ca3e74085be2,libcpufeatures-8304637f10d937ba,libcfg_if-16ed30e64ce9445d,libdigest-80f37901b3c1e6fd,libblock_buffer-c06f5456e3aad1c7,libcrypto_common-ff167ea0e065d883,libgeneric_array-deccbc00565b67c8,libtypenum-c0603a78f2233a30,libbase64-1f9f5300156d97b2,liblr_broker-503c117cb16684b5,liblr_proto-6d97dc3d3ca93ccf,liblr_abstractions-e7d6d34b90491a25,libserde_json-6a881752b50d86b1,libmemchr-323b5da16e32ae70,libitoa-436a90c02accae2d,libzmij-c74556d1f6330f7d,libtokio-489a1162e2f012eb,libsocket2-0ed80183be8164c3,libbytes-0093e1a3fc7eeafd,libmio-61cf1f9e32a44c88,libwindows_sys-352130fbcdd3680c,libwindows_link-68aefdc6edfc1b3d,libpin_project_lite-45cc2132bea4ef6d,liblr_core-0eb69a770753ec55,libtoml-90546fefdc3da8c8,libtoml_edit-2263fc1d33b8f995,libserde_spanned-6cde3325c56e89df,libindexmap-b736f6611384c2b2,libequivalent-819e878cc4e3056c,libhashbrown-5ac082aa68b4933e,libfoldhash-c35afb65b811c99a,libwinnow-3b1c23b97de60474,libtoml_write-8678517ac48dd461,libtoml_datetime-63f5da2c43809402,libipnet-0dda0e0fb18e8282,libserde-4150457e96ed80a7,libserde_core-ab9d2473d75973d0,libthiserror-f7e33b673eb201c1}.rlib" "<sysroot>\\lib\\rustlib\\x86_64-pc-windows-msvc\\lib/{libstd-*,libpanic_unwind-*,libcfg_if-*,libwindows_link-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libunwind-*,librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "kernel32.lib" "C:\\Users\\Alex\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\windows_x86_64_msvc-0.52.6\\lib\\windows.0.52.0.lib" "bcrypt.lib" "advapi32.lib" "kernel32.lib" "kernel32.lib" "kernel32.lib" "ntdll.lib" "userenv.lib" "ws2_32.lib" "dbghelp.lib" "/defaultlib:msvcrt" "/NXCOMPAT" "/LIBPATH:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\build\\ring-a1b932e209c0de1a\\out" "/LIBPATH:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\build\\libsqlite3-sys-b672acf8b5dae3e2\\out" "/LIBPATH:C:\\Users\\Alex\\.cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\windows_x86_64_msvc-0.52.6\\lib" "/OUT:D:\\GitRepositories\\Al.LocalRunner\\.claude\\worktrees\\should-issues\\target\\debug\\deps\\broker_shutdown-8f5b6ab5c1dd4357.exe" "/OPT:REF,NOICF" "/DEBUG" "/PDBALTPATH:%_PDB%" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\intrinsic.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\liballoc.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libcore.natvis" "/NATVIS:<sysroot>\\lib\\rustlib\\etc\\libstd.natvis"
+  = note: some arguments are omitted. use `--verbose` to show all linker arguments
+  = note: 
+
+error: could not compile `lr-cli` (test "broker_shutdown") due to 1 previous error
