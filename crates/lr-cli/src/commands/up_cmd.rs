@@ -80,24 +80,6 @@ pub async fn running_roles(layout: &Layout) -> RunningRoles {
     out
 }
 
-/// A line per broker the running hub is not connected to: the process is alive, the link is not.
-async fn hub_unlinked(layout: &Layout) -> Vec<String> {
-    let Ok(principal) = lr_net::current_os_principal() else {
-        return Vec::new();
-    };
-    let Ok(c) = IpcClient::connect(&layout.hub_ipc(&principal), IpcChannel::Cli).await else {
-        return Vec::new();
-    };
-    let brokers = super::view::known_brokers(&c).await;
-    c.close().await;
-    brokers
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|b| !b.available)
-        .map(|b| super::view::unreachable_line(&b.name, b.since))
-        .collect()
-}
-
 fn dirs(layout: &Layout) -> Vec<String> {
     let mut out = vec![
         "--state-dir".to_string(),
@@ -291,12 +273,15 @@ pub async fn up_with(
     }
     if roles.contains(&NodeRole::Hub) && before.hub {
         println!("hub: already running");
-        for line in hub_unlinked(layout).await {
-            eprintln!("hub: {line}");
+        for line in crate::link_report::hub_lines(layout).await {
+            eprintln!("{line}");
         }
     }
     for r in &before.runners {
         println!("runner {r}: already running");
+        if let Some(line) = crate::link_report::runner_line(layout, r).await {
+            eprintln!("{line}");
+        }
     }
     let mut plan = up_plan(layout, &roles, &before);
     if plan.is_empty() {

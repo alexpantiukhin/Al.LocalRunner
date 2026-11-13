@@ -18,6 +18,7 @@ pub mod hub_watch;
 pub mod init;
 pub mod ipc_client;
 pub mod join;
+pub mod link_report;
 pub mod net;
 pub mod os_service;
 pub mod paths;
