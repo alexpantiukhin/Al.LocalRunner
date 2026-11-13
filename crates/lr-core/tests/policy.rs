@@ -3,7 +3,7 @@ mod common;
 use common::{client, entry, entry_with, policy, req, set, CI_PRIORITY, MIN};
 use lr_core::{
     Condition, GroupBy, Policy, QueueEntry, Quota, Reject, Reserve, Rule, ServeLog, Strategy,
-    Timestamp, Wait, Zone, DEFAULT_AGE_AFTER_MIN,
+    Timestamp, Wait, Zone,
 };
 
 fn ids(queue: &[QueueEntry], order: Vec<usize>) -> Vec<String> {
@@ -42,8 +42,6 @@ fn with_pool_carries_no_rules() {
 fn default_policy_matches_spec_defaults() {
     let p = policy(8192, 8);
     assert_eq!(p.strategy, Strategy::PriorityFifo);
-    assert_eq!(p.age_after_min, DEFAULT_AGE_AFTER_MIN);
-    assert_eq!(DEFAULT_AGE_AFTER_MIN, 30);
     assert_eq!(p.group_by, GroupBy::Label);
     assert_eq!(p.max_job_timeout_s, None);
     assert_eq!(
@@ -82,44 +80,20 @@ fn wanted_priority_is_only_a_wish() {
 }
 
 #[test]
-fn aging_promotes_after_threshold_and_survives_rebroker() {
+fn a_long_waiting_order_gets_no_priority_boost() {
     let p = policy(8192, 8);
-    let mut old = entry("old", "agent", 0);
-    old.accepted_at = Timestamp(30 * MIN + 1);
-    let ci = entry("ci", "ci", 10 * MIN);
-    let queue = [ci, old];
-    assert_eq!(ordered(&p, &queue, 30 * MIN), ["ci", "old"]);
-    assert_eq!(p.effective_priority(&queue[1], Timestamp(30 * MIN)), 0);
-    assert_eq!(ordered(&p, &queue, 30 * MIN + 1), ["old", "ci"]);
-    assert_eq!(
-        p.effective_priority(&queue[1], Timestamp(30 * MIN + 1)),
-        CI_PRIORITY
-    );
+    let queue = [entry("agent", "agent", 0), entry("ci", "ci", 10 * MIN)];
+    assert_eq!(ordered(&p, &queue, 24 * 60 * MIN), ["ci", "agent"]);
 }
 
 #[test]
-fn aging_threshold_follows_age_after_min() {
-    let mut p = policy(8192, 8);
-    p.age_after_min = 5;
-    let queue = [entry("ci", "ci", 4 * MIN), entry("old", "agent", 0)];
-    assert_eq!(ordered(&p, &queue, 5 * MIN + 1), ["old", "ci"]);
-}
-
-#[test]
-fn aging_raises_to_highest_defined_priority_only() {
-    let mut p = policy(8192, 8);
-    p.rules.push(Rule {
-        priority: Some(500),
-        ..rule(Some("vip"), "vip")
-    });
-    assert_eq!(p.max_priority(), 500);
-    let queue = [entry("vip", "vip", 40 * MIN), entry("old", "agent", 0)];
-    let order = ordered(&p, &queue, 40 * MIN + 1);
-    assert_eq!(order, ["old", "vip"]);
-    assert_eq!(
-        p.effective_priority(&queue[1], Timestamp(40 * MIN + 1)),
-        500
-    );
+fn equal_priority_takes_the_oldest_by_acceptance_time() {
+    let p = policy(8192, 8);
+    let queue = [
+        entry("later", "agent", 5_000),
+        entry("earlier", "agent", 1_000),
+    ];
+    assert_eq!(ordered(&p, &queue, 10_000), ["earlier", "later"]);
 }
 
 #[test]

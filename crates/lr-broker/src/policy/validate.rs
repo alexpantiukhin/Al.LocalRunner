@@ -24,6 +24,14 @@ pub fn check(file: &PolicyFile, host: &HostResources) -> Vec<PolicyWarning> {
     allow_warnings("secrets.allow", &file.secrets.allow, &mut out);
     allow_warnings("services.allow", &file.services.allow, &mut out);
     secret_warnings(file, &mut out);
+    if file.queue.age_after_min.is_some() {
+        out.push(PolicyWarning::at(
+            "queue",
+            Some("age_after_min"),
+            None,
+            "[queue] age_after_min is no longer used".into(),
+        ));
+    }
     if file.cache.share == CacheShare::Project {
         out.push(PolicyWarning::at(
             "cache",

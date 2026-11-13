@@ -37,7 +37,7 @@ fn spec_fixture_matches_architecture_html() {
 fn spec_example_policy_parses() {
     let f = ok(SPEC_EXAMPLE);
     assert_eq!(f.queue.strategy, Strategy::PriorityFifo);
-    assert_eq!(f.queue.age_after_min, 30);
+    assert_eq!(f.queue.age_after_min, None);
     assert_eq!(f.rules.len(), 2);
     assert_eq!(f.rules[0].rule.name.as_deref(), Some("ci-first"));
     assert_eq!(f.rules[0].rule.when.client_label.as_deref(), Some("ci"));
@@ -127,13 +127,13 @@ fn spec_example_policy_parses() {
 }
 
 #[test]
-fn defaults_applied_grace_3_aging_30() {
+fn defaults_applied_grace_3_no_aging() {
     let f = ok("");
     assert_eq!(f.grace.lost_min.get(), 3);
-    assert_eq!(f.queue.age_after_min, 30);
+    assert_eq!(f.queue.age_after_min, None);
     let one_key = ok("[queue]\nstrategy = \"fair-share\"\n");
     assert_eq!(one_key.grace.lost_min.get(), 3);
-    assert_eq!(one_key.queue.age_after_min, 30);
+    assert_eq!(one_key.queue.age_after_min, None);
 }
 
 #[test]

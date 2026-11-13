@@ -279,7 +279,6 @@ A broker that does not answer within the timeout is treated as unavailable for t
 </table>
 <pre class="code">[queue]
 strategy      = "priority-fifo"        # built-in: priority-fifo, fair-share, weighted
-age_after_min = 30                     # aging: after 30 minutes of waiting the order is treated as the highest priority
 
 [[rule]]
 name     = "ci-first"                   # optional name; without it messages use the rule number

@@ -8,8 +8,8 @@ fn fifo_key(e: &QueueEntry) -> (Timestamp, Timestamp, &JobId) {
     (e.order.enqueued_at, e.accepted_at, &e.order.job)
 }
 
-/// Dispatch order of `queue` under `policy` at `now` (spec 3.5, 6): by descending effective
-/// priority, aging included; inside a priority by the strategy: enqueue time for
+/// Dispatch order of `queue` under `policy` at `now` (spec 3.5, 6): by descending
+/// priority; inside a priority by the strategy: enqueue time for
 /// `priority-fifo`, groups in turn for `fair-share` and `weighted`.
 pub fn dispatch_order(
     policy: &RulePolicy,
@@ -17,10 +17,7 @@ pub fn dispatch_order(
     served: &ServeLog,
     now: Timestamp,
 ) -> Vec<usize> {
-    let prio: Vec<i64> = queue
-        .iter()
-        .map(|e| policy.effective_priority(e, now))
-        .collect();
+    let prio: Vec<i64> = queue.iter().map(|e| policy.priority_of(e)).collect();
     let mut idx: Vec<usize> = (0..queue.len()).collect();
     idx.sort_by(|&a, &b| {
         Reverse(prio[a])

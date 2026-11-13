@@ -1,4 +1,4 @@
-use lr_core::{GroupBy, Strategy, Zone, DEFAULT_AGE_AFTER_MIN};
+use lr_core::{GroupBy, Strategy, Zone};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use std::collections::BTreeSet;
@@ -34,22 +34,22 @@ fn zone_order<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Zone>, D::Error> {
     Ok(zones)
 }
 
-/// `[queue]`: ordering strategy and aging.
+/// `[queue]`: ordering strategy.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct QueueSection {
     /// `strategy`, default `priority-fifo`.
     #[serde(deserialize_with = "parsed")]
     pub strategy: Strategy,
-    /// `age_after_min`, default 30.
-    pub age_after_min: u64,
+    /// `age_after_min`: tolerated from older files and ignored; `check` warns about it.
+    pub age_after_min: Option<u64>,
 }
 
 impl Default for QueueSection {
     fn default() -> Self {
         QueueSection {
             strategy: Strategy::PriorityFifo,
-            age_after_min: DEFAULT_AGE_AFTER_MIN,
+            age_after_min: None,
         }
     }
 }

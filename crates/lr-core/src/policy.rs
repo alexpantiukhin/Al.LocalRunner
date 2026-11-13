@@ -92,7 +92,7 @@ pub struct Rule {
 
 /// The decisions the broker's planner asks the owner's policy (spec 3.5).
 pub trait Policy {
-    /// Indices of `queue` in dispatch order at `now`, aging included.
+    /// Indices of `queue` in dispatch order at `now`.
     fn order(&self, queue: &[QueueEntry], served: &ServeLog, now: Timestamp) -> Vec<usize>;
     /// Admission at intake: `Err` when the order can never run under this policy.
     fn admit(&self, order: &Order, client: &ClientView) -> Result<(), Reject>;
@@ -115,8 +115,6 @@ pub trait Policy {
 pub struct RulePolicy {
     /// `[queue] strategy`.
     pub strategy: Strategy,
-    /// `[queue] age_after_min`.
-    pub age_after_min: u64,
     /// `[[rule]]` in file order.
     pub rules: Vec<Rule>,
     /// `[clients] group_by`.
@@ -131,16 +129,12 @@ pub struct RulePolicy {
     pub admission: Admission,
 }
 
-/// Default `[queue] age_after_min`.
-pub const DEFAULT_AGE_AFTER_MIN: u64 = 30;
-
 impl RulePolicy {
-    /// A policy over `pool` without rules: `priority-fifo`, aging after 30 minutes, groups by
+    /// A policy over `pool` without rules: `priority-fifo`, groups by
     /// label, zone order local, lan, remote. Default rules are data of the policy file loader.
     pub fn with_pool(pool: PoolLimits) -> RulePolicy {
         RulePolicy {
             strategy: Strategy::PriorityFifo,
-            age_after_min: DEFAULT_AGE_AFTER_MIN,
             rules: Vec::new(),
             group_by: GroupBy::Label,
             pool,
@@ -175,26 +169,6 @@ impl RulePolicy {
     pub fn priority_of(&self, entry: &QueueEntry) -> i64 {
         self.first(&entry.order, &entry.client, |r| r.priority)
             .map_or(0, |(_, p)| p)
-    }
-
-    /// The highest priority any rule defines, at least 0.
-    pub fn max_priority(&self) -> i64 {
-        self.rules
-            .iter()
-            .filter_map(|r| r.priority)
-            .fold(0, i64::max)
-    }
-
-    /// Priority `entry` is ordered with at `now`: once it has waited longer than
-    /// `age_after_min` since the hub enqueued it, the highest defined priority.
-    pub fn effective_priority(&self, entry: &QueueEntry, now: Timestamp) -> i64 {
-        let own = self.priority_of(entry);
-        let waited = now.millis_since(entry.order.enqueued_at);
-        if waited > self.age_after_min.saturating_mul(60_000) {
-            own.max(self.max_priority())
-        } else {
-            own
-        }
     }
 
     /// Weight of the group of `entry`: the first matching rule that sets `weight`, else 1.

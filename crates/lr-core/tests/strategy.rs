@@ -98,12 +98,12 @@ fn weighted_counts_what_groups_already_received() {
 }
 
 #[test]
-fn aging_applies_on_top_of_fair_share() {
+fn no_aging_under_fair_share() {
     let p = with(Strategy::FairShare);
     let queue = [entry("c1", "ci", 20 * MIN), entry("old", "alpha", 0)];
     assert_eq!(
         ids(&queue, &p, &ServeLog::default(), 31 * MIN),
-        ["old", "c1"]
+        ["c1", "old"]
     );
 }
 

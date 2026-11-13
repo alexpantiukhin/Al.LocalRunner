@@ -34,7 +34,6 @@ use lr_core::{Policy, RulePolicy};
 pub fn rule_policy(file: &PolicyFile, host: &HostResources) -> RulePolicy {
     RulePolicy {
         strategy: file.queue.strategy,
-        age_after_min: file.queue.age_after_min,
         rules: file.rules.iter().map(|e| e.rule.clone()).collect(),
         group_by: file.clients.group_by,
         pool: file.pool.limits(host),

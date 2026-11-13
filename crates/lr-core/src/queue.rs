@@ -42,8 +42,8 @@ pub struct Order {
     pub job: JobId,
     /// What the job needs from a runner.
     pub requirements: Requirements,
-    /// When the hub enqueued the job; carried in the order and kept on re-brokering, so aging
-    /// and FIFO are measured from it (spec 6).
+    /// When the hub enqueued the job; carried in the order and kept on re-brokering, so FIFO
+    /// is measured from it (spec 6).
     pub enqueued_at: Timestamp,
     /// Declared attributes.
     pub declared: Declared,
@@ -71,7 +71,7 @@ pub struct QueueEntry {
     pub order: Order,
     /// Its client.
     pub client: ClientView,
-    /// When this broker accepted it; informational, aging does not use it.
+    /// When this broker accepted it; informational, ordering does not use it.
     pub accepted_at: Timestamp,
 }
 

@@ -1,6 +1,5 @@
 [queue]
 strategy      = "priority-fifo"        # встроенные: priority-fifo, fair-share, weighted
-age_after_min = 30                     # старение: после 30 минут ожидания порядок как у высшего приоритета
 
 [[rule]]
 name     = "ci-first"                   # необязательное имя; без него в сообщениях номер правила
