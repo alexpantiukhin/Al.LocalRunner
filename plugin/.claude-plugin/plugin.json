@@ -1,5 +1,5 @@
 {
   "name": "localrunner",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Resource-aware job queue: install, start, stop, autostart, inspect and submit heavy tasks (tests, builds, lint, deploys, migrations) from parallel agent sessions through one shared queue"
 }
