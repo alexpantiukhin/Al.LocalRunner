@@ -132,6 +132,8 @@ pub enum ReasonCode {
     /// The runner killed the job for exceeding its declared `mem_mb` or `disk_mb`; the result
     /// is `failed`.
     ResourceExceeded,
+    /// The runner was draining when the order reached it; the broker queues the order again.
+    RunnerDraining,
     /// Refused at intake, with the cause.
     Rejected(RejectReason),
     /// A code of a newer minor version that is not a rejection; kept as received.
@@ -140,7 +142,7 @@ pub enum ReasonCode {
 
 const REJECTED_PREFIX: &str = "rejected_";
 
-const PLAIN: [ReasonCode; 13] = [
+const PLAIN: [ReasonCode; 14] = [
     ReasonCode::RunnerStopped,
     ReasonCode::RunnerRemoved,
     ReasonCode::BrokerUnavailable,
@@ -154,10 +156,11 @@ const PLAIN: [ReasonCode; 13] = [
     ReasonCode::CancelledByUser,
     ReasonCode::DiskInsufficient,
     ReasonCode::ResourceExceeded,
+    ReasonCode::RunnerDraining,
 ];
 
 impl ReasonCode {
-    /// Every known code: the thirteen known ones and one `rejected_*` per [`RejectReason`];
+    /// Every known code: the fourteen known ones and one `rejected_*` per [`RejectReason`];
     /// codes kept as `Other` are not listed.
     pub fn all() -> Vec<ReasonCode> {
         PLAIN
@@ -183,6 +186,7 @@ impl ReasonCode {
             ReasonCode::CancelledByUser => "cancelled_by_user",
             ReasonCode::DiskInsufficient => "disk_insufficient",
             ReasonCode::ResourceExceeded => "resource_exceeded",
+            ReasonCode::RunnerDraining => "runner_draining",
             ReasonCode::Rejected(r) => r.as_str(),
             ReasonCode::Other(code) => code.as_str(),
         }

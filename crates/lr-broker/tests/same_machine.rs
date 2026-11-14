@@ -96,7 +96,7 @@ async fn same_machine_order_keeps_waiting_while_another_runner_of_the_installati
 async fn draining_runner_does_not_count_for_a_same_machine_order() {
     let h = Harness::start("");
     let r = h.local_runner("alex", "lr", linux()).await;
-    r.send(&RunnerToBroker::Drain).await;
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
     let mut hub = h.local_hub("alex").await;
     hub.sync().await;
     hub.send(&order("s1", same_machine_req())).await;
@@ -113,7 +113,7 @@ async fn queued_same_machine_order_is_returned_when_its_last_runner_drains() {
     r.assign().await;
     hub.send(&order("s2", same_machine_req())).await;
     hub.accepted().await;
-    r.send(&RunnerToBroker::Drain).await;
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
     let back = returned(&mut hub).await;
     assert_eq!(
         (back.job, back.code.as_str()),

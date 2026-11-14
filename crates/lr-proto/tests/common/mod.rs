@@ -342,7 +342,7 @@ pub fn runner_to_broker() -> Vec<RunnerToBroker> {
         RunnerToBroker::Resume(resume()),
         RunnerToBroker::Ack(ack(3)),
         RunnerToBroker::Heartbeat { load: None },
-        RunnerToBroker::Drain,
+        RunnerToBroker::Drain { reason: None },
         RunnerToBroker::Bye(Bye {
             reason: Some("down".into()),
         }),

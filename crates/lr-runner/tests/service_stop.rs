@@ -48,7 +48,7 @@ async fn heartbeats_go_on_while_services_stop_for_a_drain() {
     let b = Broker::accept(&rig).await;
     run(&rig, &b, "job-1", needs_db("c", "p")).await;
     c.drain().await;
-    b.until(|m| matches!(m, RunnerToBroker::Drain)).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
     until_state(&rig, ServiceState::Stopping).await;
     let mut beats = 0;
     let bye = drive(&rig, async {

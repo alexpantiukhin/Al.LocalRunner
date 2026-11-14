@@ -355,7 +355,7 @@ pub(crate) async fn session(
     {
         return lost();
     }
-    if shared.state().draining && !s.send(&RunnerToBroker::Drain).await {
+    if shared.state().draining && !s.send(&RunnerToBroker::Drain { reason: None }).await {
         return lost();
     }
     let (_reader, mut frames) = read_frames(transport.clone());
@@ -406,7 +406,7 @@ pub(crate) async fn session(
             cmd = control.recv() => {
                 if let Some(cmd) = cmd {
                     apply_control(shared, cmd);
-                    if !s.send(&RunnerToBroker::Drain).await {
+                    if !s.send(&RunnerToBroker::Drain { reason: None }).await {
                         return lost();
                     }
                 }

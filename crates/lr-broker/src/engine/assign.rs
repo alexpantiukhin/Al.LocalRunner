@@ -380,7 +380,7 @@ impl Engine {
             }
             RunnerToBroker::Ack(a) => self.confirm_assign(&name, &a.job),
             RunnerToBroker::Resume(r) => self.runner_resumed(&name, &r.points).await,
-            RunnerToBroker::Drain => self.drain(&name).await,
+            RunnerToBroker::Drain { .. } => self.drain(&name).await,
             RunnerToBroker::CapabilitiesUpdate(u) => {
                 self.capabilities_update(&name, u.capabilities).await
             }

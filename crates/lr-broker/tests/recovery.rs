@@ -203,7 +203,7 @@ async fn drain_finishes_running_and_refuses_new() {
     r.assign().await;
     r.send(&started("j1", 1)).await;
     r.acked(1).await;
-    r.send(&RunnerToBroker::Drain).await;
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
     hub.send(&order("j2", req(512, 1, 60))).await;
     let waiting = hub.accepted().await;
     assert_eq!(

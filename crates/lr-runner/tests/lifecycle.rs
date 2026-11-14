@@ -136,8 +136,8 @@ async fn drain_finishes_the_job_then_says_bye() {
     .await;
     b.next_job_msg().await.unwrap();
     c.drain().await;
-    let m = b.until(|m| matches!(m, RunnerToBroker::Drain)).await;
-    assert_eq!(m, RunnerToBroker::Drain);
+    let m = b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    assert_eq!(m, RunnerToBroker::Drain { reason: None });
     rig.advance(10 * SEC).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.state, JobState::Passed);
@@ -179,7 +179,7 @@ async fn drained_runner_refuses_new_assignments() {
     b.assign("job-1", 1, spec.clone()).await;
     b.next_job_msg().await.unwrap();
     c.drain().await;
-    b.until(|m| matches!(m, RunnerToBroker::Drain)).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
     b.assign("job-2", 1, spec).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.job.0, "job-2");
