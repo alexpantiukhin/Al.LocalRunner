@@ -51,6 +51,10 @@ pub struct OrderSpec {
     /// Absent from older senders and when none were given.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<(String, String)>,
+    /// Labels of the profile; the policy reads them, a runner never does. Absent from older
+    /// senders and when the profile has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// Per-run replacement of profile resources given by the submitter (spec 5).

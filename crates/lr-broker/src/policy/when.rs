@@ -105,6 +105,7 @@ pub(crate) struct RawWhen {
     project: Option<StrSpec>,
     submitter_label: Option<StrSpec>,
     platform: Option<StrSpec>,
+    label: Option<StrSpec>,
     tag: Option<StrSpec>,
     min_mem_mb: Option<u64>,
     mem_mb: Option<NumSpec>,
@@ -201,6 +202,7 @@ impl RawWhen {
             (StrAttr::SubmitterLabel, self.submitter_label),
             (StrAttr::Platform, self.platform),
             (StrAttr::Tag, self.tag),
+            (StrAttr::Label, self.label),
         ];
         for (attr, spec) in strs {
             match spec {
@@ -214,7 +216,9 @@ impl RawWhen {
                     StrAttr::Project => c.project = Some(v),
                     StrAttr::SubmitterLabel => c.submitter_label = Some(v),
                     StrAttr::Tag => c.tag = Some(v),
-                    StrAttr::Platform => c.terms.push(Term::Str(attr, StrTest::Eq(v))),
+                    StrAttr::Platform | StrAttr::Label => {
+                        c.terms.push(Term::Str(attr, StrTest::Eq(v)))
+                    }
                 },
             }
         }

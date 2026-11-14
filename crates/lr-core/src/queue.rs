@@ -16,9 +16,19 @@ pub struct Declared {
     pub project: Option<String>,
     /// Label `--as` of the submitter.
     pub label: Option<String>,
+    /// Labels of the profile.
+    pub labels: Vec<String>,
 }
 
 impl Declared {
+    /// Declared attributes of a submitter identity and the labels of its profile.
+    pub fn from_spec(id: &Identity, labels: &[String]) -> Declared {
+        Declared {
+            labels: labels.to_vec(),
+            ..Declared::from_identity(id)
+        }
+    }
+
     /// Declared attributes of a submitter identity.
     pub fn from_identity(id: &Identity) -> Declared {
         Declared {
@@ -31,6 +41,7 @@ impl Declared {
             ),
             project: Some(id.project.clone()),
             label: Some(id.label.clone()),
+            labels: Vec::new(),
         }
     }
 }

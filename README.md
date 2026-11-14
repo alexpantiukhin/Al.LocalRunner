@@ -252,7 +252,7 @@ when     = { client_label = { in = ["ci", "night"] }, project = { glob = "lr-*" 
 priority = 50
 ```
 
-A condition value is a plain value (equality) or a table of tests: `in`, `prefix`, `glob`, `ne` for strings and `lt`, `le`, `gt`, `ge` for numbers, plus `any = [...]` and `not = {...}`. Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `platform`, `mem_mb`, `cpu`, `disk_mb`, `timeout_s`, `min_mem_mb`) are allowed only together with a positive `client_label` condition. A negative `priority` is allowed. There is no aging: under a constant stream of higher-priority orders a low-priority order can wait indefinitely; `[queue] age_after_min` from older files is ignored with a warning. Unknown tables and keys are rejected with a line number.
+A condition value is a plain value (equality) or a table of tests: `in`, `prefix`, `glob`, `ne` for strings and `lt`, `le`, `gt`, `ge` for numbers, plus `any = [...]` and `not = {...}`. Rules with a condition on declared attributes (`source`, `project`, `tag`, `label`, `submitter_label`, `platform`, `mem_mb`, `cpu`, `disk_mb`, `timeout_s`, `min_mem_mb`) are allowed only together with a positive `client_label` condition. A negative `priority` is allowed. There is no aging: under a constant stream of higher-priority orders a low-priority order can wait indefinitely; `[queue] age_after_min` from older files is ignored with a warning. Unknown tables and keys are rejected with a line number.
 
 Commands:
 
@@ -429,7 +429,7 @@ steps = [
 ]
 ```
 
-A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
+A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `labels` are free-form names the broker policy can match with `label` in a rule (they are not runner requirements and have no command-line flag). `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
 
 **Working tree or commit.** An order without `--platform` runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Only an order for a commit (`--platform`) is isolated from such edits. Do not touch the files of a long run in progress; the dashboard card says where the code comes from (`Directory` for the working tree, `Commit` for a commit).
 
