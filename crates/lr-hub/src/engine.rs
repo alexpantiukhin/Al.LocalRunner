@@ -179,8 +179,9 @@ impl Hub {
         let targets = engine.targets(d.local_broker).await;
         engine.restore().await;
         engine.sample_outbox().await;
+        let started = d.clock.now();
         for t in targets {
-            engine.links.entry(t.name.clone()).or_default();
+            engine.links.entry(t.name.clone()).or_default().since = Some(started);
             client::spawn(t, shared.clone(), tx.clone());
         }
         let (ipc_tx, ipc_shared) = (tx.clone(), shared.clone());

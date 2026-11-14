@@ -298,6 +298,18 @@ fn runner_control_channel_is_local_only() {
 }
 
 #[test]
+fn link_reply_without_since_parses() {
+    let reply: ControlReply = serde_json::from_str(r#"{"type":"link","connected":true}"#).unwrap();
+    assert_eq!(
+        reply,
+        ControlReply::Link {
+            connected: true,
+            since: None
+        }
+    );
+}
+
+#[test]
 fn network_channels_decode_on_both_peer_kinds() {
     let bytes = encode(&RunnerToBroker::Heartbeat { load: None }).unwrap();
     assert!(decode_for_peer::<RunnerToBroker>(&bytes, PeerKind::Network).is_ok());

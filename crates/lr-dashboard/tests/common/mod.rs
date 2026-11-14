@@ -90,6 +90,7 @@ pub fn snapshot() -> DashboardSnapshot {
             zone: Some(Zone::Lan),
             available: true,
             outbox: 0,
+            since: None,
         }],
         jobs: vec![
             job(

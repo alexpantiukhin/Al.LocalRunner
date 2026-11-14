@@ -116,6 +116,7 @@ async fn runner(
     {
         ControlReply::Ok => Ok(true),
         ControlReply::Failed { message } => Err(message),
+        ControlReply::Link { .. } => Err("unexpected answer to down".into()),
     }
 }
 

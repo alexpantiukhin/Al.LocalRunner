@@ -166,3 +166,13 @@ fn repo_setup_keeps_its_scope() {
         assert!(text.contains(cmd), "{cmd}");
     }
 }
+
+#[test]
+fn run_skill_states_the_detach_rule() {
+    let text = skill("run");
+    assert!(
+        text.contains("Without `--detach` the order is cancelled when the sending process exits")
+    );
+    assert!(text.contains("always passes `--detach` to `submit`"));
+    assert!(!text.contains("only when the run must outlive the sending process"));
+}

@@ -7,7 +7,7 @@ use crate::net::MergedListener;
 use async_trait::async_trait;
 use lr_abstractions::metric::{POLICY_RELOAD_TOTAL, RESULT};
 use lr_abstractions::{Clock, Listener, MachineKind, Meter, Peer};
-use lr_broker::policy::{check, load, HostResources, ListenValue, LocalUserEntry};
+use lr_broker::policy::{check, explain_rules, load, HostResources, ListenValue, LocalUserEntry};
 use lr_broker::BrokerHandle;
 use lr_net::{
     BrokerIdentity, CodeRequest, IpcAccess, IpcListener, ListenAddr, Registry, TlsListener,
@@ -213,6 +213,7 @@ impl BrokerAdmin {
                     .iter()
                     .map(|w| w.to_string())
                     .collect(),
+                rules: explain_rules(&file),
             },
         }
     }

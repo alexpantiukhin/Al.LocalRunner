@@ -42,11 +42,10 @@ fn own_rules_replace_the_default_rule() {
 }
 
 #[test]
-fn default_queue_is_priority_fifo_aging_after_30_min() {
+fn default_queue_is_priority_fifo_without_aging() {
     let f = ok("");
     assert_eq!(f.queue.strategy, Strategy::PriorityFifo);
-    assert_eq!(f.queue.age_after_min, 30);
-    assert_eq!(rule_policy(&f, &HOST).age_after_min, 30);
+    assert_eq!(f.queue.age_after_min, None);
 }
 
 #[test]

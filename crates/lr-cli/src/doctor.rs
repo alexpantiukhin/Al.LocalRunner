@@ -123,7 +123,8 @@ async fn policy(layout: &Layout, out: &mut Vec<Check>) {
         layout.is_service(),
     ));
     match crate::commands::admin_cmd::broker_policy(layout).await {
-        Some(Ok((path, warnings))) => {
+        Some(Ok(found)) => {
+            let (path, warnings) = (found.path, found.warnings);
             out.push(check(
                 "policy.toml",
                 Status::Ok,
@@ -429,6 +430,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     same_user(layout, &mut out);
     brokers(layout, &mut out).await;
     runner_versions(layout, &mut out).await;
+    out.extend(crate::link_report::checks(layout).await);
     out
 }
 

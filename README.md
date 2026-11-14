@@ -107,6 +107,8 @@ The skills never raise rights on their own and never print join codes or tokens.
    localrunner runners   # your runner is `online`
    ```
 
+   If `localrunner runners` prints `broker <name> unreachable since <time>`, the broker is not running or not reachable: the hub and the runners reconnect by themselves with a growing pause (1 to 30 s, no limit on attempts). `localrunner up` and `localrunner doctor` name a hub or runner that is alive but not connected to the broker.
+
 3. Describe a task. A profile lives in `.localrunner/profiles.toml` of a project; in any empty folder create it with:
 
    ```toml
@@ -215,7 +217,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 | `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
 | `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
-| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted`; `age_after_min` |
+| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
 | `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` or `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
@@ -243,9 +245,14 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
+
+[[rule]]
+name     = "nightly"
+when     = { client_label = { in = ["ci", "night"] }, project = { glob = "lr-*" }, mem_mb = { ge = 8192 }, not = { tag = "flaky" } }
+priority = 50
 ```
 
-Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) are allowed only together with a `client_label` condition. Unknown tables and keys are rejected with a line number.
+A condition value is a plain value (equality) or a table of tests: `in`, `prefix`, `glob`, `ne` for strings and `lt`, `le`, `gt`, `ge` for numbers, plus `any = [...]` and `not = {...}`. Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `platform`, `mem_mb`, `cpu`, `disk_mb`, `timeout_s`, `min_mem_mb`) are allowed only together with a positive `client_label` condition. A negative `priority` is allowed. There is no aging: under a constant stream of higher-priority orders a low-priority order can wait indefinitely; `[queue] age_after_min` from older files is ignored with a warning. Unknown tables and keys are rejected with a line number.
 
 Commands:
 
@@ -445,7 +452,7 @@ keep_files = 10
 kind = "console"       # foreground only
 ```
 
-The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output.
+The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output. Masking is exact and job-wide: the exact value of every secret of a job is replaced with `***` in the output of all its steps, with no minimum length, so a short or common value (`true`, `1`, `K`) would also damage ordinary output; use long random values for secrets.
 
 ## Autostart, stop, update, uninstall
 
@@ -539,7 +546,7 @@ All commands:
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
 | `dashboard` | a page on 127.0.0.1 |
 
-Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (the order outlives the sending process). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (without it the order is cancelled when the sending process exits; an agent session always passes it and then `wait`s, or uses `run`). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
 
 ## Releasing
 

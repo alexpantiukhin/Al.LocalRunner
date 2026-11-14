@@ -4,13 +4,24 @@
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
-use lr_broker::policy::{check, load};
+use lr_broker::policy::{check, explain_rules, load};
 use lr_proto::{AdminReply, AdminRequest};
 use std::path::{Path, PathBuf};
 
-/// The file the running broker uses and its warnings, or its refusal; `None` when the admin
-/// channel of the broker cannot be reached (no broker, or no right to use the channel).
-pub async fn broker_policy(layout: &Layout) -> Option<Result<(String, Vec<String>), String>> {
+/// What the running broker says about its policy file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrokerPolicy {
+    /// The `policy.toml` the broker uses.
+    pub path: String,
+    /// Warnings about the file.
+    pub warnings: Vec<String>,
+    /// One line per rule.
+    pub rules: Vec<String>,
+}
+
+/// The file the running broker uses, its warnings and rules, or its refusal; `None` when the
+/// admin channel of the broker cannot be reached (no broker, or no right to use the channel).
+pub async fn broker_policy(layout: &Layout) -> Option<Result<BrokerPolicy, String>> {
     let client = IpcClient::connect_broker_admin(&layout.admin_ipc())
         .await
         .ok()?;
@@ -19,7 +30,15 @@ pub async fn broker_policy(layout: &Layout) -> Option<Result<(String, Vec<String
         .await;
     client.close().await;
     Some(match reply {
-        Ok(AdminReply::Policy { path, warnings }) => Ok((path, warnings)),
+        Ok(AdminReply::Policy {
+            path,
+            warnings,
+            rules,
+        }) => Ok(BrokerPolicy {
+            path,
+            warnings,
+            rules,
+        }),
         Ok(AdminReply::Failed { message }) => Err(message),
         Ok(other) => Err(format!("unexpected answer: {other:?}")),
         Err(e) => Err(e),
@@ -62,9 +81,16 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
     if file.is_none() {
         if let Some(answer) = broker_policy(layout).await {
             return match answer {
-                Ok((path, warnings)) => {
+                Ok(BrokerPolicy {
+                    path,
+                    warnings,
+                    rules,
+                }) => {
                     for w in warnings {
                         println!("warning: {w}");
+                    }
+                    for r in rules {
+                        println!("rule: {r}");
                     }
                     println!("{path}: valid (the file the running broker uses)");
                     Ok(0)
@@ -93,6 +119,9 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
         Ok(policy) => {
             for w in check(&policy, &crate::host::resources()) {
                 println!("warning: {w}");
+            }
+            for r in explain_rules(&policy) {
+                println!("rule: {r}");
             }
             println!("{}: valid", path.display());
             Ok(0)
@@ -132,8 +161,8 @@ pub async fn remove_asked(
 pub async fn policy_reload(layout: &Layout) -> Result<i32, String> {
     let code = simple(layout, AdminRequest::PolicyReload).await?;
     if code == 0 {
-        if let Some(Ok((path, _))) = broker_policy(layout).await {
-            println!("policy: {path}");
+        if let Some(Ok(found)) = broker_policy(layout).await {
+            println!("policy: {}", found.path);
         }
     }
     Ok(code)
@@ -213,9 +242,16 @@ fn show(reply: AdminReply, code_file: Option<&Path>) -> Result<i32, String> {
             println!("ok");
             Ok(0)
         }
-        AdminReply::Policy { path, warnings } => {
+        AdminReply::Policy {
+            path,
+            warnings,
+            rules,
+        } => {
             for w in warnings {
                 println!("warning: {w}");
+            }
+            for r in rules {
+                println!("rule: {r}");
             }
             println!("policy: {path}");
             Ok(0)

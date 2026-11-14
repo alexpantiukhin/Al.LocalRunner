@@ -360,10 +360,10 @@ fn earliest_start_is_the_end_of_the_blocking_job() {
 }
 
 #[test]
-fn aged_order_becomes_head_and_reserves() {
+fn waiting_longer_does_not_make_an_order_the_head() {
     let p = policy(8192, 8);
     let busy = running(entry_with("x", "agent", 0, req(1024, 1, 3600)), "r1", 0);
     let queue = [entry("ci", "ci", 20 * MIN), entry("old", "agent", 0)];
     let out = plan(&p, &queue, &[runner("r1")], &[busy], 31 * MIN);
-    assert_eq!(out.reservation.unwrap().job, job("old"));
+    assert_eq!(out.reservation.unwrap().job, job("ci"));
 }

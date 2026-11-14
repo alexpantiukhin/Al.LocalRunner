@@ -56,6 +56,7 @@ impl Engine {
                 link.kill = Some(kill);
                 link.sent.clear();
                 link.refused = None;
+                link.since = Some(self.s.clock.now());
                 if let Some(z) = zone {
                     link.zone = Some(z);
                     if name != LOCAL_BROKER {
@@ -95,6 +96,7 @@ impl Engine {
                     link.out = None;
                     link.kill = None;
                     link.sent.clear();
+                    link.since = Some(self.s.clock.now());
                 }
                 crate::bus::reread(&self.s, name);
             }

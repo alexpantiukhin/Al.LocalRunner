@@ -69,12 +69,12 @@ fn pending_restart_reported_until_reverted() {
         active.reload(&moved).unwrap().restart_required,
         [RestartOnly::Listen]
     );
-    let moved_again = format!("{moved}\n[queue]\nage_after_min = 5\n");
+    let moved_again = format!("{moved}\n[queue]\nstrategy = \"fair-share\"\n");
     assert_eq!(
         active.reload(&moved_again).unwrap().restart_required,
         [RestartOnly::Listen]
     );
-    assert_eq!(active.file().queue.age_after_min, 5);
+    assert_eq!(active.file().queue.strategy, Strategy::FairShare);
     assert!(active.reload(START).unwrap().restart_required.is_empty());
 }
 
@@ -93,8 +93,20 @@ fn changed_grace_is_flagged_for_runners() {
 #[test]
 fn unchanged_grace_is_not_flagged() {
     let mut active = started();
-    let text = format!("{START}\n[queue]\nage_after_min = 10\n");
+    let text = format!("{START}\n[queue]\nstrategy = \"fair-share\"\n");
     assert_eq!(active.reload(&text).unwrap().settings_update, None);
+}
+
+#[test]
+fn reload_with_age_after_min_applies_and_warns() {
+    let mut active = started();
+    let text = format!("{START}\n[queue]\nage_after_min = 10\n");
+    let applied = active.reload(&text).unwrap();
+    assert!(applied
+        .warnings
+        .iter()
+        .any(|w| w.message.contains("no longer used")));
+    assert_eq!(applied.settings_update, None);
 }
 
 #[test]

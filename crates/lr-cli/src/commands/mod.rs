@@ -72,7 +72,7 @@ pub struct OrderArgs {
     /// A profile argument, `name=value`; repeat the flag for several values.
     #[arg(long = "arg", value_name = "NAME=VALUE", value_parser = parse_arg)]
     pub args: Vec<(String, String)>,
-    /// The order outlives the submitting process.
+    /// Without it the order is cancelled when the sending process exits; with it the order outlives the sending process.
     #[arg(long)]
     pub detach: bool,
 }

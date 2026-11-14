@@ -78,6 +78,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 zone: Some(Zone::Local),
                 available: true,
                 outbox: 2,
+                since: Some(lr_core::Timestamp(5)),
             }],
         },
         CliReply::Jobs { jobs: vec![] },
@@ -136,6 +137,7 @@ pub fn admin_replies() -> Vec<AdminReply> {
         AdminReply::Policy {
             path: "/var/lib/al-localrunner/policy.toml".into(),
             warnings: vec!["rule 2 shadowed".into()],
+            rules: vec!["rule 1: when everyone".into()],
         },
         AdminReply::JoinCode {
             address: "host:7000".into(),
@@ -161,6 +163,7 @@ pub fn controls() -> Vec<RunnerControl> {
             mode: DownMode::Cancel,
         },
         RunnerControl::LoggingReload,
+        RunnerControl::Status,
     ]
 }
 
@@ -169,6 +172,14 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Ok,
         ControlReply::Failed {
             message: "x".into(),
+        },
+        ControlReply::Link {
+            connected: false,
+            since: Some(lr_core::Timestamp(7)),
+        },
+        ControlReply::Link {
+            connected: true,
+            since: None,
         },
     ]
 }
