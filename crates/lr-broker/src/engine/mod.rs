@@ -435,6 +435,10 @@ impl Engine {
             .saturating_mul(MIB)
     }
 
+    pub(crate) fn upgrade_hold_s(&self) -> u64 {
+        self.policy.file().grace.upgrade_hold_s.get()
+    }
+
     pub(crate) fn lost_kill_s(&self) -> u64 {
         self.policy.file().grace.lost_min.get().saturating_mul(60)
     }

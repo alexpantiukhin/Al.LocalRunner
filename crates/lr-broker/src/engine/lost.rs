@@ -62,6 +62,17 @@ impl Engine {
                 slot.restored = false;
             }
         }
+        let mut hold_ended = false;
+        for slot in self.runners.values_mut() {
+            if slot.hold_until.is_some_and(|until| now >= until) {
+                slot.hold_until = None;
+                hold_ended = true;
+            }
+        }
+        if hold_ended {
+            self.return_stranded().await;
+            changed = true;
+        }
         if self.restored && past_grace {
             self.restored = false;
             self.return_stranded().await;

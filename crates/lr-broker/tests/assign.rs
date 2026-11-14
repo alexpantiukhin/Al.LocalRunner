@@ -416,3 +416,43 @@ async fn priority_and_runner_preference_are_independent() {
     far.send(&result("fill-far", 2, JobState::Passed, 0)).await;
     assert_eq!(far.assign().await.job, JobId("low".into()));
 }
+
+fn refused_for_drain(job: &str, seq: u64) -> RunnerToBroker {
+    let mut res = result(job, seq, JobState::Failed, 1);
+    if let RunnerToBroker::JobResult(r) = &mut res {
+        r.reason = Some(ReasonCode::RunnerDraining);
+    }
+    res
+}
+
+#[tokio::test]
+async fn an_order_refused_because_the_runner_drains_goes_back_to_the_queue() {
+    let h = Harness::start("");
+    let mut r = h.local_runner("alex", "r1", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("a", req(512, 2, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job, JobId("a".into()));
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
+    r.send(&refused_for_drain("a", 1)).await;
+    let mut other = h.local_runner("alex", "r2", linux()).await;
+    assert_eq!(other.assign().await.job, JobId("a".into()));
+    assert!(!hub
+        .sync()
+        .await
+        .iter()
+        .any(|m| matches!(m, BrokerToHub::JobResult(_))));
+}
+
+#[tokio::test]
+async fn the_same_result_of_a_started_job_is_final() {
+    let h = Harness::start("");
+    let mut r = h.local_runner("alex", "r1", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("a", req(512, 2, 60))).await;
+    hub.accepted().await;
+    r.assign().await;
+    r.send(&started("a", 1)).await;
+    r.send(&refused_for_drain("a", 2)).await;
+    h.until_state(ALEX, "a", JobState::Failed).await;
+}

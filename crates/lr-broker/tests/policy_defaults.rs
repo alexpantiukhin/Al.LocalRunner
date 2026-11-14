@@ -181,3 +181,17 @@ fn default_commands_trust_the_client() {
     assert_eq!(f.commands.default, CommandMode::Any);
     assert_eq!(f.command_mode("any-key", "agent"), CommandMode::Any);
 }
+
+#[test]
+fn upgrade_hold_defaults_to_120_seconds() {
+    assert_eq!(ok("").grace.upgrade_hold_s.get(), 120);
+    assert_eq!(
+        ok("[grace]
+upgrade_hold_s = 30
+")
+        .grace
+        .upgrade_hold_s
+        .get(),
+        30
+    );
+}

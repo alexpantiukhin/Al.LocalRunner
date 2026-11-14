@@ -130,11 +130,17 @@ impl Default for OrphansSection {
 pub struct GraceSection {
     /// `lost_min`, default 3.
     pub lost_min: NonZeroU64,
+    /// `upgrade_hold_s`, default 120: how long same-machine orders wait for a runner that
+    /// left to be replaced by an upgrade.
+    pub upgrade_hold_s: NonZeroU64,
 }
 
 impl Default for GraceSection {
     fn default() -> Self {
-        GraceSection { lost_min: nz(3) }
+        GraceSection {
+            lost_min: nz(3),
+            upgrade_hold_s: nz(120),
+        }
     }
 }
 

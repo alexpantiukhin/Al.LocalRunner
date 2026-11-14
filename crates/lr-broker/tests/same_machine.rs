@@ -160,3 +160,93 @@ async fn restored_same_machine_order_runs_when_its_runner_comes_back() {
         .await;
     assert_eq!(back.assign().await.job, JobId("s1".into()));
 }
+
+async fn busy_with_a_queued_order(h: &Harness) -> (Conn, Conn) {
+    let mut r = h.local_runner("alex", "lr", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("s1", same_machine_req())).await;
+    hub.accepted().await;
+    r.assign().await;
+    r.send(&started("s1", 1)).await;
+    hub.started_notice().await;
+    hub.send(&order("s2", same_machine_req())).await;
+    hub.accepted().await;
+    (r, hub)
+}
+
+fn drain(reason: Option<DrainReason>) -> RunnerToBroker {
+    RunnerToBroker::Drain { reason }
+}
+
+#[tokio::test]
+async fn a_same_machine_order_stays_while_its_runner_drains_for_an_upgrade() {
+    let h = Harness::start("");
+    let (r, mut hub) = busy_with_a_queued_order(&h).await;
+    r.send(&drain(Some(DrainReason::Upgrade))).await;
+    hub.until_runner("local:lr", true).await;
+    let msgs = hub.sync().await;
+    assert!(!msgs.iter().any(|m| matches!(m, BrokerToHub::Returned(_))));
+    assert_eq!(
+        h.job_row(ALEX, "s2").await.unwrap().job.state,
+        JobState::Queued
+    );
+}
+
+#[tokio::test]
+async fn a_same_machine_order_stays_for_upgrade_hold_s_after_the_runner_left() {
+    let h = Harness::start(
+        "[grace]
+upgrade_hold_s = 60
+",
+    );
+    let (r, mut hub) = busy_with_a_queued_order(&h).await;
+    r.send(&drain(Some(DrainReason::Upgrade))).await;
+    r.send(&result("s1", 2, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "s1", JobState::Passed).await;
+    r.close().await;
+    hub.until_runner("local:lr", false).await;
+    h.clock.advance(Duration::from_secs(59));
+    h.poke().await;
+    assert_eq!(
+        h.job_row(ALEX, "s2").await.unwrap().job.state,
+        JobState::Queued
+    );
+    h.clock.advance(Duration::from_secs(1));
+    h.poke().await;
+    h.until_state(ALEX, "s2", JobState::Cancelled).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
+        .await;
+    let back = returned(&mut hub).await;
+    assert_eq!(
+        (back.job, back.code.as_str()),
+        (JobId("s2".into()), NO_RUNNER)
+    );
+}
+
+#[tokio::test]
+async fn a_plain_down_still_returns_the_order_at_once() {
+    let h = Harness::start("");
+    let (r, mut hub) = busy_with_a_queued_order(&h).await;
+    r.send(&drain(Some(DrainReason::Down))).await;
+    let back = returned(&mut hub).await;
+    assert_eq!(back.job, JobId("s2".into()));
+}
+
+#[tokio::test]
+async fn a_runner_that_comes_back_in_time_gets_the_order() {
+    let h = Harness::start(
+        "[grace]
+upgrade_hold_s = 60
+",
+    );
+    let (r, mut hub) = busy_with_a_queued_order(&h).await;
+    r.send(&drain(Some(DrainReason::Upgrade))).await;
+    r.send(&result("s1", 2, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "s1", JobState::Passed).await;
+    r.close().await;
+    hub.until_runner("local:lr", false).await;
+    h.clock.advance(Duration::from_secs(30));
+    let mut again = h.local_runner("alex", "lr", linux()).await;
+    assert_eq!(again.assign().await.job, JobId("s2".into()));
+}
