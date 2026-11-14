@@ -73,6 +73,7 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.github_run_url = None;
             s.peak_mem_mb = None;
             s.peak_disk_mb = None;
+            s.labels = Vec::new();
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -187,6 +188,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         github_run_url: None,
         peak_mem_mb: row.peak_mem_mb,
         peak_disk_mb: row.peak_disk_mb,
+        labels: Vec::new(),
     }
 }
 
@@ -315,6 +317,7 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         },
         peak_mem_mb: None,
         peak_disk_mb: None,
+        labels: job.spec.labels.clone(),
     }
 }
 

@@ -32,6 +32,7 @@ fn summary(peaks: Option<(u64, u64)>) -> JobSummary {
         github_run_url: None,
         peak_mem_mb: peaks.map(|p| p.0),
         peak_disk_mb: peaks.map(|p| p.1),
+        labels: Vec::new(),
     }
 }
 

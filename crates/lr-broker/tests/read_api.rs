@@ -313,6 +313,46 @@ async fn explain_names_the_rule_that_holds_the_order() {
 }
 
 #[tokio::test]
+async fn labels_show_to_the_owner_and_are_masked_for_others() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order_labelled(
+        "j1",
+        req(1024, 2, 60),
+        &["release", "work"],
+    ))
+    .await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.send(&order_labelled("j2", req(512, 1, 60), &["work"]))
+        .await;
+    alex.accepted().await;
+    alex.sync().await;
+    let mine = status(
+        alex.read(ReadRequest::Status(StatusFilter::default()))
+            .await,
+    );
+    assert_eq!(mine.running[0].summary.labels, vec!["release", "work"]);
+    assert_eq!(mine.queue[0].summary.labels, vec!["work"]);
+    let ReadReply::Explain { text, .. } = alex
+        .read(ReadRequest::Explain {
+            job: JobId("j2".into()),
+            client: None,
+        })
+        .await
+    else {
+        panic!("explain")
+    };
+    assert!(text.contains("work"), "{text}");
+    let mut bob = h.local_hub("bob").await;
+    let theirs = status(bob.read(ReadRequest::Status(StatusFilter::default())).await);
+    assert!(theirs.running[0].summary.labels.is_empty());
+    assert!(theirs.queue[0].summary.labels.is_empty());
+}
+
+#[tokio::test]
 async fn stats_of_a_client_cover_only_its_own_runs() {
     let h = Harness::start("");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;

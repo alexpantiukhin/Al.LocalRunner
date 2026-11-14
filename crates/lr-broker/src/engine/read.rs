@@ -351,6 +351,12 @@ impl Engine {
             ),
             None => finished_text(&rec.job, a.sees_fields()),
         };
+        let text = match self.find(key) {
+            Some(j) if a.sees_fields() && !j.spec.labels.is_empty() => {
+                format!("{text}; метки профиля: {}", j.spec.labels.join(", "))
+            }
+            _ => text,
+        };
         ReadReply::Explain { job, text }
     }
 
