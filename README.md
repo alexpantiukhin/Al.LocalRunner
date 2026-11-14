@@ -446,7 +446,7 @@ keep_files = 10
 kind = "console"       # foreground only
 ```
 
-The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output.
+The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output. Masking is exact and job-wide: the exact value of every secret of a job is replaced with `***` in the output of all its steps, with no minimum length, so a short or common value (`true`, `1`, `K`) would also damage ordinary output; use long random values for secrets.
 
 ## Autostart, stop, update, uninstall
 
