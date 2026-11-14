@@ -134,3 +134,13 @@ fn the_span_check_refuses_unknown_commands_and_flags() {
     assert!(check_span("localrunner status --colour").is_err());
     assert!(check_span("localrunner down [--drain|--purge]").is_err());
 }
+
+#[test]
+fn run_skill_states_the_detach_rule() {
+    let text = skill("run");
+    assert!(
+        text.contains("Without `--detach` the order is cancelled when the sending process exits")
+    );
+    assert!(text.contains("always passes `--detach` to `submit`"));
+    assert!(!text.contains("only when the run must outlive the sending process"));
+}
