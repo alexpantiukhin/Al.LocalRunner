@@ -429,6 +429,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     same_user(layout, &mut out);
     brokers(layout, &mut out).await;
     runner_versions(layout, &mut out).await;
+    out.extend(crate::link_report::checks(layout).await);
     out
 }
 

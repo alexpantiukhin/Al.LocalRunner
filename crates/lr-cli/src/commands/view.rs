@@ -162,11 +162,15 @@ pub async fn known_brokers(client: &IpcClient) -> Result<Vec<BrokerStatus>, Stri
 }
 
 /// The line for a broker the hub is not connected to: the hub retries on its own, every 1 to
-/// 30 s, so a restart of the hub is the last resort.
-pub fn unreachable_line(name: &str) -> String {
-    format!(
-        "broker {name} is unreachable (the hub retries on its own; if it stays so while the broker runs, restart the hub: `localrunner down hub`, `localrunner up hub`)"
-    )
+/// 30 s, with no limit.
+pub fn unreachable_line(name: &str, since: Option<Timestamp>) -> String {
+    match since {
+        Some(t) => format!(
+            "broker {name} unreachable since {} (the hub retries on its own)",
+            super::timefmt::format_time(t)
+        ),
+        None => format!("broker {name} unreachable (the hub retries on its own)"),
+    }
 }
 
 /// The reachable brokers to ask (only `broker` when given) and a line per broker that is not
@@ -184,7 +188,7 @@ pub async fn reachable(
         if b.available {
             names.push(b.name);
         } else {
-            problems.push(unreachable_line(&b.name));
+            problems.push(unreachable_line(&b.name, b.since));
         }
     }
     if let Some(w) = broker.filter(|_| names.is_empty() && problems.is_empty()) {
@@ -256,7 +260,7 @@ pub async fn status(
             continue;
         }
         if !b.available {
-            problems.push(unreachable_line(&b.name));
+            problems.push(unreachable_line(&b.name, b.since));
             continue;
         }
         match read(&client, &b.name, ReadRequest::Status(filter.clone())).await {

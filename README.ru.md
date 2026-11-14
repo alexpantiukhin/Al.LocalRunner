@@ -106,6 +106,8 @@ codex plugin add localrunner@al-localrunner
    localrunner runners   # ваш раннер в состоянии `online`
    ```
 
+   Если `localrunner runners` печатает `broker <имя> unreachable since <время>`, брокер не запущен или недоступен: hub и раннеры переподключаются сами с растущей паузой (от 1 до 30 с, число попыток не ограничено). `localrunner up` и `localrunner doctor` называют hub или раннер, который жив, но не подключён к брокеру.
+
 3. Опишите задачу. Профиль лежит в `.localrunner/profiles.toml` проекта; в любой пустой папке создайте его:
 
    ```toml

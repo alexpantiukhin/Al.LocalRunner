@@ -106,6 +106,8 @@ The skills never raise rights on their own and never print join codes or tokens.
    localrunner runners   # your runner is `online`
    ```
 
+   If `localrunner runners` prints `broker <name> unreachable since <time>`, the broker is not running or not reachable: the hub and the runners reconnect by themselves with a growing pause (1 to 30 s, no limit on attempts). `localrunner up` and `localrunner doctor` name a hub or runner that is alive but not connected to the broker.
+
 3. Describe a task. A profile lives in `.localrunner/profiles.toml` of a project; in any empty folder create it with:
 
    ```toml

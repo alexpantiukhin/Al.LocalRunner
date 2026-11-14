@@ -1,4 +1,5 @@
 mod admin;
+mod broker_restart;
 mod cancel;
 mod ci;
 #[path = "../common/mod.rs"]

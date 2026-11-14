@@ -407,6 +407,7 @@ impl Engine {
                     zone,
                     available: l.out.is_some(),
                     outbox: u64::try_from(outbox).unwrap_or(u64::MAX),
+                    since: l.since,
                 }
             })
             .collect();

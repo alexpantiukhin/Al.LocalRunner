@@ -78,6 +78,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 zone: Some(Zone::Local),
                 available: true,
                 outbox: 2,
+                since: Some(lr_core::Timestamp(5)),
             }],
         },
         CliReply::Jobs { jobs: vec![] },
@@ -161,6 +162,7 @@ pub fn controls() -> Vec<RunnerControl> {
             mode: DownMode::Cancel,
         },
         RunnerControl::LoggingReload,
+        RunnerControl::Status,
     ]
 }
 
@@ -169,6 +171,14 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Ok,
         ControlReply::Failed {
             message: "x".into(),
+        },
+        ControlReply::Link {
+            connected: false,
+            since: Some(lr_core::Timestamp(7)),
+        },
+        ControlReply::Link {
+            connected: true,
+            since: None,
         },
     ]
 }
