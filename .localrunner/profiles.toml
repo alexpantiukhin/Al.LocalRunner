@@ -22,3 +22,26 @@ steps = [
   { name = "clippy", command = "cargo clippy --workspace --all-targets --locked -- -D warnings", timeout_s = 1200 },
   { name = "test",   command = "cargo test --workspace --locked --no-fail-fast",          timeout_s = 1800 },
 ]
+
+[profile.rust-test]
+command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --test {test}} {? {filter}}"
+timeout_s = 1800
+mem_mb    = 8192
+cpu       = 4
+tags      = ["cargo"]
+
+[profile.rust-test.args.pkg]
+pattern = "[a-z0-9_-]+"
+
+[profile.rust-test.args.test]
+pattern = "[a-z0-9_]+"
+
+[profile.rust-test.args.filter]
+pattern = "[A-Za-z0-9_:]+"
+
+[profile.rust-clippy]
+command   = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+timeout_s = 1200
+mem_mb    = 8192
+cpu       = 4
+tags      = ["cargo"]

@@ -67,6 +67,7 @@ struct RawNeeds {
 #[serde(deny_unknown_fields)]
 struct RawProfile {
     needs: Option<String>,
+    labels: Option<Vec<String>>,
     command: Option<String>,
     steps: Option<Vec<RawStep>>,
     timeout_s: Option<u64>,
@@ -205,7 +206,9 @@ fn build(
         overrides.insert(platform, build_override(&name, &field, o)?);
     }
     let args = build_args(&name, raw.args)?;
+    let labels = build_labels(&name, raw.labels)?;
     Ok(Profile {
+        labels,
         platforms: needs.platforms.unwrap_or_default(),
         timeout_s,
         mem_mb: needs.mem_mb,
@@ -247,6 +250,14 @@ fn positive(profile: &str, field: &str, v: Option<u64>) -> Result<Option<u64>, P
         )),
         other => Ok(other),
     }
+}
+
+fn build_labels(profile: &str, v: Option<Vec<String>>) -> Result<Vec<String>, ProfileError> {
+    let mut out = std::collections::BTreeSet::new();
+    for label in v.unwrap_or_default() {
+        out.insert(non_empty(profile, "labels", label.trim().to_string())?);
+    }
+    Ok(out.into_iter().collect())
 }
 
 fn non_empty(profile: &str, field: &str, v: String) -> Result<String, ProfileError> {

@@ -483,6 +483,19 @@ fn resource_override_fields_are_optional_for_older_senders() {
 }
 
 #[test]
+fn order_labels_are_optional_both_ways() {
+    let mut spec = order_spec();
+    let old = serde_json::to_value(&spec).unwrap();
+    assert!(old.get("labels").is_none(), "empty list not sent");
+    let back: OrderSpec = serde_json::from_value(old).unwrap();
+    assert!(back.labels.is_empty());
+    spec.labels = vec!["release".into(), "work".into()];
+    let v = serde_json::to_value(&spec).unwrap();
+    assert_eq!(v["labels"], json!(["release", "work"]));
+    assert_eq!(serde_json::from_value::<OrderSpec>(v).unwrap(), spec);
+}
+
+#[test]
 fn service_memory_in_capabilities_is_optional_both_ways() {
     let v = serde_json::to_value(caps()).unwrap();
     assert!(v.get("service_mem_mb").is_none(), "empty map not sent");

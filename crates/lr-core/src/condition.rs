@@ -19,6 +19,8 @@ pub enum StrAttr {
     Platform,
     /// Declared: any tag of the order, `tags` and `exclusive` together.
     Tag,
+    /// Declared: any label of the profile.
+    Label,
 }
 
 /// A numeric attribute a condition can test; all are declared by the client.
@@ -125,6 +127,7 @@ impl StrAttr {
             StrAttr::SubmitterLabel => "submitter_label",
             StrAttr::Platform => "platform",
             StrAttr::Tag => "tag",
+            StrAttr::Label => "label",
         }
     }
 
@@ -144,6 +147,7 @@ impl StrAttr {
                 .chain(r.exclusive.iter())
                 .map(String::as_str)
                 .collect(),
+            StrAttr::Label => order.declared.labels.iter().map(String::as_str).collect(),
         }
     }
 }

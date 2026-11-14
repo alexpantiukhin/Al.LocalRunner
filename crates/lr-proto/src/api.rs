@@ -241,6 +241,10 @@ pub struct JobSummary {
     /// Peak disk use in MB reported when the job ended; hidden at `summary`, absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_disk_mb: Option<u64>,
+    /// Labels of the profile of a queued or running job; hidden at `summary`, empty for a finished
+    /// job and absent from older peers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// A step of a run.

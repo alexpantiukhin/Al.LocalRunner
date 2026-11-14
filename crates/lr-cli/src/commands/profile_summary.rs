@@ -38,6 +38,8 @@ pub struct ProfileSummary {
     pub platforms: Vec<String>,
     /// Names of the arguments.
     pub args: Vec<String>,
+    /// Labels of the profile, sorted; the policy can match them.
+    pub labels: Vec<String>,
 }
 
 fn step(s: &StepSpec) -> StepSummary {
@@ -81,6 +83,7 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
         },
         platforms,
         args: p.args.iter().map(|a| a.name.clone()).collect(),
+        labels: p.labels.clone(),
     }
 }
 
@@ -121,6 +124,9 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
         }
         if !p.args.is_empty() {
             out.push(format!("  arguments: {}", p.args.join(", ")));
+        }
+        if !p.labels.is_empty() {
+            out.push(format!("  labels: {}", p.labels.join(", ")));
         }
     }
     out

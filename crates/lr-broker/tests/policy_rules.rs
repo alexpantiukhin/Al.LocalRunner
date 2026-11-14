@@ -100,6 +100,8 @@ fn every_declared_field_needs_the_trusted_label() {
         "project = \"o/r\"",
         "submitter_label = \"x\"",
         "tag = \"gpu\"",
+        "label = \"work\"",
+        "label = { in = [\"work\", \"release\"] }",
         "min_mem_mb = 1",
     ] {
         let e = err(&format!("[[rule]]\nwhen = {{ {cond} }}\npriority = 1\n"));

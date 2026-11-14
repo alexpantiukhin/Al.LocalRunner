@@ -131,12 +131,21 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             wanted_priority: None,
             overrides: ResourceOverride::default(),
             args: Vec::new(),
+            labels: Vec::new(),
         }),
     })
 }
 
 pub fn order(job: &str, requirements: Requirements) -> HubToBroker {
     order_at(job, requirements, START)
+}
+
+pub fn order_labelled(job: &str, requirements: Requirements, labels: &[&str]) -> HubToBroker {
+    let mut msg = order(job, requirements);
+    if let HubToBroker::Order(o) = &mut msg {
+        o.spec.labels = labels.iter().map(|l| l.to_string()).collect();
+    }
+    msg
 }
 
 pub fn cancel(job: &str, seq: u64) -> HubToBroker {
