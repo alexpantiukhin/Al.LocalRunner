@@ -191,16 +191,23 @@ pub enum RunnerAction {
 /// `profile ...`.
 #[derive(Subcommand, Debug)]
 pub enum ProfileAction {
-    /// Check the secrets of the profiles of this project: whether the policy lets the client
+    /// Check the profiles file of this project: print a summary of each profile, warn about
+    /// ignored top-level sections, then check the secrets: whether the policy lets the client
     /// request them, whether a runner of this machine has a source for each, and the variable
     /// each one becomes in the job.
     Check {
-        /// Profile name; without one, every profile that asks for a secret.
+        /// Profile name; without one, every profile.
         profile: Option<String>,
         /// The client label the policy compares with: the `label` of the `[[local_user]]`
         /// entry, not the `--as` of a run. Default: the entry of this OS user.
         #[arg(long)]
         label: Option<String>,
+        /// The profiles file to check. Default: `.localrunner/profiles.toml`.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Print one JSON document instead of text.
+        #[arg(long)]
+        json: bool,
     },
 }
 

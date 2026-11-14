@@ -76,6 +76,7 @@ Restart the agent session, then ask in plain words:
 | "update localrunner" | `upgrade-runner` | takes the new version from a signed release and replaces the binary with `upgrade`, restarting the roles |
 | "start the runners" | `up-runner` | starts the hub, the broker and the runners |
 | "run the tests through the runner" | `run` | puts the task into the queue and reads the result |
+| "set up localrunner in this repository" | `repo-setup` | interviews, writes the profiles file and `temp/` in `.gitignore` after you confirm each diff, checks it with `profile check` |
 | "show the queue" | `status-runner` | queue, jobs, runners, history, dashboard |
 | "stop the runners", "turn autostart on" | `down-runner`, `autostart-runner` | stop the roles, switch autostart |
 
@@ -540,7 +541,7 @@ All commands:
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `explain <job>` | the queue; why an order waits |
-| `profile check [profile] [--label L]` | before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
+| `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "by commit" or "by work tree", arguments), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
 | `history [--all]`, `history show <job>` | history |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
 | `dashboard` | a page on 127.0.0.1 |

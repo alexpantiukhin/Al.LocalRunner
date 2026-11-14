@@ -36,7 +36,7 @@ pub use predict::{earliest_start, pick_next, Plan, QueueState};
 pub use profile::{resolve_for_platform, PlatformOverride, Profile, Program, StepSpec};
 pub use profile_args::{ArgSpec, RESERVED_ARG_NAMES};
 pub use profile_bind::bind_args;
-pub use profile_parse::parse_profiles;
+pub use profile_parse::{ignored_sections, parse_profiles};
 pub use queue::{
     Assignment, ClientView, Declared, GroupUsage, Order, QueueEntry, Reservation, RunnerView,
     RunningJob, ServeLog,

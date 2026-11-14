@@ -107,6 +107,19 @@ impl RawNeeds {
     }
 }
 
+/// The top-level keys of a profiles file other than `profile` and `needs`, sorted; the parser ignores them.
+pub fn ignored_sections(text: &str) -> Result<Vec<String>, ProfileError> {
+    let table: toml::Table =
+        toml::from_str(text).map_err(|e| ProfileError::Syntax(e.to_string()))?;
+    let mut keys: Vec<String> = table
+        .keys()
+        .filter(|k| !matches!(k.as_str(), "profile" | "needs"))
+        .cloned()
+        .collect();
+    keys.sort();
+    Ok(keys)
+}
+
 /// Parses `.localrunner/profiles.toml` into validated profiles ordered by name.
 pub fn parse_profiles(text: &str) -> Result<Vec<Profile>, ProfileError> {
     let file: RawFile = toml::from_str(text).map_err(|e| ProfileError::Syntax(e.to_string()))?;

@@ -10,6 +10,7 @@ pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
 pub mod profile_cmd;
+pub mod profile_summary;
 pub mod read_args;
 pub mod read_cmd;
 pub mod roles_cmd;
@@ -497,11 +498,7 @@ pub async fn run(cli: Cli) -> i32 {
             runner,
             dry_run,
         } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
-        Command::Profile { action } => match action {
-            ProfileAction::Check { profile, label } => {
-                profile_cmd::check(&layout, profile.as_deref(), label.as_deref())
-            }
-        },
+        Command::Profile { action } => profile_cmd::run(&layout, action),
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };
     match result {

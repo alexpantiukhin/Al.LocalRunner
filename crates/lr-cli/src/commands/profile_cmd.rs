@@ -1,11 +1,14 @@
-//! `profile check`: the secrets a project profile asks for, checked before a run.
+//! `profile check`: a summary of the project profiles and the secrets they ask for, checked before a run.
 
+use super::args::ProfileAction;
+use super::profile_summary::{summarize, summary_lines, verdict, ProfileSummary};
 use crate::paths::Layout;
 use crate::runner_config::SecretFrom;
 use lr_broker::policy::PolicyFile;
 use lr_core::Profile;
 use lr_runner::secret_var;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// What `profile check` knows about the machine.
 pub struct Machine {
@@ -144,11 +147,37 @@ fn runner_sources(layout: &Layout) -> Vec<(String, BTreeMap<String, SecretFrom>)
         .collect()
 }
 
-/// `profile check [profile] [--label L]` in the current directory.
-pub fn check(layout: &Layout, profile: Option<&str>, label: Option<&str>) -> Result<i32, String> {
-    let path = std::path::Path::new(".localrunner").join("profiles.toml");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+/// `profile check ...`: dispatches the action.
+pub fn run(layout: &Layout, action: ProfileAction) -> Result<i32, String> {
+    match action {
+        ProfileAction::Check {
+            profile,
+            label,
+            file,
+            json,
+        } => check(
+            layout,
+            profile.as_deref(),
+            label.as_deref(),
+            file.as_deref(),
+            json,
+        ),
+    }
+}
+
+/// `profile check [profile] [--label L] [--file path] [--json]`: the summary, the warnings and the secrets report.
+pub fn check(
+    layout: &Layout,
+    profile: Option<&str>,
+    label: Option<&str>,
+    file: Option<&Path>,
+    json: bool,
+) -> Result<i32, String> {
+    let default = Path::new(".localrunner").join("profiles.toml");
+    let path = file.unwrap_or(&default);
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut profiles = lr_core::parse_profiles(&text).map_err(|e| e.to_string())?;
+    let ignored = lr_core::ignored_sections(&text).map_err(|e| e.to_string())?;
     if let Some(name) = profile {
         profiles.retain(|p| p.name == name);
         if profiles.is_empty() {
@@ -166,8 +195,29 @@ pub fn check(layout: &Layout, profile: Option<&str>, label: Option<&str>) -> Res
         runners: runner_sources(layout),
         env_set: var_set,
     };
-    let (lines, ok) = report(&profiles, &machine);
-    for l in lines {
+    let (secret_lines, secrets_ok) = report(&profiles, &machine);
+    let ok = verdict(&profiles, secrets_ok);
+    let summaries: Vec<ProfileSummary> = profiles.iter().map(summarize).collect();
+    if json {
+        let doc = serde_json::json!({
+            "file": path.display().to_string(),
+            "ok": ok,
+            "profiles": summaries,
+            "ignored_sections": ignored,
+            "secrets": { "ok": secrets_ok, "lines": secret_lines },
+        });
+        println!("{doc}");
+        return Ok(i32::from(!ok));
+    }
+    for name in &ignored {
+        println!(
+            "warning: ignored top-level section [{name}]: only [profile.<name>] and [needs.<name>] are read"
+        );
+    }
+    if profiles.is_empty() {
+        println!("no profiles in {}", path.display());
+    }
+    for l in summary_lines(&summaries).into_iter().chain(secret_lines) {
         println!("{l}");
     }
     Ok(i32::from(!ok))

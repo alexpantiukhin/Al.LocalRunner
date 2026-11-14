@@ -6,10 +6,11 @@ fn plugin() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../plugin")
 }
 
-const SKILLS: [&str; 7] = [
+const SKILLS: [&str; 8] = [
     "autostart-runner",
     "down-runner",
     "install-runner",
+    "repo-setup",
     "run",
     "status-runner",
     "up-runner",
@@ -133,6 +134,37 @@ fn the_span_check_refuses_unknown_commands_and_flags() {
     assert!(check_span("localrunner launch").is_err());
     assert!(check_span("localrunner status --colour").is_err());
     assert!(check_span("localrunner down [--drain|--purge]").is_err());
+}
+
+#[test]
+fn repo_setup_keeps_its_scope() {
+    let text = skill("repo-setup")
+        + &std::fs::read_to_string(plugin().join("skills/repo-setup/reference.md")).unwrap();
+    for word in [
+        "GitHub",
+        "workflow",
+        "CI ",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/runners.md",
+        "plugin install",
+        "allow_elevated = true",
+    ] {
+        assert!(
+            !text.contains(word),
+            "{word} is out of scope for repo-setup"
+        );
+    }
+    for cmd in [
+        "`localrunner profile check`",
+        "`localrunner profile check --json`",
+        "`localrunner profile check --file <path>`",
+        "`localrunner doctor`",
+        "`localrunner policy check`",
+        "`localrunner runners`",
+    ] {
+        assert!(text.contains(cmd), "{cmd}");
+    }
 }
 
 #[test]
