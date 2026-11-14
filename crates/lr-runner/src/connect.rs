@@ -355,7 +355,17 @@ pub(crate) async fn session(
     {
         return lost();
     }
-    if shared.state().draining && !s.send(&RunnerToBroker::Drain { reason: None }).await {
+    let (draining, drain_reason) = {
+        let st = shared.state();
+        (st.draining, st.drain_reason)
+    };
+    if draining
+        && !s
+            .send(&RunnerToBroker::Drain {
+                reason: drain_reason,
+            })
+            .await
+    {
         return lost();
     }
     let (_reader, mut frames) = read_frames(transport.clone());
@@ -365,6 +375,9 @@ pub(crate) async fn session(
     loop {
         if s.idle_and_stopping().await && shared.services_down() {
             s.flush().await;
+            shared
+                .diag
+                .event(Level::Info, "drain finished, leaving", &[]);
             s.send(&RunnerToBroker::Bye(Bye {
                 reason: Some("runner stopped".into()),
             }))
@@ -406,7 +419,8 @@ pub(crate) async fn session(
             cmd = control.recv() => {
                 if let Some(cmd) = cmd {
                     apply_control(shared, cmd);
-                    if !s.send(&RunnerToBroker::Drain { reason: None }).await {
+                    let reason = shared.state().drain_reason;
+                    if !s.send(&RunnerToBroker::Drain { reason }).await {
                         return lost();
                     }
                 }

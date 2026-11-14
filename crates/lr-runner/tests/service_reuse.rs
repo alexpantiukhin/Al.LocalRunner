@@ -160,7 +160,7 @@ async fn drain_stops_warm_services_before_bye() {
     let b = Broker::accept(&rig).await;
     run(&rig, &b, "job-1", needs_db("c", "p")).await;
     assert_eq!(registry(&rig).await.len(), 1);
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     drive(&rig, b.until(|m| matches!(m, RunnerToBroker::Bye(_)))).await;
     assert!(registry(&rig).await.is_empty());
     assert_eq!(rig.process.kills().len(), 1);

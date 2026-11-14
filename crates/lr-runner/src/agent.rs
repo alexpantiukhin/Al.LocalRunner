@@ -12,7 +12,9 @@ use lr_abstractions::{
     ProcessInspector, ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle, TransportError,
 };
 use lr_core::{JobId, Timestamp};
-use lr_proto::{ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus};
+use lr_proto::{
+    DrainReason, ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -83,7 +85,7 @@ pub enum AgentExit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
-    Drain,
+    Drain(DrainReason),
     CancelAndStop,
 }
 
@@ -95,9 +97,10 @@ pub struct AgentControl {
 }
 
 impl AgentControl {
-    /// `down --drain`: take no new orders, finish the current job, then `Bye`.
-    pub async fn drain(&self) {
-        let _ = self.tx.send(Control::Drain).await;
+    /// `down --drain`: take no new orders, finish the current job, then `Bye`; the broker is
+    /// told why.
+    pub async fn drain(&self, reason: DrainReason) {
+        let _ = self.tx.send(Control::Drain(reason)).await;
     }
 
     /// `down --cancel`: cancel the current job with `runner_stopped`, then `Bye`.
@@ -124,6 +127,7 @@ pub(crate) struct State {
     pub(crate) job: Option<Current>,
     pub(crate) broker_lost_kill_s: Option<u64>,
     pub(crate) draining: bool,
+    pub(crate) drain_reason: Option<DrainReason>,
     pub(crate) caps_dirty: bool,
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
@@ -294,6 +298,7 @@ impl RunnerAgent {
                     job: None,
                     broker_lost_kill_s: None,
                     draining: false,
+                    drain_reason: None,
                     caps_dirty: false,
                     lost_since,
                     in_use: Vec::new(),
@@ -321,6 +326,11 @@ impl RunnerAgent {
     /// lost, however long a dial or a welcome takes.
     pub async fn run(mut self) -> AgentExit {
         let shared = self.shared.clone();
+        shared.diag.event(
+            Level::Info,
+            "runner started",
+            &[("version", env!("CARGO_PKG_VERSION"))],
+        );
         recover(&shared).await;
         let mut slot = JobSlot::default();
         let mut backoff = MIN_BACKOFF;
@@ -414,7 +424,20 @@ fn handshake_refusal(e: &TransportError) -> Option<ProtocolError> {
 }
 
 pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
-    shared.state().draining = true;
+    let reason = match cmd {
+        Control::Drain(reason) => reason,
+        Control::CancelAndStop => DrainReason::Down,
+    };
+    {
+        let mut st = shared.state();
+        st.draining = true;
+        st.drain_reason = Some(reason);
+    }
+    shared.diag.event(
+        Level::Info,
+        "drain requested",
+        &[("reason", &format!("{reason:?}").to_lowercase())],
+    );
     if cmd == Control::CancelAndStop {
         shared.stop_job(Stop::Cancel, ReasonCode::RunnerStopped, "runner stopped");
     }

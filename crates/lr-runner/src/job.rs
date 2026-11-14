@@ -178,7 +178,8 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
         return;
     }
     let busy = shared.state().job.as_ref().map(|c| c.job.clone());
-    let refusal = if shared.state().draining {
+    let draining = shared.state().draining;
+    let refusal = if draining {
         Some("runner is draining".to_string())
     } else if let Some(other) = busy {
         Some(format!("runner is busy with job {other}"))
@@ -198,7 +199,11 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
             })
     };
     if let Some(detail) = refusal {
-        return refuse(s, &a, Final::failed(detail)).await;
+        let f = Final {
+            reason: draining.then_some(ReasonCode::RunnerDraining),
+            ..Final::failed(detail)
+        };
+        return refuse(s, &a, f).await;
     }
     if let Err(detail) = resolve_commands(&shared.deps.settings.commands, &mut a.spec) {
         let f = Final {

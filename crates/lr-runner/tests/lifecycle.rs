@@ -135,9 +135,14 @@ async fn drain_finishes_the_job_then_says_bye() {
     )
     .await;
     b.next_job_msg().await.unwrap();
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     let m = b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
-    assert_eq!(m, RunnerToBroker::Drain { reason: None });
+    assert_eq!(
+        m,
+        RunnerToBroker::Drain {
+            reason: Some(lr_proto::DrainReason::Down)
+        }
+    );
     rig.advance(10 * SEC).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.state, JobState::Passed);
@@ -178,12 +183,46 @@ async fn drained_runner_refuses_new_assignments() {
     let spec = worktree_spec("/w/tree", vec![step("b", "make", 60)], 60);
     b.assign("job-1", 1, spec.clone()).await;
     b.next_job_msg().await.unwrap();
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
     b.assign("job-2", 1, spec).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.job.0, "job-2");
     assert_eq!(r.detail.as_deref(), Some("runner is draining"));
+    assert_eq!(r.reason, Some(ReasonCode::RunnerDraining));
+}
+
+#[tokio::test]
+async fn drain_carries_its_reason_to_the_broker() {
+    let rig = Rig::new();
+    let (c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    c.drain(lr_proto::DrainReason::Upgrade).await;
+    let m = b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    assert_eq!(
+        m,
+        RunnerToBroker::Drain {
+            reason: Some(lr_proto::DrainReason::Upgrade)
+        }
+    );
+}
+
+#[tokio::test]
+async fn lifecycle_events_are_logged() {
+    let rig = Rig::new();
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    c.drain(lr_proto::DrainReason::Upgrade).await;
+    b.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
+    h.await.unwrap();
+    let text = rig.logs_text();
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in {text}"))
+    };
+    assert!(at("runner started") < at("drain requested"));
+    assert!(at("drain requested") < at("drain finished, leaving"));
+    assert!(text.contains("upgrade"));
 }
 
 #[test]
@@ -273,7 +312,7 @@ async fn bye_is_sent_when_the_broker_comes_back() {
     b.next_job_msg().await.unwrap();
     rig.net.set_reachable(BROKER, false);
     rig.net.cut(BROKER);
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     rig.advance(10 * SEC).await;
     rig.advance(SEC).await;
     assert!(
@@ -299,7 +338,7 @@ async fn idle_runner_told_to_stop_exits_even_when_the_broker_is_unreachable() {
     let rig = Rig::new();
     let (c, h) = rig.start();
     rig.settle().await;
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     for _ in 0..40 {
         if h.is_finished() {
             break;
