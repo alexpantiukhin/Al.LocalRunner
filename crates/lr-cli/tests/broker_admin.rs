@@ -170,7 +170,7 @@ async fn policy_check_names_the_file_the_running_broker_uses() {
     let layout = layout(&dir, "[]");
     let broker = start_broker(&layout, false).await.expect("broker starts");
     let reply = admin(&layout, AdminRequest::PolicyCheck).await;
-    let AdminReply::Policy { path, .. } = reply else {
+    let AdminReply::Policy { path, rules, .. } = reply else {
         panic!("{reply:?}");
     };
     assert_eq!(
@@ -178,6 +178,7 @@ async fn policy_check_names_the_file_the_running_broker_uses() {
         layout.config_file("policy.toml")
     );
     let asked = lr_cli::commands::admin_cmd::broker_policy(&layout).await;
+    assert!(rules[0].starts_with("rule 1 ci-first"), "{rules:?}");
     assert!(matches!(asked, Some(Ok(_))), "{asked:?}");
     assert_eq!(
         lr_cli::commands::admin_cmd::policy_check(&layout, None).await,

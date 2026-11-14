@@ -6,7 +6,7 @@ use std::net::IpAddr;
 
 #[test]
 fn unknown_table_refused_with_its_name_and_line() {
-    let e = err("[queue]\nstrategy = \"weighted\"\n\n[queu]\nage_after_min = 5\n");
+    let e = err("[queue]\nstrategy = \"weighted\"\n\n[queu]\nstrategy = \"fair-share\"\n");
     assert_eq!(e.table.as_deref(), Some("queu"));
     assert_eq!(e.line, Some(4));
     assert!(e.message.contains("queu"), "{e}");

@@ -3,6 +3,7 @@
 
 mod admission;
 mod error;
+mod explain;
 mod file;
 mod listen;
 mod reload;
@@ -10,9 +11,11 @@ mod resources;
 mod rules;
 mod sections;
 mod validate;
+mod when;
 
 pub use admission::{AdmissionSection, ForeignLoad};
 pub use error::{PolicyError, PolicyWarning};
+pub use explain::explain_rules;
 pub use file::{load, HostResources, PolicyFile};
 pub use listen::{ListenSection, ListenValue};
 pub use reload::{ActivePolicy, Applied, RestartOnly};
@@ -33,7 +36,6 @@ use lr_core::{Policy, RulePolicy};
 pub fn rule_policy(file: &PolicyFile, host: &HostResources) -> RulePolicy {
     RulePolicy {
         strategy: file.queue.strategy,
-        age_after_min: file.queue.age_after_min,
         rules: file.rules.iter().map(|e| e.rule.clone()).collect(),
         group_by: file.clients.group_by,
         pool: file.pool.limits(host),

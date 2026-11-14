@@ -137,6 +137,7 @@ pub fn admin_replies() -> Vec<AdminReply> {
         AdminReply::Policy {
             path: "/var/lib/al-localrunner/policy.toml".into(),
             warnings: vec!["rule 2 shadowed".into()],
+            rules: vec!["rule 1: when everyone".into()],
         },
         AdminReply::JoinCode {
             address: "host:7000".into(),

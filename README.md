@@ -216,7 +216,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 | `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
 | `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
-| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted`; `age_after_min` |
+| `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
 | `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` or `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
@@ -244,9 +244,14 @@ label = ""
 name     = "ci-first"
 when     = { client_label = "ci" }
 priority = 100
+
+[[rule]]
+name     = "nightly"
+when     = { client_label = { in = ["ci", "night"] }, project = { glob = "lr-*" }, mem_mb = { ge = 8192 }, not = { tag = "flaky" } }
+priority = 50
 ```
 
-Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `min_mem_mb`) are allowed only together with a `client_label` condition. Unknown tables and keys are rejected with a line number.
+A condition value is a plain value (equality) or a table of tests: `in`, `prefix`, `glob`, `ne` for strings and `lt`, `le`, `gt`, `ge` for numbers, plus `any = [...]` and `not = {...}`. Rules with a condition on declared attributes (`source`, `project`, `tag`, `submitter_label`, `platform`, `mem_mb`, `cpu`, `disk_mb`, `timeout_s`, `min_mem_mb`) are allowed only together with a positive `client_label` condition. A negative `priority` is allowed. There is no aging: under a constant stream of higher-priority orders a low-priority order can wait indefinitely; `[queue] age_after_min` from older files is ignored with a warning. Unknown tables and keys are rejected with a line number.
 
 Commands:
 

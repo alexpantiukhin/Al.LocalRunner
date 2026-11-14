@@ -1,7 +1,7 @@
 mod common;
 
 use common::{ok, HOST, SPEC_EXAMPLE};
-use lr_broker::policy::{check, PolicyWarning};
+use lr_broker::policy::{check, explain_rules, PolicyWarning};
 
 fn warnings(text: &str) -> Vec<PolicyWarning> {
     check(&ok(text), &HOST)
@@ -233,5 +233,96 @@ fn trim_without_a_timeout_maximum_warned() {
             .iter()
             .any(|w| w.key.as_deref() == Some("timeout_above_max")),
         "{with_max:?}"
+    );
+}
+
+#[test]
+fn age_after_min_loads_and_warns() {
+    let f = ok("[queue]\nage_after_min = 30\n");
+    assert_eq!(f.queue.age_after_min, Some(30));
+    let ws = check(&f, &HOST);
+    let w = ws
+        .iter()
+        .find(|w| w.message == "[queue] age_after_min is no longer used")
+        .expect("age_after_min warning");
+    assert_eq!(w.table.as_deref(), Some("queue"));
+    assert_eq!(w.key.as_deref(), Some("age_after_min"));
+    assert!(!has(&warnings(""), "no longer used"));
+}
+
+#[test]
+fn tree_rule_shadowed_by_equal_earlier_rule() {
+    let when = r#"{ client_label = "ci", any = [{ project = "a" }, { project = "b" }] }"#;
+    let ws = warnings(&format!(
+        "[[rule]]\nwhen = {when}\npriority = 1\n\n[[rule]]\nname = \"dup\"\nwhen = {when}\npriority = 2\n"
+    ));
+    let w = ws
+        .iter()
+        .find(|w| w.message.contains("never"))
+        .expect("shadow warning");
+    assert!(w.message.contains("rule dup"), "{w:?}");
+}
+
+#[test]
+fn broader_condition_with_terms_shadows() {
+    let ws = warnings(
+        "[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 1024 } }\npriority = 1\n\n[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 1024 }, project = \"p\" }\npriority = 2\n",
+    );
+    assert!(has(&ws, "never"), "{ws:?}");
+}
+
+#[test]
+fn different_terms_do_not_shadow() {
+    let ws = warnings(
+        "[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 1024 } }\npriority = 1\n\n[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 4096 } }\npriority = 2\n",
+    );
+    assert!(!has(&ws, "never"), "{ws:?}");
+}
+
+#[test]
+fn not_and_any_are_not_guessed() {
+    let ws = warnings(
+        "[[rule]]\nwhen = { client_label = \"ci\", not = { project = \"a\" } }\npriority = 1\n\n[[rule]]\nwhen = { client_label = \"ci\", project = \"b\" }\npriority = 2\n",
+    );
+    assert!(!has(&ws, "never"), "{ws:?}");
+}
+
+#[test]
+fn memory_term_above_pool_warned() {
+    for cond in [
+        "mem_mb = { ge = 99999 }",
+        "mem_mb = 99999",
+        "mem_mb = { gt = 32768 }",
+    ] {
+        let ws = warnings(&format!(
+            "[[rule]]\nwhen = {{ client_label = \"ci\", {cond} }}\npriority = 1\n"
+        ));
+        assert!(has(&ws, "is more than the pool"), "{cond}: {ws:?}");
+    }
+    let ws = warnings(
+        "[[rule]]\nwhen = { client_label = \"ci\", mem_mb = { ge = 32768 } }\npriority = 1\n",
+    );
+    assert!(!has(&ws, "is more than the pool"), "{ws:?}");
+}
+
+#[test]
+fn explain_rules_names_every_rule() {
+    let f = ok(
+        "[[rule]]\nname = \"ci-first\"\nwhen = { client_label = \"ci\" }\npriority = 100\n\n[[rule]]\nwhen = { client_label = \"ci\", project = { in = [\"a\", \"b\"] } }\npriority = -1\nreserve = { cpu = 2, mem_mb = 4096 }\nquota = { max_running = 3 }\nweight = 2\n",
+    );
+    assert_eq!(
+        explain_rules(&f),
+        [
+            "rule 1 ci-first (line 1): when client_label = \"ci\"; priority 100",
+            "rule 2 (line 6): when client_label = \"ci\", project in [\"a\", \"b\"]; priority -1; reserve cpu 2, mem_mb 4096; quota max_running 3; weight 2",
+        ]
+    );
+}
+
+#[test]
+fn explain_rules_default_rule() {
+    assert_eq!(
+        explain_rules(&ok("")),
+        ["rule 1 ci-first: when client_label = \"ci\"; priority 100"]
     );
 }

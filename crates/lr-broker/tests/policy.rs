@@ -5,7 +5,7 @@ use lr_broker::policy::{
     ActivePolicy, AllowEntry, CacheShare, CancelOthers, CommandMode, ListenValue, LocalUserEntry,
     OrphanQueued, OrphanRunning, OthersOrders, RestartOnly,
 };
-use lr_core::{GroupBy, Strategy, Zone};
+use lr_core::{GroupBy, NumAttr, NumTest, StrAttr, StrTest, Strategy, Term, Zone};
 use std::net::{IpAddr, Ipv4Addr};
 
 fn spec_example_from_html() -> String {
@@ -37,8 +37,8 @@ fn spec_fixture_matches_architecture_html() {
 fn spec_example_policy_parses() {
     let f = ok(SPEC_EXAMPLE);
     assert_eq!(f.queue.strategy, Strategy::PriorityFifo);
-    assert_eq!(f.queue.age_after_min, 30);
-    assert_eq!(f.rules.len(), 2);
+    assert_eq!(f.queue.age_after_min, None);
+    assert_eq!(f.rules.len(), 3);
     assert_eq!(f.rules[0].rule.name.as_deref(), Some("ci-first"));
     assert_eq!(f.rules[0].rule.when.client_label.as_deref(), Some("ci"));
     assert_eq!(f.rules[0].rule.priority, Some(100));
@@ -46,6 +46,24 @@ fn spec_example_policy_parses() {
     assert_eq!(f.rules[1].rule.when.source.as_deref(), Some("github"));
     let reserve = f.rules[1].rule.reserve.expect("reserve");
     assert_eq!((reserve.cpu, reserve.mem_mb), (2, 4096));
+    let nightly = &f.rules[2].rule;
+    assert_eq!(nightly.name.as_deref(), Some("nightly"));
+    assert_eq!(nightly.priority, Some(50));
+    assert_eq!(
+        nightly.when.terms,
+        [
+            Term::Str(
+                StrAttr::ClientLabel,
+                StrTest::In(vec!["ci".into(), "night".into()])
+            ),
+            Term::Str(StrAttr::Project, StrTest::Glob("lr-*".into())),
+            Term::Num(NumAttr::MemMb, NumTest::Ge(8192)),
+        ]
+    );
+    assert_eq!(
+        nightly.when.not.as_ref().and_then(|n| n.tag.as_deref()),
+        Some("flaky")
+    );
     assert_eq!(f.clients.group_by, GroupBy::Label);
     assert_eq!(f.join.code_ttl_min.get(), 60);
     assert_eq!(f.orphans.absent_after_min.get(), 360);
@@ -127,13 +145,13 @@ fn spec_example_policy_parses() {
 }
 
 #[test]
-fn defaults_applied_grace_3_aging_30() {
+fn defaults_applied_grace_3_no_aging() {
     let f = ok("");
     assert_eq!(f.grace.lost_min.get(), 3);
-    assert_eq!(f.queue.age_after_min, 30);
+    assert_eq!(f.queue.age_after_min, None);
     let one_key = ok("[queue]\nstrategy = \"fair-share\"\n");
     assert_eq!(one_key.grace.lost_min.get(), 3);
-    assert_eq!(one_key.queue.age_after_min, 30);
+    assert_eq!(one_key.queue.age_after_min, None);
 }
 
 #[test]

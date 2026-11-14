@@ -123,7 +123,8 @@ async fn policy(layout: &Layout, out: &mut Vec<Check>) {
         layout.is_service(),
     ));
     match crate::commands::admin_cmd::broker_policy(layout).await {
-        Some(Ok((path, warnings))) => {
+        Some(Ok(found)) => {
+            let (path, warnings) = (found.path, found.warnings);
             out.push(check(
                 "policy.toml",
                 Status::Ok,

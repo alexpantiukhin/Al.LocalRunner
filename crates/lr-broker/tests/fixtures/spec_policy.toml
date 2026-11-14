@@ -1,6 +1,5 @@
 [queue]
 strategy      = "priority-fifo"        # встроенные: priority-fifo, fair-share, weighted
-age_after_min = 30                     # старение: после 30 минут ожидания порядок как у высшего приоритета
 
 [[rule]]
 name     = "ci-first"                   # необязательное имя; без него в сообщениях номер правила
@@ -11,6 +10,11 @@ priority = 100
 name    = "ci-reserve"
 when    = { client_label = "ci", source = "github" }
 reserve = { cpu = 2, mem_mb = 4096 }
+
+[[rule]]
+name     = "nightly"
+when     = { client_label = { in = ["ci", "night"] }, project = { glob = "lr-*" }, mem_mb = { ge = 8192 }, not = { tag = "flaky" } }
+priority = 50
 
 [clients]
 group_by = "label"                     # key | label (атрибуты из записи ключа)
