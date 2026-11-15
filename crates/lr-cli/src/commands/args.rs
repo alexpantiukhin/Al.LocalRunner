@@ -270,4 +270,12 @@ pub struct UpgradeArgs {
     /// replaced then.
     #[arg(long, value_parser = crate::commands::upgrade_cmd::parse_duration)]
     pub wait_timeout: Option<std::time::Duration>,
+    /// The release to install, `X.Y.Z` (default: the latest release that is not a pre-release);
+    /// only when run from the installed binary.
+    #[arg(long = "version", value_name = "X.Y.Z")]
+    pub version: Option<String>,
+    /// Install from local files: the archive (or a folder holding it) with `SHA256SUMS` and
+    /// `SHA256SUMS.sig` next to it; nothing is downloaded.
+    #[arg(long, value_name = "ARCHIVE")]
+    pub offline: Option<PathBuf>,
 }

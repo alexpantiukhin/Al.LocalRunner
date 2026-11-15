@@ -184,7 +184,8 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         allow_elevated,
         dry_run,
         wait_timeout,
-    } = args;
+        ..
+    } = args.clone();
     if crate::host::is_elevated() && !allow_elevated {
         return Err("upgrade refuses to run as root or administrator; add --allow-elevated".into());
     }
@@ -200,13 +201,20 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
             dir.display()
         ));
     }
-    if let (Ok(a), Ok(b)) = (exe.canonicalize(), installed.canonicalize()) {
-        if a == b {
-            return Err(format!(
-                "this is the installed binary ({}): run the new binary from another folder",
-                installed.display()
-            ));
-        }
+    if super::upgrade_fetch::is_installed(&exe, &installed) {
+        return super::upgrade_fetch::fetch_and_relaunch(
+            layout,
+            &args,
+            &crate::release::UreqFetch,
+            &crate::release::trusted_keys(),
+            &super::upgrade_fetch::spawn_inherited,
+        );
+    }
+    if args.version.is_some() || args.offline.is_some() {
+        return Err(
+            "--version and --offline are for the installed binary: this binary replaces the installed one as it is"
+                .into(),
+        );
     }
     let old = installed_version(&installed);
     let running = running_roles(layout).await;

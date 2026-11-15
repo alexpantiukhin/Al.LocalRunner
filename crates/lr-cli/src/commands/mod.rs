@@ -21,6 +21,7 @@ pub mod snapshot_cmd;
 pub mod timefmt;
 pub mod up_cmd;
 pub mod upgrade_cmd;
+pub mod upgrade_fetch;
 pub mod upgrade_jobs;
 pub mod upgrade_pool;
 pub mod view;

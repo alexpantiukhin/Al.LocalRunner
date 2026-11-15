@@ -2,15 +2,20 @@
 //! the keys built into this binary, then the SHA-256 of the downloaded file against its line of
 //! `SHA256SUMS`. No `ssh-keygen` is needed on the machine.
 
+mod archive;
+mod fetch;
 mod keys;
 mod sshsig;
 mod sums;
+mod update;
 
 use std::fmt;
 
+pub use fetch::{asset_name, asset_url, latest_version, valid_version, Fetch, UreqFetch};
 pub use keys::trusted_keys;
 pub use sshsig::verify_signature;
 pub use sums::{check_sha256, sums_entry};
+pub use update::{fetch_release, from_offline};
 
 /// The namespace `release.yml` signs `SHA256SUMS` with.
 pub const NAMESPACE: &str = "al-localrunner-release";
