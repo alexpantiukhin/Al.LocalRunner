@@ -158,9 +158,15 @@ pub fn controls() -> Vec<RunnerControl> {
     vec![
         RunnerControl::Down {
             mode: DownMode::Drain,
+            reason: None,
+        },
+        RunnerControl::Down {
+            mode: DownMode::Drain,
+            reason: Some(lr_proto::DrainReason::Upgrade),
         },
         RunnerControl::Down {
             mode: DownMode::Cancel,
+            reason: None,
         },
         RunnerControl::LoggingReload,
         RunnerControl::Status,

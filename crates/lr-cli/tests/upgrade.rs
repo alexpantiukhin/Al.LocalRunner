@@ -5,12 +5,13 @@ use common::TempDir;
 use lr_cli::commands::confirm::Console;
 use lr_cli::commands::up_cmd::RunningRoles;
 use lr_cli::commands::upgrade_cmd::{
-    parse_version, restart_roles, restart_summary, stop_names, verdict, Job, Verdict,
+    parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
+    Verdict,
 };
 use lr_cli::commands::upgrade_jobs::Activity;
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
-use lr_proto::DownMode;
+use lr_proto::{DownMode, DrainReason};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -99,12 +100,18 @@ fn the_plan_names_the_runners_that_start_again() {
 }
 
 #[derive(Default)]
-struct Recorder(Mutex<Vec<String>>);
+struct Recorder {
+    applied: Mutex<Vec<String>>,
+    fail: bool,
+}
 
 impl System for Recorder {
     fn apply(&self, action: &Action) -> Result<(), String> {
-        self.0.lock().unwrap().push(action.to_string());
-        Ok(())
+        self.applied.lock().unwrap().push(action.to_string());
+        match self.fail {
+            true => Err("the file is busy".into()),
+            false => Ok(()),
+        }
     }
 }
 
@@ -118,14 +125,19 @@ struct Case {
     dry_run: bool,
     terminal: bool,
     typed: &'static str,
-    answering: bool,
+    answers: usize,
     interrupted: bool,
+    wait_timeout: Option<std::time::Duration>,
+    copy_fails: bool,
 }
 
 struct Outcome {
     result: Result<i32, String>,
     copies: Vec<String>,
     told: Vec<(String, DownMode)>,
+    reasons: Vec<Option<DrainReason>>,
+    lock_seen: Vec<bool>,
+    lock_left: bool,
     started: Vec<Vec<String>>,
     hub_stops: usize,
     broker_stops: usize,
@@ -135,8 +147,13 @@ struct Outcome {
 async fn run(case: Case) -> Outcome {
     let dir = TempDir::new("upgrade");
     let layout = with_runner(&dir);
-    let roles = FakeRoles::new(false, if case.answering { usize::MAX } else { 0 });
-    let system = Recorder::default();
+    let roles = FakeRoles::new(false, case.answers);
+    let lock = lr_cli::upgrade_lock::lock_path(&layout);
+    *roles.lock_file.lock().unwrap() = Some(lock.clone());
+    let system = Recorder {
+        fail: case.copy_fails,
+        ..Recorder::default()
+    };
     let started = Mutex::new(Vec::new());
     let start = |argv: &[String]| -> std::io::Result<u32> {
         started.lock().unwrap().push(argv.to_vec());
@@ -154,6 +171,7 @@ async fn run(case: Case) -> Outcome {
         yes: case.yes,
         cancel: case.cancel,
         dry_run: case.dry_run,
+        wait_timeout: case.wait_timeout,
     };
     let mut input = case.typed.as_bytes();
     let mut out = Vec::new();
@@ -170,7 +188,9 @@ async fn run(case: Case) -> Outcome {
         })
         .await;
     let told = roles.told.lock().unwrap().clone();
-    let copies = system.0.lock().unwrap().clone();
+    let reasons = roles.reasons.lock().unwrap().clone();
+    let lock_seen = roles.lock_seen.lock().unwrap().clone();
+    let copies = system.applied.lock().unwrap().clone();
     let started = started.lock().unwrap().clone();
     let (hub_stops, broker_stops) = (
         roles.hub_stops.load(std::sync::atomic::Ordering::SeqCst),
@@ -181,6 +201,9 @@ async fn run(case: Case) -> Outcome {
         result,
         copies,
         told,
+        reasons,
+        lock_seen,
+        lock_left: lock.exists(),
         started,
         hub_stops,
         broker_stops,
@@ -199,8 +222,10 @@ fn case(old: &'static str, new: &'static str) -> Case {
         dry_run: false,
         terminal: false,
         typed: "",
-        answering: false,
+        answers: 0,
         interrupted: false,
+        wait_timeout: None,
+        copy_fails: false,
     }
 }
 
@@ -333,11 +358,15 @@ async fn at_a_terminal_the_user_picks_wait_cancel_or_abort() {
 async fn ctrl_c_while_waiting_leaves_the_hub_the_broker_and_the_binary_alone() {
     let mut c = busy_case();
     c.running = running(true, true, &["r1"]);
-    c.answering = true;
+    c.answers = usize::MAX;
     c.interrupted = true;
     let o = run(c).await;
     assert_eq!(o.result, Ok(1));
-    assert_eq!(o.told, vec![("r1".to_string(), DownMode::Drain)]);
+    assert!(!o.told.is_empty());
+    assert!(o
+        .told
+        .iter()
+        .all(|t| *t == ("r1".to_string(), DownMode::Drain)));
     assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
     assert!(o.copies.is_empty() && o.started.is_empty());
 }
@@ -349,4 +378,106 @@ async fn the_hub_and_the_broker_stop_after_the_runners_are_gone() {
     let o = run(c).await;
     assert_eq!((o.hub_stops, o.broker_stops), (1, 1));
     assert!(!o.copies.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_writes_the_lock_before_stopping_and_removes_it_after() {
+    let o = run(case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(!o.lock_seen.is_empty() && o.lock_seen.iter().all(|seen| *seen));
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_lock_is_removed_after_a_failed_replacement() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.copy_fails = true;
+    let o = run(c).await;
+    assert!(o.result.is_err());
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_lock_is_removed_when_the_wait_is_interrupted() {
+    let mut c = busy_case();
+    c.answers = usize::MAX;
+    c.interrupted = true;
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert!(o.lock_seen.iter().all(|seen| *seen));
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn no_lock_is_written_for_a_dry_run_or_an_up_to_date_node() {
+    let mut dry = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    dry.dry_run = true;
+    assert!(run(dry).await.lock_seen.is_empty());
+    let same = run(case("0.1.1 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert!(same.lock_seen.is_empty() && !same.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn runners_are_stopped_with_the_upgrade_reason() {
+    let o = run(case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert_eq!(o.reasons, vec![Some(DrainReason::Upgrade)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_that_answers_again_is_told_to_stop_again() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.answers = usize::MAX;
+    c.wait_timeout = Some(std::time::Duration::from_secs(2));
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert!(o.told.len() > 1, "{:?}", o.told);
+    assert!(o
+        .told
+        .iter()
+        .all(|t| *t == ("r1".to_string(), DownMode::Drain)));
+    assert!(o.reasons.iter().all(|r| *r == Some(DrainReason::Upgrade)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn wait_timeout_stops_the_wait_with_code_1_and_replaces_nothing() {
+    let mut c = busy_case();
+    c.running = running(true, true, &["r1"]);
+    c.answers = usize::MAX;
+    c.wait_timeout = Some(std::time::Duration::from_secs(90));
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
+    assert!(o.copies.is_empty() && o.started.is_empty());
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wait_that_ends_before_the_timeout_replaces_the_binary() {
+    let mut c = busy_case();
+    c.answers = 3;
+    c.wait_timeout = Some(std::time::Duration::from_secs(90));
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(!o.copies.is_empty());
+}
+
+#[test]
+fn parse_duration_rejects_zero_and_garbage() {
+    use std::time::Duration;
+    assert_eq!(parse_duration("90s"), Ok(Duration::from_secs(90)));
+    assert_eq!(parse_duration("15m"), Ok(Duration::from_secs(900)));
+    assert_eq!(parse_duration("2h"), Ok(Duration::from_secs(7200)));
+    for bad in [
+        "", "0s", "0m", "0h", "15", "m", "abc", "-5m", "1.5h", "5d", "1h30m",
+    ] {
+        assert!(parse_duration(bad).is_err(), "{bad:?} must be rejected");
+    }
+}
+
+#[test]
+fn the_wait_prints_the_jobs_and_the_elapsed_time() {
+    let lines = busy().waiting_lines(std::time::Duration::from_secs(185));
+    assert_eq!(lines, ["j1 on r1 (tests)", "waited 3m05s"]);
+    let idle = Activity::default().waiting_lines(std::time::Duration::from_secs(2));
+    assert_eq!(idle, ["waited 2.0s"]);
 }

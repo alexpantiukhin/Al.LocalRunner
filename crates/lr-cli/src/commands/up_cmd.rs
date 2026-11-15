@@ -142,6 +142,10 @@ fn keep_std_handles_from_children() {
 fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
+        .env(
+            crate::upgrade_lock::OWNER_ENV,
+            std::process::id().to_string(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -256,7 +260,7 @@ pub async fn up_with(
 ) -> Result<i32, String> {
     if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
         eprintln!(
-            "{}: nothing is started; wait for it to finish (`localrunner status`) instead of              running `up` again",
+            "{}: nothing is started; wait for it to finish (`localrunner status`) instead of running `up` again",
             crate::upgrade_lock::describe(&lock)
         );
         return Ok(1);

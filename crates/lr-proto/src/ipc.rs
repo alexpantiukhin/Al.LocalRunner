@@ -3,6 +3,7 @@ use crate::common::ProtocolError;
 use crate::dashboard::DashboardEvent;
 use crate::frame::message;
 use crate::reason::ReasonCode;
+use crate::runner::DrainReason;
 use crate::version::Version;
 use lr_core::{Identity, JobId, JobState, Timestamp, Zone};
 use serde::{Deserialize, Serialize};
@@ -395,6 +396,9 @@ pub enum RunnerControl {
     Down {
         /// How.
         mode: DownMode,
+        /// Why a drain is asked; absent means a plain `down`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<DrainReason>,
     },
     /// Reread the runner's `logging.toml`.
     LoggingReload,

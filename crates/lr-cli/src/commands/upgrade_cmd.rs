@@ -6,18 +6,40 @@
 
 use super::args::{RoleArg, UpgradeArgs};
 use super::confirm::{Console, Stdio};
-use super::down_cmd::{down_with, wait_for_runners, IpcRoles, Roles, Waited};
+use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
 use super::setup::{binary_name, default_bin_dir, install_plan};
 use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
+use crate::upgrade_lock::{write, UpgradeLock};
+use lr_proto::DrainReason;
 use std::future::Future;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 const STARTED_WITHIN: Duration = Duration::from_secs(15);
 const BUSY_FOR: Duration = Duration::from_secs(20);
+const JOBS_REFRESH: Duration = Duration::from_secs(5);
+
+/// `--wait-timeout`: a whole number of seconds, minutes or hours (`90s`, `15m`, `2h`), not zero.
+pub fn parse_duration(text: &str) -> Result<Duration, String> {
+    let bad = || format!("`{text}` is not a duration: use `90s`, `15m` or `2h`");
+    let (digits, unit) = [("s", 1u64), ("m", 60), ("h", 3600)]
+        .into_iter()
+        .find_map(|(suffix, unit)| text.strip_suffix(suffix).map(|d| (d, unit)))
+        .ok_or_else(bad)?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let n: u64 = digits.parse().map_err(|_| bad())?;
+    match n.checked_mul(unit) {
+        Some(0) => Err(format!("`{text}` is zero: give a duration above zero")),
+        Some(secs) => Ok(Duration::from_secs(secs)),
+        None => Err(bad()),
+    }
+}
 
 /// What a version line says: `localrunner 0.1.1 (protocol 1.0)` or `0.1.1 (protocol 1.0)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +177,7 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         cancel,
         allow_elevated,
         dry_run,
+        wait_timeout,
     } = args;
     if crate::host::is_elevated() && !allow_elevated {
         return Err("upgrade refuses to run as root or administrator; add --allow-elevated".into());
@@ -204,6 +227,7 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         yes,
         cancel,
         dry_run,
+        wait_timeout,
     };
     job.run(&roles, system, &start, &mut console, async {
         let _ = tokio::signal::ctrl_c().await;
@@ -238,6 +262,8 @@ pub struct Job<'a> {
     pub cancel: bool,
     /// Print the plan and change nothing.
     pub dry_run: bool,
+    /// With running jobs: stop waiting after this long; nothing is replaced then.
+    pub wait_timeout: Option<Duration>,
 }
 
 impl Job<'_> {
@@ -302,6 +328,10 @@ impl Job<'_> {
         let Some(mode) = choose(self.activity, self.yes, self.cancel, &question, console)? else {
             return Ok(1);
         };
+        let _lock = write(
+            self.layout,
+            &UpgradeLock::of_this_process(&self.new.text, super::timefmt::now()),
+        )?;
         if !self.stop_roles(roles, mode, interrupt).await? {
             return Ok(1);
         }
@@ -334,10 +364,11 @@ impl Job<'_> {
         let cancel = mode == Mode::Cancel;
         let runners: Vec<String> = self.running.runners.iter().cloned().collect();
         if !runners.is_empty() {
-            let told = down_with(
+            let told = down_for(
                 self.layout,
                 runners.clone(),
                 cancel,
+                Some(DrainReason::Upgrade),
                 roles,
                 std::future::pending::<()>(),
             )
@@ -345,20 +376,40 @@ impl Job<'_> {
             if told != 0 {
                 return Err("a runner could not be told to stop: nothing replaced".into());
             }
-            if mode == Mode::Wait && self.activity.busy() {
+            let watching = mode == Mode::Wait && self.activity.busy();
+            let started = tokio::time::Instant::now();
+            if watching {
                 eprintln!("waiting for the running jobs to finish (Ctrl+C stops waiting)");
+                for line in self.activity.waiting_lines(Duration::ZERO) {
+                    println!("{line}");
+                }
             }
-            let names = &runners;
+            let shown = Mutex::new((self.activity.running.clone(), started + JOBS_REFRESH));
+            let (names, shown) = (&runners, &shown);
             let any_answers = move || async move {
+                let mut any = false;
                 for n in names {
                     if roles.runner_answers(n).await {
-                        return true;
+                        any = true;
+                        let _ = roles
+                            .stop_runner(n, down_mode(cancel), Some(DrainReason::Upgrade))
+                            .await;
                     }
                 }
-                false
+                if any && watching {
+                    refresh_jobs(roles, shown, started).await;
+                }
+                any
             };
-            match wait_for_runners(any_answers, cancel, interrupt).await {
+            match wait_for_runners(any_answers, cancel, self.wait_timeout, interrupt).await {
                 Waited::Gone => {}
+                Waited::WaitTimedOut => {
+                    eprintln!(
+                        "waiting stopped by --wait-timeout: nothing replaced; {} keep draining and exit when their jobs finish; the hub and the broker keep running; run `upgrade` again later",
+                        runners.join(", ")
+                    );
+                    return Ok(false);
+                }
                 Waited::TimedOut => {
                     eprintln!(
                         "{} did not exit within 30 s after the cancel; the hub and the broker keep running, nothing replaced",
@@ -380,10 +431,11 @@ impl Job<'_> {
             .filter(|n| !runners.contains(n))
             .collect();
         if !rest.is_empty()
-            && down_with(
+            && down_for(
                 self.layout,
                 rest,
                 false,
+                None,
                 roles,
                 std::future::pending::<()>(),
             )
@@ -393,5 +445,32 @@ impl Job<'_> {
             return Err("the hub or the broker did not stop: nothing replaced; start them with `localrunner up`".into());
         }
         Ok(true)
+    }
+}
+
+/// Asks for the running jobs every [`JOBS_REFRESH`] and prints the wait again when they changed.
+async fn refresh_jobs(
+    roles: &dyn Roles,
+    shown: &Mutex<(Vec<String>, tokio::time::Instant)>,
+    started: tokio::time::Instant,
+) {
+    let now = tokio::time::Instant::now();
+    if now < shown.lock().unwrap().1 {
+        return;
+    }
+    let jobs = roles.running_jobs().await;
+    let mut shown = shown.lock().unwrap();
+    shown.1 = now + JOBS_REFRESH;
+    let Some(jobs) = jobs else { return };
+    if jobs == shown.0 {
+        return;
+    }
+    shown.0 = jobs.clone();
+    let seen = Activity {
+        running: jobs,
+        ..Activity::default()
+    };
+    for line in seen.waiting_lines(now - started) {
+        println!("{line}");
     }
 }

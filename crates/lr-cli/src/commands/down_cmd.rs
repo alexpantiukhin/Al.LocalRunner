@@ -9,7 +9,9 @@ use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use async_trait::async_trait;
-use lr_proto::{AdminReply, AdminRequest, CliReply, CliRequest, ControlReply, DownMode};
+use lr_proto::{
+    AdminReply, AdminRequest, CliReply, CliRequest, ControlReply, DownMode, DrainReason,
+};
 use lr_proto::{IpcChannel, RunnerControl};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -104,6 +106,7 @@ async fn runner(
     principal: &str,
     name: &str,
     mode: DownMode,
+    reason: Option<DrainReason>,
 ) -> Result<bool, String> {
     crate::runner_config::check_runner_name(name)?;
     let address = layout.runner_ipc(principal, name);
@@ -111,7 +114,7 @@ async fn runner(
         return Ok(false);
     };
     match c
-        .call::<_, ControlReply>(&RunnerControl::Down { mode })
+        .call::<_, ControlReply>(&RunnerControl::Down { mode, reason })
         .await?
     {
         ControlReply::Ok => Ok(true),
@@ -172,15 +175,18 @@ pub enum Waited {
     Gone,
     /// After `--cancel` a runner still answered 30 s later.
     TimedOut,
+    /// The `--wait-timeout` of `upgrade` ran out first.
+    WaitTimedOut,
     /// Ctrl+C came first.
     Interrupted,
 }
 
 /// Waits until `still_running` says no: with `cancel` at most 30 s, otherwise until
-/// `interrupt`.
+/// `interrupt` or, when `limit` is set, until it has passed.
 pub async fn wait_for_runners<F, Fut>(
     still_running: F,
     cancel: bool,
+    limit: Option<Duration>,
     interrupt: impl Future<Output = ()>,
 ) -> Waited
 where
@@ -188,20 +194,28 @@ where
     Fut: Future<Output = bool>,
 {
     let timed_out = AtomicBool::new(false);
+    let wait_timed_out = AtomicBool::new(false);
     let stop = async {
-        match cancel {
-            true => tokio::select! {
+        match (cancel, limit) {
+            (true, _) => tokio::select! {
                 _ = interrupt => {}
                 _ = tokio::time::sleep(CANCELLED_EXIT_WITHIN) => {
                     timed_out.store(true, Ordering::Relaxed);
                 }
             },
-            false => interrupt.await,
+            (false, Some(limit)) => tokio::select! {
+                _ = interrupt => {}
+                _ = tokio::time::sleep(limit) => {
+                    wait_timed_out.store(true, Ordering::Relaxed);
+                }
+            },
+            (false, None) => interrupt.await,
         }
     };
     match drained(still_running, stop).await {
         true => Waited::Gone,
         false if timed_out.load(Ordering::Relaxed) => Waited::TimedOut,
+        false if wait_timed_out.load(Ordering::Relaxed) => Waited::WaitTimedOut,
         false => Waited::Interrupted,
     }
 }
@@ -256,8 +270,18 @@ pub fn down_mode(cancel: bool) -> DownMode {
 /// How `down` reaches the roles of an installation.
 #[async_trait]
 pub trait Roles: Send + Sync {
-    /// Tells runner `name` to stop in `mode`; `false` when it does not run.
-    async fn stop_runner(&self, name: &str, mode: DownMode) -> Result<bool, String>;
+    /// Tells runner `name` to stop in `mode` (a drain for `reason`); `false` when it does not
+    /// run.
+    async fn stop_runner(
+        &self,
+        name: &str,
+        mode: DownMode,
+        reason: Option<DrainReason>,
+    ) -> Result<bool, String>;
+    /// The running jobs as lines, or `None` when they are not known.
+    async fn running_jobs(&self) -> Option<Vec<String>> {
+        None
+    }
     /// Whether runner `name` still answers on its control channel.
     async fn runner_answers(&self, name: &str) -> bool;
     /// Stops the hub; `false` when it does not run.
@@ -278,8 +302,18 @@ pub struct IpcRoles<'a> {
 
 #[async_trait]
 impl Roles for IpcRoles<'_> {
-    async fn stop_runner(&self, name: &str, mode: DownMode) -> Result<bool, String> {
-        runner(self.layout, &self.principal, name, mode).await
+    async fn stop_runner(
+        &self,
+        name: &str,
+        mode: DownMode,
+        reason: Option<DrainReason>,
+    ) -> Result<bool, String> {
+        runner(self.layout, &self.principal, name, mode, reason).await
+    }
+
+    async fn running_jobs(&self) -> Option<Vec<String>> {
+        let seen = super::upgrade_jobs::activity(self.layout).await;
+        seen.note.is_none().then_some(seen.running)
     }
 
     async fn runner_answers(&self, name: &str) -> bool {
@@ -359,6 +393,18 @@ pub async fn down_with(
     roles: &dyn Roles,
     interrupt: impl Future<Output = ()>,
 ) -> Result<i32, String> {
+    down_for(layout, names, cancel, None, roles, interrupt).await
+}
+
+/// [`down_with`] whose drain tells the runners why (`upgrade` says [`DrainReason::Upgrade`]).
+pub async fn down_for(
+    layout: &Layout,
+    names: Vec<String>,
+    cancel: bool,
+    reason: Option<DrainReason>,
+    roles: &dyn Roles,
+    interrupt: impl Future<Output = ()>,
+) -> Result<i32, String> {
     let explicit = !names.is_empty();
     let targets = down_targets(layout, &names);
     if targets.is_empty() {
@@ -380,7 +426,7 @@ pub async fn down_with(
     let mut waited_for_runners = false;
     for t in &targets {
         match t {
-            Target::Runner(name) => match roles.stop_runner(name, mode).await {
+            Target::Runner(name) => match roles.stop_runner(name, mode, reason).await {
                 Ok(true) => {
                     println!("{name}: stopping ({mode:?})");
                     stopping.push(name.clone());
@@ -417,10 +463,10 @@ pub async fn down_with(
                         false
                     };
                     let waited = match interrupt.take() {
-                        Some(i) => wait_for_runners(any_answers, cancel, i).await,
+                        Some(i) => wait_for_runners(any_answers, cancel, None, i).await,
                         None => {
                             let never = std::future::pending::<()>();
-                            wait_for_runners(any_answers, cancel, never).await
+                            wait_for_runners(any_answers, cancel, None, never).await
                         }
                     };
                     if waited != Waited::Gone {

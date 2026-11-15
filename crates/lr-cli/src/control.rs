@@ -23,9 +23,13 @@ async fn connection(t: Arc<dyn Transport>, control: AgentControl, reload: Reload
     }
     while let Ok(frame) = t.recv().await {
         let reply = match receive::<RunnerControl>(frame.as_bytes(), PeerKind::Ipc) {
-            Ok(Received::Message(RunnerControl::Down { mode })) => {
+            Ok(Received::Message(RunnerControl::Down { mode, reason })) => {
                 match mode {
-                    DownMode::Drain => control.drain(lr_proto::DrainReason::Down).await,
+                    DownMode::Drain => {
+                        control
+                            .drain(reason.unwrap_or(lr_proto::DrainReason::Down))
+                            .await
+                    }
                     DownMode::Cancel => control.cancel_and_stop().await,
                 }
                 ControlReply::Ok
