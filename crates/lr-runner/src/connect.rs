@@ -374,6 +374,11 @@ pub(crate) async fn session(
     let mut last_rx = shared.now();
     loop {
         if s.idle_and_stopping().await && shared.services_down() {
+            if shared.upgrade_ended() {
+                shared.resume_after_upgrade();
+                t.close().await;
+                return lost();
+            }
             s.flush().await;
             shared
                 .diag

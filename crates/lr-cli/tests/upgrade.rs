@@ -370,7 +370,13 @@ async fn ctrl_c_while_waiting_leaves_the_hub_the_broker_and_the_binary_alone() {
         .iter()
         .all(|t| *t == ("r1".to_string(), DownMode::Drain)));
     assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
-    assert!(o.copies.is_empty() && o.started.is_empty());
+    assert!(o.copies.is_empty());
+    assert_eq!(
+        o.started.len(),
+        1,
+        "runners that left come back: {:?}",
+        o.started
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -449,7 +455,13 @@ async fn wait_timeout_stops_the_wait_with_code_1_and_replaces_nothing() {
     let o = run(c).await;
     assert_eq!(o.result, Ok(1));
     assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
-    assert!(o.copies.is_empty() && o.started.is_empty());
+    assert!(o.copies.is_empty());
+    assert_eq!(
+        o.started.len(),
+        1,
+        "runners that left come back: {:?}",
+        o.started
+    );
     assert!(!o.lock_left);
 }
 
@@ -706,4 +718,42 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
         .map(|p| (p.name.as_str(), p.machine.as_deref()))
         .collect();
     assert_eq!(names, [("r1", Some("ci-9")), ("peer", Some("ci-1"))]);
+}
+
+struct BusySecond {
+    applied: Mutex<Vec<String>>,
+    busy_left: Mutex<usize>,
+}
+
+impl System for BusySecond {
+    fn apply(&self, action: &Action) -> Result<(), String> {
+        let text = action.to_string();
+        if text.contains("second") {
+            let mut left = self.busy_left.lock().unwrap();
+            if *left > 0 {
+                *left -= 1;
+                return Err("the file is busy".into());
+            }
+        }
+        self.applied.lock().unwrap().push(text);
+        Ok(())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_busy_second_binary_does_not_make_the_first_one_replaced_again() {
+    let copy = |name: &str| Action::ReplaceBinary {
+        from: std::path::PathBuf::from("new").join(name),
+        to: std::path::PathBuf::from("installed").join(name),
+    };
+    let system = BusySecond {
+        applied: Mutex::new(Vec::new()),
+        busy_left: Mutex::new(3),
+    };
+    lr_cli::commands::upgrade_cmd::replace_binary(&system, &[copy("first"), copy("second")])
+        .await
+        .unwrap();
+    let applied = system.applied.lock().unwrap().clone();
+    assert_eq!(applied.len(), 2, "{applied:?}");
+    assert!(applied[0].contains("first") && applied[1].contains("second"));
 }

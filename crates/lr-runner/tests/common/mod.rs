@@ -50,6 +50,7 @@ pub struct Rig {
     pub disk: FakeDiskSpace,
     pub awake: FakeKeepAwake,
     pub load: FakeHostLoad,
+    pub upgrade_live: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Rig {
@@ -88,6 +89,7 @@ impl Rig {
             disk: FakeDiskSpace::new(),
             awake: FakeKeepAwake::new(),
             load: FakeHostLoad::new(),
+            upgrade_live: None,
         }
     }
 
@@ -128,6 +130,11 @@ impl Rig {
             disk: Arc::new(self.disk.clone()),
             awake: Arc::new(self.awake.clone()),
             load: Some(Arc::new(self.load.clone())),
+            upgrade_live: self.upgrade_live.clone().map(|flag| {
+                let live: lr_runner::UpgradeLive =
+                    Arc::new(move || flag.load(std::sync::atomic::Ordering::SeqCst));
+                live
+            }),
         }
     }
 

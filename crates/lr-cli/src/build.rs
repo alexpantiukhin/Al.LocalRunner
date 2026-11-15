@@ -444,6 +444,10 @@ pub async fn runner(
         disk: Arc::new(host::HostDiskSpace),
         awake: Arc::new(lr_exec::system_keep_awake()),
         load: Some(Arc::new(host_load::SystemHostLoad::new())),
+        upgrade_live: Some({
+            let layout = layout.clone();
+            Arc::new(move || crate::upgrade_lock::live_here(&layout).is_some())
+        }),
     });
     let reload = Arc::new(crate::runner_reload::RunnerReloader::new(
         layout.clone(),

@@ -42,28 +42,50 @@ pub fn lock_path(layout: &Layout) -> PathBuf {
     layout.root.join(FILE)
 }
 
-/// Removes the lock file when dropped.
+/// Removes the lock file when dropped, unless it has become the lock of another process.
 #[derive(Debug)]
 pub struct LockGuard {
     path: PathBuf,
+    pid: u32,
 }
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if read(&self.path).is_none_or(|l| l.pid == self.pid) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
-/// Writes `lock` atomically (a temporary file renamed over the lock) and returns the guard that
-/// removes it.
+/// [`write_with`] with the inspector of this machine.
 pub fn write(layout: &Layout, lock: &UpgradeLock) -> Result<LockGuard, String> {
+    write_with(layout, lock, &lr_exec::OsProcessInspector)
+}
+
+/// Writes `lock` atomically (a temporary file renamed over the lock) and returns the guard that
+/// removes it. Another live upgrade's lock is refused: two upgrades of one installation would
+/// replace the binary under each other.
+pub fn write_with(
+    layout: &Layout,
+    lock: &UpgradeLock,
+    inspector: &dyn ProcessInspector,
+) -> Result<LockGuard, String> {
+    if let Some(other) = live(layout, inspector).filter(|l| l.pid != lock.pid) {
+        return Err(format!(
+            "{}: nothing is changed; wait for it to finish (`localrunner status`)",
+            describe(&other)
+        ));
+    }
     let path = lock_path(layout);
     let text = serde_json::to_string(lock).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("lock.tmp");
     std::fs::create_dir_all(&layout.root).map_err(|e| format!("{}: {e}", layout.root.display()))?;
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(LockGuard { path })
+    Ok(LockGuard {
+        path,
+        pid: lock.pid,
+    })
 }
 
 fn read(path: &Path) -> Option<UpgradeLock> {

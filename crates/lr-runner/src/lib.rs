@@ -27,7 +27,9 @@ mod services;
 mod settings;
 mod source;
 
-pub use agent::{AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps, SettingsCell};
+pub use agent::{
+    AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps, SettingsCell, UpgradeLive,
+};
 pub use cache::{plan_sweep, CacheLayout, WORKSPACE_CLIENT};
 pub use hooks_config::{
     apply_owner_env, CleanupHook, CleanupOn, DEFAULT_CLEANUP_TIMEOUT_S, DEFAULT_HEADROOM_PCT,

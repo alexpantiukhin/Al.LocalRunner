@@ -4,7 +4,7 @@ use common::TempDir;
 use lr_abstractions::fakes::FakeProcessInspector;
 use lr_abstractions::ProcessRef;
 use lr_cli::paths::Layout;
-use lr_cli::upgrade_lock::{blocking, describe, live, lock_path, write, UpgradeLock};
+use lr_cli::upgrade_lock::{blocking, describe, live, lock_path, write, write_with, UpgradeLock};
 use lr_core::Timestamp;
 
 fn layout(dir: &TempDir) -> Layout {
@@ -130,4 +130,37 @@ async fn up_refuses_while_a_live_lock_of_another_process_exists() {
     child.kill().unwrap();
     child.wait().unwrap();
     assert_eq!(code, Ok(1));
+}
+
+#[test]
+fn a_second_upgrade_is_refused_while_the_first_lock_is_live() {
+    let dir = TempDir::new("upgrade_lock");
+    let l = layout(&dir);
+    let _first = write_with(&l, &lock(10, 1), &running(10, 1)).unwrap();
+    let refused = write_with(&l, &lock(20, 2), &running(10, 1)).unwrap_err();
+    assert!(
+        refused.contains("upgrade to 0.5.0 runs (pid 10"),
+        "{refused}"
+    );
+    assert_eq!(live(&l, &running(10, 1)).map(|k| k.pid), Some(10));
+}
+
+#[test]
+fn a_dead_lock_is_replaced_by_the_next_upgrade() {
+    let dir = TempDir::new("upgrade_lock");
+    let l = layout(&dir);
+    std::fs::create_dir_all(&l.root).unwrap();
+    std::fs::write(lock_path(&l), serde_json::to_string(&lock(10, 1)).unwrap()).unwrap();
+    let _guard = write_with(&l, &lock(20, 2), &FakeProcessInspector::new()).unwrap();
+    assert_eq!(live(&l, &running(20, 2)).map(|k| k.pid), Some(20));
+}
+
+#[test]
+fn a_guard_does_not_remove_the_lock_of_another_process() {
+    let dir = TempDir::new("upgrade_lock");
+    let l = layout(&dir);
+    let guard = write_with(&l, &lock(10, 1), &FakeProcessInspector::new()).unwrap();
+    std::fs::write(lock_path(&l), serde_json::to_string(&lock(20, 2)).unwrap()).unwrap();
+    drop(guard);
+    assert_eq!(live(&l, &running(20, 2)).map(|k| k.pid), Some(20));
 }

@@ -152,17 +152,21 @@ pub fn restart_summary(running: &RunningRoles, service: bool) -> String {
         .join(", ")
 }
 
-/// Applies the copies; a stopped role may hold its binary for a few seconds more, so a failure
-/// is retried for [`BUSY_FOR`] before it is reported.
-async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), String> {
+/// Applies the copies one by one; a stopped role may hold its binary for a few seconds more, so
+/// a failing copy is retried for [`BUSY_FOR`] before it is reported. A copy that succeeded is
+/// not applied again: it would replace the saved old file with the new binary.
+pub async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), String> {
     let start = tokio::time::Instant::now();
-    loop {
-        match apply_all(system, copies) {
-            Err(e) if start.elapsed() >= BUSY_FOR => return Err(e),
-            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
-            Ok(()) => return Ok(()),
+    for copy in copies {
+        loop {
+            match apply_all(system, std::slice::from_ref(copy)) {
+                Err(e) if start.elapsed() >= BUSY_FOR => return Err(e),
+                Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+                Ok(()) => break,
+            }
         }
     }
+    Ok(())
 }
 
 /// The version `path --version` prints; `None` when it does not run or prints none.
@@ -352,6 +356,9 @@ impl Job<'_> {
             &UpgradeLock::of_this_process(&self.new.text, super::timefmt::now()),
         )?;
         if !self.stop_roles(roles, mode, interrupt).await? {
+            if !self.running.runners.is_empty() {
+                let _ = up_with(self.layout, Some(RoleArg::Runner), STARTED_WITHIN, start).await;
+            }
             return Ok(1);
         }
         let replaced = replace_binary(system, &copies).await;

@@ -9,6 +9,7 @@ use lr_core::{JobState, Timestamp};
 use lr_proto::{BrokerToRunner, ReasonCode, RunnerToBroker, StopService};
 use lr_runner::{AgentExit, RunnerSettings};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 const SEC: Duration = Duration::from_secs(1);
@@ -205,6 +206,63 @@ async fn drain_carries_its_reason_to_the_broker() {
             reason: Some(lr_proto::DrainReason::Upgrade)
         }
     );
+}
+
+fn upgrade_flag(live: bool) -> Arc<std::sync::atomic::AtomicBool> {
+    Arc::new(std::sync::atomic::AtomicBool::new(live))
+}
+
+#[tokio::test]
+async fn a_runner_drained_for_an_upgrade_that_ended_takes_work_again() {
+    let mut rig = Rig::new();
+    rig.upgrade_live = Some(upgrade_flag(false));
+    rig.files.mkdir(std::path::Path::new("/w/tree"));
+    rig.script(
+        "job-2",
+        JobScript::new(vec![StepScript::new(std::time::Duration::ZERO, 0)]),
+    );
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    c.drain(lr_proto::DrainReason::Upgrade).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    rig.advance(Duration::from_secs(2)).await;
+    let b2 = Broker::accept(&rig).await;
+    assert!(!h.is_finished(), "the runner did not leave");
+    b2.assign(
+        "job-2",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    let r = result_of(&b2.until_result().await);
+    assert_eq!(r.job.0, "job-2");
+    assert_ne!(
+        r.reason,
+        Some(ReasonCode::RunnerDraining),
+        "it is not draining any more"
+    );
+}
+
+#[tokio::test]
+async fn a_runner_drained_for_an_upgrade_that_still_runs_leaves() {
+    let mut rig = Rig::new();
+    rig.upgrade_live = Some(upgrade_flag(true));
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    c.drain(lr_proto::DrainReason::Upgrade).await;
+    b.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
+    h.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_plain_down_leaves_even_when_no_upgrade_runs() {
+    let mut rig = Rig::new();
+    rig.upgrade_live = Some(upgrade_flag(false));
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    c.drain(lr_proto::DrainReason::Down).await;
+    b.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
+    h.await.unwrap();
 }
 
 #[tokio::test]

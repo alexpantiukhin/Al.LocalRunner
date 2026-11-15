@@ -61,6 +61,10 @@ impl SettingsCell {
     }
 }
 
+/// Tells whether an `upgrade` that asked this runner to drain still runs; the assembly passes a
+/// check of `upgrade.lock`.
+pub type UpgradeLive = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// Everything a runner agent works with; the assembly passes real implementations, tests the
 /// fakes of `lr-abstractions`.
 pub struct RunnerDeps {
@@ -86,6 +90,10 @@ pub struct RunnerDeps {
     pub meter: Arc<dyn Meter>,
     /// Settings of this runner.
     pub settings: SettingsCell,
+    /// Whether an upgrade runs. A runner that drains for an upgrade (or because one ran when it
+    /// started) and finds none left when it would leave resumes instead: the upgrade ended
+    /// without replacing it. `None`: the runner always leaves.
+    pub upgrade_live: Option<UpgradeLive>,
     /// Free space of volumes (`disk_mb`).
     pub disk: Arc<dyn DiskSpace>,
     /// Keeps the machine awake while a job runs.
@@ -200,6 +208,29 @@ impl Shared {
     pub(crate) fn job_settings(&self) -> Arc<RunnerSettings> {
         let held = self.state().job.as_ref().map(|c| c.settings.clone());
         held.unwrap_or_else(|| self.deps.settings.get())
+    }
+
+    /// A drain for an upgrade whose upgrade is gone: the runner takes work again instead of
+    /// leaving.
+    pub(crate) fn upgrade_ended(&self) -> bool {
+        let Some(live) = &self.deps.upgrade_live else {
+            return false;
+        };
+        let reason = self.state().drain_reason;
+        matches!(reason, Some(DrainReason::Upgrade | DrainReason::Lock)) && !live()
+    }
+
+    pub(crate) fn resume_after_upgrade(&self) {
+        {
+            let mut st = self.state();
+            st.draining = false;
+            st.drain_reason = None;
+        }
+        self.diag.event(
+            Level::Info,
+            "the upgrade ended without replacing this runner, resuming",
+            &[],
+        );
     }
 
     pub(crate) fn marker(&self) -> PathBuf {
