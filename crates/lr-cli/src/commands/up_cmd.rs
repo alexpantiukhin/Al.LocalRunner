@@ -254,6 +254,13 @@ pub async fn up_with(
     within: Duration,
     start: Spawn<'_>,
 ) -> Result<i32, String> {
+    if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
+        eprintln!(
+            "{}: nothing is started; wait for it to finish (`localrunner status`) instead of              running `up` again",
+            crate::upgrade_lock::describe(&lock)
+        );
+        return Ok(1);
+    }
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);

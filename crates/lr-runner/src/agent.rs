@@ -326,11 +326,7 @@ impl RunnerAgent {
     /// lost, however long a dial or a welcome takes.
     pub async fn run(mut self) -> AgentExit {
         let shared = self.shared.clone();
-        shared.diag.event(
-            Level::Info,
-            "runner started",
-            &[("version", env!("CARGO_PKG_VERSION"))],
-        );
+        shared.diag.event(Level::Info, "runner started", &[]);
         recover(&shared).await;
         let mut slot = JobSlot::default();
         let mut backoff = MIN_BACKOFF;

@@ -187,6 +187,13 @@ pub async fn start_runners(
             eprintln!("runner {n}: {p}");
         }
         let control = parts.agent.control();
+        if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
+            eprintln!(
+                "runner {n}: {}: starting in drain, it leaves once idle",
+                crate::upgrade_lock::describe(&lock)
+            );
+            control.drain(lr_proto::DrainReason::Lock).await;
+        }
         running.listeners.push(parts.control.clone());
         let listener: Arc<dyn Listener> = parts.control;
         let reload = build::logging_reloader(layout, &parts.logger);

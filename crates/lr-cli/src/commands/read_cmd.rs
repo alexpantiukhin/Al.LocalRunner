@@ -235,8 +235,15 @@ pub async fn runners(layout: &Layout, a: RunnersArgs) -> Result<i32, String> {
             .iter()
             .map(|(b, r)| json!({ "broker": b, "runners": r }))
             .collect();
-        print_json(&json!({ "brokers": brokers, "problems": problems }))?;
+        let mut out = json!({ "brokers": brokers, "problems": problems });
+        if let Some(lock) = crate::upgrade_lock::live_here(layout) {
+            out["upgrade"] = json!(crate::upgrade_lock::describe(&lock));
+        }
+        print_json(&out)?;
     } else {
+        if let Some(lock) = crate::upgrade_lock::live_here(layout) {
+            println!("{}", crate::upgrade_lock::describe(&lock));
+        }
         for line in runner_lines(&per) {
             println!("{line}");
         }

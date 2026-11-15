@@ -274,12 +274,18 @@ pub async fn status(
     if json_out {
         let mut out = status_json(&views);
         add_ages(&mut out, now);
+        if let Some(lock) = crate::upgrade_lock::live_here(layout) {
+            out["upgrade"] = json!(crate::upgrade_lock::describe(&lock));
+        }
         out["problems"] = json!(problems);
         println!(
             "{}",
             serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?
         );
     } else {
+        if let Some(lock) = crate::upgrade_lock::live_here(layout) {
+            println!("{}", crate::upgrade_lock::describe(&lock));
+        }
         let text = status_text(&views, now);
         if !text.is_empty() {
             println!("{text}");
