@@ -13,6 +13,9 @@ pub struct Gate {
     pub hang_dials: Arc<AtomicBool>,
     pub stall_sends: Arc<AtomicBool>,
     pub sent: Arc<AtomicUsize>,
+    pub received: Arc<AtomicUsize>,
+    pub pipe: Arc<AtomicUsize>,
+    pub drained: Arc<AtomicUsize>,
     pub refusal: Arc<Mutex<Option<String>>>,
     pub split_frames: Arc<AtomicBool>,
 }
@@ -37,6 +40,20 @@ impl Gate {
     pub fn sent(&self) -> usize {
         self.sent.load(Ordering::SeqCst)
     }
+
+    pub fn received(&self) -> usize {
+        self.received.load(Ordering::SeqCst)
+    }
+
+    /// Limits the runner's frames the peer has not read yet to `frames`; a send beyond that waits.
+    pub fn limit_pipe(&self, frames: usize) {
+        self.drained.store(self.sent(), Ordering::SeqCst);
+        self.pipe.store(frames, Ordering::SeqCst);
+    }
+
+    pub fn peer_read_one(&self) {
+        self.drained.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 pub struct GatedDialer {
@@ -59,12 +76,21 @@ impl Transport for GatedTransport {
         if self.gate.stall_sends.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
         }
+        loop {
+            let pipe = self.gate.pipe.load(Ordering::SeqCst);
+            let unread = self.gate.sent() - self.gate.drained.load(Ordering::SeqCst);
+            if pipe == 0 || unread < pipe {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
         self.gate.sent.fetch_add(1, Ordering::SeqCst);
         self.inner.send(frame).await
     }
 
     async fn recv(&self) -> Result<Frame, TransportError> {
         let frame = self.inner.recv().await?;
+        self.gate.received.fetch_add(1, Ordering::SeqCst);
         while self.gate.split_frames.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }

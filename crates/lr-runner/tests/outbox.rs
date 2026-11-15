@@ -5,8 +5,8 @@ use lr_abstractions::fakes::{JobScript, StepScript};
 use lr_abstractions::{OutboxKind, RunnerStore};
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{
-    classify_seq, BrokerToRunner, DedupKey, ProtocolError, ProtocolErrorCode, RunnerToBroker,
-    SeqCheck, Sequenced, CHUNK_TEXT_LIMIT,
+    classify_seq, BrokerToRunner, Chunk, DedupKey, ProtocolError, ProtocolErrorCode,
+    RunnerToBroker, SeqCheck, Sequenced, CHUNK_TEXT_LIMIT,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -279,4 +279,53 @@ async fn finished_jobs_older_than_a_day_are_forgotten_at_start() {
     let (_c, _h) = rig.start();
     let _b = Broker::accept(&rig).await;
     assert_eq!(rig.store.last_seq(&job).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn a_tail_longer_than_the_brokers_queue_is_delivered_and_acknowledged() {
+    const TAIL: usize = 3000;
+    const BROKER_QUEUE: usize = 1024;
+    const PIPE: usize = 8;
+    let rig = Rig::new();
+    let job = JobId("job-1".into());
+    for i in 0..TAIL {
+        let chunk = RunnerToBroker::Chunk(Chunk {
+            job: job.clone(),
+            seq: 0,
+            step: None,
+            text: format!("line {i}\n"),
+        });
+        rig.store
+            .push_outbox(
+                &job,
+                OutboxKind::Chunk,
+                serde_json::to_string(&chunk).unwrap(),
+                Timestamp(START),
+            )
+            .await
+            .unwrap();
+    }
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    rig.gate.limit_pipe(PIPE);
+    let got = b.read_acking(&rig.gate, BROKER_QUEUE, TAIL, 20_000).await;
+    assert_eq!(
+        got.len(),
+        TAIL,
+        "the whole tail arrives; the runner stalled after {} frames",
+        got.len()
+    );
+    assert!(
+        got.iter()
+            .enumerate()
+            .all(|(i, m)| m.sequence().unwrap().1 == i as u64 + 1),
+        "the tail arrives in order"
+    );
+    for _ in 0..20_000 {
+        if rig.pending().await.is_empty() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("{} frames stay unacknowledged", rig.pending().await.len());
 }

@@ -171,6 +171,7 @@ pub struct Broker {
     pub t: Box<dyn Transport>,
     pub hello: Hello,
     pub auto_ack: bool,
+    pub sent: AtomicUsize,
 }
 
 impl Broker {
@@ -188,6 +189,7 @@ impl Broker {
             t,
             hello,
             auto_ack: true,
+            sent: AtomicUsize::new(0),
         };
         b.send(BrokerToRunner::Welcome(Welcome {
             version: PROTOCOL_VERSION,
@@ -200,7 +202,43 @@ impl Broker {
     }
 
     pub async fn send(&self, msg: BrokerToRunner) {
+        self.sent.fetch_add(1, Ordering::SeqCst);
         self.t.send(Frame::json(&msg).unwrap()).await.unwrap();
+    }
+
+    /// Reads and acknowledges `want` job messages the way the real broker does: it stops reading
+    /// the runner while `window` or more of its frames sit unread on the runner's side. Gives up
+    /// after `spins` scheduler turns of that stall and returns what it has.
+    pub async fn read_acking(
+        &self,
+        gate: &Gate,
+        window: usize,
+        want: usize,
+        spins: usize,
+    ) -> Vec<RunnerToBroker> {
+        let mut got = Vec::new();
+        let mut stalled = 0;
+        while got.len() < want {
+            if self.sent.load(Ordering::SeqCst) - gate.received() >= window {
+                stalled += 1;
+                if stalled > spins {
+                    break;
+                }
+                tokio::task::yield_now().await;
+                continue;
+            }
+            let Some(msg) = self.recv().await else { break };
+            gate.peer_read_one();
+            if let Some((job, seq)) = msg.sequence() {
+                self.send(BrokerToRunner::Ack(Ack {
+                    job: job.clone(),
+                    seq,
+                }))
+                .await;
+                got.push(msg);
+            }
+        }
+        got
     }
 
     pub async fn recv(&self) -> Option<RunnerToBroker> {

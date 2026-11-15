@@ -9,7 +9,7 @@ use lr_proto::{
     ProtocolErrorCode, ReasonCode, Received, Resume, ResumePoint, RunnerToBroker,
     HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE, PROTOCOL_VERSION,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -45,6 +45,25 @@ async fn send_within(s: &Shared, t: &dyn Transport, frame: Frame, limit: Duratio
     }
 }
 
+struct Inbox {
+    frames: mpsc::Receiver<Frame>,
+    held: VecDeque<Frame>,
+    heard: bool,
+}
+
+impl Inbox {
+    async fn next(&mut self) -> Option<Frame> {
+        if let Some(frame) = self.held.pop_front() {
+            return Some(frame);
+        }
+        self.frames.recv().await
+    }
+
+    fn take_heard(&mut self) -> bool {
+        std::mem::take(&mut self.heard)
+    }
+}
+
 impl Session<'_> {
     pub(crate) async fn send(&self, msg: &RunnerToBroker) -> bool {
         match Frame::json(msg) {
@@ -70,16 +89,79 @@ impl Session<'_> {
         .await
     }
 
-    async fn flush(&mut self) -> bool {
+    /// Sends one frame while reading what the broker says. The broker acknowledges every job
+    /// frame and stops reading the runner once its queue of acknowledgements for this peer is
+    /// full, so a sender that does not read them deadlocks against it. Acknowledgements are
+    /// applied at once; other frames wait in `inbox` until the send is over, because handling
+    /// them may need to send, and the write in flight must neither be cut nor overtaken.
+    async fn send_reading(&self, frame: Frame, inbox: &mut Inbox) -> bool {
+        let send = send_within(self.shared, self.t, frame, self.limit);
+        tokio::pin!(send);
+        loop {
+            tokio::select! {
+                sent = &mut send => return sent,
+                got = inbox.frames.recv() => match got {
+                    Some(frame) => {
+                        inbox.heard = true;
+                        self.absorb(frame, inbox).await;
+                    }
+                    None => return false,
+                },
+            }
+        }
+    }
+
+    async fn send_msg_reading(&self, msg: &RunnerToBroker, inbox: &mut Inbox) -> bool {
+        match Frame::json(msg) {
+            Ok(f) => self.send_reading(f, inbox).await,
+            Err(_) => false,
+        }
+    }
+
+    async fn absorb(&self, frame: Frame, inbox: &mut Inbox) {
+        match receive::<BrokerToRunner>(frame.as_bytes(), self.kind) {
+            Ok(Received::Message(BrokerToRunner::Ack(a))) => self.on_ack(&a).await,
+            Ok(Received::Message(BrokerToRunner::Resume(r))) => self.on_resume(&r).await,
+            _ => inbox.held.push_back(frame),
+        }
+    }
+
+    async fn on_ack(&self, a: &Ack) {
+        if let Err(e) = self.shared.deps.store.ack_outbox(&a.job, a.seq).await {
+            self.shared.diag.event(
+                Level::Error,
+                "ack not stored",
+                &[("job", &a.job.0), ("error", &e.to_string())],
+            );
+        }
+        self.shared.wake.notify_one();
+    }
+
+    async fn on_resume(&self, r: &Resume) {
+        for p in r.points.iter().filter(|p| p.last_seq > 0) {
+            if let Err(e) = self.shared.deps.store.ack_outbox(&p.job, p.last_seq).await {
+                self.shared.diag.event(
+                    Level::Error,
+                    "resume not applied to the outbox",
+                    &[("job", &p.job.0), ("error", &e.to_string())],
+                );
+            }
+        }
+    }
+
+    async fn flush(&mut self, inbox: &mut Inbox) -> bool {
         let services = std::mem::take(&mut self.shared.state().services.dirty);
         if services {
             let report = self.shared.services().report(self.shared.now()).await;
-            if !self.send(&RunnerToBroker::ServicesReport(report)).await {
+            if !self
+                .send_msg_reading(&RunnerToBroker::ServicesReport(report), inbox)
+                .await
+            {
                 return false;
             }
         }
         for frame in self.replay.frames(&self.shared.outbox).await {
-            if !send_within(self.shared, self.t, frame, self.limit).await {
+            if !self.send_reading(frame, inbox).await {
                 return false;
             }
         }
@@ -87,9 +169,10 @@ impl Session<'_> {
         if dirty {
             let capabilities = self.shared.capabilities().await;
             return self
-                .send(&RunnerToBroker::CapabilitiesUpdate(CapabilitiesUpdate {
-                    capabilities,
-                }))
+                .send_msg_reading(
+                    &RunnerToBroker::CapabilitiesUpdate(CapabilitiesUpdate { capabilities }),
+                    inbox,
+                )
                 .await;
         }
         true
@@ -162,29 +245,9 @@ impl Session<'_> {
                 return Step::Go;
             }
         };
-        let d = &self.shared.deps;
         match msg {
-            BrokerToRunner::Ack(a) => {
-                if let Err(e) = d.store.ack_outbox(&a.job, a.seq).await {
-                    self.shared.diag.event(
-                        Level::Error,
-                        "ack not stored",
-                        &[("job", &a.job.0), ("error", &e.to_string())],
-                    );
-                }
-                self.shared.wake.notify_one();
-            }
-            BrokerToRunner::Resume(r) => {
-                for p in r.points.iter().filter(|p| p.last_seq > 0) {
-                    if let Err(e) = d.store.ack_outbox(&p.job, p.last_seq).await {
-                        self.shared.diag.event(
-                            Level::Error,
-                            "resume not applied to the outbox",
-                            &[("job", &p.job.0), ("error", &e.to_string())],
-                        );
-                    }
-                }
-            }
+            BrokerToRunner::Ack(a) => self.on_ack(&a).await,
+            BrokerToRunner::Resume(r) => self.on_resume(&r).await,
             BrokerToRunner::Assign(a) => on_assign(self, a).await,
             BrokerToRunner::Cancel(c) => on_cancel(self, c).await,
             BrokerToRunner::StopService(s) => self.shared.stop_service_detached(s.name),
@@ -347,24 +410,29 @@ pub(crate) async fn session(
         limit: silence,
     };
     let lost = || End::Lost { welcomed: true };
+    let (_reader, frames) = read_frames(transport.clone());
+    let mut inbox = Inbox {
+        frames,
+        held: VecDeque::new(),
+        heard: false,
+    };
     let points = s.resume_points().await;
     let report = shared.services().report(shared.now()).await;
     if !s.send(&RunnerToBroker::Resume(Resume { points })).await
         || !s.send(&RunnerToBroker::ServicesReport(report)).await
-        || !s.flush().await
+        || !s.flush(&mut inbox).await
     {
         return lost();
     }
     if shared.state().draining && !s.send(&RunnerToBroker::Drain).await {
         return lost();
     }
-    let (_reader, mut frames) = read_frames(transport.clone());
     let clock = shared.deps.clock.clone();
     let mut next_beat = after(shared.now(), heartbeat);
     let mut last_rx = shared.now();
     loop {
         if s.idle_and_stopping().await && shared.services_down() {
-            s.flush().await;
+            s.flush(&mut inbox).await;
             s.send(&RunnerToBroker::Bye(Bye {
                 reason: Some("runner stopped".into()),
             }))
@@ -374,7 +442,7 @@ pub(crate) async fn session(
         }
         let deadline = after(last_rx, silence);
         tokio::select! {
-            f = frames.recv() => match f {
+            f = inbox.next() => match f {
                 Some(frame) => {
                     last_rx = shared.now();
                     if let Step::End(end) = s.handle(frame).await {
@@ -384,8 +452,11 @@ pub(crate) async fn session(
                 None => return lost(),
             },
             _ = shared.wake.notified() => {
-                if !s.flush().await {
+                if !s.flush(&mut inbox).await {
                     return lost();
+                }
+                if inbox.take_heard() {
+                    last_rx = shared.now();
                 }
             }
             _ = clock.sleep_until(next_beat) => {
