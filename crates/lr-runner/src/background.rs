@@ -37,7 +37,11 @@ fn kill_at(shared: &Shared) -> Option<Timestamp> {
     let st = shared.state();
     match (&st.job, st.lost_since) {
         (Some(cur), Some(since)) if !cur.lost_killed => {
-            let grace = shared.deps.settings.lost_kill_s(st.broker_lost_kill_s);
+            let grace = shared
+                .deps
+                .settings
+                .get()
+                .lost_kill_s(st.broker_lost_kill_s);
             Some(after(since, Duration::from_secs(grace)))
         }
         _ => None,

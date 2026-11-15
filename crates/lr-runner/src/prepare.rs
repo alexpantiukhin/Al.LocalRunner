@@ -139,13 +139,13 @@ pub(crate) async fn step_secrets(
 }
 
 pub(crate) fn base_env(shared: &Shared) -> Vec<(String, String)> {
-    shared.deps.settings.base_env()
+    shared.job_settings().base_env()
 }
 
 pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
     let mut env = base_env(shared);
     env.push(("LOCALRUNNER_JOB_ID".to_string(), job.0.clone()));
-    if !shared.deps.settings.cleanup.is_empty() {
+    if !shared.job_settings().cleanup.is_empty() {
         env.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
     }
     env
@@ -154,7 +154,7 @@ pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
 /// Directory of the runner's state that holds the private temporary directories of jobs; what
 /// a crash leaves in it is removed when the runner starts.
 pub(crate) fn jobs_temp(shared: &Shared) -> PathBuf {
-    shared.deps.settings.state_dir.join("tmp")
+    shared.fixed.state_dir.join("tmp")
 }
 
 /// The private temporary directory of a job: what the job writes there is measured against its

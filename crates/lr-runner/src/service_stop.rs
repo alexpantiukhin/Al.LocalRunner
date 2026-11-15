@@ -105,8 +105,7 @@ impl Shared {
     /// [`STOP_MARGIN`] (runner stop).
     pub(crate) async fn stop_all_services(self: &Arc<Self>) {
         let longest = self
-            .deps
-            .settings
+            .fixed
             .services
             .values()
             .map(|s| s.stop_timeout_s)

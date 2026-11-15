@@ -27,7 +27,7 @@ fn hook_spec(
         job: JobId(format!("{}.cleanup.{}", job.0, hook.name)),
         steps: vec![JobStep::from(step)],
         timeout_s: hook.timeout_s,
-        cwd: shared.deps.settings.state_dir.clone(),
+        cwd: shared.fixed.state_dir.clone(),
         env: vars.to_vec(),
         cancel_grace: DEFAULT_CANCEL_GRACE,
         limits: Default::default(),
@@ -76,7 +76,8 @@ async fn run_hook(shared: &Shared, job: &JobId, hook: &CleanupHook, vars: &[(Str
 /// Runs the `[[cleanup]]` hooks that apply to `how` the job ended, one after another, each as
 /// a short job of its own; a failing hook only logs a warning and never changes the result.
 pub(crate) async fn run_cleanup(shared: &Shared, job: &JobId, how: CleanupOn) {
-    let hooks = &shared.deps.settings.cleanup;
+    let settings = shared.job_settings();
+    let hooks = &settings.cleanup;
     if hooks.iter().all(|h| !h.on.contains(&how)) {
         return;
     }
@@ -84,7 +85,7 @@ pub(crate) async fn run_cleanup(shared: &Shared, job: &JobId, how: CleanupOn) {
     if !vars.iter().any(|(n, _)| n == "LOCALRUNNER_JOB_LABEL") {
         vars.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
     }
-    apply_owner_env(&mut vars, &shared.deps.settings.job_env);
+    apply_owner_env(&mut vars, &settings.job_env);
     for hook in hooks.iter().filter(|h| h.on.contains(&how)) {
         run_hook(shared, job, hook, &vars).await;
     }

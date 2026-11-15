@@ -418,7 +418,7 @@ pub async fn runner(
         files: Arc::new(StdFiles),
         log: logger.clone(),
         meter: logger.metrics(),
-        settings: cfg.settings,
+        settings: lr_runner::SettingsCell::new(cfg.settings),
         disk: Arc::new(host::HostDiskSpace),
         awake: Arc::new(lr_exec::system_keep_awake()),
         load: Some(Arc::new(host_load::SystemHostLoad::new())),

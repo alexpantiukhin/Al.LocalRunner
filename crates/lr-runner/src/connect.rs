@@ -233,7 +233,7 @@ async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
     let capabilities = s.capabilities().await;
     let msg = RunnerToBroker::Hello(Hello {
         version: PROTOCOL_VERSION,
-        name: s.deps.settings.name.clone(),
+        name: s.fixed.name.clone(),
         capabilities: Some(capabilities),
     });
     let frame = Frame::json(&msg).map_err(|_| End::Lost { welcomed: false })?;

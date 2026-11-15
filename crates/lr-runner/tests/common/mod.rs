@@ -124,7 +124,7 @@ impl Rig {
             files: Arc::new(self.files.clone()),
             log: self.log.clone(),
             meter: self.meter.clone(),
-            settings: self.settings.clone(),
+            settings: lr_runner::SettingsCell::new(self.settings.clone()),
             disk: Arc::new(self.disk.clone()),
             awake: Arc::new(self.awake.clone()),
             load: Some(Arc::new(self.load.clone())),
