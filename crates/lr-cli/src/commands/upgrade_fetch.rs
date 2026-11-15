@@ -6,6 +6,9 @@ use crate::paths::Layout;
 use crate::release::{fetch_release, from_offline, latest_version, Fetch};
 use std::path::{Path, PathBuf};
 
+/// Runs the downloaded binary with an argument list and returns its exit code.
+pub type Spawn<'a> = dyn Fn(&Path, &[String]) -> Result<i32, String> + 'a;
+
 /// Whether `exe` is the file installed at `installed`.
 pub fn is_installed(exe: &Path, installed: &Path) -> bool {
     matches!((exe.canonicalize(), installed.canonicalize()), (Ok(a), Ok(b)) if a == b)
@@ -71,7 +74,7 @@ pub fn fetch_and_relaunch(
     args: &UpgradeArgs,
     fetch: &dyn Fetch,
     keys: &[String],
-    spawn: &dyn Fn(&Path, &[String]) -> Result<i32, String>,
+    spawn: &Spawn,
 ) -> Result<i32, String> {
     let dir = scratch_dir()?;
     let run = || {

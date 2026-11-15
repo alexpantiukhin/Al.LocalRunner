@@ -449,9 +449,11 @@ pub async fn runner(
         layout.clone(),
         name,
         config,
-        applied,
-        &text,
-        broker,
+        crate::runner_reload::Started {
+            config: applied,
+            text,
+            broker,
+        },
         agent.control(),
         logger.metrics(),
     ));

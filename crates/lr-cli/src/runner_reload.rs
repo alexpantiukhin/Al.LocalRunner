@@ -50,6 +50,17 @@ pub fn disk_differs(text_on_disk: &str, applied_hash: &str) -> bool {
     hash_text(text_on_disk) != applied_hash
 }
 
+/// What a runner started with: its parsed `runner.toml`, the text it was parsed from and the
+/// broker it connected to.
+pub struct Started {
+    /// The parsed file.
+    pub config: RunnerConfig,
+    /// The text of the file (empty without one).
+    pub text: String,
+    /// Where the broker is.
+    pub broker: BrokerAddress,
+}
+
 struct Applied {
     hash: String,
     config: RunnerConfig,
@@ -73,9 +84,7 @@ impl RunnerReloader {
         layout: Layout,
         name: &str,
         config: Option<&Path>,
-        applied: RunnerConfig,
-        applied_text: &str,
-        broker: BrokerAddress,
+        started: Started,
         control: AgentControl,
         meter: Arc<dyn Meter>,
     ) -> RunnerReloader {
@@ -84,9 +93,9 @@ impl RunnerReloader {
             name: name.to_string(),
             config: config.map(Path::to_path_buf),
             applied: Mutex::new(Applied {
-                hash: hash_text(applied_text),
-                config: applied,
-                broker,
+                hash: hash_text(&started.text),
+                config: started.config,
+                broker: started.broker,
             }),
             control,
             meter,

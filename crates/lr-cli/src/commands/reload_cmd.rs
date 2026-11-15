@@ -69,13 +69,13 @@ async fn broker(layout: &Layout) -> Outcome {
 }
 
 fn wanted(target: &Target, role: Option<RoleArg>) -> bool {
-    match (role, target) {
-        (None | Some(RoleArg::All), _) => true,
-        (Some(RoleArg::Runner), Target::Runner(_)) => true,
-        (Some(RoleArg::Hub), Target::Hub) => true,
-        (Some(RoleArg::Broker), Target::Broker) => true,
-        _ => false,
-    }
+    matches!(
+        (role, target),
+        (None | Some(RoleArg::All), _)
+            | (Some(RoleArg::Runner), Target::Runner(_))
+            | (Some(RoleArg::Hub), Target::Hub)
+            | (Some(RoleArg::Broker), Target::Broker)
+    )
 }
 
 /// Sends `reload` to the roles selected by `role` and `name` (a runner, or `hub` or `broker`);
