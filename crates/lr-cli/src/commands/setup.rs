@@ -76,6 +76,18 @@ pub fn install_plan(exe: PathBuf, dir: PathBuf) -> Vec<Action> {
     out
 }
 
+/// The plan of `upgrade`: each binary of the new build replaces the installed one by renaming
+/// that aside, so a running client keeps its file.
+pub fn upgrade_plan(exe: PathBuf, dir: PathBuf) -> Vec<Action> {
+    binaries()
+        .into_iter()
+        .filter_map(|name| {
+            let (from, to) = (exe.with_file_name(name), dir.join(name));
+            (from != to).then_some(Action::ReplaceBinary { from, to })
+        })
+        .collect()
+}
+
 fn system(dry_run: bool) -> &'static dyn System {
     if dry_run {
         &DryRun

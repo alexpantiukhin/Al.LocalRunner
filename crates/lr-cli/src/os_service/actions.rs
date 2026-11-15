@@ -277,6 +277,7 @@ impl System for OsSystem {
                 }
                 std::fs::copy(from, to).map(|_| ()).map_err(|e| io(to, e))
             }
+            Action::ReplaceBinary { from, to } => replace_binary(from, to),
             Action::RemoveFile(p) => match super::self_remove::remove_file(p) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(p, e)),
                 _ => Ok(()),
@@ -306,6 +307,29 @@ impl System for OsSystem {
             }
             Action::SecureServiceDir { path, account } => secure_service_dir(path, account),
             Action::EnsureMacAccount { name, home } => ensure_mac_account(name, home),
+        }
+    }
+}
+
+fn replace_binary(from: &Path, to: &Path) -> Result<(), String> {
+    let io = |p: &Path, e: std::io::Error| format!("{}: {e}", p.display());
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
+    }
+    let old = super::self_remove::old_name(to);
+    let had = std::fs::symlink_metadata(to).is_ok();
+    if had {
+        let _ = std::fs::remove_file(&old);
+        std::fs::rename(to, &old).map_err(|e| io(to, e))?;
+    }
+    match std::fs::copy(from, to) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if had {
+                let _ = std::fs::remove_file(to);
+                let _ = std::fs::rename(&old, to);
+            }
+            Err(io(from, e))
         }
     }
 }

@@ -12,7 +12,7 @@ use lr_cli::commands::upgrade_jobs::Activity;
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
 use lr_proto::{DownMode, DrainReason};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 fn v(text: &str) -> lr_cli::commands::upgrade_cmd::Version {
@@ -480,4 +480,107 @@ fn the_wait_prints_the_jobs_and_the_elapsed_time() {
     assert_eq!(lines, ["j1 on r1 (tests)", "waited 3m05s"]);
     let idle = Activity::default().waiting_lines(std::time::Duration::from_secs(2));
     assert_eq!(idle, ["waited 2.0s"]);
+}
+
+fn put(path: &Path, text: &str) {
+    std::fs::write(path, text).unwrap();
+}
+
+fn text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[test]
+fn replace_binary_puts_the_new_file_in_place_and_keeps_the_old_aside() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    put(&to, "old");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert_eq!(text(&dir.path().join("localrunner.old")), "old");
+}
+
+#[test]
+fn replace_binary_removes_a_previous_aside_file_first() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_twice");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    put(&to, "old");
+    put(&dir.path().join("localrunner.old"), "ancient");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert_eq!(text(&dir.path().join("localrunner.old")), "old");
+}
+
+#[test]
+fn replace_binary_restores_the_old_file_when_the_copy_fails() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_fails");
+    let to = dir.path().join("localrunner");
+    put(&to, "old");
+    let failed = OsSystem.apply(&Action::ReplaceBinary {
+        from: dir.path().join("missing"),
+        to: to.clone(),
+    });
+    assert!(failed.is_err());
+    assert_eq!(text(&to), "old");
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn replace_binary_installs_when_nothing_is_there_yet() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_fresh");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn a_leftover_aside_file_is_removed_and_a_missing_one_is_not_an_error() {
+    use lr_cli::os_service::remove_leftover;
+    let dir = TempDir::new("leftover");
+    let binary = dir.path().join("localrunner");
+    remove_leftover(&binary);
+    put(&dir.path().join("localrunner.old"), "old");
+    remove_leftover(&binary);
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn the_plan_says_open_clients_keep_the_old_version() {
+    assert!(
+        lr_cli::commands::upgrade_cmd::KEEP_OLD_NOTE.contains("keep running on the old version")
+    );
+}
+
+#[test]
+fn the_upgrade_plan_replaces_the_binary_and_never_copies_over_it() {
+    use lr_cli::commands::setup::upgrade_plan;
+    let plan = upgrade_plan(PathBuf::from("/new/localrunner"), PathBuf::from("/bin"));
+    assert!(!plan.is_empty());
+    assert!(plan
+        .iter()
+        .all(|a| matches!(a, Action::ReplaceBinary { .. })));
+    assert!(upgrade_plan(PathBuf::from("/bin/localrunner"), PathBuf::from("/bin")).is_empty());
 }

@@ -265,6 +265,9 @@ pub async fn up_with(
         );
         return Ok(1);
     }
+    if let Ok(me) = std::env::current_exe() {
+        crate::os_service::remove_leftover(&me);
+    }
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);

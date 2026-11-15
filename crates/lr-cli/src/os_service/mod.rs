@@ -9,6 +9,7 @@ pub mod plans;
 pub mod programs;
 pub mod quote;
 mod self_remove;
+pub use self_remove::remove_leftover;
 pub mod service_run;
 pub mod trust;
 #[cfg(windows)]
@@ -285,6 +286,15 @@ pub enum Action {
         /// Target.
         to: PathBuf,
     },
+    /// Puts a new binary in place of one that may be running: the old file is renamed to
+    /// `<name>.old` (an older `.old` goes first) and the new one is copied to its name; when the
+    /// copy fails the old file gets its name back.
+    ReplaceBinary {
+        /// The new binary.
+        from: PathBuf,
+        /// The installed binary.
+        to: PathBuf,
+    },
     /// Removes a file if it exists.
     RemoveFile(PathBuf),
     /// Removes a directory tree if it exists.
@@ -373,6 +383,9 @@ impl fmt::Display for Action {
                 write!(f, "copy {} to {} if missing", from.display(), to.display())
             }
             Action::Copy { from, to } => write!(f, "copy {} to {}", from.display(), to.display()),
+            Action::ReplaceBinary { from, to } => {
+                write!(f, "replace {} with {}", to.display(), from.display())
+            }
             Action::RemoveFile(p) => write!(f, "remove {}", p.display()),
             Action::RemoveDirAll(p) => write!(f, "remove directory {}", p.display()),
             Action::EnsureLocalUser { policy, user } => {

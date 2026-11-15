@@ -7,7 +7,7 @@
 use super::args::{RoleArg, UpgradeArgs};
 use super::confirm::{Console, Stdio};
 use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
-use super::setup::{binary_name, default_bin_dir, install_plan};
+use super::setup::{binary_name, default_bin_dir, upgrade_plan};
 use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
@@ -22,6 +22,10 @@ use std::time::Duration;
 const STARTED_WITHIN: Duration = Duration::from_secs(15);
 const BUSY_FOR: Duration = Duration::from_secs(20);
 const JOBS_REFRESH: Duration = Duration::from_secs(5);
+
+/// Printed with the plan: the old file is renamed, not overwritten.
+pub const KEEP_OLD_NOTE: &str =
+    "clients of other sessions that hold the old file keep running on the old version";
 
 /// `--wait-timeout`: a whole number of seconds, minutes or hours (`90s`, `15m`, `2h`), not zero.
 pub fn parse_duration(text: &str) -> Result<Duration, String> {
@@ -314,10 +318,8 @@ impl Job<'_> {
                 restart_summary(self.running, service)
             ),
         }
-        let copies: Vec<Action> = install_plan(self.exe.to_path_buf(), self.dir.to_path_buf())
-            .into_iter()
-            .filter(|a| matches!(a, Action::Copy { .. }))
-            .collect();
+        let copies = upgrade_plan(self.exe.to_path_buf(), self.dir.to_path_buf());
+        println!("{KEEP_OLD_NOTE}");
         if self.dry_run {
             for a in &copies {
                 println!("{a}");
