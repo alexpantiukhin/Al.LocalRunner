@@ -165,7 +165,8 @@ async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), St
     }
 }
 
-fn installed_version(path: &Path) -> Option<Version> {
+/// The version `path --version` prints; `None` when it does not run or prints none.
+pub fn installed_version(path: &Path) -> Option<Version> {
     let out = std::process::Command::new(path)
         .arg("--version")
         .output()

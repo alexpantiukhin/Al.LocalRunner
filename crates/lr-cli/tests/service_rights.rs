@@ -2,12 +2,18 @@ mod common;
 
 use common::TempDir;
 use lr_cli::commands::service_cmd::{
-    admin_left, autostart, autostart_with, broker_left_for_admin, install_service,
-    install_service_with, update_service_with,
+    admin_left, autostart, autostart_with, broker_left_for_admin, elevated_command,
+    install_service, install_service_with, report_lines, update_service_on, update_service_with,
+    version_line, UpdateReport,
 };
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::os_service::{service_installed, Os};
+use lr_cli::os_service::{Action, System};
 use lr_cli::paths::Layout;
+use std::cell::Cell;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::Duration;
 
 const INSTALL: &str =
     "broker install-service needs administrator rights (run it elevated or with sudo)";
@@ -83,14 +89,118 @@ fn a_run_for_all_roles_leaves_only_the_broker_service_to_an_administrator() {
 
 #[test]
 fn updating_the_service_needs_administrator_rights_and_an_installed_service() {
-    assert_eq!(
-        update_service_with(false, false, true),
-        Err(
-            "broker update-service needs administrator rights (run it elevated or with sudo)"
-                .to_string()
-        )
+    let refused = update_service_with(false, false, true).unwrap_err();
+    assert!(
+        refused.starts_with("broker update-service needs administrator rights; run: "),
+        "{refused}"
+    );
+    assert!(
+        refused.ends_with(&elevated_command(
+            Os::current(),
+            &std::env::current_exe().unwrap()
+        )),
+        "{refused}"
     );
     assert!(update_service_with(false, true, false)
         .unwrap_err()
         .contains("install-service"));
+}
+
+#[derive(Default)]
+struct Recorder(Mutex<Vec<String>>);
+
+impl System for Recorder {
+    fn apply(&self, action: &Action) -> Result<(), String> {
+        self.0.lock().unwrap().push(action.to_string());
+        Ok(())
+    }
+}
+
+#[test]
+fn the_error_without_rights_contains_the_exact_command_for_each_os() {
+    let exe = Path::new("/home/alex/.local/bin/localrunner");
+    for os in [Os::Linux, Os::MacOs] {
+        assert_eq!(
+            elevated_command(os, exe),
+            "sudo /home/alex/.local/bin/localrunner broker update-service"
+        );
+    }
+    let windows = elevated_command(Os::Windows, Path::new(r"C:\Users\Alex\bin\localrunner.exe"));
+    assert!(!windows.contains('\n'), "{windows}");
+    assert!(
+        windows.contains("Start-Process -Verb RunAs -Wait"),
+        "{windows}"
+    );
+    assert!(
+        windows.contains(r"C:\Users\Alex\bin\localrunner.exe"),
+        "{windows}"
+    );
+    assert!(windows.contains("broker update-service"), "{windows}");
+    assert!(windows.ends_with("Get-Content $o"), "{windows}");
+    assert!(
+        !windows.contains("-RedirectStandardOutput"),
+        "RunAs cannot be combined with redirection: {windows}"
+    );
+    let quoted = elevated_command(Os::Windows, Path::new("C:\\it's\\localrunner.exe"));
+    assert!(quoted.contains("it''s"), "{quoted}");
+}
+
+#[test]
+fn dry_run_needs_no_rights_and_prints_the_version_change() {
+    assert_eq!(update_service_with(true, false, true), Ok(0));
+    assert_eq!(
+        version_line(Some("0.1.0"), "0.1.1"),
+        "service: 0.1.0 -> 0.1.1"
+    );
+    assert_eq!(version_line(None, "0.1.1"), "service: unknown -> 0.1.1");
+}
+
+fn read_after(old: &'static str, after: &'static str) -> impl Fn(&Path) -> Option<String> {
+    let calls = Cell::new(0);
+    move |_| {
+        calls.set(calls.get() + 1);
+        Some(if calls.get() == 1 { old } else { after }.to_string())
+    }
+}
+
+#[test]
+fn exit_code_is_zero_only_when_the_service_runs_the_new_version() {
+    for (after, running_new) in [("0.1.1", true), ("0.1.0", false)] {
+        let system = Recorder::default();
+        let report = update_service_on(
+            &system,
+            Os::Linux,
+            Path::new("/new/localrunner"),
+            Path::new("/svc/localrunner"),
+            &read_after("0.1.0", after),
+            "0.1.1",
+        )
+        .unwrap();
+        assert_eq!(report.running_new, running_new);
+        assert_eq!(report.old.as_deref(), Some("0.1.0"));
+        assert_eq!(system.0.lock().unwrap().len(), 3);
+    }
+}
+
+#[test]
+fn the_report_prints_old_new_and_downtime() {
+    let up = UpdateReport {
+        old: Some("0.1.0".into()),
+        new: "0.1.1".into(),
+        down: Duration::from_secs(3),
+        running_new: true,
+    };
+    assert_eq!(
+        report_lines(&up),
+        [
+            "service: 0.1.0 -> 0.1.1",
+            "service stopped and started, down for 3 s"
+        ]
+    );
+    let stuck = UpdateReport {
+        running_new: false,
+        ..up
+    };
+    let lines = report_lines(&stuck).join("\n");
+    assert!(lines.contains("still runs"), "{lines}");
 }
