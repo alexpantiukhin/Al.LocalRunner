@@ -197,9 +197,12 @@ pub async fn start_runners(
         running.listeners.push(parts.control.clone());
         let listener: Arc<dyn Listener> = parts.control;
         let reload = build::logging_reloader(layout, &parts.logger);
-        running
-            .tasks
-            .push(tokio::spawn(control::serve(listener, control, reload)));
+        running.tasks.push(tokio::spawn(control::serve(
+            listener,
+            control,
+            reload,
+            parts.reload.clone(),
+        )));
         running.exits.push(tokio::spawn(parts.agent.run()));
         running.loggers.push(parts.logger);
         running.runners.push(n);

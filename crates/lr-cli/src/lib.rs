@@ -27,6 +27,7 @@ pub mod release;
 pub mod roles;
 pub mod runner_config;
 pub mod runner_keys;
+pub mod runner_reload;
 pub mod secrets;
 pub mod state_dir;
 pub mod upgrade_lock;

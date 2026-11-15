@@ -41,6 +41,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
         CliRequest::Orders,
         CliRequest::Shutdown,
         CliRequest::LoggingReload,
+        CliRequest::PolicyReload,
         CliRequest::Events,
     ]
 }
@@ -169,6 +170,7 @@ pub fn controls() -> Vec<RunnerControl> {
             reason: None,
         },
         RunnerControl::LoggingReload,
+        RunnerControl::Reload,
         RunnerControl::Status,
     ]
 }
@@ -178,6 +180,9 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Ok,
         ControlReply::Failed {
             message: "x".into(),
+        },
+        ControlReply::Reloaded {
+            restart_required: vec!["allow_elevated".into()],
         },
         ControlReply::Link {
             connected: false,

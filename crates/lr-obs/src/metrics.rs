@@ -214,7 +214,7 @@ pub const CATALOG: &[MetricDef] = &[
         Counter,
         "{reload}",
         &["result"],
-        BROKER,
+        ALL,
         &[("result", &["ok", "error"])],
     ),
     def(

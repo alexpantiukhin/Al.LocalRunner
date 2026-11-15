@@ -13,6 +13,7 @@ pub mod profile_cmd;
 pub mod profile_summary;
 pub mod read_args;
 pub mod read_cmd;
+pub mod reload_cmd;
 pub mod roles_cmd;
 pub mod runner_config_cmd;
 pub mod service_cmd;
@@ -188,6 +189,15 @@ pub enum Command {
         /// The role; the roles `init` created when omitted.
         #[arg(value_enum)]
         role: Option<RoleArg>,
+    },
+    /// Running roles reread their settings files without a restart: runners `runner.toml`, the
+    /// hub `hub-policy.toml`, the broker `policy.toml`.
+    Reload {
+        /// Only this role.
+        #[arg(long, value_enum)]
+        role: Option<RoleArg>,
+        /// One runner of this installation, or `hub` or `broker`.
+        name: Option<String>,
     },
     /// Known brokers: zone, availability, orders in the outbox.
     Brokers {
@@ -374,6 +384,7 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Up { role } => up_cmd::up(&layout, role).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
         Command::Dashboard => crate::dashboard::run(&layout).await,
+        Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,
         Command::Down {
             names, cancel, yes, ..
         } => down_cmd::down_cli(&layout, names, cancel, yes).await,

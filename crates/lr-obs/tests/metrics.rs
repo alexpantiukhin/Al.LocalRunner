@@ -81,7 +81,12 @@ fn metrics_names_match_spec_12() {
             &["role"],
             &["hub", "broker", "runner"],
         ),
-        ("policy_reload_total", Counter, &["result"], &["broker"]),
+        (
+            "policy_reload_total",
+            Counter,
+            &["result"],
+            &["hub", "broker", "runner"],
+        ),
         (
             "log_dropped_total",
             Counter,

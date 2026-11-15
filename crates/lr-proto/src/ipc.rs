@@ -194,6 +194,9 @@ pub enum CliRequest {
     /// `logging reload`: reread the hub's `logging.toml`; answered with
     /// [`CliReply::Reloaded`] or an error naming why the file was refused.
     LoggingReload,
+    /// `reload`: reread `hub-policy.toml`; answered with [`CliReply::Reloaded`], or an error
+    /// naming why the file was refused (the old policy keeps working).
+    PolicyReload,
     /// The dashboard's live stream: the hub answers [`CliReply::Watching`], then relays every
     /// event of its brokers' subscriptions as [`CliReply::Event`] until the connection closes.
     /// Each broker has already masked the events by its visibility policy for this hub's key.
@@ -402,6 +405,8 @@ pub enum RunnerControl {
     },
     /// Reread the runner's `logging.toml`.
     LoggingReload,
+    /// `reload`: reread `runner.toml` and apply what can change while the runner runs.
+    Reload,
     /// Ask whether the runner is connected to its broker.
     Status,
 }
@@ -416,6 +421,12 @@ pub enum ControlReply {
     Failed {
         /// Why.
         message: String,
+    },
+    /// `runner.toml` applies; what cannot change without a restart is named and keeps its old
+    /// value.
+    Reloaded {
+        /// Names of the settings that differ and need a restart.
+        restart_required: Vec<String>,
     },
     /// The state of the link to the broker.
     Link {
@@ -441,6 +452,7 @@ message!(
         "orders",
         "shutdown",
         "logging_reload",
+        "policy_reload",
         "events"
     ]
 );
@@ -485,7 +497,7 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload", "status"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "status"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed", "link"]);
+message!(ControlReply, local: true, ["ok", "failed", "reloaded", "link"]);
