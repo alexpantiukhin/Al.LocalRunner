@@ -22,6 +22,7 @@ pub mod timefmt;
 pub mod up_cmd;
 pub mod upgrade_cmd;
 pub mod upgrade_jobs;
+pub mod upgrade_pool;
 pub mod view;
 
 pub use args::*;

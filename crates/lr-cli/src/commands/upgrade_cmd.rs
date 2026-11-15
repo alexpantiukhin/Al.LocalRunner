@@ -10,6 +10,7 @@ use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Wa
 use super::setup::{binary_name, default_bin_dir, upgrade_plan};
 use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
+use super::upgrade_pool::{plan_lines, pool, report_lines, PoolRunner};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
 use crate::upgrade_lock::{write, UpgradeLock};
@@ -209,6 +210,7 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
     let old = installed_version(&installed);
     let running = running_roles(layout).await;
     let jobs = activity(layout).await;
+    let others = pool(layout).await;
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let start = starter(installed.clone());
@@ -228,6 +230,7 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         .ok_or("this binary has no version")?,
         running: &running,
         activity: &jobs,
+        pool: &others,
         yes,
         cancel,
         dry_run,
@@ -260,6 +263,8 @@ pub struct Job<'a> {
     pub running: &'a RunningRoles,
     /// The jobs that run and wait now.
     pub activity: &'a Activity,
+    /// The runners of other installations in the pool.
+    pub pool: &'a [PoolRunner],
     /// Confirm without asking.
     pub yes: bool,
     /// With running jobs: cancel them instead of waiting.
@@ -310,6 +315,9 @@ impl Job<'_> {
         for line in self.activity.lines() {
             println!("{line}");
         }
+        for line in plan_lines(self.pool, &self.new.text) {
+            println!("{line}");
+        }
         match stop.is_empty() {
             true => println!("no role of this installation runs"),
             false => println!(
@@ -351,6 +359,9 @@ impl Job<'_> {
             "upgraded to {}; check the node: localrunner doctor",
             self.new.text
         );
+        for line in report_lines(self.pool, self.new, protocol_changed) {
+            println!("{line}");
+        }
         Ok(code)
     }
 

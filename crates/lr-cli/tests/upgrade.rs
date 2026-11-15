@@ -9,6 +9,7 @@ use lr_cli::commands::upgrade_cmd::{
     Verdict,
 };
 use lr_cli::commands::upgrade_jobs::Activity;
+use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
 use lr_proto::{DownMode, DrainReason};
@@ -168,6 +169,7 @@ async fn run(case: Case) -> Outcome {
         new: &new,
         running: &case.running,
         activity: &case.activity,
+        pool: &[],
         yes: case.yes,
         cancel: case.cancel,
         dry_run: case.dry_run,
@@ -583,4 +585,125 @@ fn the_upgrade_plan_replaces_the_binary_and_never_copies_over_it() {
         .iter()
         .all(|a| matches!(a, Action::ReplaceBinary { .. })));
     assert!(upgrade_plan(PathBuf::from("/bin/localrunner"), PathBuf::from("/bin")).is_empty());
+}
+
+fn peer(name: &str, machine: &str, version: Option<&str>, online: bool) -> PoolRunner {
+    PoolRunner {
+        name: name.into(),
+        machine: Some(machine.into()),
+        version: version.map(String::from),
+        online,
+        kind: Kind::Unknown,
+    }
+}
+
+#[test]
+fn plan_lines_list_other_machines_with_versions_and_say_they_are_not_touched() {
+    let pool = [
+        peer("linux", "ci-1", Some("0.1.0"), true),
+        peer("old", "ci-2", None, true),
+    ];
+    let lines = plan_lines(&pool, "0.1.1");
+    let all = lines.join("\n");
+    assert!(all.contains("not touched"), "{all}");
+    assert!(
+        all.contains("linux") && all.contains("ci-1") && all.contains("0.1.0"),
+        "{all}"
+    );
+    assert!(all.contains("old") && all.contains("unknown"), "{all}");
+    assert!(plan_lines(&[], "0.1.1").is_empty());
+}
+
+#[test]
+fn report_lines_name_runners_still_on_another_version() {
+    let pool = [
+        peer("linux", "ci-1", Some("0.1.0"), true),
+        peer("same", "ci-2", Some("0.1.1"), true),
+    ];
+    let lines = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false);
+    let all = lines.join("\n");
+    assert!(
+        all.contains("linux") && all.contains("0.1.0") && all.contains("ci-1"),
+        "{all}"
+    );
+    assert!(all.contains("localrunner upgrade"), "{all}");
+    assert!(!all.contains("same"), "{all}");
+}
+
+#[test]
+fn report_lines_say_a_protocol_change_breaks_them() {
+    let pool = [peer("linux", "ci-1", Some("0.1.0"), true)];
+    let all = report_lines(&pool, &v("0.2.0 (protocol 2.0)"), true).join("\n");
+    assert!(all.contains("protocol"), "{all}");
+    let quiet = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    assert!(!quiet.contains("protocol"), "{quiet}");
+}
+
+#[test]
+fn report_lines_mark_container_and_offline_runners_manual_step() {
+    let mut boxed = peer("box", "172.17.0.2", Some("0.1.0"), true);
+    boxed.kind = Kind::Container;
+    let pool = [boxed, peer("away", "ci-3", Some("0.1.0"), false)];
+    let all = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    assert!(all.contains("box") && all.contains("manual step"), "{all}");
+    assert!(
+        all.contains("away") && all.contains("not updated: offline"),
+        "{all}"
+    );
+}
+
+#[test]
+fn no_lines_when_every_runner_is_on_the_new_version() {
+    let pool = [peer("a", "m1", Some("0.1.1"), true)];
+    assert!(report_lines(&pool, &v("0.1.1 (protocol 1.0)"), true).is_empty());
+    assert!(report_lines(&[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+}
+
+#[test]
+fn the_runners_of_this_installation_are_not_part_of_the_pool() {
+    use lr_cli::commands::upgrade_pool::rows;
+    let info = |name: &str, machine: &str, version: &str| {
+        let caps = lr_proto::WireCapabilities {
+            platforms: Default::default(),
+            mem_mb: 0,
+            cpu: 0,
+            disk_mb: 0,
+            programs: Default::default(),
+            tags: Default::default(),
+            max_job_timeout_s: None,
+            services: Default::default(),
+            machine: Some(lr_core::MachineRef(machine.into())),
+            accept_min_mem_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: Some(version.into()),
+        };
+        lr_proto::RunnerInfo {
+            name: name.into(),
+            online: true,
+            caps,
+            last_seen: None,
+            free_mem_mb: 0,
+            free_cpu: 0,
+            held_tags: Vec::new(),
+            services: Vec::new(),
+            unmet: Vec::new(),
+        }
+    };
+    let got = rows(
+        vec![
+            info("r1", "local:alex", "0.1.0"),
+            info("r1", "ci-9", "0.1.0"),
+            info("peer", "ci-1", "0.1.0"),
+        ],
+        &["r1".to_string()],
+    );
+    let names: Vec<(&str, Option<&str>)> = got
+        .iter()
+        .map(|p| (p.name.as_str(), p.machine.as_deref()))
+        .collect();
+    assert_eq!(names, [("r1", Some("ci-9")), ("peer", Some("ci-1"))]);
 }
