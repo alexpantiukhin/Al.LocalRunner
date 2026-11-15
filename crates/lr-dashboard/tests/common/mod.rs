@@ -49,6 +49,7 @@ fn job(
                 github_run_url: None,
                 peak_mem_mb: None,
                 peak_disk_mb: None,
+                labels: Vec::new(),
             },
             note: Some(XSS.into()),
             branch: Some("main".into()),

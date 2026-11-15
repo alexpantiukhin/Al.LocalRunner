@@ -13,6 +13,7 @@ Only `[profile.<name>]` and `[needs.<name>]` are read at the top level; any othe
 - `platforms`: a list of platform names; `platform.<P>` tables override `command`, `steps`, `timeout_s`, `mem_mb`, `cpu`, `disk_mb` for one platform.
 - `programs`: names, or `{ name = "...", check = "..." }`.
 - `tags`: resources held for the run; `exclusive`: tags nobody else may hold meanwhile.
+- `labels`: free-form names the broker policy can match (a rule with `label`); not requirements, so no runner has to declare them. Only the machine owner gives priority by a label, in `policy.toml`.
 - `cache`: named caches kept on the runner between runs.
 - `services`: runner services the job needs.
 - `secrets`: secret names, never values.

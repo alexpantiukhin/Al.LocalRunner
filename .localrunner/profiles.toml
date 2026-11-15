@@ -24,20 +24,20 @@ steps = [
 ]
 
 [profile.rust-test]
-command   = "cargo test --locked --no-fail-fast {? -p {package}} {? --test {test}} {? -- {filter}}"
-timeout_s = 1200
-mem_mb    = 4096
+command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --test {test}} {? {filter}}"
+timeout_s = 1800
+mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 
-[profile.rust-test.args.package]
-pattern = "^[a-z][a-z0-9-]*$"
+[profile.rust-test.args.pkg]
+pattern = "[a-z0-9_-]+"
 
 [profile.rust-test.args.test]
-pattern = "^[a-z][a-z0-9_]*$"
+pattern = "[a-z0-9_]+"
 
 [profile.rust-test.args.filter]
-pattern = "^[A-Za-z0-9_:]+$"
+pattern = "[A-Za-z0-9_:]+"
 
 [profile.rust-clippy]
 command   = "cargo clippy --workspace --all-targets --locked -- -D warnings"

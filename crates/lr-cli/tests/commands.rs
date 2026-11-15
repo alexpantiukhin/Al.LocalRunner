@@ -109,6 +109,7 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         github_run_url: None,
         peak_mem_mb: None,
         peak_disk_mb: None,
+        labels: Vec::new(),
     }
 }
 
@@ -155,6 +156,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     queued.note = Some("fix flaky test".into());
     queued.branch = Some("feat/x".into());
     queued.cwd = Some("/work/repo".into());
+    queued.labels = vec!["release".into(), "work".into()];
     let view = StatusView {
         running: Vec::new(),
         queue: vec![QueueItem {
@@ -180,7 +182,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
         "{text}"
     );
     assert!(
-        text.contains("branch feat/x  dir /work/repo  note: fix flaky test"),
+        text.contains("branch feat/x  dir /work/repo  note: fix flaky test  labels: release, work"),
         "{text}"
     );
     let mut json = status_json(&views);
@@ -190,9 +192,10 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     assert_eq!(item["note"], "fix flaky test");
     assert_eq!(item["branch"], "feat/x");
     assert_eq!(item["cwd"], "/work/repo");
+    assert_eq!(item["labels"], serde_json::json!(["release", "work"]));
     let bare = serde_json::to_value(summary("j3", JobState::Queued)).unwrap();
     assert!(
-        bare.get("note").is_none() && bare.get("cwd").is_none(),
+        bare.get("note").is_none() && bare.get("cwd").is_none() && bare.get("labels").is_none(),
         "{bare}"
     );
     let old: JobSummary = serde_json::from_value({

@@ -76,3 +76,12 @@ fn the_verdict_needs_a_profile_and_good_secrets() {
     assert!(!verdict(&profiles, false));
     assert!(verdict(&profiles, true));
 }
+
+#[test]
+fn labels_are_listed_and_serialized() {
+    let text = "[profile.t]\ncommand = \"true\"\ntimeout_s = 5\nlabels = [\"work\", \"release\"]\n";
+    let l = lines(text);
+    assert!(l.contains(&"  labels: release, work".to_string()), "{l:?}");
+    let v = serde_json::to_value(summarize(&parse_profiles(text).unwrap()[0])).unwrap();
+    assert_eq!(v["labels"], serde_json::json!(["release", "work"]));
+}

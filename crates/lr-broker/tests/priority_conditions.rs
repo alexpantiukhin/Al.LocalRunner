@@ -90,9 +90,47 @@ async fn equal_priority_takes_the_oldest() {
 }
 
 #[test]
+fn a_profile_label_raises_priority_only_for_orders_that_carry_it() {
+    let f =
+        load("[[rule]]\nwhen = { client_label = \"agent\", label = \"work\" }\npriority = 50\n")
+            .unwrap();
+    let policy = lr_broker::policy::rule_policy(&f, &HOST);
+    let mut labelled = entry("w", "agent", 0);
+    labelled.order.declared.labels = vec!["x".into(), "work".into()];
+    let plain = entry("p", "agent", 0);
+    let mut other_client = entry("o", "someone", 0);
+    other_client.order.declared.labels = vec!["work".into()];
+    assert_eq!(policy.priority_of(&labelled), 50);
+    assert_eq!(policy.priority_of(&plain), 0);
+    assert_eq!(policy.priority_of(&other_client), 0);
+}
+
+#[test]
+fn label_forms_in_glob_and_not_match_any_label() {
+    let f = load(
+        "[[rule]]\nwhen = { client_label = \"agent\", label = { glob = \"rel*\" }, not = { label = \"hold\" } }\npriority = 7\n",
+    )
+    .unwrap();
+    let policy = lr_broker::policy::rule_policy(&f, &HOST);
+    let with = |labels: &[&str]| {
+        let mut e = entry("j", "agent", 0);
+        e.order.declared.labels = labels.iter().map(|s| s.to_string()).collect();
+        policy.priority_of(&e)
+    };
+    assert_eq!(with(&["a", "release"]), 7);
+    assert_eq!(with(&["release", "hold"]), 0);
+    assert_eq!(with(&["a"]), 0);
+}
+
+#[test]
 fn claimed_attribute_without_trusted_condition_is_rejected_on_load() {
     let e = load("[[rule]]\nwhen = { project = { glob = \"lr-*\" } }\npriority = 9\n").unwrap_err();
     assert!(e.message.contains("client_label"), "{e}");
+    let e = load("[[rule]]\nwhen = { label = \"work\" }\npriority = 9\n").unwrap_err();
+    assert!(
+        e.message.contains("client_label") && e.message.contains("label"),
+        "{e}"
+    );
     load(
         "[[rule]]\nwhen = { client_label = { in = [\"ci\"] }, project = { glob = \"lr-*\" } }\npriority = 9\n",
     )

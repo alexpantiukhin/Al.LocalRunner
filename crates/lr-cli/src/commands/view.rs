@@ -112,6 +112,9 @@ fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
     if let Some(n) = &s.note {
         details.push(format!("note: {n}"));
     }
+    if !s.labels.is_empty() {
+        details.push(format!("labels: {}", s.labels.join(", ")));
+    }
     if !details.is_empty() {
         out.push_str(&format!("\n      {}", details.join("  ")));
     }

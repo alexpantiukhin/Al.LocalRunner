@@ -110,6 +110,7 @@ pub fn order_spec() -> OrderSpec {
         wanted_priority: Some(5),
         overrides: ResourceOverride::default(),
         args: Vec::new(),
+        labels: Vec::new(),
     }
 }
 
@@ -162,6 +163,7 @@ pub fn summary() -> JobSummary {
         github_run_url: None,
         peak_mem_mb: None,
         peak_disk_mb: None,
+        labels: Vec::new(),
     }
 }
 

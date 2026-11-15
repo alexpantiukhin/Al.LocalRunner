@@ -79,6 +79,8 @@ pub struct Profile {
     pub disk_mb: Option<u64>,
     /// Programs needed on the runner.
     pub programs: Vec<Program>,
+    /// Free-form labels the policy can match; not requirements, sorted and unique.
+    pub labels: Vec<String>,
     /// Resources held for the run.
     pub tags: Vec<String>,
     /// Tags nobody else may hold meanwhile.
