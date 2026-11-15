@@ -218,13 +218,14 @@ impl Engine {
     }
 
     pub(crate) fn runner_views(&self) -> Vec<RunnerView> {
+        let now = self.now();
         self.runners
             .iter()
             .map(|(name, s)| RunnerView {
                 name: name.clone(),
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
-                online: s.takes_work(),
+                online: s.takes_work() || s.holds_orders(now),
                 load: s.load.map(Into::into),
             })
             .collect()

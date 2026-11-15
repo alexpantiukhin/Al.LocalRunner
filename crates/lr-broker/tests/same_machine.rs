@@ -104,6 +104,21 @@ async fn draining_runner_does_not_count_for_a_same_machine_order() {
 }
 
 #[tokio::test]
+async fn a_new_same_machine_order_is_accepted_while_its_runner_drains_for_an_upgrade() {
+    let h = Harness::start("");
+    let r = h.local_runner("alex", "lr", linux()).await;
+    r.send(&drain(Some(DrainReason::Upgrade))).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.sync().await;
+    hub.send(&order("s1", same_machine_req())).await;
+    hub.accepted().await;
+    assert_eq!(
+        h.job_row(ALEX, "s1").await.unwrap().job.state,
+        JobState::Queued
+    );
+}
+
+#[tokio::test]
 async fn queued_same_machine_order_is_returned_when_its_last_runner_drains() {
     let h = Harness::start("");
     let mut r = h.local_runner("alex", "lr", linux()).await;
