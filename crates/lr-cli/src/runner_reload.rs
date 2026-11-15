@@ -36,7 +36,22 @@ pub fn diff(old: &RunnerConfig, new: &RunnerConfig) -> Vec<&'static str> {
     out
 }
 
+/// Lowercase SHA-256 of a settings file's text: what a role reports as the file it applied.
+pub fn hash_text(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Whether the file on disk is no longer the one a role applied.
+pub fn disk_differs(text_on_disk: &str, applied_hash: &str) -> bool {
+    hash_text(text_on_disk) != applied_hash
+}
+
 struct Applied {
+    hash: String,
     config: RunnerConfig,
     broker: BrokerAddress,
 }
@@ -59,6 +74,7 @@ impl RunnerReloader {
         name: &str,
         config: Option<&Path>,
         applied: RunnerConfig,
+        applied_text: &str,
         broker: BrokerAddress,
         control: AgentControl,
         meter: Arc<dyn Meter>,
@@ -68,12 +84,19 @@ impl RunnerReloader {
             name: name.to_string(),
             config: config.map(Path::to_path_buf),
             applied: Mutex::new(Applied {
+                hash: hash_text(applied_text),
                 config: applied,
                 broker,
             }),
             control,
             meter,
         }
+    }
+
+    /// [`hash_text`] of the `runner.toml` text the runner applied last.
+    pub fn config_hash(&self) -> String {
+        let applied = self.applied.lock().unwrap_or_else(|p| p.into_inner());
+        applied.hash.clone()
     }
 
     /// Reads, checks and applies `runner.toml`. The file is parsed and its `[programs]` are
@@ -124,6 +147,7 @@ impl RunnerReloader {
         new.settings.services = old.settings.services.clone();
         self.control.apply_settings(new.settings.clone());
         applied.config = new;
+        applied.hash = hash_text(&text);
         Ok(restart)
     }
 }

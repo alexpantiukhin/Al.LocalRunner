@@ -271,9 +271,11 @@ pub async fn status(
     }
     mask_status(&mut views, &cli_redactor(layout));
     let now = super::timefmt::now();
+    let drift = crate::config_drift::lines(layout).await;
     if json_out {
         let mut out = status_json(&views);
         add_ages(&mut out, now);
+        out["config_drift"] = json!(drift);
         if let Some(lock) = crate::upgrade_lock::live_here(layout) {
             out["upgrade"] = json!(crate::upgrade_lock::describe(&lock));
         }
@@ -289,6 +291,9 @@ pub async fn status(
         let text = status_text(&views, now);
         if !text.is_empty() {
             println!("{text}");
+        }
+        for line in &drift {
+            println!("warn: {line}");
         }
         for p in &problems {
             eprintln!("{p}");

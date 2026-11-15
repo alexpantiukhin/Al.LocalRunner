@@ -64,11 +64,13 @@ fn a_runner_that_answers_failed_to_status_gives_no_line() {
     let connected = ControlReply::Link {
         connected: true,
         since: None,
+        config_hash: None,
     };
     assert_eq!(runner_link_line("r1", &connected), None);
     let lost = ControlReply::Link {
         connected: false,
         since: None,
+        config_hash: None,
     };
     assert_eq!(
         runner_link_line("r1", &lost).as_deref(),

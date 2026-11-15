@@ -431,6 +431,13 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     brokers(layout, &mut out).await;
     runner_versions(layout, &mut out).await;
     out.extend(crate::link_report::checks(layout).await);
+    for line in crate::config_drift::lines(layout).await {
+        out.push(check(
+            "runner settings file".to_string(),
+            Status::Warn,
+            line,
+        ));
+    }
     out
 }
 

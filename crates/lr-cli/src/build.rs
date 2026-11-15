@@ -450,6 +450,7 @@ pub async fn runner(
         name,
         config,
         applied,
+        &text,
         broker,
         agent.control(),
         logger.metrics(),

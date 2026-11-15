@@ -435,6 +435,10 @@ pub enum ControlReply {
         /// Start of the current break; `None` while connected.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<Timestamp>,
+        /// Lowercase SHA-256 of the `runner.toml` text the runner applied; absent from older
+        /// runners.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_hash: Option<String>,
     },
 }
 

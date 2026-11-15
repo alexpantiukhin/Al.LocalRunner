@@ -5,6 +5,7 @@ pub mod admin;
 pub mod broker_admin;
 pub mod build;
 pub mod commands;
+pub mod config_drift;
 pub mod control;
 pub mod dashboard;
 pub mod dashboard_model;

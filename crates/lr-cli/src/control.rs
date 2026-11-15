@@ -61,7 +61,11 @@ async fn connection(
             }
             Ok(Received::Message(RunnerControl::Status)) => {
                 let (connected, since) = control.link();
-                ControlReply::Link { connected, since }
+                ControlReply::Link {
+                    connected,
+                    since,
+                    config_hash: Some(settings.config_hash()),
+                }
             }
             Ok(Received::Ignored(kind)) => ControlReply::Failed {
                 message: format!("unknown control command `{kind}`"),

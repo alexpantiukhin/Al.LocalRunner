@@ -187,10 +187,12 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Link {
             connected: false,
             since: Some(lr_core::Timestamp(7)),
+            config_hash: None,
         },
         ControlReply::Link {
             connected: true,
             since: None,
+            config_hash: Some("ab".repeat(32)),
         },
     ]
 }
