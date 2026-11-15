@@ -191,7 +191,7 @@ impl Engine {
                 job: self.internal_id(),
                 requirements,
                 enqueued_at: spec.enqueued_at,
-                declared: Declared::from_identity(&spec.identity),
+                declared: Declared::from_spec(&spec.identity, &spec.labels),
                 wanted_priority: spec.wanted_priority,
             },
             client: ClientView {

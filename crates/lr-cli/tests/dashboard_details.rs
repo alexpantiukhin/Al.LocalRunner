@@ -82,6 +82,7 @@ fn summary(job: &str, state: JobState, mine: bool) -> JobSummary {
         github_run_url: mine.then(|| "https://github.com/acme/app/actions/runs/7".into()),
         peak_mem_mb: None,
         peak_disk_mb: None,
+        labels: Vec::new(),
     }
 }
 

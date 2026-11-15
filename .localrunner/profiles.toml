@@ -24,7 +24,7 @@ steps = [
 ]
 
 [profile.rust-test]
-command   = "cargo test {? -p {package}} --locked --no-fail-fast {? {filter}}"
+command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --test {test}} {? {filter}}"
 timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
@@ -37,8 +37,18 @@ mem_mb    = 1024
 cpu       = 1
 tags      = ["cargo"]
 
-[profile.rust-test.args.package]
-one_of = ["lr-core", "lr-abstractions", "lr-proto", "lr-net", "lr-store", "lr-exec", "lr-obs", "lr-broker", "lr-hub", "lr-runner", "lr-dashboard", "lr-cli"]
+[profile.rust-test.args.pkg]
+pattern = "[a-z0-9_-]+"
+
+[profile.rust-test.args.test]
+pattern = "[a-z0-9_]+"
 
 [profile.rust-test.args.filter]
 pattern = "[A-Za-z0-9_:]+"
+
+[profile.rust-clippy]
+command   = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+timeout_s = 1200
+mem_mb    = 8192
+cpu       = 4
+tags      = ["cargo"]

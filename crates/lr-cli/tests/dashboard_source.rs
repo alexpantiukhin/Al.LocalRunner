@@ -71,6 +71,7 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         github_run_url: None,
         peak_mem_mb: None,
         peak_disk_mb: None,
+        labels: Vec::new(),
     }
 }
 

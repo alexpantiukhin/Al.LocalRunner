@@ -234,6 +234,7 @@ pub(crate) async fn build(
         wanted_priority: None,
         overrides: ResourceOverride::default(),
         args: req.args.clone(),
+        labels: profile.labels.clone(),
     };
     lower_timeout(&mut spec, resolved.timeout_s, req.timeout_s)?;
     override_resources(&mut spec, req)?;
