@@ -1,4 +1,4 @@
-use lr_abstractions::{Enforce, ResourceLimits};
+use lr_abstractions::ResourceLimits;
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -154,30 +154,6 @@ pub(crate) fn memory_delegated() -> bool {
     systemd_blocking().is_some_and(|s| s.controllers.iter().any(|c| c == "memory"))
 }
 
-/// The `systemd-run -p` properties for `limits` given the controllers available: the hard
-/// memory limit sits above the ceiling the watcher enforces, so the watcher ends the job with
-/// the proper reason first.
-pub(crate) fn properties(limits: &ResourceLimits, controllers: &[String]) -> Vec<String> {
-    let has = |name: &str| controllers.iter().any(|c| c == name);
-    let mut out = Vec::new();
-    if limits.mode == Enforce::Off {
-        return out;
-    }
-    if let (Enforce::Kill, Some(mem), true) = (limits.mode, limits.mem_mb, has("memory")) {
-        let bytes = crate::limits::bytes_of(crate::limits::backstop_mb(mem));
-        out.push(format!("MemoryMax={bytes}"));
-        out.push("MemorySwapMax=0".to_string());
-        out.push("OOMPolicy=continue".to_string());
-    }
-    if let (Some(millis), true) = (limits.cpu_millis, has("cpu")) {
-        out.push(format!("CPUQuota={}%", (millis / 10).max(1)));
-    }
-    if let (Some(procs), true) = (limits.procs, has("pids")) {
-        out.push(format!("TasksMax={}", procs.max(1)));
-    }
-    out
-}
-
 fn procs(dir: &Path) -> io::Result<Vec<u32>> {
     let text = std::fs::read_to_string(dir.join("cgroup.procs"))?;
     Ok(text.lines().filter_map(|l| l.trim().parse().ok()).collect())
@@ -297,7 +273,7 @@ impl Scope {
         let mut cmd = Command::new(&systemd.exe);
         cmd.args(["--user", "--scope", "--quiet", "--collect"])
             .arg(format!("--unit={unit}"));
-        let props = properties(limits, &systemd.controllers);
+        let props = crate::limits::scope_properties(limits, &systemd.controllers);
         for prop in &props {
             cmd.arg("-p").arg(prop);
         }
@@ -448,32 +424,5 @@ mod tests {
     fn a_scope_that_never_came_up_is_empty() {
         let scope = Scope::bare(PathBuf::from("/sys/fs/cgroup/no-such-lr-scope.scope"));
         assert_eq!(scope.is_empty(), Some(true));
-    }
-
-    #[test]
-    fn properties_follow_the_mode_and_the_controllers() {
-        let all: Vec<String> = ["memory", "cpu", "pids"].map(String::from).to_vec();
-        let mut limits = ResourceLimits {
-            mem_mb: Some(1000),
-            cpu_millis: Some(4000),
-            procs: Some(64),
-            mode: Enforce::Kill,
-            ..ResourceLimits::default()
-        };
-        assert_eq!(
-            properties(&limits, &all),
-            [
-                "MemoryMax=1153433600",
-                "MemorySwapMax=0",
-                "OOMPolicy=continue",
-                "CPUQuota=400%",
-                "TasksMax=64"
-            ]
-        );
-        assert_eq!(properties(&limits, &["pids".to_string()]), ["TasksMax=64"]);
-        limits.mode = Enforce::Warn;
-        assert_eq!(properties(&limits, &all), ["CPUQuota=400%", "TasksMax=64"]);
-        limits.mode = Enforce::Off;
-        assert!(properties(&limits, &all).is_empty());
     }
 }

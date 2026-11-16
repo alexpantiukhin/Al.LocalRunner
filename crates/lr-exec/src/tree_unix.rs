@@ -104,7 +104,7 @@ impl Tree {
         };
         let mut tree = Tree::new(pid, start, true, true);
         tree.scope = placement.0;
-        if limits.mode == Enforce::Kill && limits.mem_mb.is_some() {
+        if matches!(limits.mode, Enforce::Kill | Enforce::Limit) && limits.mem_mb.is_some() {
             if let Some(scope) = &tree.scope {
                 scope.follow_memory();
             }

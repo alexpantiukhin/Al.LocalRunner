@@ -86,10 +86,11 @@ pub fn containment() -> Containment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Enforcement {
     /// The OS limits the tree (Windows Job Object, delegated cgroup v2 controllers), with the
-    /// user-space watcher on top for the exceeded reason.
+    /// user-space watcher on top for the exceeded reason; in `limit` mode the OS holds the tree
+    /// at the ceiling.
     Os,
     /// Only the user-space watcher measures the tree and kills it (macOS, Linux without
-    /// delegated controllers); approximate.
+    /// delegated controllers); approximate, and `limit` mode acts as `warn`.
     Watcher,
 }
 

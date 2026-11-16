@@ -162,6 +162,29 @@ async fn kill_mode_ends_a_job_over_the_disk_ceiling() {
     assert!(events_text(&events).contains("killed: declared disk_mb exceeded: declared 4 MB"));
 }
 
+#[tokio::test]
+async fn limit_mode_refuses_allocations_above_the_ceiling_without_killing_the_job() {
+    if !cfg!(windows) {
+        eprintln!("skipped: the Job Object memory limit exists on Windows only; the Linux scope is checked in Docker and macOS degrades to warn");
+        return;
+    }
+    let command = "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"$a=@(); try { for($i=0;$i -lt 100;$i++){ $a += ,[byte[]]::new(4MB) } } catch { exit 3 }; exit 0\"";
+    let (outcome, events) = run("mem_limit", command, mem_limits(Enforce::Limit), 120).await;
+    let text = events_text(&events);
+    assert_eq!(outcome.state, JobState::Failed, "{text}");
+    let code = outcome.steps[0].exit_code.expect(&text);
+    assert_ne!(code, 0, "{text}");
+    assert!(!text.contains("killed"), "{text}");
+    let ex = outcome.exceeded.expect(&text);
+    assert_eq!(ex.resource, LimitedResource::Memory);
+    assert_eq!((ex.limit_mb, ex.declared_mb), (150, Some(100)));
+    assert!(ex.peak_mb < 165 && ex.peak_mb * 10 >= 1350, "{ex:?}");
+    assert!(
+        text.contains("localrunner: failed at the memory ceiling: declared mem_mb 100 MB, ceiling 150 MB, peak"),
+        "{text}"
+    );
+}
+
 #[cfg(windows)]
 #[tokio::test]
 async fn the_process_limit_stops_a_second_process() {

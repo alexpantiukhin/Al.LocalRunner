@@ -15,6 +15,8 @@ pub enum ResourceMode {
     /// A warning goes to the job log (default).
     #[default]
     Warn,
+    /// The runner's OS holds the job's memory at the ceiling where it can, without a kill.
+    Limit,
     /// The job is killed with the reason `resource_exceeded`.
     Kill,
 }
@@ -87,6 +89,7 @@ impl ResourcesSection {
             mode: match self.mode {
                 ResourceMode::Off => WireEnforce::Off,
                 ResourceMode::Warn => WireEnforce::Warn,
+                ResourceMode::Limit => WireEnforce::Limit,
                 ResourceMode::Kill => WireEnforce::Kill,
             },
             mem_headroom_pct: self.mem_headroom.percent(),

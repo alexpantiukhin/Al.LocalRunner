@@ -10,10 +10,10 @@ const PROCS_PER_CPU: u32 = 256;
 
 fn mode(broker: Option<&WireLimits>, settings: &RunnerSettings) -> Enforce {
     settings.enforce.unwrap_or(match broker.map(|l| l.mode) {
-        Some(WireEnforce::Warn) => Enforce::Warn,
+        Some(WireEnforce::Limit) => Enforce::Limit,
         Some(WireEnforce::Kill) => Enforce::Kill,
         Some(WireEnforce::Off) => Enforce::Off,
-        None => Enforce::Warn,
+        Some(WireEnforce::Warn | WireEnforce::Unknown) | None => Enforce::Warn,
     })
 }
 
@@ -172,6 +172,32 @@ mod tests {
         assert_eq!(warn.procs, Some(512));
         assert_eq!(warn.disk_mb, None);
         assert!(warn.disk_dirs.is_empty());
+    }
+
+    #[test]
+    fn limit_comes_from_the_broker_or_the_owner_like_the_other_modes() {
+        let b = broker(WireEnforce::Limit, 125, 150);
+        let l = job_limits(&req(4000, 4, 2000), Some(&b), &settings(), dirs());
+        assert_eq!(l.mode, Enforce::Limit);
+        assert_eq!(
+            (l.mem_mb, l.cpu_millis, l.procs, l.disk_mb),
+            (Some(5000), Some(4000), Some(1024), Some(3000))
+        );
+        let mut s = settings();
+        s.enforce = Some(Enforce::Limit);
+        let kill = broker(WireEnforce::Kill, 125, 150);
+        let owner = job_limits(&req(4000, 1, 0), Some(&kill), &s, dirs());
+        assert_eq!((owner.mode, owner.mem_mb), (Enforce::Limit, Some(5000)));
+        s.enforce = Some(Enforce::Warn);
+        let warn = job_limits(&req(4000, 1, 0), Some(&b), &s, dirs());
+        assert_eq!(warn.mode, Enforce::Warn);
+    }
+
+    #[test]
+    fn a_broker_mode_this_runner_does_not_know_warns() {
+        let b = broker(WireEnforce::Unknown, 125, 150);
+        let l = job_limits(&req(4000, 4, 2000), Some(&b), &settings(), dirs());
+        assert_eq!((l.mode, l.mem_mb), (Enforce::Warn, Some(5000)));
     }
 
     #[test]

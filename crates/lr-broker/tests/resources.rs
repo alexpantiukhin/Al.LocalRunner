@@ -57,6 +57,13 @@ fn modes_and_headrooms_are_read() {
         .wire();
     assert_eq!(w.mode, WireEnforce::Warn);
     assert_eq!(w.mem_headroom_pct, 110);
+    let r = ok("[resources]\nmode = \"limit\"\nmem_headroom = 1.2\n")
+        .resources
+        .expect("section present");
+    assert_eq!(r.mode, ResourceMode::Limit);
+    let w = r.wire();
+    assert_eq!(w.mode, WireEnforce::Limit);
+    assert_eq!(w.mem_headroom_pct, 120);
 }
 
 #[test]
@@ -65,6 +72,8 @@ fn invalid_values_are_refused_with_table_key_and_line() {
     assert_eq!(e.table.as_deref(), Some("resources"));
     assert_eq!(e.key.as_deref(), Some("mode"));
     assert_eq!(e.line, Some(2));
+    let e = err("[resources]\nmode = \"unknown\"\n");
+    assert_eq!(e.key.as_deref(), Some("mode"));
     let e = err("[resources]\nmem_headroom = 0.9\n");
     assert_eq!(e.key.as_deref(), Some("mem_headroom"));
     assert_eq!(e.line, Some(2));
@@ -79,6 +88,11 @@ fn invalid_values_are_refused_with_table_key_and_line() {
 #[test]
 fn kill_mode_is_not_a_warning_but_a_headroom_without_effect_is() {
     assert!(check(&ok("[resources]\nmode = \"kill\"\n"), &HOST).is_empty());
+    assert!(check(
+        &ok("[resources]\nmode = \"limit\"\nmem_headroom = 2.0\n"),
+        &HOST
+    )
+    .is_empty());
     assert!(check(&ok("[resources]\nmode = \"off\"\n"), &HOST).is_empty());
     let w = check(
         &ok("[resources]\nmode = \"off\"\nmem_headroom = 2.0\n"),
@@ -127,6 +141,17 @@ async fn kill_mode_limits_travel_with_the_assignment() {
             disk_headroom_pct: 300,
         }
     );
+}
+
+#[tokio::test]
+async fn limit_mode_travels_with_the_assignment() {
+    let h = Harness::start("[resources]\nmode = \"limit\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    let limits = r.assign().await.spec.limits.expect("limits present");
+    assert_eq!(limits.mode, WireEnforce::Limit);
 }
 
 #[tokio::test]

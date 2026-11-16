@@ -1,4 +1,4 @@
-use crate::limits::kill_line;
+use crate::limits::{held_line, kill_line};
 use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
@@ -99,7 +99,11 @@ impl<'a> Job<'a> {
         self.usage.peak_mem_mb = self.usage.peak_mem_mb.max(finished.usage.peak_mem_mb);
         self.usage.peak_disk_mb = self.usage.peak_disk_mb.max(finished.usage.peak_disk_mb);
         if let Some(ex) = finished.exceeded {
-            self.line(index, &kill_line(&ex), stop).await;
+            let line = match finished.ended {
+                Ended::Exceeded => kill_line(&ex),
+                _ => held_line(&ex),
+            };
+            self.line(index, &line, stop).await;
             self.exceeded.get_or_insert(ex);
         }
         match finished.ended {
