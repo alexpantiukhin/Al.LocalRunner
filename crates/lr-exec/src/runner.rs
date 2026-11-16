@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::process::Child;
+use tokio::sync::watch;
 use tokio::time::Instant;
 
 const POLL: Duration = Duration::from_millis(20);
@@ -66,6 +67,7 @@ struct Service {
 pub struct ExecRunner {
     clock: Arc<dyn Clock>,
     services: Mutex<HashMap<ProcessRef, Service>>,
+    output_waits: watch::Sender<u64>,
 }
 
 impl ExecRunner {
@@ -74,7 +76,14 @@ impl ExecRunner {
         ExecRunner {
             clock,
             services: Mutex::new(HashMap::new()),
+            output_waits: watch::Sender::new(0),
         }
+    }
+
+    /// How many times a step's output reader of this runner found the output buffer full and
+    /// had to wait for the consumer (backpressure), updated before each such wait.
+    pub fn output_waits(&self) -> watch::Receiver<u64> {
+        self.output_waits.subscribe()
     }
 
     fn take_service(&self, process: &ProcessRef) -> Option<Service> {
@@ -148,7 +157,7 @@ async fn kill_unmanaged(pid: u32, start: u64) {
 #[async_trait]
 impl ProcessRunner for ExecRunner {
     async fn run_job(&self, spec: JobSpec, output: &dyn JobOutput, stop: StopSignal) -> JobOutcome {
-        crate::job::run_job(&spec, self.clock.as_ref(), output, stop).await
+        crate::job::run_job(&spec, self.clock.as_ref(), &self.output_waits, output, stop).await
     }
 
     async fn spawn(&self, spec: SpawnSpec) -> Result<ProcessRef, ProcessError> {

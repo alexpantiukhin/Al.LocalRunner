@@ -8,10 +8,12 @@ use lr_abstractions::{
 };
 use lr_core::{JobState, StepState};
 use std::time::Duration;
+use tokio::sync::watch;
 
 struct Job<'a> {
     spec: &'a JobSpec,
     clock: &'a dyn Clock,
+    waits: &'a watch::Sender<u64>,
     secrets: Vec<&'a SecretValue>,
     emitter: Emitter<'a>,
     usage: Usage,
@@ -63,7 +65,7 @@ impl<'a> Job<'a> {
         if stop.current().is_some() {
             return (StepState::Cancelled, None);
         }
-        let spawned = match spawn_step(&launch, &self.secrets) {
+        let spawned = match spawn_step(&launch, &self.secrets, self.waits) {
             Ok(spawned) => spawned,
             Err(err) => {
                 let text = format!(
@@ -113,12 +115,14 @@ impl<'a> Job<'a> {
 pub(crate) async fn run_job(
     spec: &JobSpec,
     clock: &dyn Clock,
+    waits: &watch::Sender<u64>,
     output: &dyn JobOutput,
     mut stop: StopSignal,
 ) -> JobOutcome {
     let mut job = Job {
         spec,
         clock,
+        waits,
         secrets: spec.secret_values(),
         emitter: Emitter::new(output),
         usage: Usage::default(),

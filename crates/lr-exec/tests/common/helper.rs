@@ -15,6 +15,7 @@ const DETACH: &str = "LR_EXEC_DETACH";
 const READY: &str = "LR_EXEC_READY";
 const TEST_NAME: &str = "common::helper_process";
 const LIFETIME: Duration = Duration::from_secs(120);
+const READY_LIMIT: Duration = Duration::from_secs(10);
 
 static SOFT_MARKER: OnceLock<std::ffi::CString> = OnceLock::new();
 static LINKED: OnceLock<Option<TcpStream>> = OnceLock::new();
@@ -272,9 +273,21 @@ fn spawn_grandchild() {
     if detach {
         detach_command(&mut cmd);
     }
-    let child = cmd.spawn().unwrap();
-    let (mut stream, _) = ready.accept().unwrap();
-    let _ = stream.read(&mut [0u8; 1]);
+    let mut child = cmd.spawn().unwrap();
+    let (tell, told) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let ready = ready.accept().and_then(|(mut stream, _)| {
+            stream.set_read_timeout(Some(READY_LIMIT))?;
+            stream.read_exact(&mut [0u8; 1])
+        });
+        let _ = tell.send(ready.is_ok());
+    });
+    if told.recv_timeout(READY_LIMIT) != Ok(true) {
+        let _ = child.kill();
+        let _ = child.wait();
+        say("grandchild-not-ready\n");
+        std::process::exit(3);
+    }
     say(&format!(
         "grandchild-pid={} grandchild-pid-end\n",
         child.id()
@@ -374,6 +387,8 @@ fn install_soft_handler() {
             for fd in fds {
                 libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
             }
+            let flags = libc::fcntl(fds[1], libc::F_GETFL);
+            libc::fcntl(fds[1], libc::F_SETFL, flags | libc::O_NONBLOCK);
             SOFT_PIPE[0].store(fds[0], Ordering::SeqCst);
             SOFT_PIPE[1].store(fds[1], Ordering::SeqCst);
         }

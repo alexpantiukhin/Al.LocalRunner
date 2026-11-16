@@ -74,6 +74,35 @@ async fn kill_tree_spares_a_process_with_another_start() {
     assert!(!pid_alive(child));
 }
 
+struct Orphan {
+    child: std::process::Child,
+    root: ProcessRef,
+}
+
+impl Orphan {
+    fn spawn(mut cmd: std::process::Command) -> Orphan {
+        let child = cmd.spawn().unwrap();
+        let root = ProcessRef {
+            pid: child.id(),
+            start: process_start(child.id()),
+        };
+        Orphan { child, root }
+    }
+}
+
+impl Drop for Orphan {
+    fn drop(&mut self) {
+        let root = self.root.clone();
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let _ = runner().kill_tree(&root).await;
+            })
+        });
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orphan_from_an_earlier_run_is_killed_with_its_descendants() {
     let links = Links::new().await;
@@ -84,16 +113,16 @@ async fn orphan_from_an_earlier_run_is_killed_with_its_descendants() {
         cmd.process_group(0);
     }
     cmd.stdout(std::process::Stdio::null());
-    let mut orphan = cmd.spawn().unwrap();
+    let mut orphan = Orphan::spawn(cmd);
     let tree = links.roles(&["child", "grandchild"]).await;
     let grand = tree[1].pid;
     let process = ProcessRef {
         pid: tree[0].pid,
         start: process_start(tree[0].pid),
     };
-    assert!(process.start.is_some());
+    assert_eq!(process, orphan.root);
     runner().kill_tree(&process).await.unwrap();
-    let _ = orphan.wait();
+    let _ = orphan.child.wait();
     assert!(!pid_alive(process.pid));
     assert!(
         !pid_alive(grand),

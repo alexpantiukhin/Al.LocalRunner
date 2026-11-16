@@ -22,8 +22,6 @@ pub const T0: Timestamp = Timestamp(1_700_000_000_000);
 
 pub const HANG: Duration = Duration::from_secs(20);
 
-const SLOW_YIELDS: usize = 2_000;
-
 pub struct Links {
     listener: TcpListener,
     addr: String,
@@ -221,7 +219,8 @@ pub fn events_bytes(events: &[JobEvent]) -> Vec<u8> {
 pub struct Recorder {
     events: Mutex<Vec<JobEvent>>,
     notify: Notify,
-    delay_first: AtomicUsize,
+    hold_at: Mutex<Option<&'static str>>,
+    released: AtomicBool,
     block_after: Mutex<Option<usize>>,
     blocked: AtomicBool,
     max_chunk: AtomicUsize,
@@ -232,9 +231,14 @@ impl Recorder {
         Arc::new(Recorder::default())
     }
 
-    pub fn slow_first(self: &Arc<Self>, count: usize) -> Arc<Self> {
-        self.delay_first.store(count, Ordering::SeqCst);
+    pub fn hold_at(self: &Arc<Self>, needle: &'static str) -> Arc<Self> {
+        *self.hold_at.lock().unwrap() = Some(needle);
         self.clone()
+    }
+
+    pub fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
     }
 
     pub fn block_after(self: &Arc<Self>, count: usize) -> Arc<Self> {
@@ -311,9 +315,27 @@ impl JobOutput for Recorder {
                 std::future::pending::<()>().await;
             }
         }
-        if seen < self.delay_first.load(Ordering::SeqCst) {
-            for _ in 0..SLOW_YIELDS {
-                tokio::task::yield_now().await;
+        let hold = match &event {
+            JobEvent::Output { data, .. } => {
+                let mut at = self.hold_at.lock().unwrap();
+                let hit = at.is_some_and(|n| data.windows(n.len()).any(|w| w == n.as_bytes()));
+                if hit {
+                    *at = None;
+                }
+                hit
+            }
+            _ => false,
+        };
+        if hold {
+            loop {
+                let notified = self.notify.notified();
+                if !self.blocked.swap(true, Ordering::SeqCst) {
+                    self.notify.notify_waiters();
+                }
+                if self.released.load(Ordering::SeqCst) {
+                    break;
+                }
+                notified.await;
             }
         }
         if let JobEvent::Output { data, .. } = &event {

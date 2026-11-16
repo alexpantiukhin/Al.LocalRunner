@@ -34,11 +34,18 @@ async fn run_blocked(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_consumer_loses_nothing_and_keeps_order() {
-    let out = Recorder::new().slow_first(20);
+    let out = Recorder::new().hold_at(PAD);
     let spec = job("bp", 120, vec![step("flood", &flood(20_000), 100)]);
     let runner = ExecRunner::new(Arc::new(SystemClock));
+    let mut waits = runner.output_waits();
     let (_handle, stop) = stop_signal();
-    let outcome = tokio::time::timeout(HANG, runner.run_job(spec, out.as_ref(), stop))
+    let pace = async {
+        out.until_blocked().await;
+        waits.wait_for(|&n| n > 0).await.unwrap();
+        out.release();
+    };
+    let both = async { tokio::join!(runner.run_job(spec, out.as_ref(), stop), pace) };
+    let (outcome, ()) = tokio::time::timeout(HANG, both)
         .await
         .expect("run_job did not return");
     assert_eq!(outcome.state, JobState::Passed);
