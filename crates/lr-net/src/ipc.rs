@@ -144,7 +144,7 @@ pub(crate) async fn read_preamble<R: AsyncRead + Unpin>(r: &mut R) -> bool {
 /// client token on Windows, `SO_PEERCRED`/`getpeereid` on Unix) and no key.
 pub struct IpcListener {
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
-    task: JoinHandle<()>,
+    task: std::sync::Mutex<Option<JoinHandle<()>>>,
     access: platform::AccessCell,
     #[cfg_attr(not(unix), allow(dead_code))]
     path: String,
@@ -159,7 +159,7 @@ impl IpcListener {
         let (task, cell) = platform::listen(address, &access, tx).await?;
         Ok(IpcListener {
             ready: Mutex::new(rx),
-            task,
+            task: std::sync::Mutex::new(Some(task)),
             access: cell,
             path: address.to_string(),
             closed: AtomicBool::new(false),
@@ -181,9 +181,21 @@ impl IpcListener {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
-        self.task.abort();
+        if let Some(t) = self.task.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            t.abort();
+        }
         #[cfg(unix)]
         let _ = std::fs::remove_file(&self.path);
+    }
+
+    /// [`IpcListener::close`], then waits until the accepting task has let go of the address:
+    /// a new connection is refused from then on.
+    pub async fn closed(&self) {
+        self.close();
+        let task = self.task.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(t) = task {
+            let _ = t.await;
+        }
     }
 }
 

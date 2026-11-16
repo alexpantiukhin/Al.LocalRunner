@@ -14,7 +14,8 @@ use lr_abstractions::Meter;
 use lr_core::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
+use std::time::Duration;
 
 /// Kind of a metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,6 +290,8 @@ pub struct Metrics {
     client_label: AtomicBool,
     series: Mutex<Vec<Series>>,
     rejected: AtomicU64,
+    updates: Mutex<u64>,
+    updated: Condvar,
 }
 
 enum Update {
@@ -309,7 +312,25 @@ impl Metrics {
             client_label: AtomicBool::new(client_label),
             series: Mutex::new(CATALOG.iter().map(|_| Series::new()).collect()),
             rejected: AtomicU64::new(0),
+            updates: Mutex::new(0),
+            updated: Condvar::new(),
         }
+    }
+
+    /// Updates applied so far.
+    pub fn updates(&self) -> u64 {
+        *self.updates.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Blocks until more than `seen` updates are applied, at most `limit`; returns the count
+    /// then. For callers that wait for a value a role reports.
+    pub fn wait_updates(&self, seen: u64, limit: Duration) -> u64 {
+        let count = self.updates.lock().unwrap_or_else(|e| e.into_inner());
+        let (count, _) = self
+            .updated
+            .wait_timeout_while(count, limit, |n| *n <= seen)
+            .unwrap_or_else(|e| e.into_inner());
+        *count
     }
 
     /// Turns the `client` label on or off (`[metrics] client_label`).
@@ -386,7 +407,10 @@ impl Metrics {
     fn update(&self, name: &str, given: &[(&str, &str)], update: Update) {
         if !self.apply(name, given, update) {
             self.rejected.fetch_add(1, Ordering::Relaxed);
+            return;
         }
+        *self.updates.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.updated.notify_all();
     }
 
     fn apply(&self, name: &str, given: &[(&str, &str)], update: Update) -> bool {

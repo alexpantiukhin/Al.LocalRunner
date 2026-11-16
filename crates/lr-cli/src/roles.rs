@@ -90,6 +90,7 @@ impl Running {
     pub async fn stopped(mut self) {
         let tasks = std::mem::take(&mut self.tasks);
         let exits = std::mem::take(&mut self.exits);
+        let listeners = std::mem::take(&mut self.listeners);
         for t in &tasks {
             t.abort();
         }
@@ -97,6 +98,9 @@ impl Running {
             e.abort();
         }
         self.halt();
+        for l in &listeners {
+            l.closed().await;
+        }
         for t in tasks {
             let _ = t.await;
         }

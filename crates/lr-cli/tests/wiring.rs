@@ -1,5 +1,6 @@
 mod common;
 
+use common::hub_events::{until_hub, HANG};
 use common::TempDir;
 use lr_cli::commands::down_cmd::down;
 use lr_cli::commands::jobs::hub;
@@ -35,20 +36,6 @@ fn layout(dir: &TempDir) -> Layout {
     Layout::new(root, config)
 }
 
-async fn eventually<T, F, Fut>(what: &str, mut probe: F) -> T
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
-{
-    for _ in 0..150 {
-        if let Some(v) = probe().await {
-            return v;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn all_roles_start_from_wiring_on_loopback() {
     let dir = TempDir::new("wiring");
@@ -61,7 +48,7 @@ async fn all_roles_start_from_wiring_on_loopback() {
         .expect("runner starts");
     assert_eq!(runners.runners, ["r1"]);
 
-    let local = eventually("the local broker to be available", || async {
+    let local = until_hub(&layout, "the local broker to be available", || async {
         let client = hub(&layout).await.ok()?;
         let brokers = known_brokers(&client).await.ok()?;
         client.close().await;
@@ -69,7 +56,7 @@ async fn all_roles_start_from_wiring_on_loopback() {
     })
     .await;
 
-    let runner = eventually("runner r1 online", || {
+    let runner = until_hub(&layout, "runner r1 online", || {
         let local = local.clone();
         let layout = layout.clone();
         async move {
@@ -124,7 +111,7 @@ mem_mb = 256
         other => panic!("submit answered {other:?}"),
     };
     let mut output = String::new();
-    let state = tokio::time::timeout(Duration::from_secs(60), async {
+    let state = tokio::time::timeout(HANG, async {
         loop {
             match client.recv::<CliReply>().await.expect("hub answer") {
                 CliReply::Output { text, .. } => output.push_str(&text),
@@ -177,7 +164,7 @@ async fn hub_on_a_machine_without_a_broker_lists_no_local_broker() {
     let dir = TempDir::new("nobroker");
     let layout = layout(&dir);
     let hub_role = start_hub(&layout, false).await.expect("hub starts");
-    let client = eventually("the hub channel", || async { hub(&layout).await.ok() }).await;
+    let client = hub(&layout).await.expect("the hub channel");
     let brokers = known_brokers(&client).await.expect("brokers");
     client.close().await;
     assert!(

@@ -202,16 +202,11 @@ async fn a_closed_listener_stops_answering_while_still_held() {
             .expect("broker IPC"),
     );
     assert!(broker_answers(&layout).await);
-    held.close();
-    let mut gone = false;
-    for _ in 0..50 {
-        if !broker_answers(&layout).await {
-            gone = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(gone, "a closed listener answers while something holds it");
+    held.closed().await;
+    assert!(
+        !broker_answers(&layout).await,
+        "a closed listener answers while something holds it"
+    );
     drop(held);
 }
 

@@ -1,5 +1,6 @@
 mod common;
 
+use common::hub_events::HANG;
 use common::loopback::{layout, repo, until_ready, until_state};
 use common::TempDir;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
@@ -7,7 +8,6 @@ use lr_core::{JobId, JobState};
 use lr_proto::{ReasonCode, WireSource};
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
-use std::time::Duration;
 
 const GITHUB: [(&str, &str); 9] = [
     ("GITHUB_ACTIONS", "true"),
@@ -68,7 +68,7 @@ async fn a_workflow_run_whose_step_is_killed_is_cancelled_by_the_reaper_with_sen
     let mut seen = Vec::new();
     let job = loop {
         let line = rx
-            .recv_timeout(Duration::from_secs(30))
+            .recv_timeout(HANG)
             .unwrap_or_else(|e| panic!("run prints the job ({e}): {seen:?}"));
         seen.push(line.clone());
         if let Some(id) = line.strip_prefix("job ") {

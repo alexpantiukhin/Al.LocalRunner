@@ -8,8 +8,8 @@ use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
-    CliReply, CliRequest, DashboardEvent, HistoryFilter, JobSummary, QueueEvent, ReadReply,
-    ReadRequest, ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
+    CliReply, CliRequest, HistoryFilter, JobSummary, QueueEvent, ReadReply, ReadRequest,
+    ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -82,9 +82,7 @@ pub fn toml_str(text: &str) -> String {
     toml::Value::String(text.to_string()).to_string()
 }
 
-/// The longest wait for an event a role is about to produce: only an upper bound against a
-/// hang.
-pub const HANG: Duration = Duration::from_secs(20);
+pub use crate::common::hub_events::{until_hub, HANG};
 
 /// Waits for the first broker event that `pick` turns into a value.
 pub async fn broker_event<T>(
@@ -125,51 +123,6 @@ where
         assert!(started.elapsed() < limit, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-}
-
-/// The live events of the hub of `layout` (the dashboard's stream).
-pub struct HubEvents(IpcClient);
-
-impl HubEvents {
-    pub async fn open(layout: &Layout) -> HubEvents {
-        let client = hub(layout).await.expect("hub channel");
-        match client.call::<_, CliReply>(&CliRequest::Events).await {
-            Ok(CliReply::Watching) => HubEvents(client),
-            other => panic!("the hub did not open its event stream: {other:?}"),
-        }
-    }
-
-    /// The next event the hub relays.
-    pub async fn next(&mut self) -> DashboardEvent {
-        loop {
-            match self.0.recv::<CliReply>().await {
-                Ok(CliReply::Event(e)) => return e,
-                Ok(_) => {}
-                Err(e) => panic!("the hub's event stream ended: {e}"),
-            }
-        }
-    }
-}
-
-/// Checks `check` now and again after every event the hub of `layout` relays (a broker's
-/// queue or runner event, a broker connection coming or going) until it gives a value.
-pub async fn until_hub<T, F, Fut>(layout: &Layout, what: &str, mut check: F) -> T
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Option<T>>,
-{
-    let mut events = HubEvents::open(layout).await;
-    let found = async {
-        loop {
-            if let Some(v) = check().await {
-                return v;
-            }
-            events.next().await;
-        }
-    };
-    let found = tokio::time::timeout(HANG, found).await;
-    events.0.close().await;
-    found.unwrap_or_else(|_| panic!("timed out waiting for {what}"))
 }
 
 /// Reads the output of `job` on `client` until it holds `text`; the broker stores a chunk,
