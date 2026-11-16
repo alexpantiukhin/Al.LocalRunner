@@ -9,7 +9,9 @@ use lr_cli::commands::service_cmd::{
 };
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::doctor::same_user_risk_for;
-use lr_cli::os_service::runner_service::{KeyAccess, KeyState};
+use lr_cli::os_service::runner_service::{
+    service_config_for, KeyAccess, KeyState, RunnerServiceInputs, ServiceConfig,
+};
 use lr_cli::os_service::{service_installed, Os};
 use lr_cli::os_service::{Action, System};
 use lr_cli::paths::Layout;
@@ -235,6 +237,7 @@ struct Fake {
     dir: KeyState,
     login: bool,
     service: Option<Option<String>>,
+    foreign: bool,
 }
 
 fn owned_by(sid: &str) -> KeyState {
@@ -255,10 +258,16 @@ fn fake() -> Fake {
         dir: owned_by(if cfg!(windows) { ALEX } else { "1000" }),
         login: false,
         service: None,
+        foreign: false,
     }
 }
 
-fn service_for<R>(f: &Fake, user: &str, run: impl FnOnce(&ServiceContext) -> R) -> R {
+fn service_for<R>(
+    layout: &Layout,
+    f: &Fake,
+    user: &str,
+    run: impl FnOnce(&ServiceContext) -> R,
+) -> R {
     let principal = |u: &str| -> Option<String> {
         let bare = u.rsplit('\\').next().unwrap_or(u).to_ascii_lowercase();
         Some(match bare.as_str() {
@@ -275,14 +284,43 @@ fn service_for<R>(f: &Fake, user: &str, run: impl FnOnce(&ServiceContext) -> R) 
         }
     };
     let login = |_: &str| f.login;
-    let service = |_: &str| f.service.clone();
+    let service = |name: &str| {
+        f.service.clone().map(|owner| {
+            Some({
+                let named = owner.is_some();
+                let owner = owner.unwrap_or_else(|| "nobody".into());
+                let mut ours = service_config_for(&RunnerServiceInputs {
+                    os: Os::Windows,
+                    exe: std::env::current_exe().unwrap(),
+                    name: name.to_string(),
+                    state_dir: layout.root.clone(),
+                    config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
+                    user: owner,
+                });
+                if !named {
+                    ours.command = ours.command.replace(" --owner nobody", "");
+                }
+                match f.foreign {
+                    true => ServiceConfig {
+                        account: "LocalSystem".into(),
+                        ..ours
+                    },
+                    false => ours,
+                }
+            })
+        })
+    };
+    let started = |_: &str| Ok(());
+    let stopped = |_: &str| true;
     let ctx = ServiceContext {
         user: user.to_string(),
         elevated: true,
         principal: &principal,
         access: &access,
         login_entry: &login,
-        service_owner: &service,
+        service: &service,
+        confirm_started: &started,
+        confirm_stopped: &stopped,
     };
     run(&ctx)
 }
@@ -305,7 +343,7 @@ fn the_elevated_run_judges_the_same_user_rule_for_the_installing_user_not_for_ro
     );
     assert_eq!(same_user_risk_for(&layout, true, Some(&user)), None);
     assert_eq!(
-        service_for(&fake(), &user, |ctx| runner_service_for(
+        service_for(&layout, &fake(), &user, |ctx| runner_service_for(
             &layout,
             Switch::On,
             "box",
@@ -324,7 +362,7 @@ fn a_service_is_refused_for_a_missing_foreign_local_or_login_started_runner() {
     joined_runner(&layout, "box");
     let user = installing_user();
     let run = |f: &Fake, user: &str, switch: Switch, name: &str| {
-        service_for(f, user, |ctx| {
+        service_for(&layout, f, user, |ctx| {
             runner_service_for(&layout, switch, name, true, ctx)
         })
     };
@@ -394,7 +432,7 @@ fn on_windows_the_key_is_handed_over_only_by_its_owner_and_given_back_to_the_ser
     let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
     joined_runner(&layout, "box");
     let run = |f: &Fake, user: &str, switch: Switch| {
-        service_for(f, user, |ctx| {
+        service_for(&layout, f, user, |ctx| {
             runner_service_for(&layout, switch, "box", true, ctx)
         })
     };
@@ -436,6 +474,18 @@ fn on_windows_the_key_is_handed_over_only_by_its_owner_and_given_back_to_the_ser
         ..fake()
     };
     assert_eq!(run(&installed, r"PC\bob", Switch::Off), Ok(0));
+    let foreign = Fake {
+        service: Some(Some(r"PC\alex".into())),
+        foreign: true,
+        ..fake()
+    };
+    for switch in [Switch::On, Switch::Off] {
+        let e = run(&foreign, r"PC\alex", switch).unwrap_err();
+        assert!(
+            e.contains("not one this installation registered"),
+            "a service of the same name that is not ours is left alone: {e}"
+        );
+    }
 }
 
 #[test]

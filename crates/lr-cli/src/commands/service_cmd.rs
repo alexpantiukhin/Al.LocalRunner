@@ -538,14 +538,27 @@ pub fn runner_service_with(
     let user = original_user()?;
     let os = Os::current();
     let login = |n: &str| runner_service::login_entry(os, &user, n);
-    let service = |n: &str| runner_service::service_owner(os, n);
+    let service = |n: &str| runner_service::service_config(os, n);
+    let poll = |n: &str, polls: usize, settle: usize, want: bool| {
+        runner_service::confirm_state(
+            &mut || runner_service::running(os, n),
+            &mut || std::thread::sleep(Duration::from_secs(1)),
+            polls,
+            settle,
+            want,
+        )
+    };
+    let started = |n: &str| poll(n, 15, 3, true);
+    let stopped = |n: &str| poll(n, 30, 1, false).is_ok();
     let ctx = ServiceContext {
         user: user.clone(),
         elevated,
         principal: &runner_service::principal,
         access: &runner_service::key_state,
         login_entry: &login,
-        service_owner: &service,
+        service: &service,
+        confirm_started: &started,
+        confirm_stopped: &stopped,
     };
     runner_service_for(layout, switch, name, dry_run, &ctx)
 }
@@ -565,9 +578,14 @@ pub struct ServiceContext<'a> {
     pub access: &'a dyn Fn(&Path) -> runner_service::KeyState,
     /// Whether a login entry of [`ServiceContext::user`] starts the named runner.
     pub login_entry: &'a dyn Fn(&str) -> bool,
-    /// The installed service of the named runner and the user it names with `--owner`
-    /// (Windows): `None` without a service.
-    pub service_owner: &'a dyn Fn(&str) -> Option<Option<String>>,
+    /// The installed service of the named runner as the service manager holds it: `None`
+    /// without a service, `Some(None)` when it cannot be read (always on Linux and macOS).
+    pub service: &'a dyn Fn(&str) -> Option<Option<runner_service::ServiceConfig>>,
+    /// Whether the started service of the named runner keeps running: `Err` with its last
+    /// state otherwise (bounded).
+    pub confirm_started: &'a dyn Fn(&str) -> Result<(), Option<bool>>,
+    /// Whether the service of the named runner stopped (bounded).
+    pub confirm_stopped: &'a dyn Fn(&str) -> bool,
 }
 
 /// [`runner_service_with`] for `ctx`. `on` refuses, in this order: root or `SYSTEM` as the
@@ -603,7 +621,26 @@ pub fn runner_service_for(
     let account = runner_service::account(&inputs);
     let user_id = (ctx.principal)(&ctx.user);
     let service_id = (ctx.principal)(&account);
-    let installed = (ctx.service_owner)(name);
+    let installed = (ctx.service)(name);
+    let owner = installed.as_ref().map(|c| {
+        c.as_ref()
+            .and_then(|c| runner_service::owner_from_command_line(&c.command))
+    });
+    if os == Os::Windows {
+        let service = runner_service::service_name(os, name);
+        let theirs = match &installed {
+            Some(Some(config)) => runner_service::not_ours(name, config, &inputs),
+            Some(None) => Some(format!(
+                "cannot read the configuration of the service {service}, so it is left alone; \
+                 check it as administrator: {}",
+                named_status_command(os, &service)
+            )),
+            None => None,
+        };
+        if let Some(why) = theirs {
+            return Err(format!("autostart {verb} runner {name} --service: {why}"));
+        }
+    }
     let mut restore_key = false;
     if on {
         let refused = |why: String| format!("autostart on runner {name} --service: {why}");
@@ -633,7 +670,7 @@ pub fn runner_service_for(
                             service_id.as_deref(),
                             &key,
                             &(ctx.access)(&key),
-                            installed.clone(),
+                            owner.clone(),
                         )
                     })
                     .flatten()
@@ -652,7 +689,7 @@ pub fn runner_service_for(
         }
     } else if os == Os::Windows {
         let exists = (ctx.access)(&key) != runner_service::KeyState::Missing;
-        if let Some(owner) = runner_service::restore_owner(name, &key, exists, installed.clone())
+        if let Some(owner) = runner_service::restore_owner(name, &key, exists, owner.clone())
             .map_err(|e| format!("autostart off runner {name} --service: {e}"))?
         {
             inputs.user = owner;
@@ -684,17 +721,19 @@ pub fn runner_service_for(
                 &ctx.user,
             )?;
         }
-    } else {
-        apply_all(system, &runner_service::uninstall(&inputs, restore_key)).map_err(|e| {
-            if restore_key {
-                format!(
-                    "{e}; the key of runner {name} may not be {}'s again; as administrator run:{}",
-                    inputs.user,
-                    runner_service::key_recovery(&key, &inputs.user, &account)
+        if !dry_run {
+            (ctx.confirm_started)(name).map_err(|state| {
+                runner_service::start_failure(
+                    os,
+                    name,
+                    state,
+                    &layout.root.join("logs").join("service.log"),
                 )
-            } else {
-                e
-            }
+            })?;
+        }
+    } else {
+        runner_service::apply_uninstall(system, &inputs, restore_key, &mut || {
+            dry_run || (ctx.confirm_stopped)(name)
         })?;
         if restore_key && !dry_run {
             let owner_id = (ctx.principal)(&inputs.user);
@@ -717,8 +756,9 @@ pub fn runner_service_for(
     let service = runner_service::service_name(os, name);
     if on {
         println!(
-            "autostart on: runner {name} runs as the OS service {service} under {}: it starts \
-             after a reboot and keeps running after logout",
+            "autostart on: runner {name} started as the OS service {service} under {} and kept \
+             running for a few seconds; it starts after a reboot and keeps running after logout; \
+             whether it reached its broker: localrunner status",
             runner_service::account(&inputs)
         );
         println!("its state: {}", named_status_command(os, &service));

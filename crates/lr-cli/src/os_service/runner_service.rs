@@ -315,28 +315,172 @@ pub fn handover_verdict(
     }
 }
 
-/// The user a service command line `runner run ... --owner <user>` names; `None` when it names
-/// none. A quoted name may hold spaces.
-pub fn owner_from_command_line(command: &str) -> Option<String> {
-    let after = command.split_once(" --owner ")?.1.trim_start();
-    let owner = match after.strip_prefix('"') {
-        Some(quoted) => quoted.split_once('"')?.0,
-        None => after.split_whitespace().next()?,
-    };
-    (!owner.is_empty()).then(|| owner.to_string())
+/// Splits a Windows command line the way programs read it (`CommandLineToArgvW`): the program
+/// path ends at its closing quote or the first blank, then blanks separate arguments, quotes
+/// group them, and backslashes escape only a quote.
+pub fn split_command_line(command: &str) -> Vec<String> {
+    let chars: Vec<char> = command.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    while i < len && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i == len {
+        return Vec::new();
+    }
+    let mut first = String::new();
+    if chars[i] == '"' {
+        i += 1;
+        while i < len && chars[i] != '"' {
+            first.push(chars[i]);
+            i += 1;
+        }
+        i += 1;
+    } else {
+        while i < len && !chars[i].is_whitespace() {
+            first.push(chars[i]);
+            i += 1;
+        }
+    }
+    let mut out = vec![first];
+    loop {
+        while i < len && chars[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= len {
+            return out;
+        }
+        let mut arg = String::new();
+        let mut quoted = false;
+        while i < len {
+            let c = chars[i];
+            if c == '\\' {
+                let mut n = 0;
+                while i < len && chars[i] == '\\' {
+                    n += 1;
+                    i += 1;
+                }
+                if i < len && chars[i] == '"' {
+                    arg.push_str(&"\\".repeat(n / 2));
+                    if n % 2 == 1 {
+                        arg.push('"');
+                        i += 1;
+                    }
+                } else {
+                    arg.push_str(&"\\".repeat(n));
+                }
+                continue;
+            }
+            if c == '"' {
+                if quoted && i + 1 < len && chars[i + 1] == '"' {
+                    arg.push('"');
+                    i += 2;
+                    continue;
+                }
+                quoted = !quoted;
+                i += 1;
+                continue;
+            }
+            if c.is_whitespace() && !quoted {
+                break;
+            }
+            arg.push(c);
+            i += 1;
+        }
+        out.push(arg);
+    }
 }
 
-/// The installed service of runner `name` and the user it names with `--owner` (Windows):
-/// `None` when there is no service, `Some(None)` when it names nobody or its configuration
-/// cannot be read.
-pub fn service_owner(os: Os, name: &str) -> Option<Option<String>> {
+fn value_of<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let at = args.iter().skip(1).position(|a| a == flag)? + 1;
+    args.get(at + 1).map(String::as_str)
+}
+
+/// The user a service command line `runner run ... --owner <user>` names; `None` when it names
+/// none. The line is split with Windows quoting, so ` --owner ` inside the quoted program path
+/// is not taken for the flag.
+pub fn owner_from_command_line(command: &str) -> Option<String> {
+    value_of(&split_command_line(command), "--owner")
+        .filter(|o| !o.is_empty())
+        .map(str::to_string)
+}
+
+/// What the service manager holds for a Windows service: its command line and its account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceConfig {
+    /// The command line (`binPath`).
+    pub command: String,
+    /// The account it runs under (`obj`).
+    pub account: String,
+}
+
+/// The configuration `install` registers for `i`.
+pub fn service_config_for(i: &RunnerServiceInputs) -> ServiceConfig {
+    ServiceConfig {
+        command: windows_command_line(&run_args(i)),
+        account: account(i),
+    }
+}
+
+fn file_name(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_ascii_lowercase()
+}
+
+fn same_dir(a: &str, b: &str) -> bool {
+    let trim = |p: &str| p.trim_end_matches(['/', '\\']).to_lowercase();
+    trim(a) == trim(b)
+}
+
+/// Why the installed service `config` of runner `name` is not one this installation registered
+/// for `i`: another program, not `runner run --name <name> --service`, another state directory,
+/// or another account. Such a service is never changed or removed. `None` when it is ours.
+pub fn not_ours(name: &str, config: &ServiceConfig, i: &RunnerServiceInputs) -> Option<String> {
+    let args = split_command_line(&config.command);
+    let expected = account(i);
+    let reason = if args.first().map(|p| file_name(p)) != Some(file_name(&s(&i.exe))) {
+        format!(
+            "it starts {}",
+            args.first().map_or("nothing", String::as_str)
+        )
+    } else if args.get(1).map(String::as_str) != Some("runner")
+        || args.get(2).map(String::as_str) != Some("run")
+        || value_of(&args, "--name") != Some(name)
+        || !args.iter().any(|a| a == "--service")
+    {
+        format!(
+            "it does not run runner {name} as a service: {}",
+            config.command
+        )
+    } else if !value_of(&args, "--state-dir").is_some_and(|d| same_dir(d, &s(&i.state_dir))) {
+        format!(
+            "it belongs to the installation in {}",
+            value_of(&args, "--state-dir").unwrap_or("an unknown directory")
+        )
+    } else if !config.account.eq_ignore_ascii_case(&expected) {
+        format!("it runs as {}, not as {expected}", config.account)
+    } else {
+        return None;
+    };
+    Some(format!(
+        "the service {} is not one this installation registered ({reason}); it is left alone: \
+         remove it by hand, or give the installation it belongs to with --state-dir",
+        service_name(Os::Windows, name)
+    ))
+}
+
+/// The installed Windows service of runner `name` as the service manager holds it: `None` when
+/// there is no service, `Some(None)` when its configuration cannot be read. On Linux and macOS
+/// `Some(None)` for an installed service: its definition is not read back.
+pub fn service_config(os: Os, name: &str) -> Option<Option<ServiceConfig>> {
     if os != Os::Windows {
         return installed(os, name).then_some(None);
     }
     #[cfg(windows)]
     {
-        service_command_line(&service_name(os, name))
-            .map(|c| c.and_then(|c| owner_from_command_line(&c)))
+        read_service_config(&service_name(os, name))
     }
     #[cfg(not(windows))]
     {
@@ -345,12 +489,22 @@ pub fn service_owner(os: Os, name: &str) -> Option<Option<String>> {
 }
 
 #[cfg(windows)]
-fn service_command_line(service: &str) -> Option<Option<String>> {
+fn read_service_config(service: &str) -> Option<Option<ServiceConfig>> {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_SERVICE_DOES_NOT_EXIST};
     use windows_sys::Win32::System::Services::{
         CloseServiceHandle, OpenSCManagerW, OpenServiceW, QueryServiceConfigW,
         QUERY_SERVICE_CONFIGW, SC_MANAGER_CONNECT, SERVICE_QUERY_CONFIG,
     };
+    unsafe fn text(p: *const u16) -> Option<String> {
+        if p.is_null() {
+            return None;
+        }
+        let mut len = 0;
+        while *p.add(len) != 0 {
+            len += 1;
+        }
+        Some(String::from_utf16_lossy(std::slice::from_raw_parts(p, len)))
+    }
     let name: Vec<u16> = service.encode_utf16().chain(Some(0)).collect();
     unsafe {
         let scm = OpenSCManagerW(std::ptr::null(), std::ptr::null(), SC_MANAGER_CONNECT);
@@ -368,36 +522,102 @@ fn service_command_line(service: &str) -> Option<Option<String>> {
         let mut buf = vec![0u64; (needed as usize).div_ceil(8).max(1)];
         let config = buf.as_mut_ptr() as *mut QUERY_SERVICE_CONFIGW;
         let size = (buf.len() * 8) as u32;
-        let path = if QueryServiceConfigW(svc, config, size, &mut needed) != 0
-            && !(*config).lpBinaryPathName.is_null()
-        {
-            let p = (*config).lpBinaryPathName;
-            let mut len = 0;
-            while *p.add(len) != 0 {
-                len += 1;
-            }
-            Some(String::from_utf16_lossy(std::slice::from_raw_parts(p, len)))
+        let read = if QueryServiceConfigW(svc, config, size, &mut needed) != 0 {
+            text((*config).lpBinaryPathName).map(|command| ServiceConfig {
+                command,
+                account: text((*config).lpServiceStartName).unwrap_or_default(),
+            })
         } else {
             None
         };
         CloseServiceHandle(svc);
         CloseServiceHandle(scm);
-        Some(path)
+        Some(read)
     }
 }
 
-/// Applies the install plan of `i` through `system`. When a step fails: a service that
-/// `existed` before this run is left as it was; on Windows a new one is undone (the key goes
-/// back to the user when a key step had run, then the service is removed), and the undo stops
-/// at a failed key step, keeping the service and printing the commands that give the key back.
+/// Asks `probe` for the state of a service up to `polls` times, calling `pause` between asks,
+/// until it reports `want` `settle` times in a row. `Err` with the last answer otherwise.
+pub fn confirm_state(
+    probe: &mut dyn FnMut() -> Option<bool>,
+    pause: &mut dyn FnMut(),
+    polls: usize,
+    settle: usize,
+    want: bool,
+) -> Result<(), Option<bool>> {
+    let (mut streak, mut last) = (0, None);
+    for n in 0..polls {
+        last = probe();
+        if last == Some(want) {
+            streak += 1;
+            if streak >= settle {
+                return Ok(());
+            }
+        } else {
+            streak = 0;
+        }
+        if n + 1 < polls {
+            pause();
+        }
+    }
+    Err(last)
+}
+
+/// What `autostart on` says when the service of runner `name` started but did not keep running
+/// (`state`: its last state, `None` unknown), with the runner's log `log` and the state command.
+pub fn start_failure(os: Os, name: &str, state: Option<bool>, log: &Path) -> String {
+    let service = service_name(os, name);
+    let state = match state {
+        Some(true) => "running, but not steadily",
+        Some(false) => "not running",
+        None => "unknown",
+    };
+    format!(
+        "runner {name}: the OS service {service} was started but did not keep running (state: \
+         {state}); the reason is in {}; its state: {}",
+        log.display(),
+        super::state::named_status_command(os, &service)
+    )
+}
+
+/// Applies the install plan of `i` through `system`. A service that `existed` before this run,
+/// or that `sc create` finds already there (code 1073, created by someone else meanwhile), is
+/// never undone: the message says whether its definition was changed (the single `sc config`
+/// comes after the risky steps). A service this run created on Windows is undone (the key goes
+/// back to the user when a key step had run, then the service is removed); the undo stops at a
+/// failed key step, keeping the service and printing the commands that give the key back.
 pub fn apply_install(
     system: &dyn super::System,
     i: &RunnerServiceInputs,
     existed: bool,
 ) -> Result<(), String> {
     let plan = install(i);
+    let mut existed = existed;
     let mut failed = None;
     for (n, a) in plan.iter().enumerate() {
+        let created = matches!(a, Action::Run { program, args, .. }
+            if program == "sc.exe" && args.first().is_some_and(|w| w == "create"));
+        if created {
+            let strict = match a {
+                Action::Run { program, args, .. } => Action::Run {
+                    program: program.clone(),
+                    args: args.clone(),
+                    tolerate: Tolerate::Nothing,
+                },
+                other => other.clone(),
+            };
+            match system.apply(&strict) {
+                Ok(()) => continue,
+                Err(e) if e.starts_with("exit code 1073") => {
+                    existed = true;
+                    continue;
+                }
+                Err(e) => {
+                    failed = Some((n, format!("{a}: {e}")));
+                    break;
+                }
+            }
+        }
         if let Err(e) = system.apply(a) {
             failed = Some((n, format!("{a}: {e}")));
             break;
@@ -408,10 +628,20 @@ pub fn apply_install(
     };
     let service = service_name(i.os, &i.name);
     if existed {
+        let config = plan.iter().position(|a| {
+            matches!(a, Action::Run { program, args, .. }
+                if program == "sc.exe" && args.first().is_some_and(|w| w == "config"))
+        });
+        let what = match config {
+            Some(c) if at < c => {
+                "its definition was not changed (its privileges and recovery are set again to \
+                 the same values; its directory and key rights stay with its account)"
+            }
+            _ => "its definition was updated to this run's, but it did not start",
+        };
         return Err(format!(
-            "{e}; the service {service} existed before this run and was left as it was (its \
-             definition may be partly updated); fix the cause and run the command again; its \
-             state: {}",
+            "{e}; the service {service} existed before this run and was not removed; {what}; fix \
+             the cause and run the command again; its state: {}",
             super::state::named_status_command(i.os, &service)
         ));
     }
@@ -422,7 +652,7 @@ pub fn apply_install(
     let touched = plan[..=at]
         .iter()
         .any(|a| matches!(a, Action::Run { args, .. } if args.contains(&key)));
-    match super::apply_all(system, &uninstall(i, touched)) {
+    match apply_uninstall(system, i, touched, &mut || true) {
         Ok(()) => Err(format!(
             "{e} (undone: the service this run registered was removed{})",
             if touched {
@@ -432,13 +662,72 @@ pub fn apply_install(
             }
         )),
         Err(u) => Err(format!(
-            "{e}; undoing it stopped at {u}, so the service {service} was kept; give the key back \
-             to {} as administrator:{}\nthen run: localrunner autostart off runner {} --service",
-            i.user,
-            key_recovery(&key_path(i), &i.user, &account(i)),
+            "{e}; undoing it: {u}\nthen run: localrunner autostart off runner {} --service",
             i.name
         )),
     }
+}
+
+/// Applies the uninstall plan of `i` through `system`. On Windows, after `sc stop` it asks
+/// `stopped` whether the service stopped and changes nothing else while it runs; a failed key
+/// step stops before `sc delete`, with the commands that give the key back; rights on the
+/// directories that could not be taken back are named with their commands after the service is
+/// removed, and make the result an error.
+pub fn apply_uninstall(
+    system: &dyn super::System,
+    i: &RunnerServiceInputs,
+    restore_key: bool,
+    stopped: &mut dyn FnMut() -> bool,
+) -> Result<(), String> {
+    let plan = uninstall(i, restore_key);
+    if i.os != Os::Windows {
+        return super::apply_all(system, &plan);
+    }
+    let service = service_name(i.os, &i.name);
+    let account = account(i);
+    let Some((stop, rest)) = plan.split_first() else {
+        return Ok(());
+    };
+    system.apply(stop).map_err(|e| format!("{stop}: {e}"))?;
+    if !stopped() {
+        return Err(format!(
+            "the service {service} did not stop, so nothing else was changed; stop it as \
+             administrator: {}, then run this command again",
+            super::state::named_stop_command(i.os, &service)
+        ));
+    }
+    let dirs: Vec<String> = windows_dirs(i).iter().map(|(d, _)| s(d)).collect();
+    let key = s(&key_path(i));
+    let mut missed = Vec::new();
+    for a in rest {
+        let Err(e) = system.apply(a) else {
+            continue;
+        };
+        if let Action::Run { args, .. } = a {
+            if let Some(dir) = args.first().filter(|d| dirs.contains(d)) {
+                missed.push(format!("  icacls \"{dir}\" /remove \"{account}\""));
+                continue;
+            }
+            if args.contains(&key) {
+                return Err(format!(
+                    "{a}: {e}; the key of runner {} may not be {}'s again, and the service \
+                     {service} was kept; as administrator run:{}",
+                    i.name,
+                    i.user,
+                    key_recovery(&key_path(i), &i.user, &account)
+                ));
+            }
+        }
+        return Err(format!("{a}: {e}"));
+    }
+    if missed.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "the service {service} was removed, but the rights of {account} were not taken back from \
+         every directory; as administrator run:\n{}",
+        missed.join("\n")
+    ))
 }
 
 /// The error of a failed Windows install with the command that cleans up after it.
@@ -655,14 +944,14 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
     let account = account(i);
     let bin_path = windows_command_line(&run_args(i));
     let display = format!("Al.LocalRunner runner {}", i.name);
-    let params = |verb: &str| -> Vec<String> {
+    let params = |verb: &str, start: &str| -> Vec<String> {
         [
             verb,
             &name,
             "binPath=",
             &bin_path,
             "start=",
-            "demand",
+            start,
             "obj=",
             &account,
             "DisplayName=",
@@ -671,17 +960,19 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
         .map(String::from)
         .to_vec()
     };
-    let mut out = vec![
-        Action::Run {
-            program: "sc.exe".into(),
-            args: params("create"),
-            tolerate: Tolerate::Codes(vec![1073]),
-        },
-        Action::Run {
-            program: "sc.exe".into(),
-            args: params("config"),
-            tolerate: Tolerate::Nothing,
-        },
+    let mut out = vec![Action::Run {
+        program: "sc.exe".into(),
+        args: params("create", "demand"),
+        tolerate: Tolerate::Codes(vec![1073]),
+    }];
+    for (dir, rights) in windows_dirs(i) {
+        out.push(Action::run(
+            "icacls",
+            &[&s(&dir), "/grant", &format!("{account}:(OI)(CI){rights}")],
+        ));
+    }
+    out.extend(key_to(i, &account, &i.user));
+    out.extend([
         Action::run("sc.exe", &["privs", &name, WINDOWS_PRIVILEGES]),
         Action::run(
             "sc.exe",
@@ -695,15 +986,12 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             ],
         ),
         Action::run("sc.exe", &["failureflag", &name, "1"]),
-    ];
-    for (dir, rights) in windows_dirs(i) {
-        out.push(Action::run(
-            "icacls",
-            &[&s(&dir), "/grant", &format!("{account}:(OI)(CI){rights}")],
-        ));
-    }
-    out.extend(key_to(i, &account, &i.user));
-    out.push(Action::run("sc.exe", &["config", &name, "start=", "auto"]));
+        Action::Run {
+            program: "sc.exe".into(),
+            args: params("config", "auto"),
+            tolerate: Tolerate::Nothing,
+        },
+    ]);
     out.push(Action::run("sc.exe", &["start", &name]).tolerating(Tolerate::Codes(vec![1056])));
     out
 }
@@ -816,10 +1104,7 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
                 out.extend(key_to(i, &i.user, &account));
             }
             for (dir, _) in windows_dirs(i) {
-                out.push(
-                    Action::run("icacls", &[&s(&dir), "/remove", &account])
-                        .tolerating(Tolerate::Anything),
-                );
+                out.push(Action::run("icacls", &[&s(&dir), "/remove", &account]));
             }
             out.push(
                 Action::run("sc.exe", &["delete", &name]).tolerating(Tolerate::Codes(vec![1060])),
