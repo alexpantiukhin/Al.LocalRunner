@@ -112,6 +112,7 @@ pub fn read_replies() -> Vec<ReadReply> {
         ReadReply::Stats(stats()),
         ReadReply::Runners {
             runners: vec![runner_info()],
+            pools: vec![],
         },
         ReadReply::Subscribed { sub: 4 },
         ReadReply::Unsubscribed { sub: 4 },

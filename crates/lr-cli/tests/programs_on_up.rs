@@ -37,7 +37,7 @@ async fn online_r1(layout: &Layout) -> Option<BTreeSet<String>> {
     let brokers = known_brokers(&client).await.unwrap_or_default();
     let mut found = None;
     if let Some(b) = brokers.into_iter().find(|b| b.available) {
-        if let Ok(ReadReply::Runners { runners }) =
+        if let Ok(ReadReply::Runners { runners, .. }) =
             read(&client, &b.name, ReadRequest::Runners).await
         {
             found = runners

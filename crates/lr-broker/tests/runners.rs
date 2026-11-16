@@ -293,7 +293,7 @@ async fn unknown_message_type_of_a_newer_minor_version_is_skipped() {
 
 async fn until_liveness(hub: &mut Conn, name: &str, want: RunnerLiveness) -> RunnerInfo {
     for _ in 0..200 {
-        if let ReadReply::Runners { runners } = hub.read(ReadRequest::Runners).await {
+        if let ReadReply::Runners { runners, .. } = hub.read(ReadRequest::Runners).await {
             if let Some(r) = runners
                 .into_iter()
                 .find(|r| r.name == name && r.liveness == Some(want))

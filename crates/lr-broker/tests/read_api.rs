@@ -395,7 +395,7 @@ async fn runners_lists_registered_runners_with_load() {
     alex.send(&order("j1", want)).await;
     alex.accepted().await;
     r.assign().await;
-    let ReadReply::Runners { runners } = alex.read(ReadRequest::Runners).await else {
+    let ReadReply::Runners { runners, .. } = alex.read(ReadRequest::Runners).await else {
         panic!("runners")
     };
     let r1 = runners.iter().find(|x| x.name == "r1").unwrap();
@@ -791,4 +791,102 @@ async fn explain_of_a_cancelled_order_names_who_cancelled_it_and_why() {
     assert!(text.contains("cancelled_by_user"), "{text}");
     assert!(text.contains("кто: agent-1"), "{text}");
     assert!(text.contains("stop"), "{text}");
+}
+
+async fn runners_and_pools(c: &mut Conn) -> (Vec<RunnerInfo>, Vec<PoolInfo>) {
+    match c.read(ReadRequest::Runners).await {
+        ReadReply::Runners { runners, pools } => (runners, pools),
+        other => panic!("runners, got {other:?}"),
+    }
+}
+
+fn gpu_runner() -> WireCapabilities {
+    let mut c = linux();
+    c.tags.insert("gpu".into());
+    c
+}
+
+fn mac_runner() -> WireCapabilities {
+    caps(&["mac"], 16384, 8)
+}
+
+#[tokio::test]
+async fn two_runners_of_one_pool_are_grouped_with_one_shared_budget() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", gpu_runner()).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", mac_runner()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut want = req(1024, 2, 60);
+    want.tags.insert("gpu".into());
+    alex.send(&order("j1", want)).await;
+    alex.accepted().await;
+    r1.assign().await;
+    let (runners, pools) = runners_and_pools(&mut alex).await;
+    assert_eq!(pools.len(), 1, "{pools:?}");
+    let pool = &pools[0];
+    assert_eq!(pool.name, "default");
+    assert_eq!((pool.mem_total_mb, pool.mem_free_mb), (16384, 16384 - 1024));
+    assert_eq!((pool.cpu_total, pool.cpu_free), (8, 6));
+    assert_eq!(pool.runners, ["r1".to_string(), "r2".to_string()]);
+    assert_eq!(pool.held_tags.len(), 1);
+    assert_eq!(pool.held_tags[0].tag, "gpu");
+    assert_eq!(pool.held_tags[0].job, JobId("j1".into()));
+    assert!(runners.iter().all(|r| r.pool.as_deref() == Some("default")));
+    let (r1, r2) = (
+        runners.iter().find(|r| r.name == "r1").unwrap(),
+        runners.iter().find(|r| r.name == "r2").unwrap(),
+    );
+    assert_eq!((r1.busy, r2.busy), (Some(true), Some(false)));
+    assert_eq!(
+        (r1.can_start_now, r2.can_start_now),
+        (Some(false), Some(true))
+    );
+    assert_eq!(r1.free_mem_mb, pool.mem_free_mb);
+}
+
+#[tokio::test]
+async fn an_idle_runner_cannot_start_a_job_when_the_pool_is_full() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", mac_runner()).await;
+    let mut alex = h.local_hub("alex").await;
+    let (before, _) = runners_and_pools(&mut alex).await;
+    let idle = before.iter().find(|r| r.name == "r2").unwrap();
+    assert_eq!((idle.busy, idle.can_start_now), (Some(false), Some(true)));
+    alex.send(&order("j1", req(1024, 8, 60))).await;
+    alex.accepted().await;
+    r1.assign().await;
+    let (after, pools) = runners_and_pools(&mut alex).await;
+    let idle = after.iter().find(|r| r.name == "r2").unwrap();
+    assert_eq!(idle.busy, Some(false));
+    assert_eq!(idle.can_start_now, Some(false));
+    assert_eq!(pools[0].cpu_free, 0);
+}
+
+#[tokio::test]
+async fn foreign_jobs_are_summarised_for_a_viewer_with_summary_visibility() {
+    for (others, shown) in [("summary", false), ("none", false), ("full", true)] {
+        let h = Harness::start(&format!("[visibility]\nothers_orders = \"{others}\"\n"));
+        let mut r1 = h.member_runner("r1", "10.0.0.7", gpu_runner()).await;
+        let mut alex = h.local_hub("alex").await;
+        let mut bob = h.local_hub("bob").await;
+        let mut want = req(1024, 2, 60);
+        want.tags.insert("gpu".into());
+        alex.send(&order("j1", want)).await;
+        alex.accepted().await;
+        r1.assign().await;
+        let (_, seen_by_bob) = runners_and_pools(&mut bob).await;
+        let pool = &seen_by_bob[0];
+        assert_eq!(
+            (pool.mem_free_mb, pool.cpu_free),
+            (16384 - 1024, 6),
+            "{others}"
+        );
+        assert_eq!(pool.held_tags.len(), 1, "{others}");
+        assert_eq!(pool.held_tags[0].tag, "gpu", "{others}");
+        let id = &pool.held_tags[0].job;
+        assert_eq!(!id.0.is_empty(), shown, "{others}: {id:?}");
+        let (_, seen_by_alex) = runners_and_pools(&mut alex).await;
+        assert_eq!(seen_by_alex[0].held_tags[0].job, JobId("j1".into()));
+    }
 }

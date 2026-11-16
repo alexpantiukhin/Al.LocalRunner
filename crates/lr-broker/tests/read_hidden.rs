@@ -14,7 +14,7 @@ fn status(reply: ReadReply) -> StatusView {
 }
 
 fn held(reply: ReadReply, runner: &str) -> Vec<HeldTag> {
-    let ReadReply::Runners { runners } = reply else {
+    let ReadReply::Runners { runners, .. } = reply else {
         panic!("expected runners, got {reply:?}")
     };
     runners

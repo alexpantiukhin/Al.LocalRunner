@@ -87,7 +87,7 @@ async fn services_report_is_shown_on_the_runners_list() {
     let r = h.member_runner("r1", "10.0.0.7", with_service()).await;
     r.send(&report(ServiceState::Idle)).await;
     let mut hub = h.local_hub("alex").await;
-    let ReadReply::Runners { runners } = hub.read(ReadRequest::Runners).await else {
+    let ReadReply::Runners { runners, .. } = hub.read(ReadRequest::Runners).await else {
         panic!("runners reply expected");
     };
     assert_eq!(

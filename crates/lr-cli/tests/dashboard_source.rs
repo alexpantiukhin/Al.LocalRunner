@@ -189,7 +189,7 @@ fn hub(
                     ],
                     next: None,
                 },
-                ReadRequest::Runners => ReadReply::Runners { runners: vec![] },
+                ReadRequest::Runners => ReadReply::Runners { runners: vec![], pools: vec![] },
                 ReadRequest::Stats(_) => ReadReply::Stats(stats(&format!("unit-{name}"))),
                 _ => ReadReply::NotFound { what: name.clone() },
             };

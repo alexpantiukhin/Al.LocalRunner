@@ -217,7 +217,7 @@ async fn enforcement_of_a_runner_is_shown_and_survives_a_restart() {
     let _r = h.member_runner("r1", "10.0.0.7", c).await;
     let mut hub = h.local_hub("alex").await;
     let runners = |reply: ReadReply| match reply {
-        ReadReply::Runners { runners } => runners,
+        ReadReply::Runners { runners, .. } => runners,
         other => panic!("expected runners, got {other:?}"),
     };
     let list = runners(hub.read(ReadRequest::Runners).await);

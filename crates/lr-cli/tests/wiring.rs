@@ -77,7 +77,7 @@ async fn all_roles_start_from_wiring_on_loopback() {
             let reply = read(&client, &local, ReadRequest::Runners).await.ok()?;
             client.close().await;
             match reply {
-                ReadReply::Runners { runners } => runners
+                ReadReply::Runners { runners, .. } => runners
                     .into_iter()
                     .find(|r| r.online && r.name.ends_with("r1")),
                 _ => None,

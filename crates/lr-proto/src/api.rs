@@ -450,6 +450,36 @@ pub struct RunnerInfo {
     /// Whether the runner is local or joined by key; absent from an older broker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<RunnerKind>,
+    /// Name of the pool whose budget the runner shares; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
+    /// Whether an order needing no tags and the least memory and CPU could start on this runner
+    /// now: the runner takes work, is not busy and the pool has memory and CPU left. Absent from
+    /// an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_start_now: Option<bool>,
+    /// Whether a job of the pool runs on this runner now; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<bool>,
+}
+
+/// A pool: the budget its runners share.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PoolInfo {
+    /// Name of the pool.
+    pub name: String,
+    /// Memory of the pool in MB.
+    pub mem_total_mb: u64,
+    /// Memory not claimed by running jobs, MB.
+    pub mem_free_mb: u64,
+    /// CPU of the pool.
+    pub cpu_total: u32,
+    /// CPU not claimed by running jobs.
+    pub cpu_free: u32,
+    /// Tags held by running jobs; the job is empty for a reader who may not see it.
+    pub held_tags: Vec<HeldTag>,
+    /// Runners that draw on the pool.
+    pub runners: Vec<String>,
 }
 
 /// Answers to read requests.
@@ -487,6 +517,9 @@ pub enum ReadReply {
     Runners {
         /// The runners.
         runners: Vec<RunnerInfo>,
+        /// The pools the runners draw on; absent from an older broker.
+        #[serde(default)]
+        pools: Vec<PoolInfo>,
     },
     /// A subscription is open.
     Subscribed {

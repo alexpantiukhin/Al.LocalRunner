@@ -105,7 +105,7 @@ async fn local_runner_machine_is_hidden_from_other_clients() {
         ("root", Some(MachineRef("local:alex".into()))),
     ] {
         let mut c = h.local_hub(user).await;
-        let ReadReply::Runners { runners } = c.read(ReadRequest::Runners).await else {
+        let ReadReply::Runners { runners, .. } = c.read(ReadRequest::Runners).await else {
             panic!("runners");
         };
         assert_eq!(machine_seen(&runners), expected, "{user}");

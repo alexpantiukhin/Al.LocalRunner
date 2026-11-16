@@ -105,7 +105,7 @@ async fn after_a_restart_runners_are_offline_with_the_pool_as_capacity_and_remot
         "{scans:?}"
     );
     let mut root = h2.local_hub("root").await;
-    let ReadReply::Runners { runners } = root.read(ReadRequest::Runners).await else {
+    let ReadReply::Runners { runners, .. } = root.read(ReadRequest::Runners).await else {
         panic!("runners")
     };
     let r1 = runners.iter().find(|x| x.name == "r1").expect("restored");

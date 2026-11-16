@@ -109,6 +109,8 @@ codex plugin add localrunner@al-localrunner
 
    Если `localrunner runners` печатает `broker <имя> unreachable since <время>`, брокер не запущен или недоступен: hub и раннеры переподключаются сами с растущей паузой (от 1 до 30 с, число попыток не ограничено). `localrunner up` и `localrunner doctor` называют hub или раннер, который жив, но не подключён к брокеру.
 
+   Раннеры одного пула делят один бюджет (память, CPU, exclusive-теги), поэтому `localrunner runners` группирует их по пулам: `pool default: memory 12/32 GB free, cpu 6/16 free, tags held: gradle` (вывод команды английский); у каждого раннера видно `idle` или `busy` и `can start a job now: yes/no` (свободный раннер не начнёт джобу, если пул заполнен). В `--json` у каждого брокера есть `pools`. Читайте его перед тем, как отправлять несколько джоб сразу.
+
 3. Опишите задачу. Профиль лежит в `.localrunner/profiles.toml` проекта; в любой пустой папке создайте его:
 
    ```toml
@@ -221,7 +223,7 @@ localrunner broker install-service
 | `[[local_user]]` | кому разрешён локальный IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | приоритет, резерв, квота, вес по условию `when` (первое подошедшее правило по каждому полю) |
-| `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; по умолчанию вся память и все ядра машины брокера |
+| `[pool]` | `name` (его показывает `localrunner runners`, по умолчанию `default`), `mem_mb`, `cpu`, `exclusive_tags`; по умолчанию вся память и все ядра машины брокера |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` или `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
 | `[resources]` | лимиты джобы по заявленным `mem_mb` и `disk_mb`: `mode` = `off`, `warn` (по умолчанию), `kill`; `mem_headroom`, `disk_headroom` (запас, по умолчанию 1.25). См. [Лимиты ресурсов](#лимиты-ресурсов-очистка-и-чужая-нагрузка) |
 | `[admission]` | `foreign_load` = `off` (по умолчанию) или `wait`: ждать, пока чужие процессы нагружают машину раннера; `mem_headroom_mb` (256) |

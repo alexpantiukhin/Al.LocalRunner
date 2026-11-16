@@ -237,7 +237,7 @@ pub fn problem(broker: &str, reply: &ReadReply) -> String {
 /// The runners of an answer to `Runners`; `None` for a broker that does not know the request.
 pub fn runners_of(reply: ReadReply) -> Option<Vec<RunnerInfo>> {
     match reply {
-        ReadReply::Runners { runners } => Some(runners),
+        ReadReply::Runners { runners, .. } => Some(runners),
         _ => None,
     }
 }

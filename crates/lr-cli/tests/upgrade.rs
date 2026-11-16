@@ -779,6 +779,9 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             liveness: None,
             silent_for_s: None,
             kind: None,
+            pool: None,
+            can_start_now: None,
+            busy: None,
         }
     };
     let got = rows(

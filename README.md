@@ -109,6 +109,8 @@ The skills never raise rights on their own and never print join codes or tokens.
 
    If `localrunner runners` prints `broker <name> unreachable since <time>`, the broker is not running or not reachable: the hub and the runners reconnect by themselves with a growing pause (1 to 30 s, no limit on attempts). `localrunner up` and `localrunner doctor` name a hub or runner that is alive but not connected to the broker.
 
+   Runners of one pool share one budget (memory, CPU, exclusive tags), so `localrunner runners` groups them by pool: `pool default: memory 12/32 GB free, cpu 6/16 free, tags held: gradle`, and each runner shows `idle` or `busy` and `can start a job now: yes/no` (an idle runner cannot start a job when the pool is full). `--json` has `pools` per broker. Read it before submitting several jobs at once.
+
 3. Describe a task. A profile lives in `.localrunner/profiles.toml` of a project; in any empty folder create it with:
 
    ```toml
@@ -219,7 +221,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
-| `[pool]` | `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
+| `[pool]` | `name` (shown by `localrunner runners`, default `default`), `mem_mb`, `cpu`, `exclusive_tags`; by default all memory and cores of the broker machine |
 | `[limits]` | `max_job_timeout_s`, `timeout_above_max` (`reject` or `trim`), `job_log_max_mb`, `max_active_per_client`, `api_requests_per_min` (1200) |
 | `[resources]` | limits of a job by its declared `mem_mb` and `disk_mb`: `mode` = `off`, `warn` (default), `kill`; `mem_headroom`, `disk_headroom` (factor, default 1.25). See [Resource limits](#resource-limits-cleanup-and-foreign-load) |
 | `[admission]` | `foreign_load` = `off` (default) or `wait`: wait while foreign processes load the runner machine; `mem_headroom_mb` (256) |

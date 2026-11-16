@@ -383,7 +383,7 @@ impl Conn {
 
     pub async fn until_runner(&mut self, name: &str, online: bool) {
         for _ in 0..200 {
-            if let ReadReply::Runners { runners } = self.read(ReadRequest::Runners).await {
+            if let ReadReply::Runners { runners, .. } = self.read(ReadRequest::Runners).await {
                 if runners.iter().any(|r| r.name == name && r.online == online) {
                     return;
                 }

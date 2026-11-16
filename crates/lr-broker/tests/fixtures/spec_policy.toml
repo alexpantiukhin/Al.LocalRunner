@@ -60,6 +60,7 @@ label = "agent"
 names = ["registry_auth"]
 
 [pool]                                 # общий бюджет пула
+name = "default"                        # имя в выводе `localrunner runners`; по умолчанию "default"
 mem_mb = 16384
 cpu = 8
 exclusive_tags = ["android-emulator"] # теги, которые держит одна джоба за раз

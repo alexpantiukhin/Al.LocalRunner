@@ -336,6 +336,9 @@ fn runners_on_another_version_are_named_per_broker() {
         liveness: None,
         silent_for_s: None,
         kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     };
     let per = vec![
         ("a".to_string(), vec![runner("r1", Some("1.2.0"))]),

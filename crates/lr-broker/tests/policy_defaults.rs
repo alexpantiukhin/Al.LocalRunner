@@ -195,3 +195,13 @@ upgrade_hold_s = 30
         30
     );
 }
+
+#[test]
+fn pool_name_comes_from_policy_and_defaults_to_default() {
+    assert_eq!(ok("").pool.display_name(), "default");
+    assert_eq!(ok("[pool]\ncpu = 4\n").pool.display_name(), "default");
+    assert_eq!(ok("[pool]\nname = \"  \"\n").pool.display_name(), "default");
+    let named = ok("[pool]\nname = \"build\"\nmem_mb = 2048\n");
+    assert_eq!(named.pool.display_name(), "build");
+    assert_eq!(named.pool.name.as_deref(), Some("build"));
+}

@@ -1,7 +1,7 @@
 use clap::Parser;
 use lr_cli::commands::history_cmd::{history_filter, history_lines, newest_first, show_lines};
 use lr_cli::commands::log_cmd::LogPrinter;
-use lr_cli::commands::read_cmd::{runner_lines, stats_lines};
+use lr_cli::commands::read_cmd::{pool_runner_lines, runner_lines, runners_document, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::view::{
     add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines, runners_of,
@@ -9,8 +9,8 @@ use lr_cli::commands::view::{
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
-    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, ReadReply, RunnerInfo, RunnerKind,
-    RunnerLiveness, SpreadView, StatsView, StepView, WireCapabilities, WireSource,
+    HistoryFilter, JobDetail, JobSummary, PoolInfo, ProfileStatsView, ReadReply, RunnerInfo,
+    RunnerKind, RunnerLiveness, SpreadView, StatsView, StepView, WireCapabilities, WireSource,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -338,6 +338,9 @@ fn stats_and_runners_print_per_broker() {
         liveness: Some(RunnerLiveness::Stale),
         silent_for_s: Some(40),
         kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     };
     let text = runner_lines(&[("office".into(), vec![runner.clone()])]).join("\n");
     for needed in [
@@ -578,6 +581,9 @@ fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo 
         liveness: Some(liveness),
         silent_for_s: Some(silent),
         kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     }
 }
 
@@ -679,7 +685,8 @@ fn status_json_has_a_runners_key() {
 fn status_survives_a_broker_that_does_not_know_runners() {
     assert!(runners_of(ReadReply::Unknown).is_none());
     assert!(runners_of(ReadReply::Runners {
-        runners: Vec::new()
+        runners: Vec::new(),
+        pools: Vec::new()
     })
     .is_some());
     let mut doc = serde_json::json!({ "brokers": [{ "broker": "old" }] });
@@ -849,4 +856,103 @@ fn history_shows_actor_and_reason() {
     assert!(lines[3].ends_with("\tlocal\t-"), "{}", lines[3]);
     let v = serde_json::to_value(&rows[0].1).unwrap();
     assert_eq!(v["cancelled_by"], "upgrade");
+}
+
+fn pooled(name: &str, busy: bool, can: bool) -> RunnerInfo {
+    let mut r = runner_info(name, RunnerLiveness::Online, 0);
+    r.pool = Some("default".into());
+    r.busy = Some(busy);
+    r.can_start_now = Some(can);
+    r
+}
+
+fn default_pool() -> PoolInfo {
+    PoolInfo {
+        name: "default".into(),
+        mem_total_mb: 32768,
+        mem_free_mb: 12288,
+        cpu_total: 16,
+        cpu_free: 6,
+        held_tags: vec![lr_proto::HeldTag {
+            tag: "gradle".into(),
+            job: lr_core::JobId(String::new()),
+            exclusive: true,
+        }],
+        runners: vec!["r1".into(), "r2".into()],
+    }
+}
+
+#[test]
+fn runners_are_grouped_by_pool_under_one_header_with_idle_and_can_start() {
+    let view = vec![(
+        "office".to_string(),
+        vec![pooled("r1", true, false), pooled("r2", false, false)],
+        vec![default_pool()],
+    )];
+    let lines = pool_runner_lines(&view);
+    assert_eq!(lines[0], "broker office");
+    assert_eq!(
+        lines[1],
+        "  pool default: memory 12/32 GB free, cpu 6/16 free, tags held: gradle"
+    );
+    let text = lines.join("\n");
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle}:\n{text}"))
+    };
+    assert!(at("pool default") < at("r1\tonline") && at("r1\tonline") < at("r2\tonline"));
+    assert!(text.contains("busy; can start a job now: no"), "{text}");
+    assert!(text.contains("idle; can start a job now: no"), "{text}");
+    assert_eq!(text.matches("pool default").count(), 1, "{text}");
+
+    let mut free = default_pool();
+    free.held_tags.clear();
+    let view = vec![(
+        "office".to_string(),
+        vec![pooled("r1", false, true)],
+        vec![free],
+    )];
+    let text = pool_runner_lines(&view).join("\n");
+    assert!(text.contains("tags held: none"), "{text}");
+    assert!(text.contains("idle; can start a job now: yes"), "{text}");
+}
+
+#[test]
+fn an_older_broker_without_pools_prints_the_flat_list() {
+    let view = vec![(
+        "old".to_string(),
+        vec![runner_info("r1", RunnerLiveness::Online, 0)],
+        Vec::new(),
+    )];
+    let text = pool_runner_lines(&view).join("\n");
+    assert!(!text.contains("\n  pool "), "{text}");
+    assert!(!text.contains("can start"), "{text}");
+    assert!(text.contains("r1\tonline"), "{text}");
+    assert_eq!(
+        text,
+        runner_lines(&[(
+            "old".into(),
+            vec![runner_info("r1", RunnerLiveness::Online, 0)]
+        )])
+        .join("\n")
+    );
+}
+
+#[test]
+fn runners_json_carries_pools() {
+    let view = vec![(
+        "office".to_string(),
+        vec![pooled("r1", true, false)],
+        vec![default_pool()],
+    )];
+    let doc = runners_document(&view, &[]);
+    let broker = &doc["brokers"][0];
+    assert_eq!(broker["broker"], "office");
+    assert_eq!(broker["pools"][0]["name"], "default");
+    assert_eq!(broker["pools"][0]["mem_free_mb"], 12288);
+    assert_eq!(broker["pools"][0]["held_tags"][0]["tag"], "gradle");
+    assert_eq!(broker["runners"][0]["pool"], "default");
+    assert_eq!(broker["runners"][0]["can_start_now"], false);
+    let wire: ReadReply = serde_json::from_str(r#"{"type":"runners","runners":[]}"#).unwrap();
+    assert!(matches!(wire, ReadReply::Runners { pools, .. } if pools.is_empty()));
 }

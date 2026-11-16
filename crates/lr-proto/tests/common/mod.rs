@@ -198,6 +198,9 @@ pub fn runner_info() -> RunnerInfo {
         liveness: None,
         silent_for_s: None,
         kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     }
 }
 

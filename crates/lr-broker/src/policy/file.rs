@@ -177,6 +177,15 @@ impl Default for PolicyFile {
 }
 
 impl PoolSection {
+    /// The name shown to people: `name`, `default` where it is left out or blank.
+    pub fn display_name(&self) -> &str {
+        self.name
+            .as_deref()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or("default")
+    }
+
     /// The pool budget: the owner's numbers, the host's totals where they are left out.
     pub fn limits(&self, host: &HostResources) -> PoolLimits {
         PoolLimits {

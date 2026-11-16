@@ -200,6 +200,8 @@ pub struct SecretsSection {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct PoolSection {
+    /// `name`, shown by `runners`; default `default`.
+    pub name: Option<String>,
     /// `mem_mb`; `None` means all memory of the broker host.
     pub mem_mb: Option<NonZeroU64>,
     /// `cpu`; `None` means all cores of the broker host.

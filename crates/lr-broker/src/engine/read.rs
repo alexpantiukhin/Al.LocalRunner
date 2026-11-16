@@ -142,6 +142,7 @@ impl Engine {
             ReadRequest::Stats(f) => self.stats(&viewer, f).await,
             ReadRequest::Runners => ReadReply::Runners {
                 runners: self.runner_infos(&viewer),
+                pools: self.pool_infos(&viewer),
             },
             ReadRequest::Subscribe { topics } => self.subscribe(conn, topics),
             ReadRequest::Unsubscribe { sub } => {
