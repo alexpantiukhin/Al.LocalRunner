@@ -6,6 +6,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 |---|---|
 | State directory | `%LOCALAPPDATA%\Al.LocalRunner` (`LOCALRUNNER_STATE_DIR` overrides it); runners in `runner\<name>\` of it; broker service: `%ProgramData%\Al.LocalRunner` |
 | IPC | named pipes `\\.\pipe\al-localrunner-hub-<SID>`, `al-localrunner-runner-<SID>-<name>`, `al-localrunner-broker`, `al-localrunner-broker-admin`; the broker service listens on `al-localrunner-broker` too, open to `[[local_user]]` and administrators |
+| Runner as an OS service | `autostart on runner <name> --service` (administrator): service `AlLocalRunner-<name>` under `NT SERVICE\AlLocalRunner-<name>`, which gets modify on the state directory and read on the configuration and binary directories; no user profile, so jobs see only tools installed for all users; `down`/`upgrade` do not reach it, use `Stop-Service`/`Restart-Service AlLocalRunner-<name>` as administrator |
 | Process-tree kill | Job Object with kill-on-close |
 | Free memory and CPU | `Win32_OperatingSystem.FreePhysicalMemory`, logical processor count |
 

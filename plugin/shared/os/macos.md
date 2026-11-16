@@ -6,6 +6,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 |---|---|
 | State directory | `~/.local/share/al-localrunner` (`LOCALRUNNER_STATE_DIR` overrides it); runners in `runner/<name>/` of it; only the broker service uses `/Library/Application Support/Al.LocalRunner` |
 | IPC | Unix sockets in `ipc/` of the state directory (closed to the user, 0700): `hub-<user>.sock`, `runner-<user>-<name>.sock`, `broker.sock`, `broker-admin.sock`; broker service: `ipc/broker.sock` of its state directory (group `_allocalrunner`); the path must stay under the 104-byte socket limit |
+| Runner as an OS service | `sudo localrunner autostart on runner <name> --service --state-dir <state>` (the command prints the exact line): LaunchDaemon `/Library/LaunchDaemons/com.al-localrunner.runner-<name>.plist`, `UserName` the installing user; survives logout and starts at boot, but has no GUI session (no simulators, no keychain) |
 | Process-tree kill | own process group, `killpg` then SIGKILL after a grace period |
 | Free memory and CPU | `vm_stat` (free + inactive + speculative pages), `sysctl -n hw.ncpu` |
 
