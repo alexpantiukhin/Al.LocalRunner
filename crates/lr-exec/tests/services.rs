@@ -1,19 +1,13 @@
 mod common;
 
-use common::{base_env, fresh_file, helper_command, pid_alive, real_sleep, workdir, Helper};
+use common::{base_env, exited, helper_command, pid_alive, workdir, Helper, Links};
 use lr_abstractions::{
     Clock, Liveness, ProcessError, ProcessInspector, ProcessRef, ProcessRunner, SecretValue,
     SpawnSpec,
 };
 use lr_exec::{process_start, ExecRunner, OsProcessInspector, SystemClock};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-#[cfg(windows)]
-const ECHO_TOKEN: &str = "echo [%TOKEN%]> token.txt& ping -n 30 127.0.0.1 >nul";
-#[cfg(unix)]
-const ECHO_TOKEN: &str = "echo \"[$TOKEN]\" > token.txt; sleep 30";
 
 fn runner() -> ExecRunner {
     ExecRunner::new(Arc::new(SystemClock))
@@ -25,43 +19,15 @@ fn service(command: &str) -> SpawnSpec {
     spec
 }
 
-async fn wait_lines(path: &Path, count: usize) -> Vec<(String, u32)> {
-    for _ in 0..300 {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            let lines: Vec<(String, u32)> = text
-                .lines()
-                .filter_map(|l| {
-                    let (role, pid) = l.split_once(' ')?;
-                    Some((role.to_string(), pid.trim().parse().ok()?))
-                })
-                .collect();
-            if lines.len() >= count {
-                return lines;
-            }
-        }
-        real_sleep(100).await;
-    }
-    panic!(
-        "{} never got {count} lines: {:?}",
-        path.display(),
-        std::fs::read_to_string(path)
-    );
-}
-
-fn pid(lines: &[(String, u32)], role: &str) -> u32 {
-    lines.iter().find(|(r, _)| r == role).unwrap().1
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn spawned_service_tree_is_killed_by_kill_tree() {
     let runner = runner();
-    let pids = fresh_file("services", "tree.pids");
-    let cmd = helper_command(&Helper::new("tree").pidfile(&pids));
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("tree").link(&links));
     let process = runner.spawn(service(&cmd)).await.unwrap();
     let start = process.start.expect("service has a start fingerprint");
-    let lines = wait_lines(&pids, 2).await;
-    let child = pid(&lines, "child");
-    let grand = pid(&lines, "grandchild");
+    let tree = links.roles(&["child", "grandchild"]).await;
+    let (child, grand) = (tree[0].pid, tree[1].pid);
     let inspector = OsProcessInspector;
     assert_eq!(inspector.liveness(process.pid, start), Liveness::Alive);
     assert!(pid_alive(child));
@@ -94,16 +60,15 @@ async fn kill_tree_refuses_a_reference_without_fingerprint() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn kill_tree_spares_a_process_with_another_start() {
     let runner = runner();
-    let pids = fresh_file("services", "spare.pids");
-    let cmd = helper_command(&Helper::new("ignore").pidfile(&pids));
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("ignore").link(&links));
     let process = runner.spawn(service(&cmd)).await.unwrap();
-    let child = pid(&wait_lines(&pids, 1).await, "child");
+    let child = links.next().await.pid;
     let reused = ProcessRef {
         pid: process.pid,
         start: Some(process.start.unwrap() + 1),
     };
     runner.kill_tree(&reused).await.unwrap();
-    real_sleep(300).await;
     assert!(pid_alive(child), "a reused pid was killed");
     runner.kill_tree(&process).await.unwrap();
     assert!(!pid_alive(child));
@@ -111,8 +76,8 @@ async fn kill_tree_spares_a_process_with_another_start() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orphan_from_an_earlier_run_is_killed_with_its_descendants() {
-    let pids = fresh_file("services", "orphan.pids");
-    let mut cmd = common::helper::helper_process(&Helper::new("tree").pidfile(&pids));
+    let links = Links::new().await;
+    let mut cmd = common::helper::helper_process(&Helper::new("tree").link(&links));
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -120,11 +85,11 @@ async fn orphan_from_an_earlier_run_is_killed_with_its_descendants() {
     }
     cmd.stdout(std::process::Stdio::null());
     let mut orphan = cmd.spawn().unwrap();
-    let lines = wait_lines(&pids, 2).await;
-    let grand = pid(&lines, "grandchild");
+    let tree = links.roles(&["child", "grandchild"]).await;
+    let grand = tree[1].pid;
     let process = ProcessRef {
-        pid: pid(&lines, "child"),
-        start: process_start(pid(&lines, "child")),
+        pid: tree[0].pid,
+        start: process_start(tree[0].pid),
     };
     assert!(process.start.is_some());
     runner().kill_tree(&process).await.unwrap();
@@ -139,21 +104,14 @@ async fn orphan_from_an_earlier_run_is_killed_with_its_descendants() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_gets_its_secrets_in_the_environment() {
     let runner = runner();
-    let dir = workdir("services");
-    let _ = std::fs::remove_file(dir.join("token.txt"));
-    let mut spec = service(ECHO_TOKEN);
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("ignore").link(&links).show("TOKEN"));
+    let mut spec = service(&cmd);
     spec.secrets = vec![("TOKEN".to_string(), SecretValue::new("svc-secret"))];
     let process = runner.spawn(spec).await.unwrap();
-    let mut text = String::new();
-    for _ in 0..100 {
-        text = std::fs::read_to_string(dir.join("token.txt")).unwrap_or_default();
-        if text.contains(']') {
-            break;
-        }
-        real_sleep(50).await;
-    }
+    let shown = links.next().await.shown;
     runner.kill_tree(&process).await.unwrap();
-    assert!(text.contains("[svc-secret]"), "{text}");
+    assert_eq!(shown, "TOKEN=[svc-secret]");
 }
 
 #[tokio::test]
@@ -176,29 +134,25 @@ fn inspector_tells_alive_dead_and_unknown() {
     assert_eq!(inspector.liveness(0, start), Liveness::Unknown);
 }
 
-#[test]
-fn inspector_reports_an_exited_process_dead_before_and_after_reaping() {
-    let gate = fresh_file("services", "exit.gate");
-    let pids = fresh_file("services", "exit.pids");
-    let mut child =
-        common::helper::helper_process(&Helper::new("wait-file").gate(&gate).pidfile(&pids))
-            .stdout(std::process::Stdio::null())
-            .spawn()
-            .unwrap();
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspector_reports_an_exited_process_dead_before_and_after_reaping() {
+    let links = Links::new().await;
+    let mut child = common::helper::helper_process(&Helper::new("wait-gate").link(&links))
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
     let pid = child.id();
+    let mut gate = links.next().await;
     let start = process_start(pid).expect("child start");
     let inspector = OsProcessInspector;
     assert_eq!(inspector.liveness(pid, start), Liveness::Alive);
-    std::fs::write(&gate, b"go").unwrap();
-    let mut state = Liveness::Alive;
-    for _ in 0..100 {
-        state = inspector.liveness(pid, start);
-        if state == Liveness::Dead {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert_eq!(state, Liveness::Dead, "exited, unreaped child not dead");
+    gate.open().await;
+    exited(pid).await;
+    assert_eq!(
+        inspector.liveness(pid, start),
+        Liveness::Dead,
+        "exited, unreaped child not dead"
+    );
     child.wait().unwrap();
     assert_eq!(inspector.liveness(pid, start), Liveness::Dead);
 }
@@ -221,14 +175,15 @@ async fn system_clock_reads_wall_time_and_sleeps() {
     assert!(before.elapsed() < Duration::from_millis(100));
 }
 
-#[test]
-fn start_fingerprint_is_the_same_seen_from_the_process_and_from_outside() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn start_fingerprint_is_the_same_seen_from_the_process_and_from_outside() {
     use std::io::{BufRead, BufReader};
-    let gate = fresh_file("services", "start.gate");
-    let mut child = common::helper::helper_process(&Helper::new("print-start").gate(&gate))
+    let links = Links::new().await;
+    let mut child = common::helper::helper_process(&Helper::new("print-start").link(&links))
         .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
+    let mut gate = links.next().await;
     let mut own = String::new();
     for line in BufReader::new(child.stdout.take().unwrap()).lines() {
         let line = line.unwrap();
@@ -238,7 +193,7 @@ fn start_fingerprint_is_the_same_seen_from_the_process_and_from_outside() {
         }
     }
     let outside = process_start(child.id());
-    std::fs::write(&gate, b"go").unwrap();
+    gate.open().await;
     child.wait().unwrap();
     assert!(outside.is_some());
     assert!(
@@ -247,46 +202,34 @@ fn start_fingerprint_is_the_same_seen_from_the_process_and_from_outside() {
     );
 }
 
-#[test]
-fn process_exiting_with_code_259_is_dead() {
-    let gate = fresh_file("services", "259.gate");
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn process_exiting_with_code_259_is_dead() {
+    let links = Links::new().await;
     let mut child =
-        common::helper::helper_process(&Helper::new("wait-file").gate(&gate).count(259))
+        common::helper::helper_process(&Helper::new("wait-gate").link(&links).count(259))
             .stdout(std::process::Stdio::null())
             .spawn()
             .unwrap();
     let pid = child.id();
+    let mut gate = links.next().await;
     let start = process_start(pid).unwrap();
-    std::fs::write(&gate, b"go").unwrap();
-    let mut state = Liveness::Alive;
-    for _ in 0..100 {
-        state = OsProcessInspector.liveness(pid, start);
-        if state == Liveness::Dead {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert_eq!(state, Liveness::Dead);
+    gate.open().await;
+    exited(pid).await;
+    assert_eq!(OsProcessInspector.liveness(pid, start), Liveness::Dead);
     child.wait().unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn service_that_exits_by_itself_leaves_the_registry() {
     let runner = runner();
-    let gate = fresh_file("services", "sweep.gate");
-    let cmd = helper_command(&Helper::new("wait-file").gate(&gate));
-    runner.spawn(service(&cmd)).await.unwrap();
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("wait-gate").link(&links));
+    let process = runner.spawn(service(&cmd)).await.unwrap();
+    let mut gate = links.next().await;
     assert_eq!(runner.service_count(), 1);
-    std::fs::write(&gate, b"go").unwrap();
-    let mut count = 1;
-    for _ in 0..100 {
-        count = runner.service_count();
-        if count == 0 {
-            break;
-        }
-        real_sleep(50).await;
-    }
-    assert_eq!(count, 0);
+    gate.open().await;
+    exited(process.pid).await;
+    assert_eq!(runner.service_count(), 0);
 }
 
 #[cfg(windows)]

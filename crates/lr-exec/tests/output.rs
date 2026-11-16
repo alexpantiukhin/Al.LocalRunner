@@ -1,11 +1,10 @@
 mod common;
 
-use common::{events_bytes, fresh_file, helper_command, job, step, Helper, Recorder};
+use common::{events_bytes, fresh_file, helper_command, job, step, Helper, Links, Recorder, HANG};
 use lr_abstractions::{stop_signal, JobEvent, JobSpec, ProcessRunner, SecretValue};
 use lr_core::JobState;
 use lr_exec::{ExecRunner, LogWriter, Masker, SystemClock, MAX_CHUNK, MAX_LINE};
 use std::sync::Arc;
-use std::time::Duration;
 
 #[cfg(windows)]
 const BOTH_STREAMS: &str = "echo out1&echo out2&echo err1 1>&2&echo err2 1>&2";
@@ -16,12 +15,9 @@ async fn run(spec: JobSpec) -> (JobState, Arc<Recorder>) {
     let runner = ExecRunner::new(Arc::new(SystemClock));
     let out = Recorder::new();
     let (_handle, stop) = stop_signal();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        runner.run_job(spec, out.as_ref(), stop),
-    )
-    .await
-    .expect("run_job did not return");
+    let outcome = tokio::time::timeout(HANG, runner.run_job(spec, out.as_ref(), stop))
+        .await
+        .expect("run_job did not return");
     (outcome.state, out)
 }
 
@@ -68,13 +64,26 @@ async fn non_utf8_and_10mb_line_stay_bounded() {
     assert!(logged.iter().filter(|b| **b == b'a').count() >= total);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn secret_split_across_output_chunks_is_masked() {
-    let cmd = helper_command(&Helper::new("split"));
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("split").link(&links));
     let mut spec = job("split", 60, vec![step("s", &cmd, 30)]);
     spec.steps[0].secrets = vec![("X".to_string(), secret("SECRET"))];
-    let (state, out) = run(spec).await;
-    assert_eq!(state, JobState::Passed);
+    let runner = ExecRunner::new(Arc::new(SystemClock));
+    let out = Recorder::new();
+    let (_handle, stop) = stop_signal();
+    let rest = async {
+        let mut gate = links.next().await;
+        out.wait_for("pre ").await;
+        gate.open().await;
+        gate
+    };
+    let both = async { tokio::join!(runner.run_job(spec, out.as_ref(), stop), rest) };
+    let (outcome, _gate) = tokio::time::timeout(HANG, both)
+        .await
+        .expect("run_job did not return");
+    assert_eq!(outcome.state, JobState::Passed);
     let text = out.text();
     assert!(text.contains("pre *** post"), "{text}");
     assert!(!text.contains("SECRET"));

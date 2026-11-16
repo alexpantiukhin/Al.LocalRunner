@@ -10,8 +10,8 @@ struct Counts {
 
 const THRESHOLD: Counts = Counts {
     eventually: 40,
-    sleep: 40,
-    timeouts: 62,
+    sleep: 29,
+    timeouts: 54,
 };
 
 const LONG_WAITS: [&str; 5] = ["30", "45", "60", "90", "120"];
