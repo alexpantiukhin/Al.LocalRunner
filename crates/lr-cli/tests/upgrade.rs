@@ -703,6 +703,8 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             held_tags: Vec::new(),
             services: Vec::new(),
             unmet: Vec::new(),
+            liveness: None,
+            silent_for_s: None,
         }
     };
     let got = rows(

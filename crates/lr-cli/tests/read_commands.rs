@@ -6,8 +6,8 @@ use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::{Cli, Command, HistoryAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
-    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, RunnerInfo, SpreadView, StatsView,
-    StepView, WireCapabilities, WireSource,
+    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, RunnerInfo, RunnerLiveness, SpreadView,
+    StatsView, StepView, WireCapabilities, WireSource,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -306,7 +306,7 @@ fn stats_and_runners_print_per_broker() {
     }
     let runner = RunnerInfo {
         name: "r1".into(),
-        online: false,
+        online: true,
         caps: WireCapabilities {
             platforms: BTreeSet::from(["linux".to_string()]),
             mem_mb: 4096,
@@ -331,12 +331,14 @@ fn stats_and_runners_print_per_broker() {
         held_tags: Vec::new(),
         services: Vec::new(),
         unmet: vec!["program docker".into()],
+        liveness: Some(RunnerLiveness::Stale),
+        silent_for_s: Some(40),
     };
-    let text = runner_lines(&[("office".into(), vec![runner])]).join("\n");
+    let text = runner_lines(&[("office".into(), vec![runner.clone()])]).join("\n");
     for needed in [
         "office",
         "r1",
-        "offline",
+        "stale (silent 40 s)",
         "linux",
         "memory 4096 MB, free in the pool 1024 MB",
         "cpu 4, free in the pool 2",
@@ -347,6 +349,17 @@ fn stats_and_runners_print_per_broker() {
     ] {
         assert!(text.contains(needed), "{needed}:\n{text}");
     }
+    let mut gone = runner.clone();
+    gone.name = "r2".into();
+    gone.online = false;
+    gone.liveness = Some(RunnerLiveness::Offline);
+    let mut old = runner.clone();
+    old.name = "r3".into();
+    old.liveness = None;
+    old.silent_for_s = None;
+    let text = runner_lines(&[("office".into(), vec![gone, old])]).join("\n");
+    assert!(text.contains("r2\toffline"), "{text}");
+    assert!(text.contains("r3\tonline"), "{text}");
 }
 
 #[test]

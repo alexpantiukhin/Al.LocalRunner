@@ -8,7 +8,9 @@ use super::{ExplainArgs, RunnersArgs, StatsArgs};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::JobId;
-use lr_proto::{ReadReply, ReadRequest, RunnerInfo, SpreadView, StatsFilter, StatsView};
+use lr_proto::{
+    ReadReply, ReadRequest, RunnerInfo, RunnerLiveness, SpreadView, StatsFilter, StatsView,
+};
 use serde_json::json;
 
 /// Why `job` waits, from the first broker that has it: the broker's name and its text, which
@@ -155,6 +157,17 @@ fn listed<'a>(items: impl Iterator<Item = &'a String>) -> String {
     }
 }
 
+fn liveness_text(r: &RunnerInfo) -> String {
+    match (r.liveness, r.online) {
+        (Some(RunnerLiveness::Stale), _) => match r.silent_for_s {
+            Some(s) => format!("stale (silent {s} s)"),
+            None => "stale".into(),
+        },
+        (Some(RunnerLiveness::Online), _) | (None, true) => "online".into(),
+        _ => "offline".into(),
+    }
+}
+
 /// The runners of every broker as text.
 pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
     let mut out = Vec::new();
@@ -169,7 +182,7 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
                 "  {}\t{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
                  tags {}\tprograms {}",
                 r.name,
-                if r.online { "online" } else { "offline" },
+                liveness_text(r),
                 r.last_seen.map_or("-".into(), format_time),
                 listed(c.platforms.iter()),
                 c.mem_mb,

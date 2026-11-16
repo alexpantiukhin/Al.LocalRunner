@@ -34,5 +34,5 @@ pub use seq::{classify_seq, DedupKey, Direction, SeqCheck, SeqStream, Sequenced}
 pub use stats_view::*;
 pub use version::{
     negotiate, negotiate_between, Version, VersionRefused, HEARTBEAT_INTERVAL_S,
-    MISSED_HEARTBEATS_OFFLINE, PROTOCOL_VERSION,
+    MISSED_HEARTBEATS_OFFLINE, PROTOCOL_VERSION, STALE_AFTER_MISSED,
 };

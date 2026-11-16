@@ -5,7 +5,7 @@ use crate::api::{Access, Viewer};
 use lr_core::JobId;
 use lr_proto::{
     BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, RunnerCaps, RunnerInfo,
-    WireCapabilities,
+    RunnerLiveness, WireCapabilities,
 };
 
 fn caps_for(viewer: &Viewer, slot: &RunnerSlot) -> WireCapabilities {
@@ -19,6 +19,7 @@ fn caps_for(viewer: &Viewer, slot: &RunnerSlot) -> WireCapabilities {
 
 impl Engine {
     pub(crate) fn runner_infos(&self, viewer: &Viewer) -> Vec<RunnerInfo> {
+        let now = self.now();
         let running = self.running_jobs();
         let pool = self.policy.policy().pool();
         let free_mem = pool.mem_mb.saturating_sub(
@@ -53,9 +54,10 @@ impl Engine {
                         });
                     }
                 }
+                let liveness = slot.liveness(now);
                 RunnerInfo {
                     name: name.clone(),
-                    online: slot.conn.is_some(),
+                    online: liveness != RunnerLiveness::Offline,
                     caps: caps_for(viewer, slot),
                     last_seen: Some(slot.last_seen),
                     free_mem_mb: free_mem,
@@ -63,6 +65,8 @@ impl Engine {
                     held_tags,
                     services: slot.services.clone(),
                     unmet: Vec::new(),
+                    liveness: Some(liveness),
+                    silent_for_s: Some(now.millis_since(slot.last_heard) / 1000),
                 }
             })
             .collect()
@@ -70,12 +74,13 @@ impl Engine {
 
     pub(crate) fn capabilities(&self, conn: ConnId, client: &Client, q: CapabilitiesQuery) {
         let viewer = Self::viewer(client);
+        let now = self.now();
         let runners = self
             .runners
             .iter()
             .map(|(name, slot)| RunnerCaps {
                 name: name.clone(),
-                online: slot.conn.is_some(),
+                online: slot.liveness(now) == RunnerLiveness::Online,
                 zone: self.site.zone_between(&client.endpoint, &slot.endpoint),
                 caps: caps_for(&viewer, slot),
             })

@@ -360,12 +360,25 @@ pub struct HeldTag {
     pub exclusive: bool,
 }
 
+/// How recently a runner was heard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerLiveness {
+    /// Heard within the last heartbeat interval.
+    Online,
+    /// Connected, but a heartbeat is overdue; it is not given work.
+    Stale,
+    /// Not connected, or silent for the offline limit; also what an unknown value reads as.
+    #[serde(other)]
+    Offline,
+}
+
 /// A runner on the runners page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerInfo {
     /// Name.
     pub name: String,
-    /// Online or offline.
+    /// Connected and not silent for the offline limit (a stale runner is still true here).
     pub online: bool,
     /// What it offers, with cache figures.
     pub caps: WireCapabilities,
@@ -381,6 +394,12 @@ pub struct RunnerInfo {
     pub services: Vec<ServiceReport>,
     /// Characteristics that failed the check.
     pub unmet: Vec<String>,
+    /// How recently the runner was heard; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<RunnerLiveness>,
+    /// Seconds since the runner was last heard; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent_for_s: Option<u64>,
 }
 
 /// Answers to read requests.

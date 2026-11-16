@@ -263,5 +263,6 @@ upgrade_hold_s = 60
     hub.until_runner("local:lr", false).await;
     h.clock.advance(Duration::from_secs(30));
     let mut again = h.local_runner("alex", "lr", linux()).await;
+    again.send(&RunnerToBroker::Heartbeat { load: None }).await;
     assert_eq!(again.assign().await.job, JobId("s2".into()));
 }

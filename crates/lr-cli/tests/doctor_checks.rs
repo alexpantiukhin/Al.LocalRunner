@@ -333,6 +333,8 @@ fn runners_on_another_version_are_named_per_broker() {
         held_tags: Vec::new(),
         services: Vec::new(),
         unmet: Vec::new(),
+        liveness: None,
+        silent_for_s: None,
     };
     let per = vec![
         ("a".to_string(), vec![runner("r1", Some("1.2.0"))]),

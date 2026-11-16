@@ -4,8 +4,9 @@ use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
-    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities,
-    WireLoad, WireServiceStatus,
+    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, RunnerLiveness, ServiceReport,
+    WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE,
+    STALE_AFTER_MISSED,
 };
 use std::collections::BTreeSet;
 
@@ -17,6 +18,9 @@ pub(crate) struct RunnerSlot {
     pub(crate) endpoint: Endpoint,
     pub(crate) conn: Option<ConnId>,
     pub(crate) last_seen: Timestamp,
+    pub(crate) last_heard: Timestamp,
+    pub(crate) connected_once: bool,
+    pub(crate) heartbeat_proven: bool,
     pub(crate) draining: bool,
     pub(crate) drain_reason: Option<DrainReason>,
     pub(crate) hold_until: Option<Timestamp>,
@@ -36,6 +40,9 @@ impl RunnerSlot {
             endpoint: unknown_address(),
             conn: None,
             last_seen: row.last_seen.unwrap_or(Timestamp(0)),
+            last_heard: row.last_seen.unwrap_or(Timestamp(0)),
+            connected_once: false,
+            heartbeat_proven: false,
             draining: false,
             drain_reason: None,
             hold_until: None,
@@ -48,6 +55,27 @@ impl RunnerSlot {
 
     pub(crate) fn takes_work(&self) -> bool {
         self.conn.is_some() && !self.draining
+    }
+
+    pub(crate) fn liveness(&self, now: Timestamp) -> RunnerLiveness {
+        if self.conn.is_none() {
+            return RunnerLiveness::Offline;
+        }
+        let silent_ms = now.millis_since(self.last_heard);
+        let interval_ms = HEARTBEAT_INTERVAL_S * 1000;
+        let stale_ms = interval_ms * u64::from(STALE_AFTER_MISSED) + interval_ms / 2;
+        let offline_ms = interval_ms * u64::from(MISSED_HEARTBEATS_OFFLINE);
+        if silent_ms < stale_ms {
+            RunnerLiveness::Online
+        } else if silent_ms < offline_ms {
+            RunnerLiveness::Stale
+        } else {
+            RunnerLiveness::Offline
+        }
+    }
+
+    pub(crate) fn serves(&self, now: Timestamp) -> bool {
+        self.takes_work() && self.liveness(now) == RunnerLiveness::Online
     }
 
     pub(crate) fn drains_for_upgrade(&self) -> bool {
@@ -120,6 +148,10 @@ impl Engine {
             }
         }
         let now = self.now();
+        let last_heard = match self.runners.get(name) {
+            Some(prev) if prev.connected_once && !prev.heartbeat_proven => prev.last_heard,
+            _ => now,
+        };
         wire.machine = machine.map(MachineRef);
         if persisted {
             if let Err(StoreError::Duplicate(_)) = self
@@ -147,6 +179,9 @@ impl Engine {
                 endpoint,
                 conn: Some(conn),
                 last_seen: now,
+                last_heard,
+                connected_once: true,
+                heartbeat_proven: false,
                 draining: false,
                 drain_reason: None,
                 hold_until: None,
@@ -225,7 +260,7 @@ impl Engine {
                 name: name.clone(),
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
-                online: s.takes_work() || s.holds_orders(now),
+                online: s.serves(now) || s.holds_orders(now),
                 load: s.load.map(Into::into),
             })
             .collect()
@@ -240,7 +275,10 @@ impl Engine {
         let Some(slot) = self.runners.get_mut(name) else {
             return;
         };
+        let was_online = slot.liveness(now) == RunnerLiveness::Online;
         slot.last_seen = now;
+        slot.last_heard = now;
+        slot.heartbeat_proven = true;
         let load_changed = load.is_some() && slot.load != load;
         if load.is_some() {
             slot.load = load;
@@ -260,7 +298,7 @@ impl Engine {
             }
         }
         let on_foreign_load = self.wait_codes.values().any(|c| *c == "foreign_load");
-        if load_changed && on_foreign_load {
+        if !was_online || (load_changed && on_foreign_load) {
             self.plan().await;
         }
     }

@@ -290,3 +290,84 @@ async fn unknown_message_type_of_a_newer_minor_version_is_skipped() {
     let before = hub.sync().await;
     assert!(before.is_empty(), "{before:?}");
 }
+
+async fn until_liveness(hub: &mut Conn, name: &str, want: RunnerLiveness) -> RunnerInfo {
+    for _ in 0..200 {
+        if let ReadReply::Runners { runners } = hub.read(ReadRequest::Runners).await {
+            if let Some(r) = runners
+                .into_iter()
+                .find(|r| r.name == name && r.liveness == Some(want))
+            {
+                return r;
+            }
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("runner {name} never became {want:?}");
+}
+
+async fn reconnect_with_replay(h: &Harness, name: &str, addr: &str) -> Conn {
+    let mut c = h.dial(member_peer(&format!("pk-{name}"), addr)).await;
+    c.send(&hello(name, Some(linux()))).await;
+    c.welcome().await;
+    c.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
+        .await;
+    c
+}
+
+#[tokio::test]
+async fn a_runner_that_only_reconnects_without_heartbeats_turns_stale_then_offline() {
+    let h = Harness::start("");
+    let mut conn = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Online).await;
+    assert_eq!(info.silent_for_s, Some(0));
+    for _ in 0..3 {
+        h.clock.advance(Duration::from_secs(10));
+        hub.send(&HubToBroker::Heartbeat).await;
+        conn = reconnect_with_replay(&h, "r1", "10.0.0.7").await;
+    }
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    assert_eq!(info.silent_for_s, Some(30));
+    assert!(info.online);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    conn.quiet().await;
+    for _ in 0..2 {
+        h.clock.advance(Duration::from_secs(10));
+        hub.send(&HubToBroker::Heartbeat).await;
+        conn = reconnect_with_replay(&h, "r1", "10.0.0.7").await;
+    }
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Offline).await;
+    assert_eq!(info.silent_for_s, Some(50));
+    assert!(!info.online);
+    conn.quiet().await;
+}
+
+#[tokio::test]
+async fn a_heartbeat_counts_as_being_heard() {
+    let h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    h.clock.advance(Duration::from_secs(25));
+    hub.send(&HubToBroker::Heartbeat).await;
+    until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Online).await;
+    assert_eq!(info.silent_for_s, Some(0));
+}
+
+#[tokio::test]
+async fn a_stale_runner_is_not_given_an_order() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    h.clock.advance(Duration::from_secs(25));
+    hub.send(&HubToBroker::Heartbeat).await;
+    until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    r.quiet().await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    assert_eq!(r.assign().await.job, lr_core::JobId("j1".into()));
+}

@@ -531,7 +531,7 @@ pub(crate) async fn session(
     }
     s.told = shared.state().draining;
     let clock = shared.deps.clock.clone();
-    let mut next_beat = after(shared.now(), heartbeat);
+    let mut next_beat = shared.now();
     let mut last_rx = shared.now();
     loop {
         if s.stopped {
