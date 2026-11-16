@@ -166,12 +166,34 @@ async fn down_cancel_cancels_with_runner_stopped_then_bye() {
     )
     .await;
     b.next_job_msg().await.unwrap();
-    c.cancel_and_stop().await;
+    c.cancel_and_stop(lr_proto::DrainReason::Down).await;
     let r = result_of(&b.until_result().await);
     assert_eq!(r.state, JobState::Cancelled);
     assert_eq!(r.reason, Some(ReasonCode::RunnerStopped));
+    assert_eq!(r.detail.as_deref(), Some("stopped by down"));
     b.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
     assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
+}
+
+#[tokio::test]
+async fn a_cancel_for_an_upgrade_names_upgrade_in_the_stop_detail() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(600 * SEC, 0)]));
+    let (c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 600)], 600),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    c.cancel_and_stop(lr_proto::DrainReason::Upgrade).await;
+    let r = result_of(&b.until_result().await);
+    assert_eq!(r.state, JobState::Cancelled);
+    assert_eq!(r.reason, Some(ReasonCode::RunnerStopped));
+    assert_eq!(r.detail.as_deref(), Some("stopped by upgrade"));
 }
 
 #[tokio::test]
@@ -546,7 +568,7 @@ async fn cancel_and_stop_with_a_stuck_send_stops_too() {
     let (c, h) = rig.start();
     let _b = Broker::accept(&rig).await;
     rig.gate.stall_sends(true);
-    c.cancel_and_stop().await;
+    c.cancel_and_stop(lr_proto::DrainReason::Down).await;
     rig.advance(STOP_BOUND + SEC).await;
     assert!(h.is_finished(), "the stuck runner did not stop");
     assert_eq!(h.await.unwrap(), AgentExit::Stopped);

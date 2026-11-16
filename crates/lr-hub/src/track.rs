@@ -130,6 +130,7 @@ impl Track {
             peak_mem_mb: None,
             peak_disk_mb: None,
             labels: spec.map(|s| s.labels.clone()).unwrap_or_default(),
+            cancelled_by: None,
         }
     }
 }

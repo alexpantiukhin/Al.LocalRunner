@@ -9,8 +9,8 @@ use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, JobRow, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
     split_text, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall,
-    ReadReply, ReadRequest, RunnerLiveness, RunningView, StatsFilter, StatusFilter, StatusView,
-    WireSource, CHUNK_TEXT_LIMIT,
+    ReadReply, ReadRequest, ReasonCode, RejectReason, RunnerLiveness, RunningView, StatsFilter,
+    StatusFilter, StatusView, WireSource, CHUNK_TEXT_LIMIT,
 };
 
 pub(super) const SCAN_LIMIT: usize = 10_000;
@@ -256,19 +256,7 @@ impl Engine {
             });
         }
         let (queue, next) = page(queue, &f.cursor, limit as u64);
-        let mut recent = Vec::new();
-        for rec in self.store.jobs(&scan()).await.unwrap_or_default() {
-            if !rec.job.state.is_final() || recent.len() >= limit {
-                continue;
-            }
-            let a = self.access_to(viewer, &rec.job.key.client);
-            if let Some(s) = mask_summary(record_summary(&rec), a) {
-                let source = a.sees_fields().then(|| wire_source(rec.job.source));
-                if passes(&f.project, &f.source, &f.label, &s, source) {
-                    recent.push(s);
-                }
-            }
-        }
+        let recent = self.recent(viewer, &f, limit as u64).await;
         let used = self.running_jobs();
         let pool = self.policy.policy().pool();
         StatusView {
@@ -283,6 +271,39 @@ impl Engine {
             },
             next,
         }
+    }
+
+    async fn recent(&self, viewer: &Viewer, f: &StatusFilter, limit: u64) -> Vec<JobSummary> {
+        let wanted = f.recent.unwrap_or_default();
+        let count = match f.recent {
+            Some(r) => r.effective_count(limit),
+            None => limit,
+        };
+        let ended = |rec: &JobRecord| rec.job.finished_at.unwrap_or(rec.job.queued_at);
+        let mut finals: Vec<JobRecord> = self
+            .store
+            .jobs(&scan())
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|rec| rec.job.state.is_final())
+            .filter(|rec| wanted.since.is_none_or(|t| ended(rec) >= t))
+            .collect();
+        finals.sort_by(|a, b| (ended(b), &b.job.key.job).cmp(&(ended(a), &a.job.key.job)));
+        let mut recent = Vec::new();
+        for rec in finals {
+            if recent.len() as u64 >= count {
+                break;
+            }
+            let a = self.access_to(viewer, &rec.job.key.client);
+            if let Some(s) = mask_summary(record_summary(&rec), a) {
+                let source = a.sees_fields().then(|| wire_source(rec.job.source));
+                if passes(&f.project, &f.source, &f.label, &s, source) {
+                    recent.push(s);
+                }
+            }
+        }
+        recent
     }
 
     pub(crate) async fn run_of(
@@ -489,13 +510,60 @@ fn state_name(s: JobState) -> String {
         .unwrap_or_default()
 }
 
+fn reason_words(code: &ReasonCode) -> &'static str {
+    match code {
+        ReasonCode::RunnerStopped => "раннер остановлен",
+        ReasonCode::RunnerRemoved => "раннер удалён",
+        ReasonCode::BrokerUnavailable => "брокер был недоступен, джоба прервана",
+        ReasonCode::RunnerLost => "раннер пропал",
+        ReasonCode::ClientRemoved => "ключ клиента отозван",
+        ReasonCode::SenderGone => "отправитель ушёл, заказ отозван",
+        ReasonCode::HubAbsent => "hub отсутствовал дольше срока",
+        ReasonCode::ServiceFailed => "сервис раннера не поднялся",
+        ReasonCode::SecretMissing => "секрет недоступен",
+        ReasonCode::RunnerRestarted => "раннер перезапущен при живой джобе",
+        ReasonCode::CancelledByUser => "отменена пользователем",
+        ReasonCode::DiskInsufficient => "раннеру не хватило места на диске",
+        ReasonCode::ResourceExceeded => "превышены заявленные ресурсы",
+        ReasonCode::RunnerDraining => "раннер останавливался",
+        ReasonCode::Rejected(RejectReason::NoMatchingRunner) => "ни один раннер не подходит",
+        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine) => "нет раннера на машине клиента",
+        ReasonCode::Rejected(RejectReason::PoolMemory) => "просит больше памяти, чем есть в пуле",
+        ReasonCode::Rejected(RejectReason::PoolCpu) => "просит больше CPU, чем есть в пуле",
+        ReasonCode::Rejected(RejectReason::Timeout) => "таймаут выше потолка брокера",
+        ReasonCode::Rejected(_) => "не принята политикой брокера",
+        ReasonCode::Other(_) => "код новой версии",
+    }
+}
+
 fn finished_text(row: &JobRow, full: bool) -> String {
-    let mut text = format!("завершена: {}", state_name(row.state));
+    let reason = crate::api::reason_of(row.cancel_reason.as_deref());
+    let mut text = match (&reason, row.state) {
+        (Some(code), JobState::Cancelled) if code.is_rejection() => {
+            format!("отклонена при приёме: {} ({code})", reason_words(code))
+        }
+        (Some(code), JobState::Cancelled) => {
+            format!("отменена: {} ({code})", reason_words(code))
+        }
+        (Some(code), state) => format!(
+            "завершена: {}, {} ({code})",
+            state_name(state),
+            reason_words(code)
+        ),
+        (None, state) => format!("завершена: {}", state_name(state)),
+    };
     if !full {
         return text;
     }
-    if let Some(reason) = &row.cancel_reason {
-        text.push_str(&format!(" ({reason})"));
+    if let Some(by) = &row.cancelled_by {
+        text.push_str(&format!("; кто: {by}"));
+    }
+    let detail = row.cancel_reason.as_deref().and_then(|r| match reason {
+        Some(_) => r.split_once(": ").map(|(_, d)| d),
+        None => Some(r),
+    });
+    if let Some(d) = detail {
+        text.push_str(&format!("; {d}"));
     }
     if let Some(peaks) = peaks_text(row) {
         text.push_str(&format!("; {peaks}"));

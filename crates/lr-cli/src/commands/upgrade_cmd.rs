@@ -356,6 +356,11 @@ impl Job<'_> {
         let Some(mode) = choose(self.activity, self.yes, self.cancel, &question, console)? else {
             return Ok(1);
         };
+        if mode == Mode::Cancel {
+            for line in self.activity.cancel_lines() {
+                roles.say(&line);
+            }
+        }
         let _lock = write(
             self.layout,
             &UpgradeLock::of_this_process(&self.new.text, super::timefmt::now()),

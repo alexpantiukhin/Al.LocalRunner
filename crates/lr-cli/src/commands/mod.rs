@@ -174,6 +174,18 @@ pub enum Command {
         /// Only this broker.
         #[arg(long)]
         broker: Option<String>,
+        /// Also the orders that left the queue (finished, cancelled, withdrawn, rejected) with
+        /// their reason and who ended them: the last N (10 when no value) or those of a period
+        /// (`30m`, `2h`, `7d`).
+        #[arg(
+            long,
+            value_name = "N|DURATION",
+            num_args = 0..=1,
+            default_missing_value = "10",
+            value_parser = timefmt::parse_recent,
+            conflicts_with_all = ["job", "html"]
+        )]
+        recent: Option<timefmt::Recent>,
         /// Print JSON.
         #[arg(long)]
         json: bool,
@@ -376,13 +388,23 @@ pub async fn run(cli: Cli) -> i32 {
             source,
             label,
             broker,
+            recent,
             json,
             html,
         } => match html.html.clone() {
             Some(path) => snapshot_cmd::write(&layout, project, source, label, path, &html).await,
             None => match job {
                 Some(job) => view::status_job(&layout, job, broker, client, json).await,
-                None => view::status(&layout, project, source, label, broker, json).await,
+                None => {
+                    let filter = view::StatusArgs {
+                        project,
+                        source,
+                        label,
+                        broker,
+                        recent,
+                    };
+                    view::status(&layout, filter, json).await
+                }
             },
         },
         Command::Explain(a) => read_cmd::explain_cmd(&layout, a).await,

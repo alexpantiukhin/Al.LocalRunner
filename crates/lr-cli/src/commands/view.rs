@@ -1,10 +1,10 @@
 //! `status` and `brokers` (spec 9.1, 11.1): text for people, `--json` for agents. Every job of
 //! the JSON carries its project, source and label (absent values are `null`).
 
-use super::history_cmd::show_lines;
+use super::history_cmd::{reason_text, show_lines, shown_state};
 use super::jobs::hub;
 use super::log_cmd::cli_redactor;
-use super::timefmt::{format_ms, format_time};
+use super::timefmt::{format_ms, format_time, Recent};
 use super::SourceArg;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
@@ -154,6 +154,28 @@ pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
         }
     }
     out.join("\n")
+}
+
+/// The `recent` block of `status --recent`: per broker the orders that left the queue, newest
+/// end first, each with its final state, the reason and who ended it, and when.
+pub fn recent_lines(views: &[(String, StatusView)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (broker, v) in views {
+        out.push(format!("broker {broker}: recent"));
+        for s in &v.recent {
+            out.push(format!(
+                "  {}  {}  {}  ended {}",
+                s.job,
+                shown_state(s),
+                reason_text(s),
+                s.finished_at.map_or("-".into(), format_time)
+            ));
+        }
+        if v.recent.is_empty() {
+            out.push("  (none)".into());
+        }
+    }
+    out
 }
 
 /// The hub's known brokers.
@@ -357,7 +379,9 @@ pub fn is_plain_missing(what: &str, job: &JobId) -> bool {
 /// are any (the job exists, --client picks one), else that it is not found, then the problems.
 pub fn missing_job_error(job: &JobId, ambiguous: Vec<String>, problems: Vec<String>) -> String {
     let mut lines = if ambiguous.is_empty() {
-        vec![format!("job {job} is not found on the brokers of this hub")]
+        vec![format!(
+            "job {job} is not found on the brokers of this hub: none of them recorded an order with this id (refused and cancelled orders are recorded too)"
+        )]
     } else {
         ambiguous
     };
@@ -391,15 +415,30 @@ pub async fn read(
     }
 }
 
+/// What `status` asks for.
+#[derive(Debug, Clone, Default)]
+pub struct StatusArgs {
+    /// Only this project.
+    pub project: Option<String>,
+    /// Only this source.
+    pub source: Option<SourceArg>,
+    /// Only this label.
+    pub label: Option<String>,
+    /// Only this broker.
+    pub broker: Option<String>,
+    /// Also list the orders that left the queue.
+    pub recent: Option<Recent>,
+}
+
 /// `status`.
-pub async fn status(
-    layout: &Layout,
-    project: Option<String>,
-    source: Option<SourceArg>,
-    label: Option<String>,
-    broker: Option<String>,
-    json_out: bool,
-) -> Result<i32, String> {
+pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result<i32, String> {
+    let StatusArgs {
+        project,
+        source,
+        label,
+        broker,
+        recent,
+    } = args;
     let client = hub(layout).await?;
     let filter = StatusFilter {
         project,
@@ -408,6 +447,7 @@ pub async fn status(
             SourceArg::Github => WireSource::Github,
         }),
         label,
+        recent: recent.map(|r| r.filter(super::timefmt::now())),
         ..StatusFilter::default()
     };
     let mut views = Vec::new();
@@ -457,6 +497,11 @@ pub async fn status(
         let text = status_text(&views, now);
         if !text.is_empty() {
             println!("{text}");
+        }
+        if recent.is_some() {
+            for line in recent_lines(&views) {
+                println!("{line}");
+            }
         }
         for line in not_serving_lines(&per_runners) {
             println!("{line}");

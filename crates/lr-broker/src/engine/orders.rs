@@ -496,7 +496,11 @@ impl Engine {
                         self.count_rejected(&job);
                         self.note_rejected(&job, &reason);
                         let mut end = Transition::to(JobState::Cancelled, self.now());
-                        end.cancel_reason = Some(ReasonCode::Rejected(reason.clone()).to_string());
+                        end.cancelled_by = Some("broker".into());
+                        end.cancel_reason = Some(format!(
+                            "{}: {detail}",
+                            ReasonCode::Rejected(reason.clone())
+                        ));
                         if let Err(e) = self.store.transition(key, end).await {
                             return self.unavailable(conn, key, "end the unreadable order", &e);
                         }

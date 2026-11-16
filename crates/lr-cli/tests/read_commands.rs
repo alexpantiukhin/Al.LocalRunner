@@ -40,6 +40,7 @@ fn summary(job: &str, queued: u64) -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 
@@ -691,4 +692,136 @@ fn an_ambiguous_job_id_is_not_reported_as_missing_and_client_picks_the_run() {
         other => panic!("{other:?}"),
     }
     assert!(Cli::try_parse_from(["localrunner", "status", "--client", "a"]).is_err());
+}
+
+#[test]
+fn status_recent_parses_a_count_and_a_duration() {
+    use lr_cli::commands::timefmt::Recent;
+    let recent_of = |args: &[&str]| match parse(args) {
+        Command::Status { recent, .. } => recent,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        recent_of(&["status", "--recent", "5"]),
+        Some(Recent::Count(5))
+    );
+    assert_eq!(
+        recent_of(&["status", "--recent", "2h"]),
+        Some(Recent::Since(Since::Ago(2 * H)))
+    );
+    assert_eq!(
+        recent_of(&["status", "--recent"]),
+        Some(Recent::Count(10)),
+        "--recent alone lists the last ten"
+    );
+    assert_eq!(recent_of(&["status"]), None);
+    let err = Cli::try_parse_from(["localrunner", "status", "--recent", "soon"])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("2h") && err.contains("10"), "{err}");
+    assert!(Cli::try_parse_from(["localrunner", "status", "--recent", "0"]).is_err());
+    let now = Timestamp(5 * H);
+    assert_eq!(
+        Recent::Since(Since::Ago(H)).filter(now),
+        lr_proto::RecentFilter {
+            count: None,
+            since: Some(Timestamp(4 * H)),
+        }
+    );
+    assert_eq!(
+        Recent::Count(5).filter(now),
+        lr_proto::RecentFilter {
+            count: Some(5),
+            since: None,
+        }
+    );
+}
+
+fn ended(job: &str, reason: Option<lr_proto::ReasonCode>, by: Option<&str>) -> JobSummary {
+    JobSummary {
+        state: JobState::Cancelled,
+        started_at: None,
+        reason,
+        cancelled_by: by.map(String::from),
+        ..summary(job, H)
+    }
+}
+
+#[test]
+fn status_recent_lines_name_the_end_the_reason_and_who() {
+    use lr_cli::commands::view::recent_lines;
+    use lr_proto::{PoolLoad, ReasonCode, RejectReason, StatusView};
+    let view = StatusView {
+        running: Vec::new(),
+        queue: Vec::new(),
+        recent: vec![
+            ended("j7", Some(ReasonCode::RunnerStopped), Some("upgrade")),
+            ended(
+                "j6",
+                Some(ReasonCode::Rejected(RejectReason::NoMatchingRunner)),
+                Some("broker"),
+            ),
+            ended("j5", Some(ReasonCode::SenderGone), Some("agent-1")),
+            summary("j4", H),
+        ],
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 0,
+            used_cpu: 0,
+            total_cpu: 0,
+        },
+        next: None,
+    };
+    let text = recent_lines(&[("local".into(), view.clone())]).join("\n");
+    for needed in [
+        "broker local: recent",
+        "j7  cancelled  cancelled by upgrade: runner_stopped",
+        "j6  rejected  rejected_no_matching_runner",
+        "j5  cancelled  cancelled by agent-1: sender_gone",
+        "j4  passed  -",
+        "1970-01-01 01:01:03Z",
+    ] {
+        assert!(text.contains(needed), "{needed} missing:\n{text}");
+    }
+    let empty = StatusView {
+        recent: Vec::new(),
+        ..view
+    };
+    let text = recent_lines(&[("local".into(), empty)]).join("\n");
+    assert!(text.contains("(none)"), "{text}");
+}
+
+#[test]
+fn history_shows_actor_and_reason() {
+    use lr_proto::{ReasonCode, RejectReason};
+    let rows = vec![
+        (
+            "local".to_string(),
+            ended("j3", Some(ReasonCode::RunnerStopped), Some("upgrade")),
+        ),
+        (
+            "local".to_string(),
+            ended(
+                "j2",
+                Some(ReasonCode::Rejected(RejectReason::PoolMemory)),
+                Some("broker"),
+            ),
+        ),
+        ("local".to_string(), summary("j1", H)),
+    ];
+    let lines = history_lines(&rows);
+    assert!(lines[0].ends_with("\tBROKER\tREASON"), "{}", lines[0]);
+    assert!(
+        lines[1].ends_with("\tlocal\tcancelled by upgrade: runner_stopped"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].ends_with("\tlocal\trejected_pool_memory"),
+        "{}",
+        lines[2]
+    );
+    assert!(lines[3].ends_with("\tlocal\t-"), "{}", lines[3]);
+    let v = serde_json::to_value(&rows[0].1).unwrap();
+    assert_eq!(v["cancelled_by"], "upgrade");
 }

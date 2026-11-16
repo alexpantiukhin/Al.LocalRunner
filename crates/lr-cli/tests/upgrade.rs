@@ -296,7 +296,7 @@ async fn an_idle_node_is_only_replaced() {
 fn busy() -> Activity {
     Activity {
         running: vec!["j1 on r1 (tests)".into()],
-        queued: 2,
+        queued: vec!["j2".into(), "j3".into()],
         note: None,
     }
 }
@@ -828,4 +828,27 @@ async fn a_busy_second_binary_does_not_make_the_first_one_replaced_again() {
     let applied = system.applied.lock().unwrap().clone();
     assert_eq!(applied.len(), 2, "{applied:?}");
     assert!(applied[0].contains("first") && applied[1].contains("second"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_cancel_lists_the_cancelled_and_the_queued_orders() {
+    let mut c = busy_case();
+    c.cancel = true;
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(o.said.iter().any(|l| l == "cancelling: j1"), "{:?}", o.said);
+    assert!(
+        o.said.iter().any(|l| l == "staying queued: j2, j3"),
+        "{:?}",
+        o.said
+    );
+    let waited = run(busy_case()).await;
+    assert!(
+        !waited.said.iter().any(|l| l.starts_with("cancelling:")),
+        "{:?}",
+        waited.said
+    );
+    let lines = busy().lines().join("\n");
+    assert!(lines.contains("waiting orders: 2"), "{lines}");
+    assert!(lines.contains("j2, j3"), "{lines}");
 }

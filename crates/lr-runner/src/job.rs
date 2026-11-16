@@ -236,6 +236,7 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
         settings: shared.deps.settings.get(),
         stop: handle,
         reason: None,
+        detail: None,
         lost_killed: false,
     });
     shared.status.notify_one();
@@ -318,14 +319,19 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
         }
     };
     shared.release_services(&held).await;
-    let reason = shared.state().job.as_ref().and_then(|c| c.reason.clone());
-    let f = Final {
-        reason: f.reason.or(if f.state == JobState::Cancelled {
-            reason
-        } else {
-            None
-        }),
-        ..f
+    let stopped = match shared.state().job.as_ref() {
+        Some(c) if f.state == JobState::Cancelled && f.reason.is_none() => {
+            c.reason.clone().map(|r| (r, c.detail.clone()))
+        }
+        _ => None,
+    };
+    let f = match stopped {
+        Some((reason, detail)) => Final {
+            reason: Some(reason),
+            detail: detail.or(f.detail),
+            ..f
+        },
+        None => f,
     };
     crate::hooks::run_cleanup(shared, &job, CleanupOn::of(f.state, f.reason.as_ref())).await;
     finish(shared, &job, f).await;

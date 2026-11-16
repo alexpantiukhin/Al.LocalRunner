@@ -50,6 +50,20 @@ pub fn shown_state(s: &JobSummary) -> String {
     }
 }
 
+/// Why the run ended as `history` and `status --recent` show it: `cancelled by <actor>: <code>`
+/// for a cancelled run whose canceller is known, the reason code otherwise (a refusal is
+/// already `rejected` in the state), `-` without one.
+pub fn reason_text(s: &JobSummary) -> String {
+    match (&s.reason, &s.cancelled_by) {
+        (Some(code), Some(by)) if s.state == JobState::Cancelled && !is_rejected(s) => {
+            format!("cancelled by {by}: {code}")
+        }
+        (Some(code), _) => code.to_string(),
+        (None, Some(by)) if s.state == JobState::Cancelled => format!("cancelled by {by}"),
+        (None, _) => "-".into(),
+    }
+}
+
 /// The runs of every broker as one list, newest first, at most `limit`.
 pub fn newest_first(
     per: Vec<(String, Vec<JobSummary>)>,
@@ -86,12 +100,12 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER"
+        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
             .into(),
     ];
     for (b, s) in rows {
         out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}\t{}",
             s.job,
             shown_state(s),
             format_time(s.queued_at),
@@ -108,6 +122,7 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
             dash(&s.runner),
             mb(s.peak_mem_mb),
             mb(s.peak_disk_mb),
+            reason_text(s),
         ));
     }
     out

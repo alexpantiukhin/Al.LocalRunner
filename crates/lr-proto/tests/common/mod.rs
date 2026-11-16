@@ -164,6 +164,7 @@ pub fn summary() -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 

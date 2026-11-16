@@ -2,12 +2,21 @@ use super::retry::{transient, Retry};
 use super::{Cancel, Engine, Job};
 use lr_abstractions::{Applied, OutboxKind, StoreError, Transition};
 use lr_core::{JobState, Timestamp};
-use lr_proto::{BrokerToHub, JobResult, QueueEvent, StartedNotice};
+use lr_proto::{BrokerToHub, JobResult, QueueEvent, ReasonCode, StartedNotice};
 
 pub(crate) enum StartWrite {
     Saved,
     Pending(StoreError),
     Refused,
+}
+
+fn stopped_by(r: &JobResult) -> Option<String> {
+    match (&r.reason, &r.detail) {
+        (Some(ReasonCode::RunnerStopped), Some(d)) => {
+            d.strip_prefix("stopped by ").map(str::to_string)
+        }
+        _ => None,
+    }
 }
 
 fn cancelling(cancel: Option<&Cancel>, at: Timestamp) -> Transition {
@@ -155,6 +164,7 @@ impl Engine {
                     Some(d) => format!("{code}: {d}"),
                     None => code.to_string(),
                 });
+                t.cancelled_by = stopped_by(r);
             }
         }
         match self.store.transition(&job.key, t).await {

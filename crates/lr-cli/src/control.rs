@@ -41,7 +41,11 @@ async fn connection(
                             .drain(reason.unwrap_or(lr_proto::DrainReason::Down))
                             .await
                     }
-                    DownMode::Cancel => control.cancel_and_stop().await,
+                    DownMode::Cancel => {
+                        control
+                            .cancel_and_stop(reason.unwrap_or(lr_proto::DrainReason::Down))
+                            .await
+                    }
                 }
                 ControlReply::Ok
             }

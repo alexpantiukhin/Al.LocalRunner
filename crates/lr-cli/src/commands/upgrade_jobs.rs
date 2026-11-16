@@ -21,8 +21,8 @@ pub enum Mode {
 pub struct Activity {
     /// A line per running job.
     pub running: Vec<String>,
-    /// Queued orders (the first part of each queue).
-    pub queued: usize,
+    /// The ids of the queued orders (the first part of each queue).
+    pub queued: Vec<String>,
     /// Why the jobs are not known, when they are not.
     pub note: Option<String>,
 }
@@ -31,6 +31,27 @@ impl Activity {
     /// Whether a job runs now.
     pub fn busy(&self) -> bool {
         !self.running.is_empty()
+    }
+
+    /// The ids of the running jobs: the first word of each line of `running`.
+    pub fn running_ids(&self) -> Vec<String> {
+        self.running
+            .iter()
+            .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+            .collect()
+    }
+
+    /// What `upgrade --cancel` does to the jobs: the running ones it cancels and the queued
+    /// ones that stay, each as a full list.
+    pub fn cancel_lines(&self) -> Vec<String> {
+        let list = |ids: Vec<String>| match ids.is_empty() {
+            true => "none".to_string(),
+            false => ids.join(", "),
+        };
+        vec![
+            format!("cancelling: {}", list(self.running_ids())),
+            format!("staying queued: {}", list(self.queued.clone())),
+        ]
     }
 
     /// The lines shown while `upgrade` waits: a line per running job, then the time waited.
@@ -51,10 +72,11 @@ impl Activity {
             out.push(format!("running jobs: {}", self.running.len()));
             out.extend(self.running.iter().map(|l| format!("  {l}")));
         }
-        if self.queued > 0 {
+        if !self.queued.is_empty() {
             out.push(format!(
-                "waiting orders: {} (they stay queued; a stopping runner takes none)",
-                self.queued
+                "waiting orders: {} (they stay queued; a stopping runner takes none): {}",
+                self.queued.len(),
+                self.queued.join(", ")
             ));
         }
         if out.is_empty() {
@@ -92,7 +114,8 @@ pub async fn activity(layout: &Layout) -> Activity {
                 .await
                 {
                     Ok(ReadReply::Status(v)) => {
-                        out.queued += v.queue.len();
+                        out.queued
+                            .extend(v.queue.iter().map(|q| q.summary.job.0.clone()));
                         out.running.extend(v.running.iter().map(|r| {
                             let s = &r.summary;
                             let running = s.started_at.map_or(String::new(), |t| {

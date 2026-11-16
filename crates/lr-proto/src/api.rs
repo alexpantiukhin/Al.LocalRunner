@@ -42,6 +42,35 @@ pub struct StatusFilter {
     pub limit: Option<u64>,
     /// Continue the queue list after the `next` token of the previous answer.
     pub cursor: Option<String>,
+    /// Which orders that left the queue `recent` lists (`status --recent`); without it the
+    /// latest [`StatusFilter::effective_limit`] ones. Absent from older senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent: Option<RecentFilter>,
+}
+
+/// The orders that left the queue (finished, failed, cancelled, withdrawn, rejected) that
+/// `status` lists in `recent`, newest end first; every set field must hold.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentFilter {
+    /// At most this many; bounded by [`STATUS_LIMIT_MAX`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    /// Only orders that ended at or after this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Timestamp>,
+}
+
+impl RecentFilter {
+    /// How many to list at most: `count`, else [`STATUS_LIMIT_MAX`] with `since` and
+    /// `default` without it.
+    pub fn effective_count(&self, default: u64) -> u64 {
+        let fallback = if self.since.is_some() {
+            STATUS_LIMIT_MAX
+        } else {
+            default
+        };
+        effective_limit(self.count, fallback, STATUS_LIMIT_MAX)
+    }
 }
 
 impl StatusFilter {
@@ -245,6 +274,11 @@ pub struct JobSummary {
     /// job and absent from older peers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    /// Who ended the order early: the `--as` label of `cancel`, the sender label of a withdrawn
+    /// order, `upgrade` or `down` for a runner stopped by them, `broker` for a refusal or a
+    /// return; hidden at `summary`, absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_by: Option<String>,
 }
 
 /// A step of a run.

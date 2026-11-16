@@ -33,6 +33,7 @@ fn summary(peaks: Option<(u64, u64)>) -> JobSummary {
         peak_mem_mb: peaks.map(|p| p.0),
         peak_disk_mb: peaks.map(|p| p.1),
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 
@@ -60,9 +61,9 @@ fn history_has_peak_columns_with_dashes_for_unknown_values() {
         ("local".to_string(), summary(None)),
     ];
     let lines = history_lines(&rows);
-    assert!(lines[0].contains("RUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER"));
-    assert!(lines[1].ends_with("r1\t900\t40\tlocal"), "{}", lines[1]);
-    assert!(lines[2].ends_with("r1\t-\t-\tlocal"), "{}", lines[2]);
+    assert!(lines[0].contains("RUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"));
+    assert!(lines[1].contains("r1\t900\t40\tlocal\t"), "{}", lines[1]);
+    assert!(lines[2].contains("r1\t-\t-\tlocal\t"), "{}", lines[2]);
 }
 
 #[test]

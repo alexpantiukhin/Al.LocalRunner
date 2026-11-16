@@ -621,3 +621,174 @@ async fn explain_hides_the_id_of_a_foreign_holder_from_a_client_that_may_not_see
         "{seen_by_owner}"
     );
 }
+
+const ALEX: &str = "local:alex";
+const TEN_S: std::time::Duration = std::time::Duration::from_secs(10);
+const MIN: u64 = 60_000;
+
+fn bash_needed() -> lr_core::Requirements {
+    let mut want = req(512, 1, 60);
+    want.programs.push(lr_core::Program {
+        name: "bash".into(),
+        check: None,
+    });
+    want
+}
+
+fn sender_gone(job: &str, seq: u64) -> HubToBroker {
+    let HubToBroker::Cancel(mut c) = cancel(job, seq) else {
+        unreachable!()
+    };
+    c.code = ReasonCode::SenderGone;
+    c.reason = None;
+    HubToBroker::Cancel(c)
+}
+
+async fn cancel_acked(c: &mut Conn) {
+    loop {
+        if let BrokerToHub::CancelAck(_) = c.hub().await {
+            return;
+        }
+    }
+}
+
+fn recent_of(s: &StatusView) -> Vec<(&str, JobState, Option<ReasonCode>, Option<&str>)> {
+    s.recent
+        .iter()
+        .map(|j| {
+            (
+                j.job.0.as_str(),
+                j.state,
+                j.reason.clone(),
+                j.cancelled_by.as_deref(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_reason() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&sender_gone("j3", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    alex.send(&order("j4", bash_needed())).await;
+    let refused = alex.rejected().await;
+    assert!(refused.detail.contains("bash"), "{}", refused.detail);
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let s = status(
+        alex.read(ReadRequest::Status(StatusFilter::default()))
+            .await,
+    );
+    assert_eq!(
+        recent_of(&s),
+        vec![
+            ("j1", JobState::Passed, None, None),
+            (
+                "j4",
+                JobState::Cancelled,
+                Some(ReasonCode::Rejected(RejectReason::NoMatchingRunner)),
+                Some("broker")
+            ),
+            (
+                "j2",
+                JobState::Cancelled,
+                Some(ReasonCode::CancelledByUser),
+                Some("agent-1")
+            ),
+            (
+                "j3",
+                JobState::Cancelled,
+                Some(ReasonCode::SenderGone),
+                Some("agent-1")
+            ),
+        ],
+        "newest end first, each with its reason and who ended it"
+    );
+    let mut bob = h.local_hub("bob").await;
+    let theirs = status(bob.read(ReadRequest::Status(StatusFilter::default())).await);
+    assert_eq!(theirs.recent.len(), 4);
+    assert!(
+        theirs.recent.iter().all(|j| j.cancelled_by.is_none()),
+        "the canceller is hidden at summary visibility"
+    );
+}
+
+#[tokio::test]
+async fn recent_honours_a_count_and_a_duration() {
+    let h = Harness::start("");
+    for (i, job) in ["a1", "a2", "a3"].iter().enumerate() {
+        if i > 0 {
+            h.clock.advance(std::time::Duration::from_millis(10 * MIN));
+        }
+        let mut alex = h.local_hub("alex").await;
+        alex.send(&order(job, req(512, 1, 60))).await;
+        alex.rejected().await;
+    }
+    h.clock.advance(std::time::Duration::from_millis(5 * MIN));
+    let mut alex = h.local_hub("alex").await;
+    let ask = |count: Option<u64>, since: Option<u64>| {
+        ReadRequest::Status(StatusFilter {
+            recent: Some(RecentFilter {
+                count,
+                since: since.map(|m| lr_core::Timestamp(START + m * MIN)),
+            }),
+            ..StatusFilter::default()
+        })
+    };
+    let ids = |s: StatusView| -> Vec<String> { s.recent.into_iter().map(|j| j.job.0).collect() };
+    assert_eq!(
+        ids(status(alex.read(ask(Some(2), None)).await)),
+        ["a3", "a2"]
+    );
+    assert_eq!(ids(status(alex.read(ask(None, Some(15))).await)), ["a3"]);
+    assert_eq!(
+        ids(status(alex.read(ask(None, Some(5))).await)),
+        ["a3", "a2"]
+    );
+    assert_eq!(ids(status(alex.read(ask(Some(1), Some(0))).await)), ["a3"]);
+    assert_eq!(
+        ids(status(alex.read(ask(None, None)).await)),
+        ["a3", "a2", "a1"]
+    );
+}
+
+#[tokio::test]
+async fn explain_answers_for_a_rejected_order_and_names_the_unmet_requirement() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j9", bash_needed())).await;
+    alex.rejected().await;
+    let text = explain_text(alex.read(explain_of("j9")).await);
+    assert!(text.contains("отклонена при приёме"), "{text}");
+    assert!(text.contains("rejected_no_matching_runner"), "{text}");
+    assert!(text.contains("r1: bash не найден"), "{text}");
+    assert!(text.contains("кто: broker"), "{text}");
+    match alex.read(explain_of("never-sent")).await {
+        ReadReply::NotFound { what } => assert_eq!(what, "job never-sent"),
+        other => panic!("expected not found, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn explain_of_a_cancelled_order_names_who_cancelled_it_and_why() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(text.contains("отменена"), "{text}");
+    assert!(text.contains("cancelled_by_user"), "{text}");
+    assert!(text.contains("кто: agent-1"), "{text}");
+    assert!(text.contains("stop"), "{text}");
+}

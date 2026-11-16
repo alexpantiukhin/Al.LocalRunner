@@ -115,7 +115,7 @@ pub enum AgentExit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
     Drain(DrainReason),
-    CancelAndStop,
+    CancelAndStop(DrainReason),
 }
 
 /// Local control of a running agent (`down`, spec 3.9).
@@ -132,9 +132,10 @@ impl AgentControl {
         let _ = self.tx.send(Control::Drain(reason)).await;
     }
 
-    /// `down --cancel`: cancel the current job with `runner_stopped`, then `Bye`.
-    pub async fn cancel_and_stop(&self) {
-        let _ = self.tx.send(Control::CancelAndStop).await;
+    /// `down --cancel` (or `upgrade --cancel`, by `reason`): cancel the current job with
+    /// `runner_stopped` and the detail `stopped by <reason>`, then `Bye`.
+    pub async fn cancel_and_stop(&self, reason: DrainReason) {
+        let _ = self.tx.send(Control::CancelAndStop(reason)).await;
     }
 
     /// Replaces the settings of the runner (`reload`): jobs that run keep the settings they
@@ -190,6 +191,7 @@ pub(crate) struct Current {
     pub(crate) settings: Arc<RunnerSettings>,
     pub(crate) stop: StopHandle,
     pub(crate) reason: Option<ReasonCode>,
+    pub(crate) detail: Option<String>,
     pub(crate) lost_killed: bool,
 }
 
@@ -346,6 +348,18 @@ impl Shared {
         if let Some(cur) = self.state().job.as_mut() {
             cur.reason.get_or_insert(reason);
             cur.stop.stop_with_reason(stop, text);
+        }
+    }
+
+    pub(crate) fn stop_for(&self, reason: DrainReason) {
+        let actor = actor_of(reason);
+        if let Some(cur) = self.state().job.as_mut() {
+            if cur.reason.is_none() {
+                cur.reason = Some(ReasonCode::RunnerStopped);
+                cur.detail = Some(format!("stopped by {actor}"));
+            }
+            cur.stop
+                .stop_with_reason(Stop::Cancel, &format!("runner stopped by {actor}"));
         }
     }
 
@@ -552,10 +566,17 @@ fn handshake_refusal(e: &TransportError) -> Option<ProtocolError> {
     })
 }
 
+fn actor_of(reason: DrainReason) -> &'static str {
+    match reason {
+        DrainReason::Down => "down",
+        DrainReason::Upgrade => "upgrade",
+        DrainReason::Lock => "lock",
+    }
+}
+
 pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
     let reason = match cmd {
-        Control::Drain(reason) => reason,
-        Control::CancelAndStop => DrainReason::Down,
+        Control::Drain(reason) | Control::CancelAndStop(reason) => reason,
     };
     let stop_by = after(shared.now(), STOP_BOUND);
     let repeat = {
@@ -573,8 +594,8 @@ pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
         "drain requested",
         &[("reason", &format!("{reason:?}").to_lowercase())],
     );
-    if cmd == Control::CancelAndStop {
-        shared.stop_job(Stop::Cancel, ReasonCode::RunnerStopped, "runner stopped");
+    if let Control::CancelAndStop(reason) = cmd {
+        shared.stop_for(reason);
     }
     shared.wake.notify_one();
 }
