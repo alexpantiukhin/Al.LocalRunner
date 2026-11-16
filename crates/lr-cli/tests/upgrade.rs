@@ -4,12 +4,13 @@ use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
 use lr_cli::commands::confirm::Console;
 use lr_cli::commands::up_cmd::RunningRoles;
+use lr_cli::commands::upgrade_cmd::RECONNECT_WITHIN;
 use lr_cli::commands::upgrade_cmd::{
     parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
     Verdict,
 };
 use lr_cli::commands::upgrade_jobs::Activity;
-use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner};
+use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner, Reconnected};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
 use lr_proto::{DownMode, DrainReason};
@@ -130,6 +131,8 @@ struct Case {
     interrupted: bool,
     wait_timeout: Option<std::time::Duration>,
     copy_fails: bool,
+    pool: Vec<PoolRunner>,
+    after_restart: Vec<PoolRunner>,
 }
 
 struct Outcome {
@@ -143,6 +146,7 @@ struct Outcome {
     hub_stops: usize,
     broker_stops: usize,
     out: String,
+    said: Vec<String>,
 }
 
 async fn run(case: Case) -> Outcome {
@@ -151,6 +155,7 @@ async fn run(case: Case) -> Outcome {
     let roles = FakeRoles::new(false, case.answers);
     let lock = lr_cli::upgrade_lock::lock_path(&layout);
     *roles.lock_file.lock().unwrap() = Some(lock.clone());
+    *roles.after_restart.lock().unwrap() = case.after_restart.clone();
     let system = Recorder {
         fail: case.copy_fails,
         ..Recorder::default()
@@ -169,7 +174,7 @@ async fn run(case: Case) -> Outcome {
         new: &new,
         running: &case.running,
         activity: &case.activity,
-        pool: &[],
+        pool: &case.pool,
         yes: case.yes,
         cancel: case.cancel,
         dry_run: case.dry_run,
@@ -210,6 +215,7 @@ async fn run(case: Case) -> Outcome {
         hub_stops,
         broker_stops,
         out,
+        said: roles.said(),
     }
 }
 
@@ -228,6 +234,8 @@ fn case(old: &'static str, new: &'static str) -> Case {
         interrupted: false,
         wait_timeout: None,
         copy_fails: false,
+        pool: Vec::new(),
+        after_restart: Vec::new(),
     }
 }
 
@@ -632,7 +640,7 @@ fn report_lines_name_runners_still_on_another_version() {
         peer("linux", "ci-1", Some("0.1.0"), true),
         peer("same", "ci-2", Some("0.1.1"), true),
     ];
-    let lines = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false);
+    let lines = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false);
     let all = lines.join("\n");
     assert!(
         all.contains("linux") && all.contains("0.1.0") && all.contains("ci-1"),
@@ -645,9 +653,9 @@ fn report_lines_name_runners_still_on_another_version() {
 #[test]
 fn report_lines_say_a_protocol_change_breaks_them() {
     let pool = [peer("linux", "ci-1", Some("0.1.0"), true)];
-    let all = report_lines(&pool, &v("0.2.0 (protocol 2.0)"), true).join("\n");
+    let all = report_lines(&pool, &[], &v("0.2.0 (protocol 2.0)"), true).join("\n");
     assert!(all.contains("protocol"), "{all}");
-    let quiet = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    let quiet = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false).join("\n");
     assert!(!quiet.contains("protocol"), "{quiet}");
 }
 
@@ -656,7 +664,7 @@ fn report_lines_mark_container_and_offline_runners_manual_step() {
     let mut boxed = peer("box", "172.17.0.2", Some("0.1.0"), true);
     boxed.kind = Kind::Container;
     let pool = [boxed, peer("away", "ci-3", Some("0.1.0"), false)];
-    let all = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    let all = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false).join("\n");
     assert!(all.contains("box") && all.contains("manual step"), "{all}");
     assert!(
         all.contains("away") && all.contains("not updated: offline"),
@@ -667,8 +675,69 @@ fn report_lines_mark_container_and_offline_runners_manual_step() {
 #[test]
 fn no_lines_when_every_runner_is_on_the_new_version() {
     let pool = [peer("a", "m1", Some("0.1.1"), true)];
-    assert!(report_lines(&pool, &v("0.1.1 (protocol 1.0)"), true).is_empty());
-    assert!(report_lines(&[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+    assert!(report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), true).is_empty());
+    assert!(report_lines(&[], &[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+}
+
+fn report_of(o: &Outcome) -> String {
+    let at = o
+        .said
+        .iter()
+        .position(|l| l.starts_with("upgraded to"))
+        .unwrap_or_else(|| panic!("no report in {:?}", o.said));
+    o.said[at..].join("\n")
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restarted_runner_of_this_installation_is_not_reported_as_still_on_the_old_version() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![
+        peer("local:r1", "local:alex", Some("0.1.0"), true),
+        peer("linux", "ci-1", Some("0.1.0"), true),
+    ];
+    c.after_restart = vec![
+        peer("local:r1", "local:alex", Some("0.1.1"), true),
+        peer("linux", "ci-1", Some("0.1.0"), true),
+    ];
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    let said = report_of(&o);
+    assert!(!said.contains("r1"), "{said}");
+    assert!(said.contains("linux on ci-1: still on 0.1.0"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_that_did_not_reconnect_is_named() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), false)];
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    assert!(
+        started.elapsed() >= RECONNECT_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    let said = report_of(&o);
+    assert!(said.contains("r1: did not reconnect within 20 s"), "{said}");
+    assert!(!said.contains("still on"), "{said}");
+}
+
+#[test]
+fn report_lines_name_a_restarted_runner_that_did_not_reconnect() {
+    let new = v("0.1.1 (protocol 1.0)");
+    let lines = report_lines(
+        &[],
+        &[
+            ("r1".to_string(), Reconnected::No),
+            ("r2".to_string(), Reconnected::Yes),
+        ],
+        &new,
+        true,
+    );
+    let all = lines.join("\n");
+    assert!(all.contains("r1: did not reconnect within 20 s"), "{all}");
+    assert!(!all.contains("r2") && !all.contains("protocol"), "{all}");
 }
 
 #[test]
@@ -710,6 +779,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
     let got = rows(
         vec![
             info("r1", "local:alex", "0.1.0"),
+            info("local:r1", "local:alex", "0.1.0"),
             info("r1", "ci-9", "0.1.0"),
             info("peer", "ci-1", "0.1.0"),
         ],

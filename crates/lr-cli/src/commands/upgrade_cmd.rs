@@ -10,7 +10,7 @@ use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Wa
 use super::setup::{binary_name, default_bin_dir, upgrade_plan};
 use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
-use super::upgrade_pool::{plan_lines, pool, report_lines, PoolRunner};
+use super::upgrade_pool::{plan_lines, pool, reconnected, report_lines, PoolRunner, Reconnected};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
 use crate::upgrade_lock::{write, UpgradeLock};
@@ -23,6 +23,11 @@ use std::time::Duration;
 const STARTED_WITHIN: Duration = Duration::from_secs(15);
 const BUSY_FOR: Duration = Duration::from_secs(20);
 const JOBS_REFRESH: Duration = Duration::from_secs(5);
+
+/// How long `upgrade` waits for the runners it restarted to reconnect to their broker before it
+/// reports; longer than a heartbeat.
+pub const RECONNECT_WITHIN: Duration = Duration::from_secs(20);
+const RECONNECT_POLL: Duration = Duration::from_millis(200);
 
 /// Printed with the plan: the old file is renamed, not overwritten.
 pub const KEEP_OLD_NOTE: &str =
@@ -371,14 +376,39 @@ impl Job<'_> {
             );
         }
         replaced?;
-        println!(
+        let restarted = self.reconnects(roles).await;
+        roles.say(&format!(
             "upgraded to {}; check the node: localrunner doctor",
             self.new.text
-        );
-        for line in report_lines(self.pool, self.new, protocol_changed) {
-            println!("{line}");
+        ));
+        for line in report_lines(self.pool, &restarted, self.new, protocol_changed) {
+            roles.say(&line);
         }
         Ok(code)
+    }
+
+    /// Waits up to [`RECONNECT_WITHIN`] for the runners started again to be online on the new
+    /// version, asking every [`RECONNECT_POLL`]; a failed answer while the hub restarts counts as
+    /// not back yet.
+    async fn reconnects(&self, roles: &dyn Roles) -> Vec<(String, Reconnected)> {
+        let names: Vec<String> = self.running.runners.iter().cloned().collect();
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let until = tokio::time::Instant::now() + RECONNECT_WITHIN;
+        loop {
+            let now = roles.pool_after_restart().await;
+            let seen: Vec<(String, Reconnected)> = names
+                .iter()
+                .map(|n| (n.clone(), reconnected(&now, n, &self.new.text)))
+                .collect();
+            if seen.iter().all(|(_, back)| *back == Reconnected::Yes)
+                || tokio::time::Instant::now() >= until
+            {
+                return seen;
+            }
+            tokio::time::sleep(RECONNECT_POLL).await;
+        }
     }
 
     /// Stops the runners (draining or cancelling), waits for them, and only then the hub and a

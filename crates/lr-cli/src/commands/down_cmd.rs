@@ -325,6 +325,11 @@ pub trait Roles: Send + Sync {
     async fn broker_service_state(&self) -> ServiceState {
         ServiceState::NotInstalled
     }
+    /// Every runner the brokers list now, this installation's included; empty when that is not
+    /// known (the hub may still be starting).
+    async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
+        Vec::new()
+    }
 }
 
 /// The broker service as seen without administrator rights.
@@ -411,6 +416,10 @@ impl Roles for IpcRoles<'_> {
 
     fn broker_is_service(&self) -> bool {
         self.layout.broker_is_service()
+    }
+
+    async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
+        super::upgrade_pool::all_runners(self.layout).await
     }
 
     async fn broker_service_state(&self) -> ServiceState {

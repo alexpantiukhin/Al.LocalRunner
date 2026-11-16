@@ -225,6 +225,7 @@ async fn a_runner_drained_for_an_upgrade_that_ended_takes_work_again() {
     let b = Broker::accept(&rig).await;
     c.drain(lr_proto::DrainReason::Upgrade).await;
     b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    while b.recv().await.is_some() {}
     rig.advance(Duration::from_secs(2)).await;
     let b2 = Broker::accept(&rig).await;
     assert!(!h.is_finished(), "the runner did not leave");
@@ -240,6 +241,115 @@ async fn a_runner_drained_for_an_upgrade_that_ended_takes_work_again() {
         r.reason,
         Some(ReasonCode::RunnerDraining),
         "it is not draining any more"
+    );
+}
+
+#[tokio::test]
+async fn a_runner_drained_for_an_upgrade_resumes_when_the_lock_is_gone_while_its_job_runs() {
+    let mut rig = Rig::new();
+    let flag = upgrade_flag(true);
+    rig.upgrade_live = Some(flag.clone());
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(30 * SEC, 0)]));
+    rig.script(
+        "job-3",
+        JobScript::new(vec![StepScript::new(Duration::ZERO, 0)]),
+    );
+    let spec = worktree_spec("/w/tree", vec![step("b", "make", 120)], 120);
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign("job-1", 1, spec.clone()).await;
+    b.next_job_msg().await.unwrap();
+    c.drain(lr_proto::DrainReason::Upgrade).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    rig.advance(16 * SEC).await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while b.recv().await.is_some() {}
+    })
+    .await
+    .expect("the runner did not close its drained session");
+    assert!(rig
+        .logs_text()
+        .contains("the upgrade ended without replacing this runner, resuming"));
+    rig.advance(2 * SEC).await;
+    let b2 = Broker::accept(&rig).await;
+    b2.assign("job-2", 1, spec.clone()).await;
+    let r = result_of(&b2.until_result().await);
+    assert_eq!(r.job.0, "job-2");
+    assert_ne!(
+        r.reason,
+        Some(ReasonCode::RunnerDraining),
+        "it is not draining any more"
+    );
+    assert_eq!(
+        r.detail.as_deref(),
+        Some("runner is busy with job job-1"),
+        "job-1 still runs"
+    );
+    rig.advance(15 * SEC).await;
+    let r = result_of(&b2.until_result().await);
+    assert_eq!((r.job.0.as_str(), r.state), ("job-1", JobState::Passed));
+    b2.assign("job-3", 1, spec).await;
+    let r = result_of(&b2.until_result().await);
+    assert_eq!((r.job.0.as_str(), r.state), ("job-3", JobState::Passed));
+    assert!(!h.is_finished(), "the runner did not leave");
+}
+
+fn drain_levels(rig: &Rig) -> Vec<Level> {
+    rig.log
+        .records()
+        .into_iter()
+        .filter(|r| r.message == "drain requested")
+        .map(|r| r.level)
+        .collect()
+}
+
+async fn busy_runner(rig: &Rig) -> (lr_runner::AgentControl, Broker) {
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(600 * SEC, 0)]));
+    let (c, _h) = rig.start();
+    let b = Broker::accept(rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 600)], 600),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    (c, b)
+}
+
+async fn drain_and_wait(c: &lr_runner::AgentControl, b: &Broker, reason: lr_proto::DrainReason) {
+    c.drain(reason).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+}
+
+#[tokio::test]
+async fn repeated_drain_requests_with_one_reason_log_once_at_info() {
+    let mut rig = Rig::new();
+    rig.upgrade_live = Some(upgrade_flag(true));
+    let (c, b) = busy_runner(&rig).await;
+    for _ in 0..3 {
+        drain_and_wait(&c, &b, lr_proto::DrainReason::Upgrade).await;
+    }
+    assert_eq!(
+        drain_levels(&rig),
+        vec![Level::Info, Level::Debug, Level::Debug]
+    );
+}
+
+#[tokio::test]
+async fn a_changed_reason_logs_again() {
+    let mut rig = Rig::new();
+    rig.upgrade_live = Some(upgrade_flag(true));
+    let (c, b) = busy_runner(&rig).await;
+    drain_and_wait(&c, &b, lr_proto::DrainReason::Down).await;
+    drain_and_wait(&c, &b, lr_proto::DrainReason::Down).await;
+    drain_and_wait(&c, &b, lr_proto::DrainReason::Upgrade).await;
+    assert_eq!(
+        drain_levels(&rig),
+        vec![Level::Info, Level::Debug, Level::Info]
     );
 }
 

@@ -19,6 +19,8 @@ use tokio::sync::mpsc;
 /// the outbox and is replayed on the next start.
 pub const STOP_BOUND: Duration = Duration::from_secs(10);
 
+const PROBE_EVERY: Duration = Duration::from_secs(1);
+
 pub(crate) enum End {
     Lost { welcomed: bool },
     Refused(ProtocolError),
@@ -175,6 +177,12 @@ impl Session<'_> {
         );
         self.t.close().await;
         self.stopped = true;
+    }
+
+    async fn resume(&self) -> End {
+        self.shared.resume_after_upgrade();
+        self.t.close().await;
+        self.lost()
     }
 
     fn lost(&self) -> End {
@@ -533,6 +541,7 @@ pub(crate) async fn session(
     let clock = shared.deps.clock.clone();
     let mut next_beat = shared.now();
     let mut last_rx = shared.now();
+    let mut next_probe = shared.now();
     loop {
         if s.stopped {
             return End::Stopped;
@@ -544,10 +553,8 @@ pub(crate) async fn session(
             }
         }
         if s.idle_and_stopping().await && shared.services_down() {
-            if shared.upgrade_ended() {
-                shared.resume_after_upgrade();
-                t.close().await;
-                return s.lost();
+            if shared.upgrade_gone().await {
+                return s.resume().await;
             }
             s.flush(&mut inbox).await;
             shared
@@ -591,6 +598,12 @@ pub(crate) async fn session(
                 if inbox.take_heard() {
                     last_rx = shared.now();
                 }
+                if shared.now() >= next_probe {
+                    next_probe = after(shared.now(), PROBE_EVERY);
+                    if shared.upgrade_gone().await {
+                        return s.resume().await;
+                    }
+                }
             }
             _ = clock.sleep_until(next_beat) => {
                 next_beat = after(next_beat, heartbeat);
@@ -600,6 +613,10 @@ pub(crate) async fn session(
                     })
                     .await {
                     return s.lost();
+                }
+                next_probe = after(shared.now(), PROBE_EVERY);
+                if shared.upgrade_gone().await {
+                    return s.resume().await;
                 }
             }
             _ = clock.sleep_until(deadline) => {

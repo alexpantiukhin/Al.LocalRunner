@@ -245,6 +245,26 @@ impl Shared {
         matches!(reason, Some(DrainReason::Upgrade | DrainReason::Lock)) && !live()
     }
 
+    /// Whether the runner drains for an upgrade that no longer runs, job or not. The check reads
+    /// a file and the process list, so it runs off the async threads.
+    pub(crate) async fn upgrade_gone(&self) -> bool {
+        let Some(live) = self.deps.upgrade_live.clone() else {
+            return false;
+        };
+        let for_upgrade = {
+            let st = self.state();
+            st.draining
+                && matches!(
+                    st.drain_reason,
+                    Some(DrainReason::Upgrade | DrainReason::Lock)
+                )
+        };
+        for_upgrade
+            && !tokio::task::spawn_blocking(move || live())
+                .await
+                .unwrap_or(true)
+    }
+
     pub(crate) fn resume_after_upgrade(&self) {
         {
             let mut st = self.state();
@@ -538,16 +558,18 @@ pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
         Control::CancelAndStop => DrainReason::Down,
     };
     let stop_by = after(shared.now(), STOP_BOUND);
-    {
+    let repeat = {
         let mut st = shared.state();
+        let repeat = st.draining && st.drain_reason == Some(reason);
         st.draining = true;
         st.drain_reason = Some(reason);
         if st.job.is_none() {
             st.stop_by.get_or_insert(stop_by);
         }
-    }
+        repeat
+    };
     shared.diag.event(
-        Level::Info,
+        if repeat { Level::Debug } else { Level::Info },
         "drain requested",
         &[("reason", &format!("{reason:?}").to_lowercase())],
     );

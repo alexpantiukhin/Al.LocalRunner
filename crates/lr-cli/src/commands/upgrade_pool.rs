@@ -3,7 +3,7 @@
 //! own `upgrade`; nothing here changes a remote node.
 
 use super::read_cmd::fetch_runners;
-use super::upgrade_cmd::Version;
+use super::upgrade_cmd::{Version, RECONNECT_WITHIN};
 use crate::paths::Layout;
 use lr_proto::RunnerInfo;
 
@@ -33,39 +33,63 @@ pub struct PoolRunner {
     pub kind: Kind,
 }
 
-/// The runners of the brokers the hub knows, without those of this installation: a row is this
-/// installation's when its name is one of `own` and its machine is this host's (`local:...`) or
-/// not reported.
+const LOCAL: &str = "local:";
+
+/// Whether `row` is runner `name` of this installation: the broker lists it as `name`, or as
+/// `local:name` when it connected over local IPC, and its machine is this host's (`local:...`)
+/// or not reported.
+pub fn is_own(row: &PoolRunner, name: &str) -> bool {
+    let here = row.machine.as_deref().is_none_or(|m| m.starts_with(LOCAL));
+    here && (row.name == name || row.name.strip_prefix(LOCAL) == Some(name))
+}
+
+/// The runners of the brokers the hub knows, without those of this installation named in `own`
+/// (see [`is_own`]).
 pub fn rows(infos: impl IntoIterator<Item = RunnerInfo>, own: &[String]) -> Vec<PoolRunner> {
     infos
         .into_iter()
-        .filter_map(|r| {
-            let machine = r.caps.machine.map(|m| m.0);
-            let here = machine.as_deref().is_none_or(|m| m.starts_with("local:"));
-            (!(here && own.contains(&r.name))).then_some(PoolRunner {
-                name: r.name,
-                machine,
-                version: r.caps.version,
-                online: r.online,
-                kind: Kind::Unknown,
-            })
+        .map(|r| PoolRunner {
+            name: r.name,
+            machine: r.caps.machine.map(|m| m.0),
+            version: r.caps.version,
+            online: r.online,
+            kind: Kind::Unknown,
         })
+        .filter(|r| !own.iter().any(|n| is_own(r, n)))
         .collect()
 }
 
-/// The pool as the hub of this OS user sees it; empty without a hub or a broker.
-pub async fn pool(layout: &Layout) -> Vec<PoolRunner> {
+/// Every runner the brokers known to the hub of this OS user list, this installation's
+/// included; empty without a hub or a broker.
+pub async fn all_runners(layout: &Layout) -> Vec<PoolRunner> {
     let Ok(client) = super::jobs::hub(layout).await else {
         return Vec::new();
     };
     let fetched = fetch_runners(&client, None).await;
     client.close().await;
     match fetched {
-        Ok((per, _)) => rows(
-            per.into_iter().flat_map(|(_, runners)| runners),
-            &layout.runner_names(),
-        ),
+        Ok((per, _)) => rows(per.into_iter().flat_map(|(_, runners)| runners), &[]),
         Err(_) => Vec::new(),
+    }
+}
+
+/// The pool as the hub of this OS user sees it, without the runners of this installation;
+/// empty without a hub or a broker.
+pub async fn pool(layout: &Layout) -> Vec<PoolRunner> {
+    let own = layout.runner_names();
+    let mut all = all_runners(layout).await;
+    all.retain(|r| !own.iter().any(|n| is_own(r, n)));
+    all
+}
+
+/// Whether restarted runner `name` is back: listed in `now` online on version `new`.
+pub fn reconnected(now: &[PoolRunner], name: &str, new: &str) -> Reconnected {
+    let back = now
+        .iter()
+        .any(|r| is_own(r, name) && r.online && r.version.as_deref() == Some(new));
+    match back {
+        true => Reconnected::Yes,
+        false => Reconnected::No,
     }
 }
 
@@ -89,11 +113,40 @@ pub fn plan_lines(pool: &[PoolRunner], new: &str) -> Vec<String> {
     out
 }
 
-/// The report's lines after the replacement: the runners that are not on the new version and
-/// what to do about each.
-pub fn report_lines(pool: &[PoolRunner], new: &Version, protocol_changed: bool) -> Vec<String> {
+/// Whether a runner that `upgrade` restarted came back to its broker on the new version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reconnected {
+    /// It is online on the new version.
+    Yes,
+    /// It did not come back within the wait.
+    No,
+}
+
+/// The report's lines after the replacement: the runners of this installation that `upgrade`
+/// restarted and that did not reconnect within the wait, then the runners of `pool` that are
+/// not on the new version and what to do about each. A runner of `restarted` is left out of
+/// `pool`, which may have been read before the restart.
+pub fn report_lines(
+    pool: &[PoolRunner],
+    restarted: &[(String, Reconnected)],
+    new: &Version,
+    protocol_changed: bool,
+) -> Vec<String> {
+    let mut lost: Vec<String> = restarted
+        .iter()
+        .filter(|(_, back)| *back == Reconnected::No)
+        .map(|(name, _)| {
+            format!(
+                "{name}: did not reconnect within {} s after the restart; check it: localrunner doctor",
+                RECONNECT_WITHIN.as_secs()
+            )
+        })
+        .collect();
     let mut out = Vec::new();
-    for r in pool {
+    for r in pool
+        .iter()
+        .filter(|r| !restarted.iter().any(|(n, _)| is_own(r, n)))
+    {
         let machine = r.machine.as_deref().unwrap_or("its machine");
         let current = r.version.as_deref() == Some(new.text.as_str());
         if current {
@@ -123,5 +176,6 @@ pub fn report_lines(pool: &[PoolRunner], new: &Version, protocol_changed: bool) 
                 .into(),
         );
     }
-    out
+    lost.append(&mut out);
+    lost
 }

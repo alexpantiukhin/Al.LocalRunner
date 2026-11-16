@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use lr_cli::commands::down_cmd::{Roles, ServiceState};
+use lr_cli::commands::upgrade_pool::PoolRunner;
 use lr_cli::paths::Layout;
 use lr_proto::{DownMode, DrainReason};
 use std::path::PathBuf;
@@ -31,6 +32,7 @@ pub struct FakeRoles {
     pub said_err: Mutex<Vec<String>>,
     pub broker_unreachable: bool,
     pub broker_state: ServiceState,
+    pub after_restart: Mutex<Vec<PoolRunner>>,
 }
 
 impl FakeRoles {
@@ -49,6 +51,7 @@ impl FakeRoles {
             said_err: Mutex::new(Vec::new()),
             broker_unreachable: false,
             broker_state: ServiceState::NotInstalled,
+            after_restart: Mutex::new(Vec::new()),
         }
     }
 
@@ -136,5 +139,9 @@ impl Roles for FakeRoles {
 
     async fn broker_service_state(&self) -> ServiceState {
         self.broker_state
+    }
+
+    async fn pool_after_restart(&self) -> Vec<PoolRunner> {
+        self.after_restart.lock().unwrap().clone()
     }
 }
