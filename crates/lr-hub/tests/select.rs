@@ -268,6 +268,29 @@ async fn same_machine_rejection_does_not_search_replacement() {
 }
 
 #[tokio::test]
+async fn a_joined_runner_refusal_reaches_the_client_without_the_start_it_hint() {
+    let joined = "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента";
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Reject(
+        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),
+        joined.into(),
+    )));
+    rig.start();
+    wait_connected(&[&local]).await;
+    let cli = rig.cli().await;
+    let mut req = submit("unit", None);
+    req.wait = true;
+    cli.submit(req).await;
+    match cli.reply().await {
+        CliReply::Rejected { code, detail } => {
+            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine));
+            assert_eq!(detail, joined);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn returned_same_machine_order_ends_with_hint() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());

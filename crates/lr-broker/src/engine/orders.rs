@@ -25,7 +25,7 @@ pub(super) fn reject_reason(r: &Reject) -> RejectReason {
         Reject::Reserved { .. } => RejectReason::Reserved,
         Reject::Quota { .. } => RejectReason::Quota,
         Reject::NoMatchingRunner { .. } => RejectReason::NoMatchingRunner,
-        Reject::NoRunnerOnMachine => RejectReason::NoRunnerOnMachine,
+        Reject::NoRunnerOnMachine { .. } => RejectReason::NoRunnerOnMachine,
     }
 }
 

@@ -87,7 +87,22 @@ pub fn check_runners(
                 .filter(|r| site.zone_between(&entry.client.endpoint, &r.endpoint) == Zone::Local)
                 .collect();
             if own.is_empty() {
-                return Err(Reject::NoRunnerOnMachine);
+                let joined = runners
+                    .iter()
+                    .filter(|r| r.online)
+                    .filter(|r| {
+                        suitable(entry, r, site).is_err_and(|m| {
+                            m.reasons.iter().any(|reason| {
+                                matches!(
+                                    reason,
+                                    MismatchReason::NotSameMachine { joined: true, .. }
+                                )
+                            })
+                        })
+                    })
+                    .map(|r| r.name.clone())
+                    .collect();
+                return Err(Reject::NoRunnerOnMachine { joined });
             }
             own
         }

@@ -364,9 +364,9 @@ Runner services (a build daemon, an emulator) are described in `[service.<name>]
 
 | | Local runner | Joined runner |
 | --- | --- | --- |
-| How it connects | Over the local channel of the broker on this computer, as the same OS user as the client; it needs no `broker.toml` and no key | By key (`join`), over the network or from a container, even if it is on the same computer |
+| How it connects | Over the local channel of the broker on this computer (any OS user the broker lets in connects this way); it needs no `broker.toml` and no key | By key (`join`), over the network or from a container, even if it is on the same computer |
 | Its name | `local:<name>` | The name it was given when it joined |
-| Work-tree orders (the code is the client's working tree) | Takes them, when it belongs to the same OS user | Refused: `runner <name> is joined by key ...` is shown in the reason |
+| Work-tree orders (the code is the client's working tree) | Takes them, when it runs as the same OS user as the client | Refused; the broker prints (in Russian) `раннер <name> подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента` |
 | Commit orders | Takes them | Takes them |
 
 Consequences:

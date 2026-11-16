@@ -1,5 +1,5 @@
 use crate::admission::LoadResource;
-use crate::matching::Mismatch;
+use crate::matching::{Mismatch, MismatchReason};
 use crate::model::{JobId, Timestamp};
 use crate::requirements::Requirements;
 use serde::{Deserialize, Serialize};
@@ -215,7 +215,10 @@ pub enum Reject {
         runners: Vec<(String, Mismatch)>,
     },
     /// A same-machine order and no runner of that installation is online.
-    NoRunnerOnMachine,
+    NoRunnerOnMachine {
+        /// Online runners joined by key that could not take it; named in the text.
+        joined: Vec<String>,
+    },
 }
 
 impl fmt::Display for Reject {
@@ -256,8 +259,21 @@ impl fmt::Display for Reject {
                 let parts: Vec<String> = runners.iter().map(|(n, m)| format!("{n}: {m}")).collect();
                 f.write_str(&parts.join(" | "))
             }
-            Self::NoRunnerOnMachine => {
+            Self::NoRunnerOnMachine { joined } if joined.is_empty() => {
                 write!(f, "нет раннера на вашей установке, запустите его: up")
+            }
+            Self::NoRunnerOnMachine { joined } => {
+                let parts: Vec<String> = joined
+                    .iter()
+                    .map(|runner| {
+                        MismatchReason::NotSameMachine {
+                            runner: runner.clone(),
+                            joined: true,
+                        }
+                        .to_string()
+                    })
+                    .collect();
+                f.write_str(&parts.join("; "))
             }
         }
     }

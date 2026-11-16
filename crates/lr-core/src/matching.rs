@@ -48,6 +48,9 @@ pub struct Capabilities {
     pub commands: BTreeSet<String>,
 }
 
+/// The words that mark a refusal naming a runner joined by key.
+pub const JOINED_BY_KEY: &str = "подключён по ключу";
+
 /// One reason a runner does not suit an order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MismatchReason {
@@ -144,7 +147,7 @@ impl fmt::Display for MismatchReason {
                 joined: true,
             } => write!(
                 f,
-                "раннер {runner} подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+                "раннер {runner} {JOINED_BY_KEY}: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
             ),
             Self::NotSameMachine {
                 runner,
