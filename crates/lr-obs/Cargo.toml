@@ -15,6 +15,9 @@ toml.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 aho-corasick = "1"
 
+[features]
+test-support = []
+
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

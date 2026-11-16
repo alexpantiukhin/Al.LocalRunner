@@ -19,8 +19,6 @@ pub enum Mode {
     Wait,
 }
 
-/// A helper process that reported over its link: its pid and the link itself, whose end
-/// means the process is gone.
 struct Arrival {
     name: String,
     role: String,
@@ -30,12 +28,18 @@ struct Arrival {
     process: Option<Process>,
 }
 
+#[derive(Default)]
+struct Arrivals {
+    closing: bool,
+    list: Vec<Arrival>,
+}
+
 /// The loopback listener the helpers of a test connect to. Each helper reports `name role
 /// pid` and then waits for one byte (the gate opening) or the end of the link; the link ends
 /// when the helper's process ends.
 pub struct Gate {
     addr: String,
-    arrivals: Arc<Mutex<Vec<Arrival>>>,
+    arrivals: Arc<Mutex<Arrivals>>,
     changes: watch::Receiver<usize>,
     accept: tokio::task::JoinHandle<()>,
 }
@@ -44,7 +48,7 @@ impl Gate {
     pub async fn new() -> Arc<Gate> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap().to_string();
-        let arrivals = Arc::new(Mutex::new(Vec::new()));
+        let arrivals = Arc::new(Mutex::new(Arrivals::default()));
         let (tx, changes) = watch::channel(0usize);
         let seen = arrivals.clone();
         let accept = tokio::spawn(async move {
@@ -52,8 +56,14 @@ impl Gate {
                 let seen = seen.clone();
                 let tx = tx.clone();
                 tokio::spawn(async move {
-                    if let Some(a) = arrive(stream).await {
-                        seen.lock().unwrap().push(a);
+                    if let Some(mut a) = arrive(stream).await {
+                        let mut arrivals = seen.lock().unwrap();
+                        if arrivals.closing {
+                            let _ = a.link.write_all(b"o");
+                            return;
+                        }
+                        arrivals.list.push(a);
+                        drop(arrivals);
                         tx.send_modify(|n| *n += 1);
                     }
                 });
@@ -110,6 +120,7 @@ impl Gate {
                     .arrivals
                     .lock()
                     .unwrap()
+                    .list
                     .iter()
                     .find(|a| a.name == name && a.role == role)
                     .map(|a| Helper {
@@ -129,16 +140,20 @@ impl Gate {
 
     /// Lets every helper that has reported so far end.
     pub fn open(&self) {
-        for a in self.arrivals.lock().unwrap().iter_mut() {
+        for a in self.arrivals.lock().unwrap().list.iter_mut() {
             let _ = a.link.write_all(b"o");
         }
     }
 
-    /// Opens the gate and waits until every helper that reported has ended.
     fn release(&self) {
-        self.open();
+        let reported = {
+            let mut arrivals = self.arrivals.lock().unwrap();
+            arrivals.closing = true;
+            std::mem::take(&mut arrivals.list)
+        };
         self.accept.abort();
-        for a in self.arrivals.lock().unwrap().drain(..) {
+        for mut a in reported {
+            let _ = a.link.write_all(b"o");
             let _ = ended(&a.link);
             #[cfg(windows)]
             if let Some(p) = a.process {
@@ -174,7 +189,6 @@ async fn arrive(stream: tokio::net::TcpStream) -> Option<Arrival> {
     .ok()?
 }
 
-/// Blocks until the link ends (the process at its other end is gone), at most [`HANG`].
 fn ended(link: &TcpStream) -> std::io::Result<()> {
     let mut link = link.try_clone()?;
     link.set_read_timeout(Some(HANG))?;
@@ -394,4 +408,23 @@ fn run_step() {
         .unwrap();
     let _ = child.wait();
     std::process::exit(0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_helper_that_reports_after_the_release_is_let_go_at_once() {
+    let gate = Gate::new().await;
+    let mut late = TcpStream::connect(&gate.addr).unwrap();
+    let release = Release::new(&[&gate]);
+    let released = tokio::task::spawn_blocking(move || drop(release));
+    tokio::time::timeout(HANG, released).await.unwrap().unwrap();
+    let _ = writeln!(late, "late grandchild {}", std::process::id());
+    late.set_read_timeout(Some(HANG)).unwrap();
+    let got = late.read(&mut [0u8; 1]);
+    assert!(
+        !matches!(
+            &got,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut)
+        ),
+        "a late helper is let go: {got:?}"
+    );
 }

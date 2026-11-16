@@ -30,8 +30,6 @@ fn layout(dir: &TempDir) -> Layout {
     Layout::new(root, config)
 }
 
-/// Waits until the registry of `role` holds metric `name` with role label `label`; it checks
-/// again after every update of the registry.
 async fn until_reported(what: &str, role: &Running, name: &'static str, label: &'static str) {
     let registries = role.metrics();
     assert_eq!(registries.len(), 1, "one logger");

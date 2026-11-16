@@ -14,7 +14,8 @@ use lr_abstractions::Meter;
 use lr_core::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::Mutex;
+#[cfg(feature = "test-support")]
 use std::time::Duration;
 
 /// Kind of a metric.
@@ -290,8 +291,8 @@ pub struct Metrics {
     client_label: AtomicBool,
     series: Mutex<Vec<Series>>,
     rejected: AtomicU64,
-    updates: Mutex<u64>,
-    updated: Condvar,
+    #[cfg(feature = "test-support")]
+    updates: (Mutex<u64>, std::sync::Condvar),
 }
 
 enum Update {
@@ -312,22 +313,25 @@ impl Metrics {
             client_label: AtomicBool::new(client_label),
             series: Mutex::new(CATALOG.iter().map(|_| Series::new()).collect()),
             rejected: AtomicU64::new(0),
-            updates: Mutex::new(0),
-            updated: Condvar::new(),
+            #[cfg(feature = "test-support")]
+            updates: (Mutex::new(0), std::sync::Condvar::new()),
         }
     }
 
-    /// Updates applied so far.
+    /// Updates applied so far (feature `test-support`).
+    #[cfg(feature = "test-support")]
     pub fn updates(&self) -> u64 {
-        *self.updates.lock().unwrap_or_else(|e| e.into_inner())
+        *self.updates.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Blocks until more than `seen` updates are applied, at most `limit`; returns the count
-    /// then. For callers that wait for a value a role reports.
+    /// then (feature `test-support`).
+    #[cfg(feature = "test-support")]
     pub fn wait_updates(&self, seen: u64, limit: Duration) -> u64 {
-        let count = self.updates.lock().unwrap_or_else(|e| e.into_inner());
+        let count = self.updates.0.lock().unwrap_or_else(|e| e.into_inner());
         let (count, _) = self
-            .updated
+            .updates
+            .1
             .wait_timeout_while(count, limit, |n| *n <= seen)
             .unwrap_or_else(|e| e.into_inner());
         *count
@@ -405,12 +409,15 @@ impl Metrics {
     }
 
     fn update(&self, name: &str, given: &[(&str, &str)], update: Update) {
-        if !self.apply(name, given, update) {
+        let applied = self.apply(name, given, update);
+        if !applied {
             self.rejected.fetch_add(1, Ordering::Relaxed);
-            return;
         }
-        *self.updates.lock().unwrap_or_else(|e| e.into_inner()) += 1;
-        self.updated.notify_all();
+        #[cfg(feature = "test-support")]
+        if applied {
+            *self.updates.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            self.updates.1.notify_all();
+        }
     }
 
     fn apply(&self, name: &str, given: &[(&str, &str)], update: Update) -> bool {

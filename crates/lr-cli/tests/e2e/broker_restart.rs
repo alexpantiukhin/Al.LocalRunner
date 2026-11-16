@@ -1,3 +1,4 @@
+use crate::common::hub_events::HubEvents;
 use crate::common::TempDir;
 use crate::support::*;
 use lr_cli::doctor::Status;
@@ -5,12 +6,37 @@ use lr_cli::link_report;
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::JobState;
+use lr_proto::QueueEvent;
 
 async fn broker_gone(layout: &Layout) {
     until_hub(layout, "the hub to see the broker gone", || async {
         broker_available(layout).await.map_or(Some(()), |_| None)
     })
     .await;
+}
+
+async fn back_online(mut events: HubEvents, layout: &Layout, name: &str) {
+    let online = async {
+        loop {
+            let event = events.next().await;
+            if matches!(&event.event, QueueEvent::RunnerOnline { name: n } if n.ends_with(name)) {
+                return;
+            }
+            let live = async {
+                broker_available(layout).await?;
+                runners(layout)
+                    .await?
+                    .into_iter()
+                    .find(|r| r.online && r.name.ends_with(name))
+            };
+            if live.await.is_some() {
+                return;
+            }
+        }
+    };
+    let online = tokio::time::timeout(HANG, online).await;
+    events.close().await;
+    online.unwrap_or_else(|_| panic!("timed out waiting for runner {name} on the new broker"));
 }
 
 async fn restart_and_run(dir: &TempDir, move_listen: bool) {
@@ -36,10 +62,11 @@ async fn restart_and_run(dir: &TempDir, move_listen: bool) {
         std::fs::write(layout.config_file("policy.toml"), policy).unwrap();
     }
 
+    let events = HubEvents::open(&layout).await;
     let broker = start_broker(&layout, false)
         .await
         .expect("the broker starts again");
-    runner_online(&layout, "r1").await;
+    back_online(events, &layout, "r1").await;
 
     let profiles = "[profile.unit]\ncommand = \"echo reconnected\"\ntimeout_s = 60\nmem_mb = 64\n";
     let repo = repo(dir, profiles);
