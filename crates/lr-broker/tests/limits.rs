@@ -10,16 +10,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-async fn eventually(what: &str, mut ok: impl FnMut() -> bool) {
-    for _ in 0..500 {
-        if ok() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("never happened: {what}");
-}
-
 #[tokio::test]
 async fn slow_reader_is_disconnected_and_logged() {
     let (h, stall) = Harness::stalling("");
@@ -32,7 +22,10 @@ async fn slow_reader_is_disconnected_and_logged() {
         }))
         .await;
     }
-    eventually("slow connection closed", || stall.closes() >= 1).await;
+    until_changed(stall.changes(), "slow connection closed", || {
+        std::future::ready(stall.closes() >= 1)
+    })
+    .await;
     stall.on.store(false, Ordering::SeqCst);
     let mut other = h.local_hub("bob").await;
     other.sync().await;

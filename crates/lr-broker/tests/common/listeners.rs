@@ -3,7 +3,7 @@ use lr_abstractions::fakes::FakeListener;
 use lr_abstractions::{Frame, Listener, Peer, Transport, TransportError};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
+use tokio::sync::{watch, Semaphore};
 
 #[derive(Clone)]
 pub struct Stall {
@@ -12,6 +12,7 @@ pub struct Stall {
     pub sent: Arc<AtomicUsize>,
     pub reads: Arc<AtomicUsize>,
     permits: Arc<Semaphore>,
+    changed: Arc<watch::Sender<u64>>,
 }
 
 impl Default for Stall {
@@ -22,6 +23,7 @@ impl Default for Stall {
             sent: Arc::default(),
             reads: Arc::default(),
             permits: Arc::new(Semaphore::new(0)),
+            changed: Arc::new(watch::channel(0).0),
         }
     }
 }
@@ -29,6 +31,10 @@ impl Default for Stall {
 impl Stall {
     pub fn start(&self) {
         self.on.store(true, Ordering::SeqCst);
+    }
+
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
     }
 
     pub fn closes(&self) -> usize {
@@ -93,6 +99,7 @@ impl Transport for StallTransport {
 
     async fn close(&self) {
         self.stall.closed.fetch_add(1, Ordering::SeqCst);
+        self.stall.changed.send_modify(|n| *n += 1);
         self.inner.close().await;
     }
 }

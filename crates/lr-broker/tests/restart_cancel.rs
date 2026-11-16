@@ -98,7 +98,7 @@ async fn hub_absent_cancel_of_an_assigned_order_survives_a_restart() {
     hub.close().await;
     for _ in 0..3 {
         r.send(&RunnerToBroker::Heartbeat { load: None }).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        h.poke().await;
         h.clock.advance(Duration::from_secs(20));
     }
     h.poke().await;

@@ -9,16 +9,6 @@ use std::time::Duration;
 
 const LINUX: &[(&str, &str)] = &[(PLATFORM, "linux")];
 
-async fn eventually(what: &str, check: impl Fn() -> bool) {
-    for _ in 0..500 {
-        if check() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("{what} never happened");
-}
-
 fn assert_clean(meter: &MemoryMeter, forbidden: &[&str]) {
     for (k, v) in meter.label_pairs() {
         for f in forbidden {
@@ -116,14 +106,14 @@ async fn pool_load_and_presence_per_runner_then_forgotten_on_removal() {
     hub.send(&order("j1", req(1536, 3, 600))).await;
     hub.accepted().await;
     let load = [(metric::POOL, POOL_VALUE), (RUNNER, "r1")];
-    eventually("load reported", || {
+    until_meter(&m, "load reported", || {
         m.gauge(RUNNING_JOBS, &load) == Some(1.0)
     })
     .await;
     assert_eq!(m.gauge(POOL_MEMORY_USED_MB, &load), Some(1536.0));
     assert_eq!(m.gauge(POOL_CPU_USED, &load), Some(3.0));
     r.close().await;
-    eventually("runner offline", || {
+    until_meter(&m, "runner offline", || {
         m.gauge(RUNNER_ONLINE, &runner) == Some(0.0)
     })
     .await;
@@ -149,7 +139,7 @@ async fn saturation_wait_grows_for_the_waiting_reason_only() {
     tick_by(&h, 20).await;
     let m = h.meter.clone();
     let busy = [(REASON, "runner_busy")];
-    eventually("saturation reported", || {
+    until_meter(&m, "saturation reported", || {
         m.gauge(SATURATION_WAIT_SECONDS, &busy) == Some(20.0)
     })
     .await;
@@ -184,7 +174,7 @@ async fn result_outbox_is_sampled_with_its_oldest_age() {
     let h = Harness::start("");
     let m = h.meter.clone();
     let role = [(ROLE, "broker")];
-    eventually("first sample", || {
+    until_meter(&m, "first sample", || {
         m.gauge(OUTBOX_PENDING, &role) == Some(0.0)
     })
     .await;
@@ -201,7 +191,7 @@ async fn result_outbox_is_sampled_with_its_oldest_age() {
         }
     }
     tick_by(&h, OUTBOX_SAMPLE_S).await;
-    eventually("backlog sampled", || {
+    until_meter(&m, "backlog sampled", || {
         m.gauge(OUTBOX_PENDING, &role) == Some(1.0)
     })
     .await;
@@ -224,12 +214,15 @@ async fn cancel_of_a_waiting_order_counts_without_a_duration() {
     hub.send(&cancel("j2", 2)).await;
     let m = h.meter.clone();
     let cancelled = [(RESULT, "cancelled"), (PLATFORM, "linux")];
-    eventually("cancel counted", || {
+    until_meter(&m, "cancel counted", || {
         m.counter(ORDERS_TOTAL, &cancelled) == 1
     })
     .await;
     assert!(m.observed(JOB_DURATION_SECONDS, &cancelled).is_empty());
-    eventually("queue empty", || m.gauge(QUEUE_LENGTH, LINUX) == Some(0.0)).await;
+    until_meter(&m, "queue empty", || {
+        m.gauge(QUEUE_LENGTH, LINUX) == Some(0.0)
+    })
+    .await;
 }
 
 async fn started_notice(hub: &mut Conn) {
@@ -257,7 +250,7 @@ async fn waits_count_on_the_broker_clock_whatever_the_hub_clock_says() {
     tick_by(&h, 5).await;
     let m = h.meter.clone();
     let busy = [(REASON, "runner_busy")];
-    eventually("saturation from acceptance", || {
+    until_meter(&m, "saturation from acceptance", || {
         m.gauge(SATURATION_WAIT_SECONDS, &busy) == Some(5.0)
     })
     .await;
@@ -274,13 +267,13 @@ async fn a_requeued_order_waits_from_its_return_to_the_queue() {
     hub.send(&order("j1", req(512, 1, 600))).await;
     hub.accepted().await;
     let m = h.meter.clone();
-    eventually("first assignment", || {
+    until_meter(&m, "first assignment", || {
         m.observed(QUEUE_WAIT_SECONDS, LINUX).len() == 1
     })
     .await;
     h.clock.advance(Duration::from_secs(4));
     a.close().await;
-    eventually("requeued", || m.gauge(QUEUE_LENGTH, LINUX) == Some(1.0)).await;
+    until_meter(&m, "requeued", || m.gauge(QUEUE_LENGTH, LINUX) == Some(1.0)).await;
     h.clock.advance(Duration::from_secs(6));
     let mut b = h.member_runner("rB", "10.0.0.8", linux()).await;
     b.assign().await;
@@ -300,7 +293,7 @@ async fn same_machine_orders_given_back_count_as_cancelled() {
     r.close().await;
     let m = h.meter.clone();
     let cancelled = [(RESULT, "cancelled"), (PLATFORM, SAME_MACHINE)];
-    eventually("both given back", || {
+    until_meter(&m, "both given back", || {
         m.counter(ORDERS_TOTAL, &cancelled) == 2
     })
     .await;
@@ -322,7 +315,10 @@ async fn timeout_and_lost_results_are_counted_with_their_duration() {
     r.send(&result("j1", 2, JobState::Timeout, -1)).await;
     let m = h.meter.clone();
     let timeout = [(RESULT, "timeout"), (PLATFORM, "linux")];
-    eventually("timeout counted", || m.counter(ORDERS_TOTAL, &timeout) == 1).await;
+    until_meter(&m, "timeout counted", || {
+        m.counter(ORDERS_TOTAL, &timeout) == 1
+    })
+    .await;
     assert_eq!(m.observed(JOB_DURATION_SECONDS, &timeout), vec![2.0]);
     hub.send(&order("j2", req(512, 1, 600))).await;
     hub.accepted().await;
@@ -332,7 +328,7 @@ async fn timeout_and_lost_results_are_counted_with_their_duration() {
     h.clock.advance(Duration::from_secs(3));
     h.handle.revoked("r1").await;
     let lost = [(RESULT, "lost"), (PLATFORM, "linux")];
-    eventually("lost counted", || m.counter(ORDERS_TOTAL, &lost) == 1).await;
+    until_meter(&m, "lost counted", || m.counter(ORDERS_TOTAL, &lost) == 1).await;
     assert_eq!(m.observed(JOB_DURATION_SECONDS, &lost), vec![3.0]);
 }
 
@@ -351,7 +347,7 @@ async fn pool_memory_used_counts_the_live_services_of_a_runner() {
     .await;
     let m = h.meter.clone();
     let load = [(metric::POOL, POOL_VALUE), (RUNNER, "r1")];
-    eventually("service memory reported", || {
+    until_meter(&m, "service memory reported", || {
         m.gauge(POOL_MEMORY_USED_MB, &load) == Some(2048.0)
     })
     .await;
