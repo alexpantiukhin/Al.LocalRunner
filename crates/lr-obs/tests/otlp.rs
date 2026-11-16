@@ -392,9 +392,10 @@ fn https_transport_times_out_on_a_silent_receiver() {
     let pki = pki();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (done, posted) = std::sync::mpsc::channel::<()>();
     let hold = std::thread::spawn(move || {
         let (tcp, _) = listener.accept().unwrap();
-        std::thread::sleep(Duration::from_secs(3));
+        let _ = posted.recv();
         drop(tcp);
     });
     let endpoint = parse_endpoint(&format!("https://localhost:{port}")).unwrap();
@@ -403,6 +404,7 @@ fn https_transport_times_out_on_a_silent_receiver() {
     let started = Instant::now();
     assert!(t.post(LOGS_PATH, b"{}").is_err());
     assert!(started.elapsed() < Duration::from_secs(2));
+    drop(done);
     hold.join().unwrap();
 }
 

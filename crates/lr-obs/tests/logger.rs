@@ -487,7 +487,7 @@ fn reload_never_has_two_writers_on_one_path() {
     let cfg = LoggingConfig::parse("[[sink]]\nkind = \"file\"\n").unwrap();
     for _ in 0..30 {
         logger.reload(&cfg).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::yield_now();
     }
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     writer.join().unwrap();

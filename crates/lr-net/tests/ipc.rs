@@ -11,6 +11,8 @@ use lr_proto::{decode_for_peer, AdminRequest, PeerKind, RejectReason};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+const HANG: Duration = Duration::from_secs(20);
+
 fn address() -> String {
     let name = unique("lr-test");
     if cfg!(windows) {
@@ -180,11 +182,11 @@ async fn many_clients_each_accepted() {
             .expect("send");
     }
     for _ in &clients {
-        let server = tokio::time::timeout(Duration::from_secs(30), listener.accept())
+        let server = tokio::time::timeout(HANG, listener.accept())
             .await
             .expect("every client is accepted")
             .unwrap();
-        let got = tokio::time::timeout(Duration::from_secs(30), server.recv())
+        let got = tokio::time::timeout(HANG, server.recv())
             .await
             .expect("every accepted connection delivers its frame")
             .expect("recv");

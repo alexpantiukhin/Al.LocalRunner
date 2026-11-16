@@ -194,10 +194,11 @@ async fn dial_without_fingerprint_or_with_garbage_refused() {
 #[tokio::test]
 async fn nobody_listening_is_unreachable() {
     let b = broker().await;
-    let addr = b.addr.clone();
     let fp = b.fingerprint();
-    drop(b);
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let addr = {
+        let free = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+        free.local_addr().expect("its address").to_string()
+    };
     let err = TlsDialer::new(key()).dial(&addr, Some(&fp)).await.err();
     assert!(
         matches!(err, Some(TransportError::Unreachable(_))),

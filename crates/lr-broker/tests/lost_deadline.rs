@@ -16,9 +16,8 @@ async fn keep_alive(h: &Harness, runner: &Conn, hub: &Conn, mut ms: u64) {
     while ms > 0 {
         let step = ms.min(STEP_MS);
         h.clock.advance(Duration::from_millis(step));
-        runner.send(&RunnerToBroker::Heartbeat { load: None }).await;
         hub.send(&HubToBroker::Heartbeat).await;
-        h.poke().await;
+        h.heartbeat(runner, "r2").await;
         ms -= step;
     }
 }

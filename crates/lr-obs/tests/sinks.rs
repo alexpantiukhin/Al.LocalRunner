@@ -226,8 +226,7 @@ fn reload_after_shutdown_is_refused_and_starts_no_worker() {
     assert!(logger.reload(&file_config()).is_err());
     let before = logger.dropped();
     logger.write(&record("engine", Level::Info, "after shutdown"));
-    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert_eq!(logger.dropped(), before + 1);
     let file = String::from_utf8(fs.file(&log_path()).unwrap_or_default()).unwrap();
     assert!(!file.contains("after shutdown"), "{file}");
-    assert_eq!(logger.dropped(), before + 1);
 }

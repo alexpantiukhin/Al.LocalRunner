@@ -7,7 +7,6 @@ use lr_core::JobId;
 use lr_store::SqliteBrokerStore;
 use rusqlite::Connection;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_pushes_get_distinct_consecutive_seqs() {
@@ -119,7 +118,7 @@ async fn a_store_call_waiting_on_the_database_does_not_block_the_runtime() {
     };
     let mut ticks = 0;
     for _ in 0..6 {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
         ticks += 1;
         assert!(!call.is_finished(), "the call must wait for the write lock");
     }

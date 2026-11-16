@@ -12,7 +12,6 @@ use rustls::sign::CertifiedKey;
 use rustls::{ClientConfig, DigitallySignedStruct, ServerConfig, SignatureScheme};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
@@ -49,7 +48,7 @@ async fn fake_broker(config: Arc<ServerConfig>) -> (String, Arc<AtomicBool>) {
                 flag.store(true, Ordering::SeqCst);
             }
             let _ = write_frame(&mut tls, &encode(&AuthFromBroker::Authenticated).unwrap()).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            let _ = read_frame(&mut tls).await;
         }
     });
     (addr, reached)

@@ -30,10 +30,6 @@ fn small(general: usize, reserved: usize, per_ip: usize) -> Limits {
     }
 }
 
-async fn settle() {
-    tokio::time::sleep(Duration::from_millis(200)).await;
-}
-
 #[test]
 fn default_limits_split_the_handshake_cap() {
     let l = Limits::default();
@@ -51,7 +47,6 @@ async fn one_address_cannot_take_more_than_its_share() {
         junk_from("127.0.0.2", &b.addr).await,
         junk_from("127.0.0.2", &b.addr).await,
     ];
-    settle().await;
     let mut third = junk_from("127.0.0.2", &b.addr).await;
     assert!(
         dropped_within(&mut third, Duration::from_secs(2)).await,
@@ -75,7 +70,6 @@ async fn full_slots_drop_newcomers_but_not_known_members() {
     for i in 2..6 {
         junk.push(junk_from(&format!("127.0.0.{i}"), &b.addr).await);
     }
-    settle().await;
     let mut late = junk_from("127.0.0.9", &b.addr).await;
     assert!(
         dropped_within(&mut late, Duration::from_secs(2)).await,
@@ -99,7 +93,6 @@ async fn reserved_slots_are_only_for_known_addresses() {
     for i in 2..6 {
         junk.push(junk_from(&format!("127.0.0.{i}"), &b.addr).await);
     }
-    settle().await;
     assert!(
         b.dial(&k).await.is_err(),
         "an address that never authenticated has no reserved slot"
@@ -118,7 +111,6 @@ async fn junk_from_a_member_address_cannot_lock_it_out() {
     for _ in 0..3 {
         junk.push(junk_from("127.0.0.1", &b.addr).await);
     }
-    settle().await;
     b.dial(&k)
         .await
         .expect("over its per-address share a known address uses the reserved pool");
@@ -172,7 +164,6 @@ async fn both_pools_full_of_junk_from_one_member_source_spare_other_members() {
         junk.push(junk_from("127.0.0.1", &b.addr).await);
     }
     junk.push(junk_from("127.0.0.3", &b.addr).await);
-    settle().await;
     let mut over = junk_from("127.0.0.1", &b.addr).await;
     assert!(
         dropped_within(&mut over, Duration::from_secs(2)).await,

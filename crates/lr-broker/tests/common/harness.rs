@@ -6,8 +6,8 @@ use lr_abstractions::fakes::{
     MemorySecrets,
 };
 use lr_abstractions::{
-    BrokerStore, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
-    PeerAccess, Transport,
+    BrokerStore, Clock, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
+    PeerAccess, RunnerState, Transport,
 };
 use lr_broker::policy::{ActivePolicy, HostResources};
 use lr_broker::{Broker, BrokerDeps, BrokerHandle, BusEvent, ExactLocalUsers};
@@ -280,6 +280,24 @@ impl Harness {
         let mut c = self.connect_local("root").await;
         c.send(&hello("root", None)).await;
         c.welcome().await;
+    }
+
+    pub async fn heartbeat(&self, runner: &Conn, name: &str) {
+        let at = self.clock.now();
+        runner.send(&RunnerToBroker::Heartbeat { load: None }).await;
+        until_changed(
+            self.faults.changes(),
+            "the heartbeat is recorded",
+            || async {
+                self.faults.runners().await.is_ok_and(|rows| {
+                    rows.iter().any(|r| {
+                        r.name == name && r.last_seen == Some(at) && r.state == RunnerState::Online
+                    })
+                })
+            },
+        )
+        .await;
+        self.poke().await;
     }
 
     pub async fn until_state(
