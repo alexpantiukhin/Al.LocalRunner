@@ -3,7 +3,7 @@
 
 use super::jobs::hub;
 use super::timefmt::{format_ms, format_time, now};
-use super::view::{print_json, problem, reachable, read};
+use super::view::{is_plain_missing, missing_job_error, print_json, problem, reachable, read};
 use super::{ExplainArgs, RunnersArgs, StatsArgs};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
@@ -20,31 +20,39 @@ pub async fn explain(
     job: &JobId,
     broker: Option<&str>,
 ) -> Result<(String, String), String> {
+    explain_for(client, job, broker, None).await
+}
+
+/// Like `explain`, for the run of the client key `run_client` when several clients use `job`.
+pub async fn explain_for(
+    client: &IpcClient,
+    job: &JobId,
+    broker: Option<&str>,
+    run_client: Option<String>,
+) -> Result<(String, String), String> {
     let (names, mut problems) = reachable(client, broker).await?;
+    let mut ambiguous = Vec::new();
     for b in names {
         let req = ReadRequest::Explain {
             job: job.clone(),
-            client: None,
+            client: run_client.clone(),
         };
         match read(client, &b, req).await {
             Ok(ReadReply::Explain { text, .. }) => return Ok((b, text)),
-            Ok(ReadReply::NotFound { .. }) => {}
+            Ok(ReadReply::NotFound { what }) if is_plain_missing(&what, job) => {}
+            Ok(ReadReply::NotFound { what }) => ambiguous.push(format!("broker {b}: {what}")),
             Ok(other) => problems.push(problem(&b, &other)),
             Err(e) => problems.push(e),
         }
     }
-    problems.insert(
-        0,
-        format!("job {job} is not found on the brokers of this hub"),
-    );
-    Err(problems.join("\n"))
+    Err(missing_job_error(job, ambiguous, problems))
 }
 
 /// `explain <job>`.
 pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String> {
     let client = hub(layout).await?;
     let job = JobId(a.job);
-    let found = explain(&client, &job, a.broker.as_deref()).await;
+    let found = explain_for(&client, &job, a.broker.as_deref(), a.client).await;
     client.close().await;
     let (broker, text) = found?;
     if a.json {

@@ -177,6 +177,19 @@ async fn status_jobs_and_brokers_filter_and_print_json_through_the_hub() {
     assert_eq!(one["job"], a.0.as_str());
     assert!(one["text"].as_str().is_some_and(|t| !t.is_empty()));
     assert_eq!(one["detail"]["summary"]["job"], a.0.as_str());
+    let missing = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["status", "no-such-job"])
+        .current_dir(&repo)
+        .env("LOCALRUNNER_STATE_DIR", dir.path().join("state"))
+        .env("LOCALRUNNER_CONFIG_DIR", dir.path().join("config"))
+        .output()
+        .expect("the binary runs");
+    assert!(!missing.status.success());
+    let said = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        said.contains("job no-such-job is not found on the brokers of this hub"),
+        "{said}"
+    );
     let project = cli(
         &dir,
         &repo,

@@ -3,7 +3,9 @@ use lr_cli::commands::history_cmd::{history_filter, history_lines, newest_first,
 use lr_cli::commands::log_cmd::LogPrinter;
 use lr_cli::commands::read_cmd::{runner_lines, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
-use lr_cli::commands::view::{add_runners, job_lines, not_serving_lines, runners_of};
+use lr_cli::commands::view::{
+    add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines, runners_of,
+};
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
@@ -658,4 +660,35 @@ fn status_survives_a_broker_that_does_not_know_runners() {
     add_runners(&mut doc, &[]);
     assert!(doc["brokers"][0].get("runners").is_none());
     assert!(not_serving_lines(&[]).is_empty());
+}
+
+#[test]
+fn an_ambiguous_job_id_is_not_reported_as_missing_and_client_picks_the_run() {
+    let job = JobId("j2".into());
+    let said =
+        "broker office: job j2: this JobId is used by several clients (a, b); name the client";
+    assert!(!is_plain_missing(
+        "job j2: this JobId is used by several clients (a, b)",
+        &job
+    ));
+    assert!(is_plain_missing("job j2", &job));
+    let text = missing_job_error(&job, vec![said.into()], vec!["broker x: down".into()]);
+    assert!(!text.contains("not found"), "{text}");
+    assert!(text.starts_with(said), "{text}");
+    assert!(text.contains("broker x: down"), "{text}");
+    let gone = missing_job_error(&job, Vec::new(), vec!["broker x: down".into()]);
+    assert!(
+        gone.starts_with("job j2 is not found on the brokers of this hub"),
+        "{gone}"
+    );
+    assert!(gone.contains("broker x: down"), "{gone}");
+    match parse(&["status", "j2", "--client", "a"]) {
+        Command::Status { client, .. } => assert_eq!(client.as_deref(), Some("a")),
+        other => panic!("{other:?}"),
+    }
+    match parse(&["explain", "j2", "--client", "a"]) {
+        Command::Explain(a) => assert_eq!(a.client.as_deref(), Some("a")),
+        other => panic!("{other:?}"),
+    }
+    assert!(Cli::try_parse_from(["localrunner", "status", "--client", "a"]).is_err());
 }

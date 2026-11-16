@@ -571,4 +571,3 @@ Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lower
 ## License
 
 GPL-3.0-or-later: see [LICENSE](LICENSE). Additional terms (keep the author attribution in copies and documentation): [NOTICE](NOTICE).
-

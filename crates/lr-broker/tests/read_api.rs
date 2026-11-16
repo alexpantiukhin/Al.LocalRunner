@@ -594,3 +594,30 @@ async fn explain_names_the_job_that_holds_the_only_slot() {
     let text = explain_text(alex.read(explain_of("j2")).await);
     assert!(text.contains("раннер занят заказом j1 (3 мин)"), "{text}");
 }
+
+#[tokio::test]
+async fn explain_hides_the_id_of_a_foreign_holder_from_a_client_that_may_not_see_it() {
+    let h = Harness::start("[visibility]\nothers_orders = \"none\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.20").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    ci.send(&order("c1", req(512, 1, 60))).await;
+    ci.accepted().await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
+    assert!(
+        seen_by_ci.contains("раннер занят чужим заказом ("),
+        "{seen_by_ci}"
+    );
+    assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
+    let seen_by_owner = explain_text(alex.read(explain_of("j2")).await);
+    assert!(
+        seen_by_owner.contains("раннер занят заказом j1 ("),
+        "{seen_by_owner}"
+    );
+}

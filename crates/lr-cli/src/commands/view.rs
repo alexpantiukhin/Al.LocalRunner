@@ -296,10 +296,11 @@ pub async fn status_job(
     layout: &Layout,
     job: String,
     broker: Option<String>,
+    run_client: Option<String>,
     json_out: bool,
 ) -> Result<i32, String> {
     let client = hub(layout).await?;
-    let found = find_job(&client, &JobId(job.clone()), broker.as_deref()).await;
+    let found = find_job(&client, &JobId(job.clone()), broker.as_deref(), run_client).await;
     client.close().await;
     let (b, text, detail) = found?;
     if json_out {
@@ -316,19 +317,20 @@ async fn find_job(
     client: &IpcClient,
     job: &JobId,
     broker: Option<&str>,
+    run_client: Option<String>,
 ) -> Result<(String, String, Option<JobDetail>), String> {
     let (names, mut problems) = reachable(client, broker).await?;
-    let plain = format!("job {job}");
+    let mut ambiguous = Vec::new();
     for b in names {
         let ask = ReadRequest::Explain {
             job: job.clone(),
-            client: None,
+            client: run_client.clone(),
         };
         match read(client, &b, ask).await {
             Ok(ReadReply::Explain { text, .. }) => {
                 let show = ReadRequest::HistoryShow {
                     job: job.clone(),
-                    client: None,
+                    client: run_client.clone(),
                 };
                 let detail = match read(client, &b, show).await {
                     Ok(ReadReply::Job(d)) => Some(*d),
@@ -336,17 +338,31 @@ async fn find_job(
                 };
                 return Ok((b, text, detail));
             }
-            Ok(ReadReply::NotFound { what }) if what == plain => {}
-            Ok(ReadReply::NotFound { what }) => problems.push(format!("broker {b}: {what}")),
+            Ok(ReadReply::NotFound { what }) if is_plain_missing(&what, job) => {}
+            Ok(ReadReply::NotFound { what }) => ambiguous.push(format!("broker {b}: {what}")),
             Ok(other) => problems.push(problem(&b, &other)),
             Err(e) => problems.push(e),
         }
     }
-    problems.insert(
-        0,
-        format!("job {job} is not found on the brokers of this hub"),
-    );
-    Err(problems.join("\n"))
+    Err(missing_job_error(job, ambiguous, problems))
+}
+
+/// Whether what of a NotFound answer just says that job does not exist, as against the
+/// broker's remark that the id is used by several clients.
+pub fn is_plain_missing(what: &str, job: &JobId) -> bool {
+    what == format!("job {job}")
+}
+
+/// The error for a job no broker answered: the brokers' remarks on an ambiguous id when there
+/// are any (the job exists, --client picks one), else that it is not found, then the problems.
+pub fn missing_job_error(job: &JobId, ambiguous: Vec<String>, problems: Vec<String>) -> String {
+    let mut lines = if ambiguous.is_empty() {
+        vec![format!("job {job} is not found on the brokers of this hub")]
+    } else {
+        ambiguous
+    };
+    lines.extend(problems);
+    lines.join("\n")
 }
 
 /// Prints `value` as pretty JSON.

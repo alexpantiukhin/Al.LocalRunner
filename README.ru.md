@@ -574,4 +574,3 @@ codex plugin marketplace remove al-localrunner
 ## Лицензия
 
 GPL-3.0-or-later: см. [LICENSE](LICENSE). Дополнительные условия (сохранять указание автора в копиях и документации): [NOTICE](NOTICE).
-

@@ -159,6 +159,9 @@ pub enum Command {
         /// Show this one job: why it waits or what it does, with its record.
         #[arg(value_name = "JOB", conflicts_with = "html")]
         job: Option<String>,
+        /// The client key whose run to show, when several clients use the same job id.
+        #[arg(long, requires = "job")]
+        client: Option<String>,
         /// Only this project.
         #[arg(long)]
         project: Option<String>,
@@ -368,6 +371,7 @@ pub async fn run(cli: Cli) -> i32 {
         } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
         Command::Status {
             job,
+            client,
             project,
             source,
             label,
@@ -377,7 +381,7 @@ pub async fn run(cli: Cli) -> i32 {
         } => match html.html.clone() {
             Some(path) => snapshot_cmd::write(&layout, project, source, label, path, &html).await,
             None => match job {
-                Some(job) => view::status_job(&layout, job, broker, json).await,
+                Some(job) => view::status_job(&layout, job, broker, client, json).await,
                 None => view::status(&layout, project, source, label, broker, json).await,
             },
         },
@@ -533,4 +537,3 @@ pub async fn run(cli: Cli) -> i32 {
         }
     }
 }
-
