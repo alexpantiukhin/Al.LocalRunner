@@ -374,13 +374,17 @@ impl Engine {
                     return;
                 };
                 let job = self.active.remove(i);
-                self.job_result(job, &r, now).await;
+                if r.reason == Some(ReasonCode::RunnerDraining) && job.started_at.is_none() {
+                    self.requeue_or_retry(job).await;
+                } else {
+                    self.job_result(job, &r, now).await;
+                }
                 self.ack_runner(conn, &r.job, r.seq);
                 self.plan().await;
             }
             RunnerToBroker::Ack(a) => self.confirm_assign(&name, &a.job),
             RunnerToBroker::Resume(r) => self.runner_resumed(&name, &r.points).await,
-            RunnerToBroker::Drain => self.drain(&name).await,
+            RunnerToBroker::Drain { reason } => self.drain(&name, reason).await,
             RunnerToBroker::CapabilitiesUpdate(u) => {
                 self.capabilities_update(&name, u.capabilities).await
             }

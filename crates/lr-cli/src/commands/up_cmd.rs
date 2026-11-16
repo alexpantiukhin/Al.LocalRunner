@@ -142,6 +142,10 @@ fn keep_std_handles_from_children() {
 fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
+        .env(
+            crate::upgrade_lock::OWNER_ENV,
+            std::process::id().to_string(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -254,6 +258,16 @@ pub async fn up_with(
     within: Duration,
     start: Spawn<'_>,
 ) -> Result<i32, String> {
+    if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
+        eprintln!(
+            "{}: nothing is started; wait for it to finish (`localrunner status`) instead of running `up` again",
+            crate::upgrade_lock::describe(&lock)
+        );
+        return Ok(1);
+    }
+    if let Ok(me) = std::env::current_exe() {
+        crate::os_service::remove_leftover(&me);
+    }
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);

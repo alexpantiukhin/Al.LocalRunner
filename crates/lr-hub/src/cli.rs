@@ -43,6 +43,7 @@ impl Engine {
             CliRequest::Orders => Some(self.orders(&e.os_user)),
             CliRequest::Shutdown => None,
             CliRequest::LoggingReload => Some(self.reload_logging()),
+            CliRequest::PolicyReload => Some(self.reload_policy()),
             CliRequest::Events if !self.watching.insert(e.conn) => Some(CliReply::Watching),
             CliRequest::Events => {
                 crate::bus::watch(&self.s, e.reply.clone());
@@ -198,6 +199,37 @@ impl Engine {
                 CliReply::Reloaded
             }
             Err(e) => error(ProtocolErrorCode::Malformed, e),
+        }
+    }
+
+    fn count_reload(&self, result: &str) {
+        self.s.meter.add(
+            lr_abstractions::metric::POLICY_RELOAD_TOTAL,
+            &[(lr_abstractions::metric::RESULT, result)],
+            1,
+        );
+    }
+
+    fn reload_policy(&mut self) -> CliReply {
+        let Some(reload) = &self.s.reload_policy else {
+            return error(
+                ProtocolErrorCode::Unavailable,
+                "this hub cannot reload its policy",
+            );
+        };
+        match reload() {
+            Ok(policy) => {
+                self.policy = policy;
+                self.count_reload("ok");
+                self.s.diag(Level::Info, "hub policy reloaded", &[]);
+                CliReply::Reloaded
+            }
+            Err(e) => {
+                self.count_reload("error");
+                self.s
+                    .diag(Level::Warn, "hub policy refused, the old one stays", &[]);
+                error(ProtocolErrorCode::Malformed, e)
+            }
         }
     }
 

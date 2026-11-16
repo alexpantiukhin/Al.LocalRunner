@@ -5,13 +5,15 @@ use common::TempDir;
 use lr_cli::commands::confirm::Console;
 use lr_cli::commands::up_cmd::RunningRoles;
 use lr_cli::commands::upgrade_cmd::{
-    parse_version, restart_roles, restart_summary, stop_names, verdict, Job, Verdict,
+    parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
+    Verdict,
 };
 use lr_cli::commands::upgrade_jobs::Activity;
+use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
-use lr_proto::DownMode;
-use std::path::Path;
+use lr_proto::{DownMode, DrainReason};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 fn v(text: &str) -> lr_cli::commands::upgrade_cmd::Version {
@@ -99,12 +101,18 @@ fn the_plan_names_the_runners_that_start_again() {
 }
 
 #[derive(Default)]
-struct Recorder(Mutex<Vec<String>>);
+struct Recorder {
+    applied: Mutex<Vec<String>>,
+    fail: bool,
+}
 
 impl System for Recorder {
     fn apply(&self, action: &Action) -> Result<(), String> {
-        self.0.lock().unwrap().push(action.to_string());
-        Ok(())
+        self.applied.lock().unwrap().push(action.to_string());
+        match self.fail {
+            true => Err("the file is busy".into()),
+            false => Ok(()),
+        }
     }
 }
 
@@ -118,14 +126,19 @@ struct Case {
     dry_run: bool,
     terminal: bool,
     typed: &'static str,
-    answering: bool,
+    answers: usize,
     interrupted: bool,
+    wait_timeout: Option<std::time::Duration>,
+    copy_fails: bool,
 }
 
 struct Outcome {
     result: Result<i32, String>,
     copies: Vec<String>,
     told: Vec<(String, DownMode)>,
+    reasons: Vec<Option<DrainReason>>,
+    lock_seen: Vec<bool>,
+    lock_left: bool,
     started: Vec<Vec<String>>,
     hub_stops: usize,
     broker_stops: usize,
@@ -135,8 +148,13 @@ struct Outcome {
 async fn run(case: Case) -> Outcome {
     let dir = TempDir::new("upgrade");
     let layout = with_runner(&dir);
-    let roles = FakeRoles::new(false, if case.answering { usize::MAX } else { 0 });
-    let system = Recorder::default();
+    let roles = FakeRoles::new(false, case.answers);
+    let lock = lr_cli::upgrade_lock::lock_path(&layout);
+    *roles.lock_file.lock().unwrap() = Some(lock.clone());
+    let system = Recorder {
+        fail: case.copy_fails,
+        ..Recorder::default()
+    };
     let started = Mutex::new(Vec::new());
     let start = |argv: &[String]| -> std::io::Result<u32> {
         started.lock().unwrap().push(argv.to_vec());
@@ -151,9 +169,11 @@ async fn run(case: Case) -> Outcome {
         new: &new,
         running: &case.running,
         activity: &case.activity,
+        pool: &[],
         yes: case.yes,
         cancel: case.cancel,
         dry_run: case.dry_run,
+        wait_timeout: case.wait_timeout,
     };
     let mut input = case.typed.as_bytes();
     let mut out = Vec::new();
@@ -170,7 +190,9 @@ async fn run(case: Case) -> Outcome {
         })
         .await;
     let told = roles.told.lock().unwrap().clone();
-    let copies = system.0.lock().unwrap().clone();
+    let reasons = roles.reasons.lock().unwrap().clone();
+    let lock_seen = roles.lock_seen.lock().unwrap().clone();
+    let copies = system.applied.lock().unwrap().clone();
     let started = started.lock().unwrap().clone();
     let (hub_stops, broker_stops) = (
         roles.hub_stops.load(std::sync::atomic::Ordering::SeqCst),
@@ -181,6 +203,9 @@ async fn run(case: Case) -> Outcome {
         result,
         copies,
         told,
+        reasons,
+        lock_seen,
+        lock_left: lock.exists(),
         started,
         hub_stops,
         broker_stops,
@@ -199,8 +224,10 @@ fn case(old: &'static str, new: &'static str) -> Case {
         dry_run: false,
         terminal: false,
         typed: "",
-        answering: false,
+        answers: 0,
         interrupted: false,
+        wait_timeout: None,
+        copy_fails: false,
     }
 }
 
@@ -333,13 +360,23 @@ async fn at_a_terminal_the_user_picks_wait_cancel_or_abort() {
 async fn ctrl_c_while_waiting_leaves_the_hub_the_broker_and_the_binary_alone() {
     let mut c = busy_case();
     c.running = running(true, true, &["r1"]);
-    c.answering = true;
+    c.answers = usize::MAX;
     c.interrupted = true;
     let o = run(c).await;
     assert_eq!(o.result, Ok(1));
-    assert_eq!(o.told, vec![("r1".to_string(), DownMode::Drain)]);
+    assert!(!o.told.is_empty());
+    assert!(o
+        .told
+        .iter()
+        .all(|t| *t == ("r1".to_string(), DownMode::Drain)));
     assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
-    assert!(o.copies.is_empty() && o.started.is_empty());
+    assert!(o.copies.is_empty());
+    assert_eq!(
+        o.started.len(),
+        1,
+        "runners that left come back: {:?}",
+        o.started
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -349,4 +386,374 @@ async fn the_hub_and_the_broker_stop_after_the_runners_are_gone() {
     let o = run(c).await;
     assert_eq!((o.hub_stops, o.broker_stops), (1, 1));
     assert!(!o.copies.is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_writes_the_lock_before_stopping_and_removes_it_after() {
+    let o = run(case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(!o.lock_seen.is_empty() && o.lock_seen.iter().all(|seen| *seen));
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_lock_is_removed_after_a_failed_replacement() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.copy_fails = true;
+    let o = run(c).await;
+    assert!(o.result.is_err());
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_lock_is_removed_when_the_wait_is_interrupted() {
+    let mut c = busy_case();
+    c.answers = usize::MAX;
+    c.interrupted = true;
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert!(o.lock_seen.iter().all(|seen| *seen));
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn no_lock_is_written_for_a_dry_run_or_an_up_to_date_node() {
+    let mut dry = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    dry.dry_run = true;
+    assert!(run(dry).await.lock_seen.is_empty());
+    let same = run(case("0.1.1 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert!(same.lock_seen.is_empty() && !same.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn runners_are_stopped_with_the_upgrade_reason() {
+    let o = run(case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)")).await;
+    assert_eq!(o.reasons, vec![Some(DrainReason::Upgrade)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_that_answers_again_is_told_to_stop_again() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.answers = usize::MAX;
+    c.wait_timeout = Some(std::time::Duration::from_secs(2));
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert!(o.told.len() > 1, "{:?}", o.told);
+    assert!(o
+        .told
+        .iter()
+        .all(|t| *t == ("r1".to_string(), DownMode::Drain)));
+    assert!(o.reasons.iter().all(|r| *r == Some(DrainReason::Upgrade)));
+}
+
+#[tokio::test(start_paused = true)]
+async fn wait_timeout_stops_the_wait_with_code_1_and_replaces_nothing() {
+    let mut c = busy_case();
+    c.running = running(true, true, &["r1"]);
+    c.answers = usize::MAX;
+    c.wait_timeout = Some(std::time::Duration::from_secs(90));
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(1));
+    assert_eq!((o.hub_stops, o.broker_stops), (0, 0));
+    assert!(o.copies.is_empty());
+    assert_eq!(
+        o.started.len(),
+        1,
+        "runners that left come back: {:?}",
+        o.started
+    );
+    assert!(!o.lock_left);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_wait_that_ends_before_the_timeout_replaces_the_binary() {
+    let mut c = busy_case();
+    c.answers = 3;
+    c.wait_timeout = Some(std::time::Duration::from_secs(90));
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(!o.copies.is_empty());
+}
+
+#[test]
+fn parse_duration_rejects_zero_and_garbage() {
+    use std::time::Duration;
+    assert_eq!(parse_duration("90s"), Ok(Duration::from_secs(90)));
+    assert_eq!(parse_duration("15m"), Ok(Duration::from_secs(900)));
+    assert_eq!(parse_duration("2h"), Ok(Duration::from_secs(7200)));
+    for bad in [
+        "", "0s", "0m", "0h", "15", "m", "abc", "-5m", "1.5h", "5d", "1h30m",
+    ] {
+        assert!(parse_duration(bad).is_err(), "{bad:?} must be rejected");
+    }
+}
+
+#[test]
+fn the_wait_prints_the_jobs_and_the_elapsed_time() {
+    let lines = busy().waiting_lines(std::time::Duration::from_secs(185));
+    assert_eq!(lines, ["j1 on r1 (tests)", "waited 3m05s"]);
+    let idle = Activity::default().waiting_lines(std::time::Duration::from_secs(2));
+    assert_eq!(idle, ["waited 2.0s"]);
+}
+
+fn put(path: &Path, text: &str) {
+    std::fs::write(path, text).unwrap();
+}
+
+fn text(path: &Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[test]
+fn replace_binary_puts_the_new_file_in_place_and_keeps_the_old_aside() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    put(&to, "old");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert_eq!(text(&dir.path().join("localrunner.old")), "old");
+}
+
+#[test]
+fn replace_binary_removes_a_previous_aside_file_first() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_twice");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    put(&to, "old");
+    put(&dir.path().join("localrunner.old"), "ancient");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert_eq!(text(&dir.path().join("localrunner.old")), "old");
+}
+
+#[test]
+fn replace_binary_restores_the_old_file_when_the_copy_fails() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_fails");
+    let to = dir.path().join("localrunner");
+    put(&to, "old");
+    let failed = OsSystem.apply(&Action::ReplaceBinary {
+        from: dir.path().join("missing"),
+        to: to.clone(),
+    });
+    assert!(failed.is_err());
+    assert_eq!(text(&to), "old");
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn replace_binary_installs_when_nothing_is_there_yet() {
+    use lr_cli::os_service::OsSystem;
+    let dir = TempDir::new("replace_fresh");
+    let (from, to) = (dir.path().join("new"), dir.path().join("localrunner"));
+    put(&from, "new");
+    OsSystem
+        .apply(&Action::ReplaceBinary {
+            from,
+            to: to.clone(),
+        })
+        .unwrap();
+    assert_eq!(text(&to), "new");
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn a_leftover_aside_file_is_removed_and_a_missing_one_is_not_an_error() {
+    use lr_cli::os_service::remove_leftover;
+    let dir = TempDir::new("leftover");
+    let binary = dir.path().join("localrunner");
+    remove_leftover(&binary);
+    put(&dir.path().join("localrunner.old"), "old");
+    remove_leftover(&binary);
+    assert!(!dir.path().join("localrunner.old").exists());
+}
+
+#[test]
+fn the_plan_says_open_clients_keep_the_old_version() {
+    assert!(
+        lr_cli::commands::upgrade_cmd::KEEP_OLD_NOTE.contains("keep running on the old version")
+    );
+}
+
+#[test]
+fn the_upgrade_plan_replaces_the_binary_and_never_copies_over_it() {
+    use lr_cli::commands::setup::upgrade_plan;
+    let plan = upgrade_plan(PathBuf::from("/new/localrunner"), PathBuf::from("/bin"));
+    assert!(!plan.is_empty());
+    assert!(plan
+        .iter()
+        .all(|a| matches!(a, Action::ReplaceBinary { .. })));
+    assert!(upgrade_plan(PathBuf::from("/bin/localrunner"), PathBuf::from("/bin")).is_empty());
+}
+
+fn peer(name: &str, machine: &str, version: Option<&str>, online: bool) -> PoolRunner {
+    PoolRunner {
+        name: name.into(),
+        machine: Some(machine.into()),
+        version: version.map(String::from),
+        online,
+        kind: Kind::Unknown,
+    }
+}
+
+#[test]
+fn plan_lines_list_other_machines_with_versions_and_say_they_are_not_touched() {
+    let pool = [
+        peer("linux", "ci-1", Some("0.1.0"), true),
+        peer("old", "ci-2", None, true),
+    ];
+    let lines = plan_lines(&pool, "0.1.1");
+    let all = lines.join("\n");
+    assert!(all.contains("not touched"), "{all}");
+    assert!(
+        all.contains("linux") && all.contains("ci-1") && all.contains("0.1.0"),
+        "{all}"
+    );
+    assert!(all.contains("old") && all.contains("unknown"), "{all}");
+    assert!(plan_lines(&[], "0.1.1").is_empty());
+}
+
+#[test]
+fn report_lines_name_runners_still_on_another_version() {
+    let pool = [
+        peer("linux", "ci-1", Some("0.1.0"), true),
+        peer("same", "ci-2", Some("0.1.1"), true),
+    ];
+    let lines = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false);
+    let all = lines.join("\n");
+    assert!(
+        all.contains("linux") && all.contains("0.1.0") && all.contains("ci-1"),
+        "{all}"
+    );
+    assert!(all.contains("localrunner upgrade"), "{all}");
+    assert!(!all.contains("same"), "{all}");
+}
+
+#[test]
+fn report_lines_say_a_protocol_change_breaks_them() {
+    let pool = [peer("linux", "ci-1", Some("0.1.0"), true)];
+    let all = report_lines(&pool, &v("0.2.0 (protocol 2.0)"), true).join("\n");
+    assert!(all.contains("protocol"), "{all}");
+    let quiet = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    assert!(!quiet.contains("protocol"), "{quiet}");
+}
+
+#[test]
+fn report_lines_mark_container_and_offline_runners_manual_step() {
+    let mut boxed = peer("box", "172.17.0.2", Some("0.1.0"), true);
+    boxed.kind = Kind::Container;
+    let pool = [boxed, peer("away", "ci-3", Some("0.1.0"), false)];
+    let all = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    assert!(all.contains("box") && all.contains("manual step"), "{all}");
+    assert!(
+        all.contains("away") && all.contains("not updated: offline"),
+        "{all}"
+    );
+}
+
+#[test]
+fn no_lines_when_every_runner_is_on_the_new_version() {
+    let pool = [peer("a", "m1", Some("0.1.1"), true)];
+    assert!(report_lines(&pool, &v("0.1.1 (protocol 1.0)"), true).is_empty());
+    assert!(report_lines(&[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+}
+
+#[test]
+fn the_runners_of_this_installation_are_not_part_of_the_pool() {
+    use lr_cli::commands::upgrade_pool::rows;
+    let info = |name: &str, machine: &str, version: &str| {
+        let caps = lr_proto::WireCapabilities {
+            platforms: Default::default(),
+            mem_mb: 0,
+            cpu: 0,
+            disk_mb: 0,
+            programs: Default::default(),
+            tags: Default::default(),
+            max_job_timeout_s: None,
+            services: Default::default(),
+            machine: Some(lr_core::MachineRef(machine.into())),
+            accept_min_mem_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: Some(version.into()),
+        };
+        lr_proto::RunnerInfo {
+            name: name.into(),
+            online: true,
+            caps,
+            last_seen: None,
+            free_mem_mb: 0,
+            free_cpu: 0,
+            held_tags: Vec::new(),
+            services: Vec::new(),
+            unmet: Vec::new(),
+        }
+    };
+    let got = rows(
+        vec![
+            info("r1", "local:alex", "0.1.0"),
+            info("r1", "ci-9", "0.1.0"),
+            info("peer", "ci-1", "0.1.0"),
+        ],
+        &["r1".to_string()],
+    );
+    let names: Vec<(&str, Option<&str>)> = got
+        .iter()
+        .map(|p| (p.name.as_str(), p.machine.as_deref()))
+        .collect();
+    assert_eq!(names, [("r1", Some("ci-9")), ("peer", Some("ci-1"))]);
+}
+
+struct BusySecond {
+    applied: Mutex<Vec<String>>,
+    busy_left: Mutex<usize>,
+}
+
+impl System for BusySecond {
+    fn apply(&self, action: &Action) -> Result<(), String> {
+        let text = action.to_string();
+        if text.contains("second") {
+            let mut left = self.busy_left.lock().unwrap();
+            if *left > 0 {
+                *left -= 1;
+                return Err("the file is busy".into());
+            }
+        }
+        self.applied.lock().unwrap().push(text);
+        Ok(())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_busy_second_binary_does_not_make_the_first_one_replaced_again() {
+    let copy = |name: &str| Action::ReplaceBinary {
+        from: std::path::PathBuf::from("new").join(name),
+        to: std::path::PathBuf::from("installed").join(name),
+    };
+    let system = BusySecond {
+        applied: Mutex::new(Vec::new()),
+        busy_left: Mutex::new(3),
+    };
+    lr_cli::commands::upgrade_cmd::replace_binary(&system, &[copy("first"), copy("second")])
+        .await
+        .unwrap();
+    let applied = system.applied.lock().unwrap().clone();
+    assert_eq!(applied.len(), 2, "{applied:?}");
+    assert!(applied[0].contains("first") && applied[1].contains("second"));
 }

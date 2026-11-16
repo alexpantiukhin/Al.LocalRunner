@@ -4,8 +4,8 @@ use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
-    ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities, WireLoad,
-    WireServiceStatus,
+    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, ServiceReport, WireCapabilities,
+    WireLoad, WireServiceStatus,
 };
 use std::collections::BTreeSet;
 
@@ -18,6 +18,8 @@ pub(crate) struct RunnerSlot {
     pub(crate) conn: Option<ConnId>,
     pub(crate) last_seen: Timestamp,
     pub(crate) draining: bool,
+    pub(crate) drain_reason: Option<DrainReason>,
+    pub(crate) hold_until: Option<Timestamp>,
     pub(crate) services: Vec<ServiceReport>,
     pub(crate) stopping: BTreeSet<String>,
     pub(crate) restored: bool,
@@ -35,6 +37,8 @@ impl RunnerSlot {
             conn: None,
             last_seen: row.last_seen.unwrap_or(Timestamp(0)),
             draining: false,
+            drain_reason: None,
+            hold_until: None,
             services: Vec::new(),
             stopping: BTreeSet::new(),
             restored: true,
@@ -44,6 +48,19 @@ impl RunnerSlot {
 
     pub(crate) fn takes_work(&self) -> bool {
         self.conn.is_some() && !self.draining
+    }
+
+    pub(crate) fn drains_for_upgrade(&self) -> bool {
+        self.draining
+            && matches!(
+                self.drain_reason,
+                Some(DrainReason::Upgrade | DrainReason::Lock)
+            )
+    }
+
+    pub(crate) fn holds_orders(&self, now: Timestamp) -> bool {
+        self.drains_for_upgrade()
+            && (self.conn.is_some() || self.hold_until.is_some_and(|until| now < until))
     }
 }
 
@@ -131,6 +148,8 @@ impl Engine {
                 conn: Some(conn),
                 last_seen: now,
                 draining: false,
+                drain_reason: None,
+                hold_until: None,
                 services: Vec::new(),
                 stopping: BTreeSet::new(),
                 restored: false,
@@ -199,13 +218,14 @@ impl Engine {
     }
 
     pub(crate) fn runner_views(&self) -> Vec<RunnerView> {
+        let now = self.now();
         self.runners
             .iter()
             .map(|(name, s)| RunnerView {
                 name: name.clone(),
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
-                online: s.takes_work(),
+                online: s.takes_work() || s.holds_orders(now),
                 load: s.load.map(Into::into),
             })
             .collect()
@@ -247,6 +267,7 @@ impl Engine {
 
     pub(crate) async fn runner_gone(&mut self, name: &str) {
         let now = self.now();
+        let hold_s = self.upgrade_hold_s();
         let Some(slot) = self.runners.get_mut(name) else {
             return;
         };
@@ -254,6 +275,9 @@ impl Engine {
             return;
         }
         slot.load = None;
+        if slot.drains_for_upgrade() {
+            slot.hold_until = Some(now.plus_secs(hold_s));
+        }
         if slot.persisted {
             if let Err(e) = self
                 .store

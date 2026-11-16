@@ -98,6 +98,7 @@ fn zero_durations_and_sizes_refused() {
         ("join", "code_ttl_min"),
         ("orphans", "absent_after_min"),
         ("grace", "lost_min"),
+        ("grace", "upgrade_hold_s"),
         ("results", "keep_hours"),
         ("pool", "mem_mb"),
         ("pool", "cpu"),

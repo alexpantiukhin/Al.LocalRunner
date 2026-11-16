@@ -92,6 +92,15 @@ pub fn logging_reloader(layout: &Layout, logger: &Arc<Logger>) -> lr_hub::Reload
     Arc::new(move || reload_logging(&path, &logger))
 }
 
+/// Rereads `hub-policy.toml` of the installation for the hub's `reload`.
+pub fn hub_policy_reloader(layout: &Layout) -> lr_hub::ReloadPolicy {
+    let path = layout.config_file("hub-policy.toml");
+    Arc::new(move || {
+        let text = read_optional(&path)?.unwrap_or_default();
+        parse_hub_policy(&text).map_err(|e| e.to_string())
+    })
+}
+
 fn ipc_dialer() -> Result<Arc<dyn Dialer>, String> {
     Ok(Arc::new(IpcDialer::new(
         crate::os_service::broker_servers()?
@@ -292,7 +301,8 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         policy,
         name: crate::facts::host_name(),
     })
-    .with_logging_reload(logging_reloader(layout, &logger));
+    .with_logging_reload(logging_reloader(layout, &logger))
+    .with_policy_reload(hub_policy_reloader(layout));
     Ok(HubParts { hub, logger, ipc })
 }
 
@@ -306,6 +316,8 @@ pub struct RunnerParts {
     pub logger: Arc<Logger>,
     /// Problems found while checking `[programs]`.
     pub problems: Vec<String>,
+    /// Rereads `runner.toml` for `reload`.
+    pub reload: Arc<crate::runner_reload::RunnerReloader>,
 }
 
 /// Where a runner's `runner.toml` is: `explicit`, else its own directory, else the template of
@@ -328,7 +340,7 @@ struct BrokerFile {
     fingerprint: Option<String>,
 }
 
-fn broker_address(dir: &Path, layout: &Layout) -> Result<BrokerAddress, String> {
+pub fn broker_address(dir: &Path, layout: &Layout) -> Result<BrokerAddress, String> {
     match read_optional(&dir.join(BROKER_FILE))? {
         None => Ok(BrokerAddress {
             address: layout.broker_ipc(),
@@ -342,6 +354,33 @@ fn broker_address(dir: &Path, layout: &Layout) -> Result<BrokerAddress, String> 
             })
         }
     }
+}
+
+/// The facts the assembly adds to a parsed `runner.toml` (home, temp, free disk, the disk
+/// ledger, the process, version and enforcement) and the `[programs]` checks; returns the
+/// problems the checks found.
+pub fn finish_settings(layout: &Layout, dir: &Path, cfg: &mut RunnerConfig) -> Vec<String> {
+    cfg.settings.home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
+    let problems = cfg.check_programs();
+    cfg.settings.disk_mb = host::free_disk_mb(dir).unwrap_or(0);
+    cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
+    let pid = std::process::id();
+    cfg.settings.process = Some(lr_abstractions::ProcessRef {
+        pid,
+        start: lr_exec::process_start(pid),
+    });
+    cfg.settings.version = Some(env!("CARGO_PKG_VERSION").to_string());
+    cfg.settings.enforcement = Some(
+        match lr_exec::enforcement() {
+            lr_exec::Enforcement::Os => "os",
+            lr_exec::Enforcement::Watcher => "watcher",
+        }
+        .to_string(),
+    );
+    problems
 }
 
 /// Builds runner `name`: `runner.toml` (resources default to the whole host), the elevation
@@ -375,26 +414,7 @@ pub async fn runner(
     {
         eprintln!("runner {name}: warning: {risk}");
     }
-    cfg.settings.home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok();
-    cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
-    let problems = cfg.check_programs();
-    cfg.settings.disk_mb = host::free_disk_mb(&dir).unwrap_or(0);
-    cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
-    let pid = std::process::id();
-    cfg.settings.process = Some(lr_abstractions::ProcessRef {
-        pid,
-        start: lr_exec::process_start(pid),
-    });
-    cfg.settings.version = Some(env!("CARGO_PKG_VERSION").to_string());
-    cfg.settings.enforcement = Some(
-        match lr_exec::enforcement() {
-            lr_exec::Enforcement::Os => "os",
-            lr_exec::Enforcement::Watcher => "watcher",
-        }
-        .to_string(),
-    );
+    let problems = finish_settings(layout, &dir, &mut cfg);
     let clock = clock();
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =
@@ -407,10 +427,12 @@ pub async fn runner(
             .await
             .map_err(|e| format!("runner control IPC {address}: {e}"))?,
     );
+    let applied = cfg.clone();
+    let broker = broker_address(&dir, layout)?;
     let agent = RunnerAgent::new(RunnerDeps {
         clock: clock.clone(),
         dialer: dialer(&dir.join(KEY_FILE))?,
-        broker: broker_address(&dir, layout)?,
+        broker: broker.clone(),
         store,
         process: Arc::new(ExecRunner::new(clock)),
         inspector: Arc::new(OsProcessInspector),
@@ -418,15 +440,32 @@ pub async fn runner(
         files: Arc::new(StdFiles),
         log: logger.clone(),
         meter: logger.metrics(),
-        settings: cfg.settings,
+        settings: lr_runner::SettingsCell::new(cfg.settings),
         disk: Arc::new(host::HostDiskSpace),
         awake: Arc::new(lr_exec::system_keep_awake()),
         load: Some(Arc::new(host_load::SystemHostLoad::new())),
+        upgrade_live: Some({
+            let layout = layout.clone();
+            Arc::new(move || crate::upgrade_lock::live_here(&layout).is_some())
+        }),
     });
+    let reload = Arc::new(crate::runner_reload::RunnerReloader::new(
+        layout.clone(),
+        name,
+        config,
+        crate::runner_reload::Started {
+            config: applied,
+            text,
+            broker,
+        },
+        agent.control(),
+        logger.metrics(),
+    ));
     Ok(RunnerParts {
         agent,
         control,
         logger,
         problems,
+        reload,
     })
 }

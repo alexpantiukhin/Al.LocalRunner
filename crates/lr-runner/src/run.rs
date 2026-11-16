@@ -36,7 +36,7 @@ async fn run_phase(
     let limits = job_limits(
         &p.spec.requirements,
         p.spec.limits.as_ref(),
-        &shared.deps.settings,
+        &shared.job_settings(),
         dirs,
     );
     let spec = JobSpec {
@@ -245,7 +245,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     {
         Ok((_, cache_env)) => {
             env.extend(cache_env);
-            apply_owner_env(&mut env, &shared.deps.settings.job_env);
+            apply_owner_env(&mut env, &shared.job_settings().job_env);
         }
         Err(detail) => {
             skip_steps(shared, &p.job, &spec.steps, 0).await;

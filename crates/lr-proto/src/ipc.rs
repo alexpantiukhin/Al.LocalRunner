@@ -3,6 +3,7 @@ use crate::common::ProtocolError;
 use crate::dashboard::DashboardEvent;
 use crate::frame::message;
 use crate::reason::ReasonCode;
+use crate::runner::DrainReason;
 use crate::version::Version;
 use lr_core::{Identity, JobId, JobState, Timestamp, Zone};
 use serde::{Deserialize, Serialize};
@@ -193,6 +194,9 @@ pub enum CliRequest {
     /// `logging reload`: reread the hub's `logging.toml`; answered with
     /// [`CliReply::Reloaded`] or an error naming why the file was refused.
     LoggingReload,
+    /// `reload`: reread `hub-policy.toml`; answered with [`CliReply::Reloaded`], or an error
+    /// naming why the file was refused (the old policy keeps working).
+    PolicyReload,
     /// The dashboard's live stream: the hub answers [`CliReply::Watching`], then relays every
     /// event of its brokers' subscriptions as [`CliReply::Event`] until the connection closes.
     /// Each broker has already masked the events by its visibility policy for this hub's key.
@@ -395,9 +399,14 @@ pub enum RunnerControl {
     Down {
         /// How.
         mode: DownMode,
+        /// Why a drain is asked; absent means a plain `down`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<DrainReason>,
     },
     /// Reread the runner's `logging.toml`.
     LoggingReload,
+    /// `reload`: reread `runner.toml` and apply what can change while the runner runs.
+    Reload,
     /// Ask whether the runner is connected to its broker.
     Status,
 }
@@ -413,6 +422,12 @@ pub enum ControlReply {
         /// Why.
         message: String,
     },
+    /// `runner.toml` applies; what cannot change without a restart is named and keeps its old
+    /// value.
+    Reloaded {
+        /// Names of the settings that differ and need a restart.
+        restart_required: Vec<String>,
+    },
     /// The state of the link to the broker.
     Link {
         /// Whether the runner has a welcomed session.
@@ -420,6 +435,10 @@ pub enum ControlReply {
         /// Start of the current break; `None` while connected.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<Timestamp>,
+        /// Lowercase SHA-256 of the `runner.toml` text the runner applied; absent from older
+        /// runners.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        config_hash: Option<String>,
     },
 }
 
@@ -437,6 +456,7 @@ message!(
         "orders",
         "shutdown",
         "logging_reload",
+        "policy_reload",
         "events"
     ]
 );
@@ -481,7 +501,7 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload", "status"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "status"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed", "link"]);
+message!(ControlReply, local: true, ["ok", "failed", "reloaded", "link"]);

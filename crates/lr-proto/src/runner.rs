@@ -9,6 +9,18 @@ use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::JobId;
 use serde::{Deserialize, Serialize};
 
+/// Why a runner stops taking orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrainReason {
+    /// A plain `down`.
+    Down,
+    /// `upgrade` is replacing the binary; same-machine orders are kept for the new runner.
+    Upgrade,
+    /// The runner started while an upgrade lock was held.
+    Lock,
+}
+
 /// Messages a runner sends to its broker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -29,7 +41,11 @@ pub enum RunnerToBroker {
         load: Option<WireLoad>,
     },
     /// Take no new orders, finish the current job.
-    Drain,
+    Drain {
+        /// Why the runner drains; absent from runners of an earlier minor version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<DrainReason>,
+    },
     /// The runner leaves in an orderly way.
     Bye(Bye),
     /// The job started.

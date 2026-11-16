@@ -30,6 +30,13 @@ mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 
+[profile.rust-deny]
+command   = "cargo deny check licenses"
+timeout_s = 600
+mem_mb    = 1024
+cpu       = 1
+tags      = ["cargo"]
+
 [profile.rust-test.args.pkg]
 pattern = "[a-z0-9_-]+"
 

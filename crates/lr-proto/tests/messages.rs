@@ -304,7 +304,8 @@ fn link_reply_without_since_parses() {
         reply,
         ControlReply::Link {
             connected: true,
-            since: None
+            since: None,
+            config_hash: None
         }
     );
 }

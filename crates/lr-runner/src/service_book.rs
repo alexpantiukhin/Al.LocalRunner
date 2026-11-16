@@ -62,15 +62,15 @@ impl JobOutput for Discard {
 
 impl Shared {
     pub(crate) fn service_spec(&self, name: &str) -> Option<&ServiceSpec> {
-        self.deps.settings.services.get(name)
+        self.fixed.services.get(name)
     }
 
     pub(crate) fn service_dir(&self, name: &str) -> PathBuf {
-        self.deps.settings.state_dir.join("services").join(name)
+        self.fixed.state_dir.join("services").join(name)
     }
 
     pub(crate) fn service_labels<'a>(&'a self, name: &'a str) -> [(&'a str, &'a str); 2] {
-        [(RUNNER, self.deps.settings.name.as_str()), (SERVICE, name)]
+        [(RUNNER, self.fixed.name.as_str()), (SERVICE, name)]
     }
 
     pub(crate) fn service_metric(&self, metric: &str, name: &str) {

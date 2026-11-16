@@ -27,7 +27,7 @@ async fn bye_waits_until_a_stop_already_running_has_killed_the_tree() {
     }))
     .await;
     until_state(&rig, ServiceState::Stopping).await;
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     let bye = drive(&rig, b.until(|m| matches!(m, RunnerToBroker::Bye(_)))).await;
     assert!(matches!(bye, RunnerToBroker::Bye(_)));
     assert_eq!(
@@ -47,8 +47,8 @@ async fn heartbeats_go_on_while_services_stop_for_a_drain() {
     let (c, _h) = rig.start();
     let b = Broker::accept(&rig).await;
     run(&rig, &b, "job-1", needs_db("c", "p")).await;
-    c.drain().await;
-    b.until(|m| matches!(m, RunnerToBroker::Drain)).await;
+    c.drain(lr_proto::DrainReason::Down).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
     until_state(&rig, ServiceState::Stopping).await;
     let mut beats = 0;
     let bye = drive(&rig, async {

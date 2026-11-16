@@ -9,6 +9,8 @@ use crate::os_service::{
     service_installed, Action, DryRun, Os, OsSystem, System,
 };
 use crate::paths::{service_root, Layout};
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 fn apply(actions: &[Action], dry_run: bool) -> Result<(), String> {
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
@@ -22,6 +24,24 @@ fn needs_admin(what: &str, dry_run: bool, elevated: bool) -> Result<(), String> 
         Err(format!(
             "{what} needs administrator rights (run it elevated or with sudo)"
         ))
+    }
+}
+
+/// The one command that runs `broker update-service` with administrator rights on `os`; it is
+/// printed for the user and never run by this binary.
+pub fn elevated_command(os: Os, exe: &Path) -> String {
+    let exe = exe.display().to_string();
+    match os {
+        Os::Windows => {
+            let exe = exe.replace('\'', "\'\'");
+            format!(
+                "$e = '{exe}'; $o = Join-Path $env:TEMP 'localrunner-update-service.txt'; \
+                 Start-Process -Verb RunAs -Wait -FilePath cmd.exe \
+                 -ArgumentList \"/d /c `\"`\"$e`\" broker update-service > `\"$o`\" 2>&1`\"\"; \
+                 Get-Content $o"
+            )
+        }
+        _ => format!("sudo {exe} broker update-service"),
     }
 }
 
@@ -109,20 +129,99 @@ pub fn update_service(dry_run: bool) -> Result<i32, String> {
 /// service `installed` or not: it replaces the service's own copy of the binary with this one
 /// and restarts the service. Without administrator rights it is refused before any change.
 pub fn update_service_with(dry_run: bool, elevated: bool, installed: bool) -> Result<i32, String> {
-    needs_admin("broker update-service", dry_run, elevated)?;
+    let os = Os::current();
+    let this = exe()?;
+    if !dry_run && !elevated {
+        return Err(format!(
+            "broker update-service needs administrator rights; run: {}",
+            elevated_command(os, &this)
+        ));
+    }
     if !installed {
         return Err(
             "the broker is not installed as a service: run `broker install-service`".into(),
         );
     }
-    let os = Os::current();
-    let plan = plans::update_service(os, &exe()?, &service_binary(os));
+    let new = env!("CARGO_PKG_VERSION");
+    let binary = service_binary(os);
+    let read = |path: &Path| super::upgrade_cmd::installed_version(path).map(|v| v.text);
     admin_marker(dry_run, elevated);
-    apply(&plan, dry_run)?;
-    if !dry_run {
-        println!("the broker service runs the binary of {}", exe()?.display());
+    if dry_run {
+        println!("{}", version_line(read(&binary).as_deref(), new));
+        return apply(&plans::update_service(os, &this, &binary), true).map(|()| 0);
     }
-    Ok(0)
+    let report = update_service_on(&OsSystem, os, &this, &binary, &read, new)?;
+    for line in report_lines(&report) {
+        println!("{line}");
+    }
+    Ok(if report.running_new { 0 } else { 1 })
+}
+
+/// What `broker update-service` did to the service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateReport {
+    /// The version of the service binary before, when it printed one.
+    pub old: Option<String>,
+    /// The version installed.
+    pub new: String,
+    /// From the stop of the service to its start.
+    pub down: Duration,
+    /// Whether the service binary reports the new version after the start.
+    pub running_new: bool,
+}
+
+/// `service: <old> -> <new>`.
+pub fn version_line(old: Option<&str>, new: &str) -> String {
+    format!("service: {} -> {new}", old.unwrap_or("unknown"))
+}
+
+/// The lines printed after an update.
+pub fn report_lines(report: &UpdateReport) -> Vec<String> {
+    let mut out = vec![
+        version_line(report.old.as_deref(), &report.new),
+        format!(
+            "service stopped and started, down for {} s",
+            report.down.as_secs()
+        ),
+    ];
+    if !report.running_new {
+        out.push(format!(
+            "the service binary still runs another version than {}: check `localrunner doctor`",
+            report.new
+        ));
+    }
+    out
+}
+
+/// Stops the service, replaces its binary and starts it again through `system`, timing the
+/// stop; `read` gives the version of a binary, asked before the plan and after the start.
+pub fn update_service_on(
+    system: &dyn System,
+    os: Os,
+    exe: &Path,
+    binary: &Path,
+    read: &dyn Fn(&Path) -> Option<String>,
+    new: &str,
+) -> Result<UpdateReport, String> {
+    let old = read(binary);
+    let plan = plans::update_service(os, exe, binary);
+    let (mut stopped, mut down) = (None, Duration::ZERO);
+    for (i, action) in plan.iter().enumerate() {
+        system.apply(action).map_err(|e| format!("{action}: {e}"))?;
+        if i == 0 {
+            stopped = Some(Instant::now());
+        }
+        if i + 1 == plan.len() {
+            down = stopped.map_or(Duration::ZERO, |t| t.elapsed());
+        }
+    }
+    let running_new = read(binary).as_deref() == Some(new);
+    Ok(UpdateReport {
+        old,
+        new: new.to_string(),
+        down,
+        running_new,
+    })
 }
 
 /// The plan that removes the broker service.

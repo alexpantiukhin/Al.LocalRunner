@@ -447,3 +447,49 @@ async fn workspace_mirrors_are_evicted_down_to_max_size_gb() {
     assert!(!rig.files.is_dir(Path::new(&older.path)));
     assert!(rig.files.is_dir(Path::new(&newer.path)));
 }
+
+async fn within<T>(what: &str, fut: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(Duration::from_secs(20), fut)
+        .await
+        .unwrap_or_else(|_| panic!("stuck at: {what}"))
+}
+
+#[tokio::test]
+async fn a_running_job_keeps_the_settings_it_started_with() {
+    let mut rig = Rig::new();
+    rig.settings.job_env.insert("MODE".into(), "old".into());
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script(
+        "job-1",
+        JobScript::new(vec![StepScript::new(Duration::from_secs(5), 0)]),
+    );
+    rig.script(
+        "job-2",
+        JobScript::new(vec![StepScript::new(Duration::ZERO, 0)]),
+    );
+    let (control, _h) = rig.start();
+    let b = within("accept", Broker::accept(&rig)).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    within("job-1 started", b.next_job_msg()).await.unwrap();
+    let mut next = rig.settings.clone();
+    next.job_env.insert("MODE".into(), "new".into());
+    control.apply_settings(next);
+    rig.advance(Duration::from_secs(5)).await;
+    within("job-1 result", b.until_result()).await;
+    b.assign(
+        "job-2",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    within("job-2 result", b.until_result()).await;
+    let runs = rig.process.runs();
+    let mode = |i: usize| env_of(&runs[i]).into_iter().find(|(k, _)| k == "MODE");
+    assert_eq!(mode(0), Some(("MODE".into(), "old".into())));
+    assert_eq!(mode(1), Some(("MODE".into(), "new".into())));
+}

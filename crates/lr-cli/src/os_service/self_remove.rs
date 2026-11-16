@@ -29,6 +29,12 @@ fn defer(path: &Path) -> io::Result<()> {
     spawn_cleanup(&old)
 }
 
+/// Removes `<binary>.old` left by an earlier replacement, when nothing holds it any more; a
+/// missing or busy file is not an error.
+pub fn remove_leftover(binary: &Path) {
+    let _ = std::fs::remove_file(old_name(binary));
+}
+
 pub(super) fn old_name(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".old");

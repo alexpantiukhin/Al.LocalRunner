@@ -178,29 +178,33 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
         return;
     }
     let busy = shared.state().job.as_ref().map(|c| c.job.clone());
-    let refusal = if shared.state().draining {
+    let draining = shared.state().draining;
+    let refusal = if draining {
         Some("runner is draining".to_string())
     } else if let Some(other) = busy {
         Some(format!("runner is busy with job {other}"))
     } else {
         let t = a.spec.requirements.timeout_s;
-        shared
-            .deps
-            .settings
+        let settings = shared.deps.settings.get();
+        settings
             .max_job_timeout_s
             .filter(|ceiling| t > *ceiling)
             .map(|ceiling| format!("job timeout {t} s is above the runner ceiling {ceiling} s"))
             .or_else(|| {
-                shared.deps.settings.path.is_none().then(|| {
+                settings.path.is_none().then(|| {
                     "runner.toml has no [env] path, so the job would get no PATH; set [env] path (spec 13.4)"
                         .to_string()
                 })
             })
     };
     if let Some(detail) = refusal {
-        return refuse(s, &a, Final::failed(detail)).await;
+        let f = Final {
+            reason: draining.then_some(ReasonCode::RunnerDraining),
+            ..Final::failed(detail)
+        };
+        return refuse(s, &a, f).await;
     }
-    if let Err(detail) = resolve_commands(&shared.deps.settings.commands, &mut a.spec) {
+    if let Err(detail) = resolve_commands(&shared.deps.settings.get().commands, &mut a.spec) {
         let f = Final {
             reason: Some(ReasonCode::Rejected(RejectReason::CommandNotAllowed)),
             ..Final::failed(detail)
@@ -229,6 +233,7 @@ pub(crate) async fn on_assign(s: &mut Session<'_>, mut a: Assign) {
     let (handle, signal) = stop_signal();
     shared.state().job = Some(Current {
         job: a.job.clone(),
+        settings: shared.deps.settings.get(),
         stop: handle,
         reason: None,
         lost_killed: false,

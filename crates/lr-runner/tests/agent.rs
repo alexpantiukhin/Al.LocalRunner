@@ -491,3 +491,20 @@ async fn missing_work_tree_fails_the_job() {
         .count();
     assert_eq!(skipped, 1);
 }
+
+#[tokio::test]
+async fn apply_settings_sends_a_capabilities_update_with_the_new_tags() {
+    let rig = Rig::new();
+    let (control, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    let mut next = rig.settings.clone();
+    next.tags.insert("gpu".into());
+    control.apply_settings(next);
+    let update = b
+        .until(|m| matches!(m, RunnerToBroker::CapabilitiesUpdate(_)))
+        .await;
+    let RunnerToBroker::CapabilitiesUpdate(update) = update else {
+        panic!("capabilities update")
+    };
+    assert!(update.capabilities.tags.contains("gpu"));
+}

@@ -50,7 +50,7 @@ async fn a_draining_row_stays_draining_through_heartbeats_until_bye() {
     let h = Harness::start("");
     let r = h.member_runner("r1", "10.0.0.7", linux()).await;
     until_row_state(&h, "r1", RunnerState::Online).await;
-    r.send(&RunnerToBroker::Drain).await;
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
     until_row_state(&h, "r1", RunnerState::Draining).await;
     r.send(&RunnerToBroker::Heartbeat { load: None }).await;
     let mut hub = h.local_hub("alex").await;
@@ -64,7 +64,7 @@ async fn a_draining_row_stays_draining_through_heartbeats_until_bye() {
 async fn a_draining_row_ends_when_the_runner_connects_again() {
     let h = Harness::start("");
     let r = h.member_runner("r1", "10.0.0.7", linux()).await;
-    r.send(&RunnerToBroker::Drain).await;
+    r.send(&RunnerToBroker::Drain { reason: None }).await;
     until_row_state(&h, "r1", RunnerState::Draining).await;
     let mut again = h.dial(member_peer("pk-r1", "10.0.0.7")).await;
     again.send(&hello("r1", Some(linux()))).await;

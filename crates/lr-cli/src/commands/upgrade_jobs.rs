@@ -2,6 +2,7 @@
 //! wait for the running jobs, cancel them, or give up.
 
 use super::confirm::{proceed, Console};
+use super::timefmt::{format_ms, now};
 use super::view::{known_brokers, read};
 use crate::paths::Layout;
 use lr_proto::{ReadReply, ReadRequest, StatusFilter};
@@ -30,6 +31,14 @@ impl Activity {
     /// Whether a job runs now.
     pub fn busy(&self) -> bool {
         !self.running.is_empty()
+    }
+
+    /// The lines shown while `upgrade` waits: a line per running job, then the time waited.
+    pub fn waiting_lines(&self, elapsed: std::time::Duration) -> Vec<String> {
+        let ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+        let mut out = self.running.clone();
+        out.push(format!("waited {}", format_ms(ms)));
+        out
     }
 
     /// The lines shown before the question.
@@ -86,8 +95,11 @@ pub async fn activity(layout: &Layout) -> Activity {
                         out.queued += v.queue.len();
                         out.running.extend(v.running.iter().map(|r| {
                             let s = &r.summary;
+                            let running = s.started_at.map_or(String::new(), |t| {
+                                format!(", running {}", format_ms(now().0.saturating_sub(t.0)))
+                            });
                             format!(
-                                "{} on {} ({})",
+                                "{} on {} ({}){running}",
                                 s.job.0,
                                 s.runner.as_deref().unwrap_or("?"),
                                 s.profile.as_deref().unwrap_or(&s.client_label)

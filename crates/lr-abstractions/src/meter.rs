@@ -64,7 +64,8 @@ pub mod metric {
     pub const OUTBOX_PENDING: &str = "localrunner_outbox_pending";
     /// Age of the oldest waiting outbox message, by `role` (gauge, s).
     pub const OUTBOX_OLDEST_AGE_SECONDS: &str = "localrunner_outbox_oldest_age_seconds";
-    /// Policy reloads, by `result` (`ok`, `error`) (counter).
+    /// Reloads of a broker policy, a hub policy and a runner `runner.toml`, by `result` (`ok`,
+    /// `error`) (counter).
     pub const POLICY_RELOAD_TOTAL: &str = "localrunner_policy_reload_total";
 
     /// Every name above.

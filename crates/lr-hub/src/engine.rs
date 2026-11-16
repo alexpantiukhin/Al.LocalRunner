@@ -28,6 +28,9 @@ pub const LOCAL_BROKER: &str = "local";
 /// new configuration was refused.
 pub type ReloadLogging = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
+/// Reads `hub-policy.toml` again (`reload`); `Err` says why the file was refused.
+pub type ReloadPolicy = Arc<dyn Fn() -> Result<HubPolicy, String> + Send + Sync>;
+
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
 
@@ -42,6 +45,7 @@ pub(crate) struct Shared {
     pub(crate) meter: Arc<dyn Meter>,
     pub(crate) name: String,
     pub(crate) reload_logging: Option<ReloadLogging>,
+    pub(crate) reload_policy: Option<ReloadPolicy>,
     pub(crate) pending: Pending,
     pub(crate) bus: broadcast::Sender<DashboardEvent>,
     next_req: AtomicU64,
@@ -124,6 +128,7 @@ pub(crate) struct Engine {
 pub struct Hub {
     deps: HubDeps,
     reload_logging: Option<ReloadLogging>,
+    reload_policy: Option<ReloadPolicy>,
 }
 
 impl Hub {
@@ -132,7 +137,15 @@ impl Hub {
         Hub {
             deps,
             reload_logging: None,
+            reload_policy: None,
         }
+    }
+
+    /// The hub answers `reload` on its CLI channel by taking the policy `reload` returns; an
+    /// error keeps the policy the hub works with. Without it the command is refused.
+    pub fn with_policy_reload(mut self, reload: ReloadPolicy) -> Hub {
+        self.reload_policy = Some(reload);
+        self
     }
 
     /// The hub answers `logging reload` on its CLI channel with `reload`; without it the
@@ -146,8 +159,10 @@ impl Hub {
     pub async fn run(self) {
         let d = self.deps;
         let reload_logging = self.reload_logging;
+        let reload_policy = self.reload_policy;
         let shared = Arc::new(Shared {
             reload_logging,
+            reload_policy,
             clock: d.clock.clone(),
             store: d.store,
             dialer: d.dialer,

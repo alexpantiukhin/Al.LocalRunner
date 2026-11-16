@@ -378,7 +378,39 @@ fn nothing_leaves_the_machine_hub_cli_and_dashboard_carry_no_http_client() {
         assert!(reached > 3, "{root}");
         found.extend(clients);
     }
+    found.retain(|f| !DOWNLOAD_CLIENT_OF_THE_CLI.contains(&f.as_str()));
     assert!(found.is_empty(), "an HTTP client: {found:#?}");
+}
+
+const DOWNLOAD_CLIENT_OF_THE_CLI: [&str; 2] = ["lr-cli: lr-cli depends on ureq", "lr-cli: ureq"];
+
+fn rust_sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            rust_sources(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+#[test]
+fn only_the_release_downloader_names_the_http_client() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_sources(&src, &mut files);
+    assert!(files.len() > 20);
+    let users: Vec<_> = files
+        .iter()
+        .filter(|f| std::fs::read_to_string(f).unwrap().contains("ureq"))
+        .map(|f| f.strip_prefix(&src).unwrap().to_path_buf())
+        .collect();
+    assert_eq!(
+        users,
+        [std::path::Path::new("release").join("fetch.rs")],
+        "the update download is the only place that opens an outgoing connection"
+    );
 }
 
 fn first_arguments<'a>(script: &'a str, call: &str) -> Vec<&'a str> {

@@ -6,18 +6,45 @@
 
 use super::args::{RoleArg, UpgradeArgs};
 use super::confirm::{Console, Stdio};
-use super::down_cmd::{down_with, wait_for_runners, IpcRoles, Roles, Waited};
-use super::setup::{binary_name, default_bin_dir, install_plan};
+use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
+use super::setup::{binary_name, default_bin_dir, upgrade_plan};
 use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
+use super::upgrade_pool::{plan_lines, pool, report_lines, PoolRunner};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
+use crate::upgrade_lock::{write, UpgradeLock};
+use lr_proto::DrainReason;
 use std::future::Future;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 
 const STARTED_WITHIN: Duration = Duration::from_secs(15);
 const BUSY_FOR: Duration = Duration::from_secs(20);
+const JOBS_REFRESH: Duration = Duration::from_secs(5);
+
+/// Printed with the plan: the old file is renamed, not overwritten.
+pub const KEEP_OLD_NOTE: &str =
+    "clients of other sessions that hold the old file keep running on the old version";
+
+/// `--wait-timeout`: a whole number of seconds, minutes or hours (`90s`, `15m`, `2h`), not zero.
+pub fn parse_duration(text: &str) -> Result<Duration, String> {
+    let bad = || format!("`{text}` is not a duration: use `90s`, `15m` or `2h`");
+    let (digits, unit) = [("s", 1u64), ("m", 60), ("h", 3600)]
+        .into_iter()
+        .find_map(|(suffix, unit)| text.strip_suffix(suffix).map(|d| (d, unit)))
+        .ok_or_else(bad)?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(bad());
+    }
+    let n: u64 = digits.parse().map_err(|_| bad())?;
+    match n.checked_mul(unit) {
+        Some(0) => Err(format!("`{text}` is zero: give a duration above zero")),
+        Some(secs) => Ok(Duration::from_secs(secs)),
+        None => Err(bad()),
+    }
+}
 
 /// What a version line says: `localrunner 0.1.1 (protocol 1.0)` or `0.1.1 (protocol 1.0)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,20 +152,25 @@ pub fn restart_summary(running: &RunningRoles, service: bool) -> String {
         .join(", ")
 }
 
-/// Applies the copies; a stopped role may hold its binary for a few seconds more, so a failure
-/// is retried for [`BUSY_FOR`] before it is reported.
-async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), String> {
+/// Applies the copies one by one; a stopped role may hold its binary for a few seconds more, so
+/// a failing copy is retried for [`BUSY_FOR`] before it is reported. A copy that succeeded is
+/// not applied again: it would replace the saved old file with the new binary.
+pub async fn replace_binary(system: &dyn System, copies: &[Action]) -> Result<(), String> {
     let start = tokio::time::Instant::now();
-    loop {
-        match apply_all(system, copies) {
-            Err(e) if start.elapsed() >= BUSY_FOR => return Err(e),
-            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
-            Ok(()) => return Ok(()),
+    for copy in copies {
+        loop {
+            match apply_all(system, std::slice::from_ref(copy)) {
+                Err(e) if start.elapsed() >= BUSY_FOR => return Err(e),
+                Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
+                Ok(()) => break,
+            }
         }
     }
+    Ok(())
 }
 
-fn installed_version(path: &Path) -> Option<Version> {
+/// The version `path --version` prints; `None` when it does not run or prints none.
+pub fn installed_version(path: &Path) -> Option<Version> {
     let out = std::process::Command::new(path)
         .arg("--version")
         .output()
@@ -155,7 +187,9 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         cancel,
         allow_elevated,
         dry_run,
-    } = args;
+        wait_timeout,
+        ..
+    } = args.clone();
     if crate::host::is_elevated() && !allow_elevated {
         return Err("upgrade refuses to run as root or administrator; add --allow-elevated".into());
     }
@@ -171,17 +205,25 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
             dir.display()
         ));
     }
-    if let (Ok(a), Ok(b)) = (exe.canonicalize(), installed.canonicalize()) {
-        if a == b {
-            return Err(format!(
-                "this is the installed binary ({}): run the new binary from another folder",
-                installed.display()
-            ));
-        }
+    if super::upgrade_fetch::is_installed(&exe, &installed) {
+        return super::upgrade_fetch::fetch_and_relaunch(
+            layout,
+            &args,
+            &crate::release::UreqFetch,
+            &crate::release::trusted_keys(),
+            &super::upgrade_fetch::spawn_inherited,
+        );
+    }
+    if args.version.is_some() || args.offline.is_some() {
+        return Err(
+            "--version and --offline are for the installed binary: this binary replaces the installed one as it is"
+                .into(),
+        );
     }
     let old = installed_version(&installed);
     let running = running_roles(layout).await;
     let jobs = activity(layout).await;
+    let others = pool(layout).await;
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let start = starter(installed.clone());
@@ -201,9 +243,11 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
         .ok_or("this binary has no version")?,
         running: &running,
         activity: &jobs,
+        pool: &others,
         yes,
         cancel,
         dry_run,
+        wait_timeout,
     };
     job.run(&roles, system, &start, &mut console, async {
         let _ = tokio::signal::ctrl_c().await;
@@ -232,12 +276,16 @@ pub struct Job<'a> {
     pub running: &'a RunningRoles,
     /// The jobs that run and wait now.
     pub activity: &'a Activity,
+    /// The runners of other installations in the pool.
+    pub pool: &'a [PoolRunner],
     /// Confirm without asking.
     pub yes: bool,
     /// With running jobs: cancel them instead of waiting.
     pub cancel: bool,
     /// Print the plan and change nothing.
     pub dry_run: bool,
+    /// With running jobs: stop waiting after this long; nothing is replaced then.
+    pub wait_timeout: Option<Duration>,
 }
 
 impl Job<'_> {
@@ -280,6 +328,9 @@ impl Job<'_> {
         for line in self.activity.lines() {
             println!("{line}");
         }
+        for line in plan_lines(self.pool, &self.new.text) {
+            println!("{line}");
+        }
         match stop.is_empty() {
             true => println!("no role of this installation runs"),
             false => println!(
@@ -288,10 +339,8 @@ impl Job<'_> {
                 restart_summary(self.running, service)
             ),
         }
-        let copies: Vec<Action> = install_plan(self.exe.to_path_buf(), self.dir.to_path_buf())
-            .into_iter()
-            .filter(|a| matches!(a, Action::Copy { .. }))
-            .collect();
+        let copies = upgrade_plan(self.exe.to_path_buf(), self.dir.to_path_buf());
+        println!("{KEEP_OLD_NOTE}");
         if self.dry_run {
             for a in &copies {
                 println!("{a}");
@@ -302,7 +351,14 @@ impl Job<'_> {
         let Some(mode) = choose(self.activity, self.yes, self.cancel, &question, console)? else {
             return Ok(1);
         };
+        let _lock = write(
+            self.layout,
+            &UpgradeLock::of_this_process(&self.new.text, super::timefmt::now()),
+        )?;
         if !self.stop_roles(roles, mode, interrupt).await? {
+            if !self.running.runners.is_empty() {
+                let _ = up_with(self.layout, Some(RoleArg::Runner), STARTED_WITHIN, start).await;
+            }
             return Ok(1);
         }
         let replaced = replace_binary(system, &copies).await;
@@ -319,6 +375,9 @@ impl Job<'_> {
             "upgraded to {}; check the node: localrunner doctor",
             self.new.text
         );
+        for line in report_lines(self.pool, self.new, protocol_changed) {
+            println!("{line}");
+        }
         Ok(code)
     }
 
@@ -334,10 +393,11 @@ impl Job<'_> {
         let cancel = mode == Mode::Cancel;
         let runners: Vec<String> = self.running.runners.iter().cloned().collect();
         if !runners.is_empty() {
-            let told = down_with(
+            let told = down_for(
                 self.layout,
                 runners.clone(),
                 cancel,
+                Some(DrainReason::Upgrade),
                 roles,
                 std::future::pending::<()>(),
             )
@@ -345,20 +405,40 @@ impl Job<'_> {
             if told != 0 {
                 return Err("a runner could not be told to stop: nothing replaced".into());
             }
-            if mode == Mode::Wait && self.activity.busy() {
+            let watching = mode == Mode::Wait && self.activity.busy();
+            let started = tokio::time::Instant::now();
+            if watching {
                 eprintln!("waiting for the running jobs to finish (Ctrl+C stops waiting)");
+                for line in self.activity.waiting_lines(Duration::ZERO) {
+                    println!("{line}");
+                }
             }
-            let names = &runners;
+            let shown = Mutex::new((self.activity.running.clone(), started + JOBS_REFRESH));
+            let (names, shown) = (&runners, &shown);
             let any_answers = move || async move {
+                let mut any = false;
                 for n in names {
                     if roles.runner_answers(n).await {
-                        return true;
+                        any = true;
+                        let _ = roles
+                            .stop_runner(n, down_mode(cancel), Some(DrainReason::Upgrade))
+                            .await;
                     }
                 }
-                false
+                if any && watching {
+                    refresh_jobs(roles, shown, started).await;
+                }
+                any
             };
-            match wait_for_runners(any_answers, cancel, interrupt).await {
+            match wait_for_runners(any_answers, cancel, self.wait_timeout, interrupt).await {
                 Waited::Gone => {}
+                Waited::WaitTimedOut => {
+                    eprintln!(
+                        "waiting stopped by --wait-timeout: nothing replaced; {} keep draining and exit when their jobs finish; the hub and the broker keep running; run `upgrade` again later",
+                        runners.join(", ")
+                    );
+                    return Ok(false);
+                }
                 Waited::TimedOut => {
                     eprintln!(
                         "{} did not exit within 30 s after the cancel; the hub and the broker keep running, nothing replaced",
@@ -380,10 +460,11 @@ impl Job<'_> {
             .filter(|n| !runners.contains(n))
             .collect();
         if !rest.is_empty()
-            && down_with(
+            && down_for(
                 self.layout,
                 rest,
                 false,
+                None,
                 roles,
                 std::future::pending::<()>(),
             )
@@ -393,5 +474,32 @@ impl Job<'_> {
             return Err("the hub or the broker did not stop: nothing replaced; start them with `localrunner up`".into());
         }
         Ok(true)
+    }
+}
+
+/// Asks for the running jobs every [`JOBS_REFRESH`] and prints the wait again when they changed.
+async fn refresh_jobs(
+    roles: &dyn Roles,
+    shown: &Mutex<(Vec<String>, tokio::time::Instant)>,
+    started: tokio::time::Instant,
+) {
+    let now = tokio::time::Instant::now();
+    if now < shown.lock().unwrap().1 {
+        return;
+    }
+    let jobs = roles.running_jobs().await;
+    let mut shown = shown.lock().unwrap();
+    shown.1 = now + JOBS_REFRESH;
+    let Some(jobs) = jobs else { return };
+    if jobs == shown.0 {
+        return;
+    }
+    shown.0 = jobs.clone();
+    let seen = Activity {
+        running: jobs,
+        ..Activity::default()
+    };
+    for line in seen.waiting_lines(now - started) {
+        println!("{line}");
     }
 }

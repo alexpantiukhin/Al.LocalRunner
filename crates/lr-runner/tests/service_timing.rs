@@ -47,7 +47,7 @@ async fn seconds_from_drain_to_bye(stop_timeout_s: u64) -> u64 {
     let b = Broker::accept(&rig).await;
     rig.settle().await;
     let from = rig.clock.now();
-    c.drain().await;
+    c.drain(lr_proto::DrainReason::Down).await;
     let bye = b.until(|m| matches!(m, RunnerToBroker::Bye(_)));
     tokio::pin!(bye);
     let mut ticks = 0u64;

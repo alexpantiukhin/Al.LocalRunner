@@ -29,7 +29,7 @@ pub use hub::*;
 pub use ipc::*;
 pub use job::*;
 pub use reason::{ReasonCode, RejectReason};
-pub use runner::{BrokerToRunner, RunnerToBroker};
+pub use runner::{BrokerToRunner, DrainReason, RunnerToBroker};
 pub use seq::{classify_seq, DedupKey, Direction, SeqCheck, SeqStream, Sequenced};
 pub use stats_view::*;
 pub use version::{

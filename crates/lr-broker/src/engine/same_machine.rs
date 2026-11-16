@@ -10,8 +10,9 @@ impl Engine {
         let Some(machine) = &job.entry.order.requirements.same_machine else {
             return true;
         };
+        let now = self.now();
         self.runners.values().any(|s| {
-            s.takes_work()
+            (s.takes_work() || s.holds_orders(now))
                 && s.caps.machine.as_ref() == Some(machine)
                 && self
                     .site

@@ -41,6 +41,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
         CliRequest::Orders,
         CliRequest::Shutdown,
         CliRequest::LoggingReload,
+        CliRequest::PolicyReload,
         CliRequest::Events,
     ]
 }
@@ -158,11 +159,18 @@ pub fn controls() -> Vec<RunnerControl> {
     vec![
         RunnerControl::Down {
             mode: DownMode::Drain,
+            reason: None,
+        },
+        RunnerControl::Down {
+            mode: DownMode::Drain,
+            reason: Some(lr_proto::DrainReason::Upgrade),
         },
         RunnerControl::Down {
             mode: DownMode::Cancel,
+            reason: None,
         },
         RunnerControl::LoggingReload,
+        RunnerControl::Reload,
         RunnerControl::Status,
     ]
 }
@@ -173,13 +181,18 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Failed {
             message: "x".into(),
         },
+        ControlReply::Reloaded {
+            restart_required: vec!["allow_elevated".into()],
+        },
         ControlReply::Link {
             connected: false,
             since: Some(lr_core::Timestamp(7)),
+            config_hash: None,
         },
         ControlReply::Link {
             connected: true,
             since: None,
+            config_hash: Some("ab".repeat(32)),
         },
     ]
 }

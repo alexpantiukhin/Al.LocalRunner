@@ -24,7 +24,7 @@ pub mod select;
 mod track;
 
 pub use deps::HubDeps;
-pub use engine::{Hub, ReloadLogging, LOCAL_BROKER};
+pub use engine::{Hub, ReloadLogging, ReloadPolicy, LOCAL_BROKER};
 pub use policy::{
     parse_hub_policy, BrokerStrategy, BrokersPolicy, HubPolicy, HubPolicyError, OnExpire,
     OutboxPolicy, ZoneQuery,

@@ -2,7 +2,7 @@ use lr_proto::*;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-const SPEC_15: [&str; 13] = [
+const SPEC_15: [&str; 14] = [
     "runner_stopped",
     "runner_removed",
     "broker_unavailable",
@@ -16,6 +16,7 @@ const SPEC_15: [&str; 13] = [
     "cancelled_by_user",
     "disk_insufficient",
     "resource_exceeded",
+    "runner_draining",
 ];
 
 #[test]
@@ -120,4 +121,13 @@ fn authorization_failures_are_commands_for_the_runner() {
     assert!(ProtocolErrorCode::Unauthorized.kills_running_jobs());
     assert!(ProtocolErrorCode::KeyRevoked.kills_running_jobs());
     assert!(!ProtocolErrorCode::SeqGap.kills_running_jobs());
+}
+
+#[test]
+fn runner_draining_parses_and_is_known() {
+    assert_eq!(
+        ReasonCode::from_str("runner_draining").unwrap(),
+        ReasonCode::RunnerDraining
+    );
+    assert!(ReasonCode::all().contains(&ReasonCode::RunnerDraining));
 }

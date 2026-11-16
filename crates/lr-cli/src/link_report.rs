@@ -28,6 +28,7 @@ pub fn runner_link_line(name: &str, reply: &ControlReply) -> Option<String> {
         ControlReply::Link {
             connected: false,
             since,
+            ..
         } => Some(not_connected_line(&format!("runner {name}"), *since)),
         _ => None,
     }

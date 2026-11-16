@@ -296,7 +296,7 @@ async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
     let capabilities = s.capabilities().await;
     let msg = RunnerToBroker::Hello(Hello {
         version: PROTOCOL_VERSION,
-        name: s.deps.settings.name.clone(),
+        name: s.fixed.name.clone(),
         capabilities: Some(capabilities),
     });
     let frame = Frame::json(&msg).map_err(|_| End::Lost { welcomed: false })?;
@@ -424,7 +424,17 @@ pub(crate) async fn session(
     {
         return lost();
     }
-    if shared.state().draining && !s.send(&RunnerToBroker::Drain).await {
+    let (draining, drain_reason) = {
+        let st = shared.state();
+        (st.draining, st.drain_reason)
+    };
+    if draining
+        && !s
+            .send(&RunnerToBroker::Drain {
+                reason: drain_reason,
+            })
+            .await
+    {
         return lost();
     }
     let clock = shared.deps.clock.clone();
@@ -432,7 +442,15 @@ pub(crate) async fn session(
     let mut last_rx = shared.now();
     loop {
         if s.idle_and_stopping().await && shared.services_down() {
+            if shared.upgrade_ended() {
+                shared.resume_after_upgrade();
+                t.close().await;
+                return lost();
+            }
             s.flush(&mut inbox).await;
+            shared
+                .diag
+                .event(Level::Info, "drain finished, leaving", &[]);
             s.send(&RunnerToBroker::Bye(Bye {
                 reason: Some("runner stopped".into()),
             }))
@@ -477,7 +495,8 @@ pub(crate) async fn session(
             cmd = control.recv() => {
                 if let Some(cmd) = cmd {
                     apply_control(shared, cmd);
-                    if !s.send(&RunnerToBroker::Drain).await {
+                    let reason = shared.state().drain_reason;
+                    if !s.send(&RunnerToBroker::Drain { reason }).await {
                         return lost();
                     }
                 }

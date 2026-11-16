@@ -12,9 +12,11 @@ use lr_abstractions::{
     ProcessInspector, ProcessRunner, RunnerStore, SecretSource, Stop, StopHandle, TransportError,
 };
 use lr_core::{JobId, Timestamp};
-use lr_proto::{ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus};
+use lr_proto::{
+    DrainReason, ProtocolError, ProtocolErrorCode, ReasonCode, WireCapabilities, WireServiceStatus,
+};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
@@ -37,6 +39,31 @@ pub struct BrokerAddress {
     /// Pinned certificate fingerprint from the join code; `None` for local IPC.
     pub fingerprint: Option<String>,
 }
+
+/// The settings of a runner as a snapshot that can be replaced while the runner runs: a reader
+/// takes an `Arc` and keeps it for as long as it needs one value to stay the same.
+pub struct SettingsCell(RwLock<Arc<RunnerSettings>>);
+
+impl SettingsCell {
+    /// A cell holding `settings`.
+    pub fn new(settings: RunnerSettings) -> SettingsCell {
+        SettingsCell(RwLock::new(Arc::new(settings)))
+    }
+
+    /// The current snapshot.
+    pub fn get(&self) -> Arc<RunnerSettings> {
+        self.0.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Replaces the snapshot; readers that hold the old one keep it.
+    pub fn swap(&self, next: RunnerSettings) {
+        *self.0.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(next);
+    }
+}
+
+/// Tells whether an `upgrade` that asked this runner to drain still runs; the assembly passes a
+/// check of `upgrade.lock`.
+pub type UpgradeLive = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// Everything a runner agent works with; the assembly passes real implementations, tests the
 /// fakes of `lr-abstractions`.
@@ -62,7 +89,11 @@ pub struct RunnerDeps {
     /// Metrics of spec 12.2.
     pub meter: Arc<dyn Meter>,
     /// Settings of this runner.
-    pub settings: RunnerSettings,
+    pub settings: SettingsCell,
+    /// Whether an upgrade runs. A runner that drains for an upgrade (or because one ran when it
+    /// started) and finds none left when it would leave resumes instead: the upgrade ended
+    /// without replacing it. `None`: the runner always leaves.
+    pub upgrade_live: Option<UpgradeLive>,
     /// Free space of volumes (`disk_mb`).
     pub disk: Arc<dyn DiskSpace>,
     /// Keeps the machine awake while a job runs.
@@ -83,7 +114,7 @@ pub enum AgentExit {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
-    Drain,
+    Drain(DrainReason),
     CancelAndStop,
 }
 
@@ -95,14 +126,31 @@ pub struct AgentControl {
 }
 
 impl AgentControl {
-    /// `down --drain`: take no new orders, finish the current job, then `Bye`.
-    pub async fn drain(&self) {
-        let _ = self.tx.send(Control::Drain).await;
+    /// `down --drain`: take no new orders, finish the current job, then `Bye`; the broker is
+    /// told why.
+    pub async fn drain(&self, reason: DrainReason) {
+        let _ = self.tx.send(Control::Drain(reason)).await;
     }
 
     /// `down --cancel`: cancel the current job with `runner_stopped`, then `Bye`.
     pub async fn cancel_and_stop(&self) {
         let _ = self.tx.send(Control::CancelAndStop).await;
+    }
+
+    /// Replaces the settings of the runner (`reload`): jobs that run keep the settings they
+    /// started with, the next job and the capabilities the broker sees follow the new ones. What
+    /// identifies the runner and its processes (name, state directory, own process, disk ledger,
+    /// services) stays as it is: changing it needs a restart.
+    pub fn apply_settings(&self, mut next: RunnerSettings) {
+        let old = self.shared.deps.settings.get();
+        next.name = old.name.clone();
+        next.state_dir = old.state_dir.clone();
+        next.process = old.process.clone();
+        next.disk_ledger = old.disk_ledger.clone();
+        next.services = old.services.clone();
+        self.shared.deps.settings.swap(next);
+        self.shared.state().caps_dirty = true;
+        self.shared.wake.notify_one();
     }
 
     /// Whether the runner has a welcomed session and, when not, since when it has had none
@@ -115,6 +163,7 @@ impl AgentControl {
 
 pub(crate) struct Current {
     pub(crate) job: JobId,
+    pub(crate) settings: Arc<RunnerSettings>,
     pub(crate) stop: StopHandle,
     pub(crate) reason: Option<ReasonCode>,
     pub(crate) lost_killed: bool,
@@ -124,6 +173,7 @@ pub(crate) struct State {
     pub(crate) job: Option<Current>,
     pub(crate) broker_lost_kill_s: Option<u64>,
     pub(crate) draining: bool,
+    pub(crate) drain_reason: Option<DrainReason>,
     pub(crate) caps_dirty: bool,
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
@@ -134,6 +184,7 @@ pub(crate) struct State {
 
 pub(crate) struct Shared {
     pub(crate) deps: RunnerDeps,
+    pub(crate) fixed: Arc<RunnerSettings>,
     pub(crate) diag: Arc<Diag>,
     pub(crate) outbox: Outbox,
     pub(crate) wake: Arc<Notify>,
@@ -152,24 +203,55 @@ impl Shared {
         self.deps.clock.now()
     }
 
+    /// The settings of the job that runs, as they were when it started; the current ones when
+    /// none runs. Never called while the state lock is held.
+    pub(crate) fn job_settings(&self) -> Arc<RunnerSettings> {
+        let held = self.state().job.as_ref().map(|c| c.settings.clone());
+        held.unwrap_or_else(|| self.deps.settings.get())
+    }
+
+    /// A drain for an upgrade whose upgrade is gone: the runner takes work again instead of
+    /// leaving.
+    pub(crate) fn upgrade_ended(&self) -> bool {
+        let Some(live) = &self.deps.upgrade_live else {
+            return false;
+        };
+        let reason = self.state().drain_reason;
+        matches!(reason, Some(DrainReason::Upgrade | DrainReason::Lock)) && !live()
+    }
+
+    pub(crate) fn resume_after_upgrade(&self) {
+        {
+            let mut st = self.state();
+            st.draining = false;
+            st.drain_reason = None;
+        }
+        self.diag.event(
+            Level::Info,
+            "the upgrade ended without replacing this runner, resuming",
+            &[],
+        );
+    }
+
     pub(crate) fn marker(&self) -> PathBuf {
-        self.deps.settings.state_dir.join("active-job")
+        self.fixed.state_dir.join("active-job")
     }
 
     pub(crate) fn workspace(&self) -> WorkspaceLayout {
-        WorkspaceLayout::new(self.deps.settings.state_dir.clone())
+        WorkspaceLayout::new(self.fixed.state_dir.clone())
     }
 
     pub(crate) fn caches(&self) -> Caches<'_> {
+        let live = self.deps.settings.get();
         Caches {
             store: self.deps.store.as_ref(),
             files: self.deps.files.as_ref(),
             diag: &self.diag,
             meter: self.deps.meter.as_ref(),
-            runner: &self.deps.settings.name,
-            layout: CacheLayout::new(self.deps.settings.state_dir.clone()),
-            cache: self.deps.settings.cache,
-            workspace: self.deps.settings.workspace,
+            runner: &self.fixed.name,
+            layout: CacheLayout::new(self.fixed.state_dir.clone()),
+            cache: live.cache,
+            workspace: live.workspace,
         }
     }
 
@@ -184,7 +266,7 @@ impl Shared {
 
     pub(crate) async fn capabilities(&self) -> WireCapabilities {
         let used = self.caches().used_mb().await;
-        let mut caps = self.deps.settings.capabilities(used);
+        let mut caps = self.deps.settings.get().capabilities(used);
         caps.disk_mb = self.free_disk_mb().await;
         for name in &self.state().services.unavailable {
             caps.services
@@ -267,6 +349,7 @@ pub struct RunnerAgent {
 impl RunnerAgent {
     /// An agent over `deps`; nothing happens before [`RunnerAgent::run`].
     pub fn new(deps: RunnerDeps) -> RunnerAgent {
+        let fixed = deps.settings.get();
         let diag = Arc::new(Diag {
             log: deps.log.clone(),
             clock: deps.clock.clone(),
@@ -284,6 +367,7 @@ impl RunnerAgent {
         RunnerAgent {
             shared: Arc::new(Shared {
                 deps,
+                fixed,
                 diag,
                 outbox,
                 wake,
@@ -294,6 +378,7 @@ impl RunnerAgent {
                     job: None,
                     broker_lost_kill_s: None,
                     draining: false,
+                    drain_reason: None,
                     caps_dirty: false,
                     lost_since,
                     in_use: Vec::new(),
@@ -321,6 +406,7 @@ impl RunnerAgent {
     /// lost, however long a dial or a welcome takes.
     pub async fn run(mut self) -> AgentExit {
         let shared = self.shared.clone();
+        shared.diag.event(Level::Info, "runner started", &[]);
         recover(&shared).await;
         let mut slot = JobSlot::default();
         let mut backoff = MIN_BACKOFF;
@@ -414,7 +500,20 @@ fn handshake_refusal(e: &TransportError) -> Option<ProtocolError> {
 }
 
 pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
-    shared.state().draining = true;
+    let reason = match cmd {
+        Control::Drain(reason) => reason,
+        Control::CancelAndStop => DrainReason::Down,
+    };
+    {
+        let mut st = shared.state();
+        st.draining = true;
+        st.drain_reason = Some(reason);
+    }
+    shared.diag.event(
+        Level::Info,
+        "drain requested",
+        &[("reason", &format!("{reason:?}").to_lowercase())],
+    );
     if cmd == Control::CancelAndStop {
         shared.stop_job(Stop::Cancel, ReasonCode::RunnerStopped, "runner stopped");
     }

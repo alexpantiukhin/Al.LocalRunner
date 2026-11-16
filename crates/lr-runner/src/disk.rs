@@ -12,11 +12,11 @@ struct Others {
 
 impl Shared {
     fn own_entry(&self) -> String {
-        format!("{}{ENTRY}", self.deps.settings.name)
+        format!("{}{ENTRY}", self.fixed.name)
     }
 
     fn entry_text(&self, mb: u64) -> String {
-        match &self.deps.settings.process {
+        match &self.fixed.process {
             Some(p) => match p.start {
                 Some(start) => format!("{mb} {} {start}", p.pid),
                 None => format!("{mb} {}", p.pid),
@@ -40,7 +40,7 @@ impl Shared {
             mb: 0,
             unreadable: Vec::new(),
         };
-        let Some(dir) = &self.deps.settings.disk_ledger else {
+        let Some(dir) = &self.fixed.disk_ledger else {
             return others;
         };
         let names = match self.deps.files.list_files(dir).await {
@@ -93,7 +93,7 @@ impl Shared {
     /// cannot be measured), less what other runners have reserved; none while a reservation
     /// cannot be read.
     pub(crate) async fn free_disk_mb(&self) -> u64 {
-        let s = &self.deps.settings;
+        let s = self.deps.settings.get();
         let free = self.deps.disk.free_mb(&s.state_dir).unwrap_or(s.disk_mb);
         let others = self.reserved_by_others().await;
         if others.unreadable.is_empty() {
@@ -113,14 +113,15 @@ impl Shared {
         if declared == 0 {
             return Ok(());
         }
-        let need = match crate::limits::disk_headroom_pct(spec.limits.as_ref(), &self.deps.settings)
-        {
-            Some(pct) => declared.saturating_mul(u64::from(pct)).div_ceil(100),
-            None => declared,
-        };
+        let need =
+            match crate::limits::disk_headroom_pct(spec.limits.as_ref(), &self.deps.settings.get())
+            {
+                Some(pct) => declared.saturating_mul(u64::from(pct)).div_ceil(100),
+                None => declared,
+            };
         let volume = match &spec.code {
             WireCode::WorkTree { cwd } => PathBuf::from(cwd),
-            _ => self.deps.settings.state_dir.clone(),
+            _ => self.fixed.state_dir.clone(),
         };
         let Some(free) = self.deps.disk.free_mb(&volume) else {
             self.diag.event(
@@ -130,7 +131,7 @@ impl Shared {
             );
             return Ok(());
         };
-        if let Some(dir) = &self.deps.settings.disk_ledger {
+        if let Some(dir) = &self.fixed.disk_ledger {
             let entry = dir.join(self.own_entry());
             self.deps
                 .files
@@ -167,7 +168,7 @@ impl Shared {
 
     /// Drops the disk reservation of this runner, if any.
     pub(crate) async fn release_disk(&self) {
-        let Some(dir) = &self.deps.settings.disk_ledger else {
+        let Some(dir) = &self.fixed.disk_ledger else {
             return;
         };
         if let Err(e) = self
