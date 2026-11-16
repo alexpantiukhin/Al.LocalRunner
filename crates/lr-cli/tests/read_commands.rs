@@ -9,8 +9,8 @@ use lr_cli::commands::view::{
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
-    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, ReadReply, RunnerInfo, RunnerLiveness,
-    SpreadView, StatsView, StepView, WireCapabilities, WireSource,
+    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, ReadReply, RunnerInfo, RunnerKind,
+    RunnerLiveness, SpreadView, StatsView, StepView, WireCapabilities, WireSource,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -337,6 +337,7 @@ fn stats_and_runners_print_per_broker() {
         unmet: vec!["program docker".into()],
         liveness: Some(RunnerLiveness::Stale),
         silent_for_s: Some(40),
+        kind: None,
     };
     let text = runner_lines(&[("office".into(), vec![runner.clone()])]).join("\n");
     for needed in [
@@ -364,6 +365,29 @@ fn stats_and_runners_print_per_broker() {
     let text = runner_lines(&[("office".into(), vec![gone, old])]).join("\n");
     assert!(text.contains("r2\toffline"), "{text}");
     assert!(text.contains("r3\tonline"), "{text}");
+}
+
+#[test]
+fn runners_marks_local_and_joined() {
+    let mut local = runner_info("local:r1", RunnerLiveness::Online, 0);
+    local.kind = Some(RunnerKind::Local);
+    let mut joined = runner_info("office", RunnerLiveness::Online, 0);
+    joined.kind = Some(RunnerKind::Joined);
+    let mut unknown = runner_info("odd", RunnerLiveness::Online, 0);
+    unknown.kind = Some(RunnerKind::Unknown);
+    let old = runner_info("old", RunnerLiveness::Online, 0);
+    let text = runner_lines(&[("b".into(), vec![local, joined, unknown, old])]).join("\n");
+    assert!(text.contains("local:r1\tonline\tlocal\t"), "{text}");
+    assert!(text.contains("office\tonline\tjoined\t"), "{text}");
+    assert!(text.contains("odd\tonline\t?\t"), "{text}");
+    assert!(text.contains("old\tonline\tlast seen"), "{text}");
+    let wire: RunnerInfo = serde_json::from_str(
+        &serde_json::to_string(&runner_info("x", RunnerLiveness::Online, 0))
+            .unwrap()
+            .replace("\"unmet\"", "\"kind\":\"from_the_future\",\"unmet\""),
+    )
+    .unwrap();
+    assert_eq!(wire.kind, Some(RunnerKind::Unknown));
 }
 
 #[test]
@@ -553,6 +577,7 @@ fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo 
         unmet: Vec::new(),
         liveness: Some(liveness),
         silent_for_s: Some(silent),
+        kind: None,
     }
 }
 

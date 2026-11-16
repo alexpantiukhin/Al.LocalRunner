@@ -63,11 +63,47 @@ fn same_machine_needs_local_ipc_not_an_equal_machine_ref() {
     net.caps.machine = Some(MachineRef("alex".into()));
     let e = same_machine_entry("wt", "alex");
     let err = suitable(&e, &net, &site()).unwrap_err();
-    assert!(err.reasons.contains(&MismatchReason::NotSameMachine));
+    assert!(err.reasons.contains(&MismatchReason::NotSameMachine {
+        runner: "net".into(),
+        joined: true
+    }));
     assert_eq!(
         check_runners(&e, &[net], &site()),
         Err(Reject::NoRunnerOnMachine)
     );
+}
+
+#[test]
+fn a_joined_runner_is_refused_a_work_tree_order_with_a_reason_naming_it() {
+    let mut net = runner("office");
+    net.caps.machine = Some(MachineRef("alex".into()));
+    let e = same_machine_entry("wt", "alex");
+    let err = suitable(&e, &net, &site()).unwrap_err();
+    assert_eq!(
+        err.reasons,
+        [MismatchReason::NotSameMachine {
+            runner: "office".into(),
+            joined: true
+        }]
+    );
+    assert_eq!(
+        err.to_string(),
+        "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+    );
+}
+
+#[test]
+fn a_local_runner_of_another_user_is_refused_with_the_old_meaning() {
+    let e = same_machine_entry("wt", "alex");
+    let err = suitable(&e, &ipc_runner("bob-runner", "bob"), &site()).unwrap_err();
+    assert_eq!(
+        err.reasons,
+        [MismatchReason::NotSameMachine {
+            runner: "bob-runner".into(),
+            joined: false
+        }]
+    );
+    assert_eq!(err.to_string(), "раннер bob-runner не на машине клиента");
 }
 
 #[test]

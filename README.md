@@ -358,6 +358,24 @@ on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # default: 
 
 Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
 
+### Local and joined runners
+
+`localrunner runners` shows the kind of each runner: `local` or `joined`.
+
+| | Local runner | Joined runner |
+| --- | --- | --- |
+| How it connects | Over the local channel of the broker on this computer, as the same OS user as the client; it needs no `broker.toml` and no key | By key (`join`), over the network or from a container, even if it is on the same computer |
+| Its name | `local:<name>` | The name it was given when it joined |
+| Work-tree orders (the code is the client's working tree) | Takes them, when it belongs to the same OS user | Refused: `runner <name> is joined by key ...` is shown in the reason |
+| Commit orders | Takes them | Takes them |
+
+Consequences:
+
+- A joined runner on the same computer as the client takes no work-tree orders, because the broker cannot prove that it sees the client's directory.
+- To make a runner take work-tree orders, run it as a local runner: start it with no `broker.toml` and no key on the client's computer.
+- A runner in a container cannot be local: it has no local channel to the broker, so it is always joined.
+- An older broker does not report the kind; the column is then empty.
+
 ### Resource limits, cleanup and foreign load
 
 The `cpu`, `mem_mb` and `disk_mb` of a profile limit the job itself by default in the `warn` mode: the runner records the peaks of every job, writes a warning to the job log when the `mem_mb` or `disk_mb` ceiling is exceeded, caps the CPU share to the declared `cpu` and limits the process count; nothing is killed unless `kill` is chosen. Turn it off with `[resources] mode = "off"` or `[limits] enforce = "off"`. This default changes the behaviour of existing installations. Peaks are recorded in any mode (`peak_mem_mb`, `peak_disk_mb`): see the `PEAK_MEM_MB` and `PEAK_DISK_MB` columns of `history`, and `history show`, `jobs`, `explain`, `status --json` and the dashboard. A dash in a peak column means "not measured" (a job without a declared `disk_mb` and without directories to measure has no disk peak), while `0` means measured and empty. A job that starts a container (`docker run ...`) is measured by its own process tree only: the memory used inside the Docker VM or the container is not part of the peak, so the peak of such a job is small and its declared `mem_mb` cannot be compared with it.

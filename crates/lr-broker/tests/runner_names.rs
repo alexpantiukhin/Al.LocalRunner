@@ -87,3 +87,17 @@ async fn network_runner_name_with_a_colon_is_refused() {
     }
     assert!(c.closed().await);
 }
+
+#[tokio::test]
+async fn runners_marks_local_and_joined() {
+    let h = Harness::start("");
+    let _local = h.local_runner("alex", "r1", linux()).await;
+    let _joined = h.member_runner("r2", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let ReadReply::Runners { runners } = hub.read(ReadRequest::Runners).await else {
+        panic!("runners");
+    };
+    let kind = |name: &str| runners.iter().find(|r| r.name == name).unwrap().kind;
+    assert_eq!(kind("local:r1"), Some(RunnerKind::Local));
+    assert_eq!(kind("r2"), Some(RunnerKind::Joined));
+}

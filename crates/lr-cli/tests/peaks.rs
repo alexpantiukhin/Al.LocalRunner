@@ -137,6 +137,7 @@ fn runners_list_shows_enforcement() {
         unmet: Vec::new(),
         liveness: None,
         silent_for_s: None,
+        kind: None,
     };
     let text = runner_lines(&[(
         "office".into(),

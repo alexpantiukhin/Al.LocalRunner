@@ -407,6 +407,19 @@ pub enum RunnerLiveness {
     Offline,
 }
 
+/// How a runner is connected to the broker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerKind {
+    /// Connected over the local channel of the broker on this machine.
+    Local,
+    /// Connected by key; takes only commit orders.
+    Joined,
+    /// A kind this version does not know.
+    #[serde(other)]
+    Unknown,
+}
+
 /// A runner on the runners page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerInfo {
@@ -434,6 +447,9 @@ pub struct RunnerInfo {
     /// Seconds since the runner was last heard; absent from an older broker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub silent_for_s: Option<u64>,
+    /// Whether the runner is local or joined by key; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<RunnerKind>,
 }
 
 /// Answers to read requests.

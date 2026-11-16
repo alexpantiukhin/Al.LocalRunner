@@ -778,6 +778,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             unmet: Vec::new(),
             liveness: None,
             silent_for_s: None,
+            kind: None,
         }
     };
     let got = rows(

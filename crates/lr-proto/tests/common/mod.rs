@@ -197,6 +197,7 @@ pub fn runner_info() -> RunnerInfo {
         unmet: vec!["adb not found".into()],
         liveness: None,
         silent_for_s: None,
+        kind: None,
     }
 }
 

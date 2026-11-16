@@ -77,6 +77,7 @@ svg .tg{cursor:help;text-decoration:underline dotted;text-underline-offset:3px}
 <dt id="g-order" data-re="orders?">Order</dt><dd>A request to run a job: requirements for the runner (platform, resources, programs, tags), a commit and commands, and the desired priority. The priority in an order is only a wish; the policy decides the order. It belongs to the client key, not to the connection: a short connection drop (laptop sleep, network change) does not cancel it. A waiting order is canceled only if the hub has not appeared for longer than the policy period (6 hours by default).</dd>
 <dt id="g-policy" data-re="polic(?:y|ies)">Policy</dt><dd>The owner's rules in policy.toml on the broker: assignment order, group weights and quotas, resource reserve, client admission, runner choice, wait windows, retention. The code contains only the mechanism and built-in strategies; an unknown rule is a refusal at load time, and a reload error keeps the previous policy.</dd>
 <dt id="g-runner" data-re="runners?">Runner</dt><dd>A role and a separate process: it connects to the broker, runs the jobs the broker assigns to it and returns results and logs. Several runners can work on one installation, for example light and heavy.</dd>
+<dt id="g-local-runner" data-re="(?:local|joined) runners?">Local and joined runner</dt><dd>A local runner connects over the local channel of the broker on the client's computer and takes work-tree orders; a joined runner connects by key (over the network or from a container) and takes only commit orders. <code>runners</code> shows which is which.</dd>
 <dt id="g-client" data-re="clients?">Client</dt><dd>A client machine: only the hub and agent sessions run on it, and it does not run jobs. For the broker, its connection is an ordinary client with a label that the owner set when issuing the key.</dd>
 <dt id="g-daemon" data-re="daemons?">Daemon</dt><dd>The background localrunner process that holds one role: hub, broker or runner. It is started by the up command; the broker can be installed as an OS service (section 3.12).</dd>
 <dt id="g-ci-runner" data-re="ci runners?">ci runner</dt><dd>A real GitHub Actions self-hosted runner with the label al-ci. It takes no resources from the broker by itself: a GitHub job calls <code>localrunner run</code> through the hub of its machine, and the order goes into the shared queue of the broker like any other, under the label ci. Not to be confused with our runner.</dd>
@@ -254,6 +255,22 @@ A broker that does not answer within the timeout is treated as unavailable for t
 <li>Several runners can work on one installation (for example, <code>light</code> and <code>heavy</code>); each has its own name, admission rules, platforms and tags; each executes one job at a time. They share the installation pool.</li>
 <li>If the broker is unavailable for longer than the grace period (3 minutes by default, policy), the runner kills its running jobs; it keeps the results of finished ones and hands them over after reconnecting.</li>
 <li>The runner accepts jobs only from the broker it joined and executes the commands from the assigned order.</li>
+</ul>
+
+<h3>Local and joined runners</h3>
+<p>The broker sees two kinds of runners; <code>runners</code> shows the kind (<code>local</code> or <code>joined</code>) in the API field <code>kind</code>, derived from how the runner connected.</p>
+<table>
+<tr><th></th><th>Local runner</th><th>Joined runner</th></tr>
+<tr><td>How it connects</td><td>Over the local IPC of the broker on the same computer, as the same OS user as the client; no <code>broker.toml</code> and no key</td><td>By key, over the network or from a container, even on the same computer</td></tr>
+<tr><td>Its name</td><td><code>local:&lt;name&gt;</code></td><td>The name it was given when it joined</td></tr>
+<tr><td>Work-tree orders</td><td>Takes them if it belongs to the same OS user</td><td>Refused; the reason names the runner and says what to do</td></tr>
+<tr><td>Commit orders</td><td>Takes them</td><td>Takes them</td></tr>
+</table>
+<ul>
+<li>A joined runner on the same computer takes no work-tree orders: the broker cannot prove that it sees the client's directory.</li>
+<li>To make a runner take work-tree orders, run it as a local runner with no <code>broker.toml</code> and no key; a container cannot be local.</li>
+<li>The reason for a joined runner: “runner &lt;name&gt; is joined by key: it takes only commit orders; a work-tree order needs a runner connected over the broker's local channel on the client's machine”. For a local runner of another OS user the reason keeps its meaning (“runner &lt;name&gt; is not on the client's machine”) and names the runner.</li>
+<li>The field <code>kind</code> is optional and an unknown value reads as unknown, so an older broker or hub keeps working.</li>
 </ul>
 
 <h3>3.4 Order</h3>

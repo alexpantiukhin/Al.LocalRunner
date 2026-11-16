@@ -4,7 +4,7 @@ use super::{Client, Engine};
 use crate::api::{Access, Viewer};
 use lr_core::JobId;
 use lr_proto::{
-    BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, RunnerCaps, RunnerInfo,
+    BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, RunnerCaps, RunnerInfo, RunnerKind,
     RunnerLiveness, WireCapabilities,
 };
 
@@ -67,6 +67,11 @@ impl Engine {
                     unmet: Vec::new(),
                     liveness: Some(liveness),
                     silent_for_s: Some(now.millis_since(slot.last_heard) / 1000),
+                    kind: Some(if slot.persisted {
+                        RunnerKind::Joined
+                    } else {
+                        RunnerKind::Local
+                    }),
                 }
             })
             .collect()

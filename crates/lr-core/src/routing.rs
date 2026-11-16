@@ -2,7 +2,7 @@ use crate::matching::{satisfies, Mismatch, MismatchReason};
 use crate::model::Zone;
 use crate::queue::{QueueEntry, RunnerView};
 use crate::scheduler::Reject;
-use crate::zone::Site;
+use crate::zone::{Endpoint, Site};
 use std::cmp::Reverse;
 
 /// Checks that `runner` suits `entry` (spec 3.7, 4) and returns the pairwise zone of the
@@ -22,9 +22,25 @@ pub fn suitable(entry: &QueueEntry, runner: &RunnerView, site: &Site) -> Result<
     };
     if req.same_machine.is_some()
         && zone != Zone::Local
-        && !reasons.contains(&MismatchReason::NotSameMachine)
+        && !reasons
+            .iter()
+            .any(|r| matches!(r, MismatchReason::NotSameMachine { .. }))
     {
-        reasons.push(MismatchReason::NotSameMachine);
+        reasons.push(MismatchReason::NotSameMachine {
+            runner: String::new(),
+            joined: false,
+        });
+    }
+    let joined = matches!(runner.endpoint, Endpoint::Addr(_));
+    for reason in &mut reasons {
+        if let MismatchReason::NotSameMachine {
+            runner: name,
+            joined: j,
+        } = reason
+        {
+            *name = runner.name.clone();
+            *j = joined;
+        }
     }
     if reasons.is_empty() {
         Ok(zone)

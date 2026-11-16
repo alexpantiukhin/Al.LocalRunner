@@ -9,7 +9,8 @@ use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_core::JobId;
 use lr_proto::{
-    ReadReply, ReadRequest, RunnerInfo, RunnerLiveness, SpreadView, StatsFilter, StatsView,
+    ReadReply, ReadRequest, RunnerInfo, RunnerKind, RunnerLiveness, SpreadView, StatsFilter,
+    StatsView,
 };
 use serde_json::json;
 
@@ -176,6 +177,15 @@ fn liveness_text(r: &RunnerInfo) -> String {
     }
 }
 
+fn kind_column(r: &RunnerInfo) -> String {
+    match r.kind {
+        Some(RunnerKind::Local) => "\tlocal".into(),
+        Some(RunnerKind::Joined) => "\tjoined".into(),
+        Some(RunnerKind::Unknown) => "\t?".into(),
+        None => String::new(),
+    }
+}
+
 /// The runners of every broker as text.
 pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
     let mut out = Vec::new();
@@ -187,10 +197,11 @@ pub fn runner_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
         for r in runners {
             let c = &r.caps;
             out.push(format!(
-                "  {}\t{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
+                "  {}\t{}{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
                  tags {}\tprograms {}",
                 r.name,
                 liveness_text(r),
+                kind_column(r),
                 r.last_seen.map_or("-".into(), format_time),
                 listed(c.platforms.iter()),
                 c.mem_mb,
