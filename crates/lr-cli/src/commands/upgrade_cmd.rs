@@ -8,7 +8,7 @@ use super::args::{RoleArg, UpgradeArgs};
 use super::confirm::{Console, Stdio};
 use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
 use super::setup::{binary_name, default_bin_dir, upgrade_plan};
-use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
+use super::up_cmd::{running_roles, starter, up_with, up_with_services, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
 use super::upgrade_pool::{plan_lines, pool, reconnected, report_lines, PoolRunner, Reconnected};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
@@ -323,20 +323,29 @@ impl Job<'_> {
         }
         let service = self.layout.broker_is_service();
         let stop = stop_names(self.running, service);
-        let again = restart_roles(self.running, service);
+        let mut services = std::collections::BTreeSet::new();
+        let mut names: std::collections::BTreeSet<String> =
+            self.layout.runner_names().into_iter().collect();
+        names.extend(self.running.runners.iter().cloned());
+        for name in names {
+            if roles.runner_service(&name).await.is_some() {
+                services.insert(name);
+            }
+        }
+        let mut again = restart_roles(self.running, service);
+        if self.running.runners.iter().all(|r| services.contains(r)) {
+            again.retain(|r| *r != RoleArg::Runner);
+        }
         if self.running.broker && service {
             println!(
                 "the broker runs as an OS service with its own copy of the binary: this command does not touch it; update it afterwards with `localrunner broker update-service`, which needs administrator rights (see README, \"Update\")"
             );
         }
-        {
-            use crate::os_service::{runner_service, Os};
-            let os = Os::current();
-            for name in self.layout.runner_names() {
-                if runner_service::installed(os, &name) {
-                    println!("{}", runner_service::upgrade_line(os, &name));
-                }
-            }
+        for name in &services {
+            roles.say(&crate::os_service::runner_service::upgrade_line(
+                crate::os_service::Os::current(),
+                name,
+            ));
         }
         println!("directory: {}", self.dir.display());
         for line in self.activity.lines() {
@@ -384,13 +393,13 @@ impl Job<'_> {
         let mut code = 0;
         for role in again {
             code = code.max(
-                up_with(self.layout, Some(role), STARTED_WITHIN, start)
+                up_with_services(self.layout, Some(role), STARTED_WITHIN, start, false)
                     .await
                     .unwrap_or(1),
             );
         }
         replaced?;
-        let restarted = self.reconnects(roles).await;
+        let restarted = self.reconnects(roles, &services).await;
         roles.say(&format!(
             "upgraded to {}; check the node: localrunner doctor",
             self.new.text
@@ -404,8 +413,18 @@ impl Job<'_> {
     /// Waits up to [`RECONNECT_WITHIN`] for the runners started again to be online on the new
     /// version, asking every [`RECONNECT_POLL`]; a failed answer while the hub restarts counts as
     /// not back yet.
-    async fn reconnects(&self, roles: &dyn Roles) -> Vec<(String, Reconnected)> {
-        let names: Vec<String> = self.running.runners.iter().cloned().collect();
+    async fn reconnects(
+        &self,
+        roles: &dyn Roles,
+        services: &std::collections::BTreeSet<String>,
+    ) -> Vec<(String, Reconnected)> {
+        let names: Vec<String> = self
+            .running
+            .runners
+            .iter()
+            .filter(|n| !services.contains(*n))
+            .cloned()
+            .collect();
         if names.is_empty() {
             return Vec::new();
         }

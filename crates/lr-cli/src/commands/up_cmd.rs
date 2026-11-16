@@ -290,6 +290,18 @@ pub async fn up_with(
     within: Duration,
     start: Spawn<'_>,
 ) -> Result<i32, String> {
+    up_with_services(layout, role, within, start, true).await
+}
+
+/// [`up_with`]; a runner whose OS service is installed but does not run makes the exit code 1
+/// only when `stopped_service_fails` (`upgrade` names it itself and does not fail for it).
+pub async fn up_with_services(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    within: Duration,
+    start: Spawn<'_>,
+    stopped_service_fails: bool,
+) -> Result<i32, String> {
     if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
         eprintln!(
             "{}: nothing is started; wait for it to finish (`localrunner status`) instead of running `up` again",
@@ -311,7 +323,7 @@ pub async fn up_with(
             let line = service_runner_line(crate::os_service::Os::current(), &name, running);
             if running == Some(true) {
                 println!("{line}");
-            } else {
+            } else if stopped_service_fails {
                 eprintln!("{line}");
                 code = 1;
             }

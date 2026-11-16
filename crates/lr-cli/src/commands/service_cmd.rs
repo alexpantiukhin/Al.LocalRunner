@@ -305,13 +305,10 @@ fn task_hint(e: String) -> String {
 
 fn runner_may_start(layout: &Layout, name: &str) -> Result<(), String> {
     let os = Os::current();
-    if runner_service::installed(os, name) {
-        return Err(format!(
-            "autostart runner {name}: it runs as the OS service {}, and a login autostart would \
-             start it twice; remove the service first (`localrunner autostart off runner {name} \
-             --service`, administrator) or keep it",
-            runner_service::service_name(os, name)
-        ));
+    if let Some(why) =
+        runner_service::service_conflict(os, name, runner_service::installed(os, name))
+    {
+        return Err(why);
     }
     let allowed = crate::doctor::runner_allows_same_user(layout, name);
     match crate::doctor::same_user_verdict(layout, allowed) {
@@ -409,6 +406,14 @@ pub fn autostart_with(
                 let name = runner
                     .clone()
                     .unwrap_or_else(|| crate::roles::runner_base_name(layout, None, None));
+                let os = Os::current();
+                if runner_service::installed(os, &name) {
+                    println!(
+                        "runner {name}: skipped, it runs as the OS service {}",
+                        runner_service::service_name(os, &name)
+                    );
+                    continue;
+                }
                 runner_may_start(layout, &name)?;
             }
             let name = entry.name();
@@ -531,36 +536,48 @@ pub fn runner_service_with(
     elevated: bool,
 ) -> Result<i32, String> {
     let user = original_user()?;
-    let owned = |p: &Path| runner_service::owned_by(p, &user);
-    let login = |n: &str| runner_service::login_entry(Os::current(), &user, n);
+    let os = Os::current();
+    let login = |n: &str| runner_service::login_entry(os, &user, n);
+    let service = |n: &str| runner_service::service_owner(os, n);
     let ctx = ServiceContext {
         user: user.clone(),
         elevated,
-        owned_by_user: &owned,
+        principal: &runner_service::principal,
+        access: &runner_service::key_state,
         login_entry: &login,
+        service_owner: &service,
     };
     runner_service_for(layout, switch, name, dry_run, &ctx)
 }
 
 /// What [`runner_service_for`] learns from the machine: the installing user (under `sudo` the
-/// one who called it, elevated on Windows the session user), the rights of this process,
-/// whether a path belongs to that user, and whether a login entry of that user starts a runner.
+/// one who called it, elevated on Windows the session user), the rights of this process, the
+/// id of a user, the ownership of a path, whether a login entry of that user starts a runner,
+/// and the installed service of a runner.
 pub struct ServiceContext<'a> {
     /// The installing OS user: the runner's owner and, on Linux and macOS, its account.
     pub user: String,
     /// Whether this process has administrator rights.
     pub elevated: bool,
-    /// Whether a path belongs to [`ServiceContext::user`].
-    pub owned_by_user: &'a dyn Fn(&Path) -> bool,
+    /// The id of an OS user: a SID on Windows, a uid elsewhere.
+    pub principal: &'a dyn Fn(&str) -> Option<String>,
+    /// The ownership of a path as this process sees it.
+    pub access: &'a dyn Fn(&Path) -> runner_service::KeyState,
     /// Whether a login entry of [`ServiceContext::user`] starts the named runner.
     pub login_entry: &'a dyn Fn(&str) -> bool,
+    /// The installed service of the named runner and the user it names with `--owner`
+    /// (Windows): `None` without a service.
+    pub service_owner: &'a dyn Fn(&str) -> Option<Option<String>>,
 }
 
 /// [`runner_service_with`] for `ctx`. `on` refuses, in this order: root or `SYSTEM` as the
-/// user; the `ci` runner and a runner that needs a desktop session; a runner missing from the
-/// installation or not owned by the user; on Windows a runner without its own broker key; a
-/// runner a login entry also starts; a runner the same-user rule of spec 3.12 refuses for the
-/// installing user. Then the rights. `off` is refused only without the rights.
+/// user (by name or id); the `ci` runner and a runner that needs a desktop session; a runner
+/// missing from the installation or whose directory the user does not own; on Windows a runner
+/// without its own broker key, or whose key is not the user's (a re-run over the user's own
+/// service excepted); a runner a login entry also starts; a runner the same-user rule of spec
+/// 3.12 refuses for the installing user. Then the rights. `off` on Windows gives the key back to
+/// the user the service was installed for, and is refused when that user cannot be told;
+/// otherwise only without the rights.
 pub fn runner_service_for(
     layout: &Layout,
     switch: Switch,
@@ -574,7 +591,7 @@ pub fn runner_service_for(
     crate::runner_config::check_runner_name(name)?;
     let os = Os::current();
     let exe = exe()?;
-    let inputs = RunnerServiceInputs {
+    let mut inputs = RunnerServiceInputs {
         os,
         exe: exe.clone(),
         name: name.to_string(),
@@ -582,9 +599,16 @@ pub fn runner_service_for(
         config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
         user: ctx.user.clone(),
     };
+    let key = runner_service::key_path(&inputs);
+    let account = runner_service::account(&inputs);
+    let user_id = (ctx.principal)(&ctx.user);
+    let installed = (ctx.service_owner)(name);
+    let mut restore_key = false;
     if on {
         let refused = |why: String| format!("autostart on runner {name} --service: {why}");
-        runner_service::check_identity(&inputs).map_err(refused)?;
+        if let Some(why) = runner_service::identity_refusal(&ctx.user, user_id.as_deref()) {
+            return Err(refused(why));
+        }
         let dir = layout.runner_dir(name);
         let joined = dir.join(crate::build::BROKER_FILE).is_file();
         let why = runner_service::refusal(name, &runner_needs(layout, name))
@@ -592,11 +616,25 @@ pub fn runner_service_for(
                 runner_service::runner_dir_refusal(
                     name,
                     dir.is_dir(),
-                    dir.is_dir() && (ctx.owned_by_user)(&dir),
+                    dir.is_dir()
+                        && runner_service::dir_owned(os, &(ctx.access)(&dir), user_id.as_deref()),
                     &ctx.user,
                 )
             })
             .or_else(|| runner_service::local_runner_refusal(os, name, joined))
+            .or_else(|| {
+                (os == Os::Windows)
+                    .then(|| {
+                        runner_service::key_handover_refusal(
+                            name,
+                            &ctx.user,
+                            user_id.as_deref(),
+                            &(ctx.access)(&key),
+                            installed.clone(),
+                        )
+                    })
+                    .flatten()
+            })
             .or_else(|| {
                 runner_service::login_entry_refusal(name, (ctx.login_entry)(name), &ctx.user)
             });
@@ -608,6 +646,14 @@ pub fn runner_service_for(
             .map_err(|e| format!("autostart runner {name}: {e}"))?
         {
             eprintln!("runner {name}: warning: {risk}");
+        }
+    } else if os == Os::Windows {
+        let exists = (ctx.access)(&key) != runner_service::KeyState::Missing;
+        if let Some(owner) = runner_service::restore_owner(name, &key, exists, installed.clone())
+            .map_err(|e| format!("autostart off runner {name} --service: {e}"))?
+        {
+            inputs.user = owner;
+            restore_key = true;
         }
     }
     if !dry_run && !elevated {
@@ -622,13 +668,41 @@ pub fn runner_service_for(
         ));
     }
     admin_marker(dry_run, elevated);
-    let plan = if on {
-        runner_service::install(&inputs)
+    let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
+    if on {
+        let undo = match os {
+            Os::Windows => runner_service::uninstall(&inputs, true),
+            _ => Vec::new(),
+        };
+        apply_or_undo(system, &runner_service::install(&inputs), &undo)
+            .map_err(|e| runner_service::install_failure(os, name, e))?;
     } else {
-        runner_service::uninstall(&inputs)
-    };
-    let existed = on && !dry_run && runner_service::installed(os, name);
-    apply(&plan, dry_run)?;
+        apply_all(system, &runner_service::uninstall(&inputs, restore_key)).map_err(|e| {
+            if restore_key {
+                format!(
+                    "{e}; the key of runner {name} may not be {}'s again: as administrator run: {}",
+                    inputs.user,
+                    runner_service::key_recovery(&key, &inputs.user, &account)
+                )
+            } else {
+                e
+            }
+        })?;
+        if restore_key && !dry_run {
+            let owner_id = (ctx.principal)(&inputs.user);
+            if let Some(note) = runner_service::restore_verdict(
+                name,
+                &key,
+                &(ctx.access)(&key),
+                &inputs.user,
+                owner_id.as_deref(),
+                &account,
+            )? {
+                println!("{note}");
+            }
+        }
+    }
+    let existed = on && installed.is_some();
     if dry_run {
         return Ok(0);
     }

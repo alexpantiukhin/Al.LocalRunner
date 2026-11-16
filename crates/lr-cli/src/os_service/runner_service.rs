@@ -84,14 +84,261 @@ fn is_root(user: &str) -> bool {
 
 /// Refuses root and `SYSTEM` as the runner's identity: a job would get the whole machine.
 pub fn check_identity(i: &RunnerServiceInputs) -> Result<(), String> {
-    if is_root(&i.user) {
-        return Err(format!(
-            "a runner service never runs as {}: run the command for the user the runner belongs \
-             to (with sudo, or from an elevated terminal of that user)",
-            i.user
-        ));
+    identity_refusal(&i.user, None).map_or(Ok(()), Err)
+}
+
+/// Why `user` cannot be the runner's identity: root or `SYSTEM` by name, or by its id
+/// `principal` (uid `0`, SID `S-1-5-18`), which catches an alias of root. `None` when it can.
+pub fn identity_refusal(user: &str, principal: Option<&str>) -> Option<String> {
+    let root_id = principal.is_some_and(|p| p == "0" || p.eq_ignore_ascii_case("S-1-5-18"));
+    (is_root(user) || root_id).then(|| {
+        format!(
+            "a runner service never runs as {user}: run the command for the user the runner \
+             belongs to (with sudo, or from an elevated terminal of that user)"
+        )
+    })
+}
+
+/// Who owns a file and whom its access list lets in: SIDs on Windows, the owner uid elsewhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyAccess {
+    /// The owner: a SID, or a uid.
+    pub owner: Option<String>,
+    /// The SIDs the access list allows; `None` when not known (always on Unix).
+    pub allowed: Option<Vec<String>>,
+}
+
+/// What this process can tell of a file's ownership.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyState {
+    /// The file is not there.
+    Missing,
+    /// It is there, but its security cannot be read by this process (on Windows: a key that only
+    /// a service account may touch).
+    Unreadable,
+    /// Its owner and access list.
+    Read(KeyAccess),
+}
+
+const ADMINISTRATORS: &str = "S-1-5-32-544";
+
+/// The ownership of `path` as this process sees it.
+pub fn key_state(path: &Path) -> KeyState {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return KeyState::Missing,
+        Err(_) => return KeyState::Unreadable,
+        Ok(_) => {}
     }
-    Ok(())
+    #[cfg(windows)]
+    {
+        match lr_net::file_security(path) {
+            Ok(s) => KeyState::Read(KeyAccess {
+                owner: s.owner,
+                allowed: s.allowed,
+            }),
+            Err(_) => KeyState::Unreadable,
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match std::fs::metadata(path) {
+            Ok(m) => KeyState::Read(KeyAccess {
+                owner: Some(m.uid().to_string()),
+                allowed: None,
+            }),
+            Err(_) => KeyState::Unreadable,
+        }
+    }
+}
+
+/// The id of OS user `user`: a SID on Windows, a uid elsewhere.
+pub fn principal(user: &str) -> Option<String> {
+    lr_net::account_principal(user).ok()
+}
+
+/// Whether a directory in `state` belongs to the user with id `user_id`: its owner is that user
+/// (on Windows also the Administrators group, the owner of what an elevated shell creates).
+pub fn dir_owned(os: Os, state: &KeyState, user_id: Option<&str>) -> bool {
+    let (KeyState::Read(a), Some(user_id)) = (state, user_id) else {
+        return false;
+    };
+    a.owner.as_deref().is_some_and(|o| {
+        o.eq_ignore_ascii_case(user_id) || (os == Os::Windows && o == ADMINISTRATORS)
+    })
+}
+
+fn held_by(a: &KeyAccess, sid: &str) -> bool {
+    a.owner
+        .as_deref()
+        .is_some_and(|o| o.eq_ignore_ascii_case(sid))
+        && a.allowed
+            .as_ref()
+            .is_some_and(|l| l.len() == 1 && l[0].eq_ignore_ascii_case(sid))
+}
+
+/// Why the Windows service of runner `name` may not take its key from `user` (id `user_id`):
+/// the key is missing, belongs to someone else, or cannot be read. A key the user owns (or the
+/// Administrators group owns with the user as its only entry) is the user's; a key that cannot
+/// be read is accepted only when the installed service (its `--owner`, `service_owner`) already
+/// belongs to `user`: a re-run. `None` when the key may be handed over.
+pub fn key_handover_refusal(
+    name: &str,
+    user: &str,
+    user_id: Option<&str>,
+    key: &KeyState,
+    service_owner: Option<Option<String>>,
+) -> Option<String> {
+    let user_id = user_id.unwrap_or("?");
+    match key {
+        KeyState::Missing => Some(format!(
+            "runner {name} has no key of its own; join it to the broker first (`localrunner \
+             runner join <address> --name {name}`)"
+        )),
+        KeyState::Read(a) => {
+            let owner = a.owner.as_deref().unwrap_or("nobody");
+            let only_user = a
+                .allowed
+                .as_ref()
+                .is_some_and(|l| l.len() == 1 && l[0].eq_ignore_ascii_case(user_id));
+            let mine =
+                owner.eq_ignore_ascii_case(user_id) || (owner == ADMINISTRATORS && only_user);
+            (!mine).then(|| {
+                format!(
+                    "the key of runner {name} belongs to {owner}, not to {user} ({user_id}): run \
+                     the command for the runner's owner, from that user's elevated terminal"
+                )
+            })
+        }
+        KeyState::Unreadable => match service_owner {
+            Some(Some(o)) if o.eq_ignore_ascii_case(user) => None,
+            _ => Some(format!(
+                "cannot read the key of runner {name} as {user}: it is not this user's; run the \
+                 command for the runner's owner, from that user's elevated terminal"
+            )),
+        },
+    }
+}
+
+/// The commands an administrator runs to give the key at `key` back to `user`, away from the
+/// service `account`.
+pub fn key_recovery(key: &Path, user: &str, account: &str) -> String {
+    let k = key.display();
+    format!(
+        "takeown /F \"{k}\" /A; icacls \"{k}\" /inheritance:r /grant:r \"{user}:(F)\"; icacls \
+         \"{k}\" /remove \"{account}\"; icacls \"{k}\" /setowner \"{user}\""
+    )
+}
+
+/// To whom `autostart off` gives the key at `key` of runner `name` back on Windows: the user the
+/// installed service names with `--owner` (`service_owner`: `None` when no service is
+/// installed, `Some(None)` when it names nobody), never whoever runs `off`. `Ok(None)` when
+/// there is nothing to give back (no key, no service); an error with the manual commands when
+/// the user cannot be told.
+pub fn restore_owner(
+    name: &str,
+    key: &Path,
+    key_exists: bool,
+    service_owner: Option<Option<String>>,
+) -> Result<Option<String>, String> {
+    match (key_exists, service_owner) {
+        (false, _) | (_, None) => Ok(None),
+        (true, Some(Some(user))) => Ok(Some(user)),
+        (true, Some(None)) => Err(format!(
+            "cannot tell whom runner {name} belongs to: its service {} names no --owner; give \
+             the key back by hand as administrator, then run this command again: {}",
+            service_name(Os::Windows, name),
+            key_recovery(
+                key,
+                "<user>",
+                &format!(r"NT SERVICE\{}", service_name(Os::Windows, name))
+            )
+        )),
+    }
+}
+
+/// Checks the key given back to `user` (id `user_id`) by `autostart off`: owned by the user,
+/// who is its only entry. `Ok(Some(note))` when this process cannot read it (another
+/// administrator), with the command to check it as the user; an error with the manual commands
+/// when the key is not the user's.
+pub fn restore_verdict(
+    name: &str,
+    key: &Path,
+    state: &KeyState,
+    user: &str,
+    user_id: Option<&str>,
+    account: &str,
+) -> Result<Option<String>, String> {
+    match state {
+        KeyState::Missing => Ok(None),
+        KeyState::Read(a) if user_id.is_some_and(|id| held_by(a, id)) => Ok(None),
+        KeyState::Read(a) => Err(format!(
+            "the key of runner {name} was not given back to {user}: owner {}, entries {:?}; as \
+             administrator run: {}",
+            a.owner.as_deref().unwrap_or("none"),
+            a.allowed.as_deref().unwrap_or_default(),
+            key_recovery(key, user, account)
+        )),
+        KeyState::Unreadable => Ok(Some(format!(
+            "this account cannot read the key of runner {name}; check as {user} that it is the \
+             only entry: icacls \"{}\"",
+            key.display()
+        ))),
+    }
+}
+
+/// The user the installed Windows service names with `--owner`, read from the output of
+/// `sc qc` (`BINARY_PATH_NAME`); `None` when it names none.
+pub fn owner_from_service_config(qc: &str) -> Option<String> {
+    let line = qc
+        .lines()
+        .find(|l| l.trim_start().starts_with("BINARY_PATH_NAME"))?;
+    let (_, command) = line.split_once(':')?;
+    let after = command.split_once(" --owner ")?.1.trim_start();
+    let owner = match after.strip_prefix('"') {
+        Some(quoted) => quoted.split_once('"')?.0,
+        None => after.split_whitespace().next()?,
+    };
+    (!owner.is_empty()).then(|| owner.to_string())
+}
+
+/// The installed Windows service of runner `name` and the user it names with `--owner`:
+/// `None` when there is no service, `Some(None)` when it names nobody.
+pub fn service_owner(os: Os, name: &str) -> Option<Option<String>> {
+    if os != Os::Windows {
+        return installed(os, name).then_some(None);
+    }
+    let sc = super::programs::program_path("sc.exe").ok()?;
+    let out = std::process::Command::new(sc)
+        .args(["qc", &service_name(os, name), "4096"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| owner_from_service_config(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// The error of a failed Windows install with the command that cleans up after it.
+pub fn install_failure(os: Os, name: &str, e: String) -> String {
+    let admin = if os == Os::Windows {
+        "from an elevated terminal"
+    } else {
+        "with sudo"
+    };
+    format!("{e}; to clean up, run {admin}: localrunner autostart off runner {name} --service")
+}
+
+/// Why a login autostart of runner `name` is refused: its OS service is `installed`, and both
+/// would run it at once.
+pub fn service_conflict(os: Os, name: &str, installed: bool) -> Option<String> {
+    installed.then(|| {
+        format!(
+            "autostart runner {name}: it runs as the OS service {}, and a login autostart would \
+             start it twice; remove the service first (`localrunner autostart off runner {name} \
+             --service`, administrator) or keep it",
+            service_name(os, name)
+        )
+    })
 }
 
 /// Why runner `name` gets no OS service: the `ci` runner, or a tag, platform or service among
@@ -250,27 +497,6 @@ fn home_of(_user: &str) -> Option<PathBuf> {
     None
 }
 
-/// Whether `path` belongs to OS user `user` (Unix: its owner uid); always `true` on Windows,
-/// where the state directory of a user's profile is not checked this way.
-pub fn owned_by(path: &Path, user: &str) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(meta) = std::fs::metadata(path) else {
-            return false;
-        };
-        lr_net::account_principal(user)
-            .ok()
-            .and_then(|uid| uid.parse::<u32>().ok())
-            .is_some_and(|uid| uid == meta.uid())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, user);
-        true
-    }
-}
-
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
 /// `--owner <user>` (the service account is not the installing user), and the directories.
 pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
@@ -353,16 +579,23 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             &[&s(&dir), "/grant", &format!("{account}:(OI)(CI){rights}")],
         ));
     }
-    let key = s(&key_path(i));
-    out.push(Action::run("icacls", &[&key, "/setowner", &account]));
-    out.push(Action::run(
-        "icacls",
-        &[&key, "/grant:r", &format!("{account}:(F)")],
-    ));
-    out.push(Action::run("icacls", &[&key, "/remove", &i.user]));
+    out.extend(key_to(i, &account, &i.user));
     out.push(Action::run("sc.exe", &["config", &name, "start=", "auto"]));
     out.push(Action::run("sc.exe", &["start", &name]).tolerating(Tolerate::Codes(vec![1056])));
     out
+}
+
+fn key_to(i: &RunnerServiceInputs, to: &str, from: &str) -> Vec<Action> {
+    let key = s(&key_path(i));
+    vec![
+        Action::run("takeown", &["/F", &key, "/A"]),
+        Action::run(
+            "icacls",
+            &[&key, "/inheritance:r", "/grant:r", &format!("{to}:(F)")],
+        ),
+        Action::run("icacls", &[&key, "/remove", from]),
+        Action::run("icacls", &[&key, "/setowner", to]),
+    ]
 }
 
 fn linux(i: &RunnerServiceInputs) -> Vec<Action> {
@@ -434,7 +667,8 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 /// [`account`], started at boot and restarted after a failure, and starts it now. On Windows
 /// the service account also gets the state directory (modify) and the configuration and binary
 /// directories (read), and becomes the owner and only user of the runner's key ([`key_path`]),
-/// as the key's owner check requires; `uninstall` gives the key back to the user.
+/// as the key's owner check requires: the Administrators group takes the key first, so a re-run
+/// over a service that already holds it works too. `uninstall` gives the key back to the user.
 pub fn install(i: &RunnerServiceInputs) -> Vec<Action> {
     match i.os {
         Os::Windows => windows(i),
@@ -444,20 +678,20 @@ pub fn install(i: &RunnerServiceInputs) -> Vec<Action> {
 }
 
 /// `autostart off runner <name> --service`: stops and removes that runner's service and nothing
-/// else; its state stays. A service that is not there is fine.
-pub fn uninstall(i: &RunnerServiceInputs) -> Vec<Action> {
+/// else; its state stays. A service that is not there is fine. On Windows with `restore_key`
+/// the key goes back to [`RunnerServiceInputs::user`] first, while the service account still
+/// exists: the Administrators group takes it, grants it to the user alone and hands it over.
+/// A failed step stops the plan before the service is deleted.
+pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
     let name = service_name(i.os, &i.name);
     match i.os {
         Os::Windows => {
             let account = account(i);
-            let key = s(&key_path(i));
-            let mut out = vec![
-                Action::run("sc.exe", &["stop", &name]).tolerating(Tolerate::Anything),
-                Action::run("icacls", &[&key, "/setowner", &i.user]).tolerating(Tolerate::Anything),
-                Action::run("icacls", &[&key, "/grant:r", &format!("{}:(F)", i.user)])
-                    .tolerating(Tolerate::Anything),
-                Action::run("icacls", &[&key, "/remove", &account]).tolerating(Tolerate::Anything),
-            ];
+            let mut out =
+                vec![Action::run("sc.exe", &["stop", &name]).tolerating(Tolerate::Anything)];
+            if restore_key {
+                out.extend(key_to(i, &i.user, &account));
+            }
             for (dir, _) in windows_dirs(i) {
                 out.push(
                     Action::run("icacls", &[&s(&dir), "/remove", &account])

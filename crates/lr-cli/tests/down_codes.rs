@@ -50,6 +50,7 @@ async fn down_names_a_runner_that_runs_as_an_os_service_instead_of_calling_it_st
     let layout = with_runner(&dir);
     let mut roles = FakeRoles::new(false, 0);
     roles.service_runner = Some(Some(true));
+    roles.service_unreachable = true;
     let code = down_with(&layout, vec!["r1".into()], false, &roles, pending::<()>()).await;
     assert_eq!(
         code,
@@ -64,6 +65,7 @@ async fn down_names_a_runner_that_runs_as_an_os_service_instead_of_calling_it_st
     assert!(!err.contains("not running"), "{err}");
     let mut all = FakeRoles::new(false, 0);
     all.service_runner = Some(Some(true));
+    all.service_unreachable = true;
     assert_eq!(
         down_with(&layout, Vec::new(), false, &all, pending::<()>()).await,
         Ok(1),

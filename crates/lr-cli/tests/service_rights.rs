@@ -9,6 +9,7 @@ use lr_cli::commands::service_cmd::{
 };
 use lr_cli::commands::{RoleArg, Switch};
 use lr_cli::doctor::same_user_risk_for;
+use lr_cli::os_service::runner_service::{KeyAccess, KeyState};
 use lr_cli::os_service::{service_installed, Os};
 use lr_cli::os_service::{Action, System};
 use lr_cli::paths::Layout;
@@ -92,6 +93,7 @@ fn joined_runner(layout: &Layout, name: &str) {
         "address = \"127.0.0.1:1\"\nfingerprint = \"x\"\n",
     )
     .unwrap();
+    lr_net::write_private(&dir.join("participant.key"), b"key").unwrap();
 }
 
 fn entries(dir: &Path) -> Vec<String> {
@@ -129,7 +131,10 @@ fn runner_service_without_administrator_rights_is_refused_with_the_exact_command
         );
     }
     assert_eq!(entries(&layout.root), ["runner"], "nothing was written");
-    assert_eq!(entries(&layout.runner_dir("box")), ["broker.toml"]);
+    assert_eq!(
+        entries(&layout.runner_dir("box")),
+        ["broker.toml", "participant.key"]
+    );
     assert!(!dir.path().join("config").exists(), "nothing was written");
     let unix = runner_service_command(
         Os::Linux,
@@ -170,7 +175,7 @@ fn runner_service_dry_run_needs_no_rights_and_a_service_needs_a_runner_name() {
     );
     assert_eq!(
         entries(&layout.runner_dir("box")),
-        ["broker.toml"],
+        ["broker.toml", "participant.key"],
         "a dry run writes nothing"
     );
     let typo = runner_service_with(&layout, Switch::On, "bx", true, false).unwrap_err();
@@ -221,17 +226,65 @@ fn installing_user() -> String {
     }
 }
 
-fn context<'a>(
-    user: &str,
-    owned: &'a dyn Fn(&Path) -> bool,
-    login: &'a dyn Fn(&str) -> bool,
-) -> ServiceContext<'a> {
-    ServiceContext {
+const ALEX: &str = "S-1-5-21-1-1001";
+
+#[derive(Clone)]
+struct Fake {
+    user_sid: String,
+    key: KeyState,
+    dir: KeyState,
+    login: bool,
+    service: Option<Option<String>>,
+}
+
+fn owned_by(sid: &str) -> KeyState {
+    KeyState::Read(KeyAccess {
+        owner: Some(sid.into()),
+        allowed: Some(vec![sid.into()]),
+    })
+}
+
+fn fake() -> Fake {
+    Fake {
+        user_sid: if cfg!(windows) {
+            ALEX.into()
+        } else {
+            "1000".into()
+        },
+        key: owned_by(if cfg!(windows) { ALEX } else { "1000" }),
+        dir: owned_by(if cfg!(windows) { ALEX } else { "1000" }),
+        login: false,
+        service: None,
+    }
+}
+
+fn service_for<R>(f: &Fake, user: &str, run: impl FnOnce(&ServiceContext) -> R) -> R {
+    let principal = |u: &str| -> Option<String> {
+        let bare = u.rsplit('\\').next().unwrap_or(u).to_ascii_lowercase();
+        Some(match bare.as_str() {
+            "toor" => "0".into(),
+            "localsvc" => "S-1-5-18".into(),
+            _ => f.user_sid.clone(),
+        })
+    };
+    let access = |p: &Path| -> KeyState {
+        if p.ends_with("participant.key") {
+            f.key.clone()
+        } else {
+            f.dir.clone()
+        }
+    };
+    let login = |_: &str| f.login;
+    let service = |_: &str| f.service.clone();
+    let ctx = ServiceContext {
         user: user.to_string(),
         elevated: true,
-        owned_by_user: owned,
-        login_entry: login,
-    }
+        principal: &principal,
+        access: &access,
+        login_entry: &login,
+        service_owner: &service,
+    };
+    run(&ctx)
 }
 
 #[test]
@@ -251,10 +304,14 @@ fn the_elevated_run_judges_the_same_user_rule_for_the_installing_user_not_for_ro
         "under sudo the process user is root, and alex counts as another user"
     );
     assert_eq!(same_user_risk_for(&layout, true, Some(&user)), None);
-    let yes = |_: &Path| true;
-    let no = |_: &str| false;
     assert_eq!(
-        runner_service_for(&layout, Switch::On, "box", true, &context(&user, &yes, &no)),
+        service_for(&fake(), &user, |ctx| runner_service_for(
+            &layout,
+            Switch::On,
+            "box",
+            true,
+            ctx
+        )),
         Ok(0),
         "the init-written policy admits only the installing user: no refusal"
     );
@@ -266,27 +323,42 @@ fn a_service_is_refused_for_a_missing_foreign_local_or_login_started_runner() {
     let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
     joined_runner(&layout, "box");
     let user = installing_user();
-    let (yes, no) = (|_: &Path| true, |_: &Path| false);
-    let (login, none) = (|_: &str| true, |_: &str| false);
-    let on = |ctx: &ServiceContext, name: &str| {
-        runner_service_for(&layout, Switch::On, name, true, ctx).unwrap_err()
+    let run = |f: &Fake, user: &str, switch: Switch, name: &str| {
+        service_for(f, user, |ctx| {
+            runner_service_for(&layout, switch, name, true, ctx)
+        })
     };
-    assert!(on(&context(&user, &yes, &none), "nope").contains("no runner nope"));
-    let foreign = on(&context(&user, &no, &none), "box");
+    let on = |f: &Fake, name: &str| run(f, &user, Switch::On, name).unwrap_err();
+    assert!(on(&fake(), "nope").contains("no runner nope"));
+    let foreign = on(
+        &Fake {
+            dir: owned_by("S-1-5-21-1-1002"),
+            ..fake()
+        },
+        "box",
+    );
     assert!(foreign.contains("not owned by"), "{foreign}");
-    let twice = on(&context(&user, &yes, &login), "box");
+    let root_dir = on(
+        &Fake {
+            dir: owned_by("0"),
+            ..fake()
+        },
+        "box",
+    );
+    assert!(root_dir.contains("not owned by"), "{root_dir}");
+    let twice = on(
+        &Fake {
+            login: true,
+            ..fake()
+        },
+        "box",
+    );
     assert!(
         twice.contains("localrunner autostart off runner box"),
         "{twice}"
     );
     std::fs::create_dir_all(layout.runner_dir("local")).unwrap();
-    let local = runner_service_for(
-        &layout,
-        Switch::On,
-        "local",
-        true,
-        &context(&user, &yes, &none),
-    );
+    let local = run(&fake(), &user, Switch::On, "local");
     if cfg!(windows) {
         let e = local.unwrap_err();
         assert!(e.contains("runner join"), "{e}");
@@ -297,21 +369,73 @@ fn a_service_is_refused_for_a_missing_foreign_local_or_login_started_runner() {
             "on Unix the service runs as the user and reaches its broker"
         );
     }
-    for user in ["root", r"NT AUTHORITY\SYSTEM"] {
-        let e = on(&context(user, &yes, &none), "box");
-        assert!(e.contains("never runs as"), "{user}: {e}");
+    for who in ["root", r"NT AUTHORITY\SYSTEM", "toor", r"PC\localsvc"] {
+        let e = run(&fake(), who, Switch::On, "box").unwrap_err();
+        assert!(e.contains("never runs as"), "{who}: {e}");
     }
+    let wrong = Fake {
+        dir: owned_by("S-1-5-21-1-1002"),
+        login: true,
+        ..fake()
+    };
     assert_eq!(
-        runner_service_for(
-            &layout,
-            Switch::Off,
-            "box",
-            true,
-            &context(&user, &no, &login)
-        ),
+        run(&wrong, &user, Switch::Off, "box"),
         Ok(0),
         "off removes the service whatever else is wrong"
     );
+}
+
+#[test]
+fn on_windows_the_key_is_handed_over_only_by_its_owner_and_given_back_to_the_service_owner() {
+    if !cfg!(windows) {
+        return;
+    }
+    let dir = TempDir::new("runner-service-key");
+    let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
+    joined_runner(&layout, "box");
+    let run = |f: &Fake, user: &str, switch: Switch| {
+        service_for(f, user, |ctx| {
+            runner_service_for(&layout, switch, "box", true, ctx)
+        })
+    };
+    let bob = Fake {
+        user_sid: "S-1-5-21-1-1002".into(),
+        dir: owned_by("S-1-5-21-1-1002"),
+        ..fake()
+    };
+    let e = run(&bob, r"PC\bob", Switch::On).unwrap_err();
+    assert!(
+        e.contains(r"PC\bob") && e.contains(ALEX),
+        "an administrator cannot hand alex's key over as himself: {e}"
+    );
+    let again = Fake {
+        key: KeyState::Unreadable,
+        service: Some(Some(r"PC\alex".into())),
+        ..fake()
+    };
+    assert_eq!(
+        run(&again, r"PC\alex", Switch::On),
+        Ok(0),
+        "a re-run over alex's own service"
+    );
+    let stranger = Fake {
+        key: KeyState::Unreadable,
+        ..fake()
+    };
+    assert!(run(&stranger, r"PC\alex", Switch::On)
+        .unwrap_err()
+        .contains("cannot read"));
+    let no_owner = Fake {
+        service: Some(None),
+        ..fake()
+    };
+    let e = run(&no_owner, r"PC\bob", Switch::Off).unwrap_err();
+    assert!(e.contains("takeown /F"), "{e}");
+    let installed = Fake {
+        service: Some(Some(r"PC\alex".into())),
+        ..fake()
+    };
+    assert_eq!(run(&installed, r"PC\bob", Switch::Off), Ok(0));
 }
 
 #[test]

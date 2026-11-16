@@ -133,6 +133,7 @@ struct Case {
     copy_fails: bool,
     pool: Vec<PoolRunner>,
     after_restart: Vec<PoolRunner>,
+    service_runner: Option<Option<bool>>,
 }
 
 struct Outcome {
@@ -152,7 +153,8 @@ struct Outcome {
 async fn run(case: Case) -> Outcome {
     let dir = TempDir::new("upgrade");
     let layout = with_runner(&dir);
-    let roles = FakeRoles::new(false, case.answers);
+    let mut roles = FakeRoles::new(false, case.answers);
+    roles.service_runner = case.service_runner;
     let lock = lr_cli::upgrade_lock::lock_path(&layout);
     *roles.lock_file.lock().unwrap() = Some(lock.clone());
     *roles.after_restart.lock().unwrap() = case.after_restart.clone();
@@ -236,6 +238,7 @@ fn case(old: &'static str, new: &'static str) -> Case {
         copy_fails: false,
         pool: Vec::new(),
         after_restart: Vec::new(),
+        service_runner: None,
     }
 }
 
@@ -708,6 +711,30 @@ async fn a_restarted_runner_of_this_installation_is_not_reported_as_still_on_the
     let said = report_of(&o);
     assert!(!said.contains("r1"), "{said}");
     assert!(said.contains("linux on ci-1: still on 0.1.0"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_service_is_not_started_again_nor_waited_for_and_its_restart_is_named() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.service_runner = Some(Some(true));
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), false)];
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(0), "the upgrade itself succeeded");
+    assert!(
+        started.elapsed() < RECONNECT_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(o.started.is_empty(), "no user copy: {:?}", o.started);
+    let said = o.said.join("\n");
+    assert!(
+        said.contains("runner r1 runs as the OS service")
+            && said.contains("restart it as administrator"),
+        "{said}"
+    );
+    assert!(!said.contains("did not reconnect"), "{said}");
 }
 
 #[tokio::test(start_paused = true)]

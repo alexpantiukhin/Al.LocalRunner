@@ -679,7 +679,7 @@ fn runner_service_plan_names_the_runner_and_state_dir() {
 #[test]
 fn runner_service_off_removes_only_that_runner() {
     for os in ALL {
-        let plan = runner_service::uninstall(&runner_service(os, "box"));
+        let plan = runner_service::uninstall(&runner_service(os, "box"), false);
         let text: Vec<String> = plan.iter().map(|a| a.to_string()).collect();
         let all = text.join("\n");
         assert!(!all.contains("Broker") && !all.contains("broker"), "{all}");
@@ -730,7 +730,7 @@ fn runner_service_off_removes_only_that_runner() {
         }
         let other = format!(
             "{:?}",
-            runner_service::uninstall(&runner_service(os, "gpu"))
+            runner_service::uninstall(&runner_service(os, "gpu"), true)
         );
         assert!(!other.contains("box"), "{os:?}: {other}");
     }
@@ -760,21 +760,29 @@ fn windows_runner_service_hands_the_runner_key_to_the_service_account_before_it_
         .iter()
         .position(|r| r.starts_with("sc.exe create"))
         .unwrap();
+    let take = at(&runs, &format!("takeown /F {key} /A"));
+    let grant = at(
+        &runs,
+        &format!(r"icacls {key} /inheritance:r /grant:r NT SERVICE\AlLocalRunner-box:(F)"),
+    );
+    let user_out = at(&runs, &format!("icacls {key} /remove alex"));
     let owner = at(
         &runs,
         &format!(r"icacls {key} /setowner NT SERVICE\AlLocalRunner-box"),
     );
-    let grant = at(
-        &runs,
-        &format!(r"icacls {key} /grant:r NT SERVICE\AlLocalRunner-box:(F)"),
-    );
-    let user_out = at(&runs, &format!("icacls {key} /remove alex"));
     let auto = at(&runs, "sc.exe config AlLocalRunner-box start= auto");
     let start = at(&runs, "sc.exe start AlLocalRunner-box");
     assert!(
-        create < owner && owner < grant && grant < user_out && user_out < auto && auto < start,
-        "the account exists before it owns the key, and the key is its own before the start: {runs:#?}"
+        create < take
+            && take < grant
+            && grant < user_out
+            && user_out < owner
+            && owner < auto
+            && auto < start,
+        "the administrators take the key first, so a re-run over a service that already owns it \
+         works; the key is the account's before the start: {runs:#?}"
     );
+    assert_key_steps_are_checked(&runner_service::install(&i), &key);
     for os in [Os::Linux, Os::MacOs] {
         let text = format!("{:?}", runner_service::install(&runner_service(os, "box")));
         assert!(
@@ -787,20 +795,281 @@ fn windows_runner_service_hands_the_runner_key_to_the_service_account_before_it_
 #[test]
 fn windows_runner_service_off_gives_the_key_back_while_the_account_still_exists() {
     let i = runner_service(Os::Windows, "box");
-    let plan = runner_service::uninstall(&i);
+    let plan = runner_service::uninstall(&i, true);
     let runs = runs(&plan);
     let key = key_of(&i);
     let stop = at(&runs, "sc.exe stop AlLocalRunner-box");
-    let owner = at(&runs, &format!("icacls {key} /setowner alex"));
-    let grant = at(&runs, &format!("icacls {key} /grant:r alex:(F)"));
+    let take = at(&runs, &format!("takeown /F {key} /A"));
+    let grant = at(
+        &runs,
+        &format!("icacls {key} /inheritance:r /grant:r alex:(F)"),
+    );
     let service_out = at(
         &runs,
         &format!(r"icacls {key} /remove NT SERVICE\AlLocalRunner-box"),
     );
+    let owner = at(&runs, &format!("icacls {key} /setowner alex"));
     let delete = at(&runs, "sc.exe delete AlLocalRunner-box");
     assert!(
-        stop < owner && owner < grant && grant < service_out && service_out < delete,
+        stop < take && take < grant && grant < service_out && service_out < owner && owner < delete,
         "{runs:#?}"
+    );
+    assert_key_steps_are_checked(&plan, &key);
+    let kept = format!("{:?}", runner_service::uninstall(&i, false));
+    assert!(
+        !kept.contains("participant.key"),
+        "no key to give back: {kept}"
+    );
+}
+
+fn assert_key_steps_are_checked(plan: &[Action], key: &str) {
+    let steps: Vec<&Action> = plan
+        .iter()
+        .filter(|a| matches!(a, Action::Run { args, .. } if args.iter().any(|w| w == key)))
+        .collect();
+    assert_eq!(steps.len(), 4, "{steps:#?}");
+    for a in steps {
+        assert!(
+            matches!(
+                a,
+                Action::Run {
+                    tolerate: Tolerate::Nothing,
+                    ..
+                }
+            ),
+            "a failed key step must stop the plan, not pass as success: {a}"
+        );
+    }
+}
+
+#[test]
+fn the_key_goes_to_the_service_only_from_its_owner_or_back_to_the_service_owner() {
+    use runner_service::{key_handover_refusal, restore_owner, KeyAccess, KeyState};
+    let alex = "S-1-5-21-1-1001";
+    let read = |owner: &str, allowed: &[&str]| {
+        KeyState::Read(KeyAccess {
+            owner: Some(owner.into()),
+            allowed: Some(allowed.iter().map(|s| s.to_string()).collect()),
+        })
+    };
+    assert_eq!(
+        key_handover_refusal("box", "PC\\alex", Some(alex), &read(alex, &[alex]), None),
+        None
+    );
+    assert_eq!(
+        key_handover_refusal(
+            "box",
+            "PC\\alex",
+            Some(alex),
+            &read("S-1-5-32-544", &[alex]),
+            None
+        ),
+        None,
+        "a key written from an elevated shell is owned by the administrators and still alex's"
+    );
+    let bob = key_handover_refusal(
+        "box",
+        "PC\\bob",
+        Some("S-1-5-21-1-1002"),
+        &read(alex, &[alex]),
+        None,
+    )
+    .unwrap();
+    assert!(
+        bob.contains("PC\\bob") && bob.contains(alex) && bob.contains("runner box"),
+        "{bob}"
+    );
+    assert_eq!(
+        key_handover_refusal(
+            "box",
+            "PC\\alex",
+            Some(alex),
+            &KeyState::Unreadable,
+            Some(Some("PC\\alex".into()))
+        ),
+        None,
+        "a re-run over the service of the same user: the account holds the key"
+    );
+    for service in [None, Some(None), Some(Some("PC\\bob".into()))] {
+        let e = key_handover_refusal(
+            "box",
+            "PC\\alex",
+            Some(alex),
+            &KeyState::Unreadable,
+            service.clone(),
+        )
+        .unwrap();
+        assert!(e.contains("cannot read"), "{service:?}: {e}");
+    }
+    let missing =
+        key_handover_refusal("box", "PC\\alex", Some(alex), &KeyState::Missing, None).unwrap();
+    assert!(missing.contains("runner join"), "{missing}");
+
+    let key = Path::new(r"C:\Users\alex\state\runner\box\participant.key");
+    assert_eq!(
+        restore_owner("box", key, false, Some(Some("PC\\alex".into()))),
+        Ok(None)
+    );
+    assert_eq!(
+        restore_owner("box", key, true, None),
+        Ok(None),
+        "no service, nothing to give back"
+    );
+    assert_eq!(
+        restore_owner("box", key, true, Some(Some("PC\\alex".into()))),
+        Ok(Some("PC\\alex".into())),
+        "the key goes back to the user the service was installed for, not to whoever runs off"
+    );
+    let unknown = restore_owner("box", key, true, Some(None)).unwrap_err();
+    assert!(
+        unknown.contains("takeown /F") && unknown.contains("<user>"),
+        "{unknown}"
+    );
+}
+
+#[test]
+fn the_service_owner_is_read_from_the_service_command_line() {
+    let qc = "[SC] QueryServiceConfig SUCCESS\r\n\r\nSERVICE_NAME: AlLocalRunner-box\r\n        TYPE               : 10  WIN32_OWN_PROCESS\r\n        BINARY_PATH_NAME   : C:\\bin\\localrunner.exe runner run --name box --service --owner PC\\alex --state-dir C:\\s\r\n        SERVICE_START_NAME : NT SERVICE\\AlLocalRunner-box\r\n";
+    assert_eq!(
+        runner_service::owner_from_service_config(qc),
+        Some("PC\\alex".into())
+    );
+    let quoted = "        BINARY_PATH_NAME   : \"C:\\Program Files\\lr.exe\" runner run --name box --service --owner \"PC\\alex smith\" --state-dir \"C:\\my state\"\r\n";
+    assert_eq!(
+        runner_service::owner_from_service_config(quoted),
+        Some("PC\\alex smith".into())
+    );
+    assert_eq!(
+        runner_service::owner_from_service_config(
+            "        BINARY_PATH_NAME   : C:\\bin\\localrunner.exe runner run --name box --service\r\n"
+        ),
+        None
+    );
+}
+
+#[test]
+fn the_key_given_back_is_checked_and_a_failure_prints_the_manual_command() {
+    use runner_service::{key_recovery, restore_verdict, KeyAccess, KeyState};
+    let alex = "S-1-5-21-1-1001";
+    let service = "S-1-5-80-1";
+    let key = Path::new(r"C:\s\runner\box\participant.key");
+    let held = |owner: &str, allowed: &[&str]| {
+        KeyState::Read(KeyAccess {
+            owner: Some(owner.into()),
+            allowed: Some(allowed.iter().map(|s| s.to_string()).collect()),
+        })
+    };
+    let command = key_recovery(key, "PC\\alex", r"NT SERVICE\AlLocalRunner-box");
+    assert_eq!(
+        command,
+        r#"takeown /F "C:\s\runner\box\participant.key" /A; icacls "C:\s\runner\box\participant.key" /inheritance:r /grant:r "PC\alex:(F)"; icacls "C:\s\runner\box\participant.key" /remove "NT SERVICE\AlLocalRunner-box"; icacls "C:\s\runner\box\participant.key" /setowner "PC\alex""#
+    );
+    let ok = restore_verdict(
+        "box",
+        key,
+        &held(alex, &[alex]),
+        "PC\\alex",
+        Some(alex),
+        r"NT SERVICE\AlLocalRunner-box",
+    );
+    assert_eq!(ok, Ok(None));
+    for wrong in [
+        held(service, &[service]),
+        held(alex, &[alex, service]),
+        held(alex, &[]),
+    ] {
+        let e = restore_verdict(
+            "box",
+            key,
+            &wrong,
+            "PC\\alex",
+            Some(alex),
+            r"NT SERVICE\AlLocalRunner-box",
+        )
+        .unwrap_err();
+        assert!(e.contains("runner box") && e.ends_with(&command), "{e}");
+    }
+    let note = restore_verdict(
+        "box",
+        key,
+        &KeyState::Unreadable,
+        "PC\\alex",
+        Some(alex),
+        r"NT SERVICE\AlLocalRunner-box",
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        note.contains("icacls") && note.contains("PC\\alex"),
+        "{note}"
+    );
+}
+
+#[test]
+fn a_failed_windows_install_names_the_command_that_cleans_up() {
+    let e = runner_service::install_failure(Os::Windows, "box", "icacls ...: exit 5".into());
+    assert!(
+        e.starts_with("icacls ...: exit 5")
+            && e.contains("localrunner autostart off runner box --service"),
+        "{e}"
+    );
+}
+
+#[test]
+fn root_is_refused_by_its_id_as_well_as_by_its_name() {
+    for (user, id) in [("toor", "0"), ("svc", "S-1-5-18")] {
+        let e = runner_service::identity_refusal(user, Some(id)).unwrap();
+        assert!(e.contains(user), "{e}");
+    }
+    assert_eq!(runner_service::identity_refusal("alex", Some("1000")), None);
+    assert!(runner_service::identity_refusal("root", None).is_some());
+}
+
+#[test]
+fn a_directory_belongs_to_the_user_by_its_owner_id() {
+    use runner_service::{dir_owned, KeyAccess, KeyState};
+    let owned = |owner: &str| {
+        KeyState::Read(KeyAccess {
+            owner: Some(owner.into()),
+            allowed: None,
+        })
+    };
+    assert!(dir_owned(Os::Linux, &owned("1000"), Some("1000")));
+    assert!(!dir_owned(Os::Linux, &owned("0"), Some("1000")));
+    assert!(dir_owned(
+        Os::Windows,
+        &owned("S-1-5-21-1"),
+        Some("S-1-5-21-1")
+    ));
+    assert!(dir_owned(
+        Os::Windows,
+        &owned("S-1-5-32-544"),
+        Some("S-1-5-21-1")
+    ));
+    assert!(!dir_owned(
+        Os::Windows,
+        &owned("S-1-5-21-2"),
+        Some("S-1-5-21-1")
+    ));
+    assert!(!dir_owned(
+        Os::Windows,
+        &KeyState::Unreadable,
+        Some("S-1-5-21-1")
+    ));
+    assert!(!dir_owned(Os::Linux, &owned("1000"), None));
+}
+
+#[test]
+fn a_login_autostart_is_refused_for_a_runner_that_is_an_os_service() {
+    let e = runner_service::service_conflict(Os::Linux, "box", true).unwrap();
+    assert!(
+        e.contains("al-localrunner-runner-box")
+            && e.contains("localrunner autostart off runner box --service"),
+        "{e}"
+    );
+    assert_eq!(
+        runner_service::service_conflict(Os::Linux, "box", false),
+        None
     );
 }
 
