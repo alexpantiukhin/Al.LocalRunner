@@ -357,7 +357,7 @@ impl Job<'_> {
             return Ok(1);
         };
         if mode == Mode::Cancel {
-            for line in self.activity.cancel_lines() {
+            for line in self.activity.cancel_lines(&self.running.runners) {
                 roles.say(&line);
             }
         }

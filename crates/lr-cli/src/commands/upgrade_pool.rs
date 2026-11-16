@@ -40,7 +40,13 @@ const LOCAL: &str = "local:";
 /// or not reported.
 pub fn is_own(row: &PoolRunner, name: &str) -> bool {
     let here = row.machine.as_deref().is_none_or(|m| m.starts_with(LOCAL));
-    here && (row.name == name || row.name.strip_prefix(LOCAL) == Some(name))
+    here && is_own_name(&row.name, name)
+}
+
+/// Whether the broker's name `listed` of a runner is runner `name` of this installation: `name`
+/// itself, or `local:name` when it connected over local IPC.
+pub fn is_own_name(listed: &str, name: &str) -> bool {
+    listed == name || listed.strip_prefix(LOCAL) == Some(name)
 }
 
 /// The runners of the brokers the hub knows, without those of this installation named in `own`

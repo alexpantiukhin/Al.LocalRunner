@@ -9,7 +9,7 @@ use lr_cli::commands::upgrade_cmd::{
     parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
     Verdict,
 };
-use lr_cli::commands::upgrade_jobs::Activity;
+use lr_cli::commands::upgrade_jobs::{pages, Activity, RunningJob};
 use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner, Reconnected};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
@@ -296,6 +296,10 @@ async fn an_idle_node_is_only_replaced() {
 fn busy() -> Activity {
     Activity {
         running: vec!["j1 on r1 (tests)".into()],
+        running_jobs: vec![RunningJob {
+            job: "j1".into(),
+            runner: Some("local:r1".into()),
+        }],
         queued: vec!["j2".into(), "j3".into()],
         note: None,
     }
@@ -851,4 +855,77 @@ async fn upgrade_cancel_lists_the_cancelled_and_the_queued_orders() {
     let lines = busy().lines().join("\n");
     assert!(lines.contains("waiting orders: 2"), "{lines}");
     assert!(lines.contains("j2, j3"), "{lines}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_cancel_names_only_the_jobs_of_the_runners_it_stops() {
+    let mut c = busy_case();
+    c.cancel = true;
+    c.activity.running.push("j9 on r7 (tests)".into());
+    c.activity.running_jobs.push(RunningJob {
+        job: "j9".into(),
+        runner: Some("r7".into()),
+    });
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(o.said.iter().any(|l| l == "cancelling: j1"), "{:?}", o.said);
+    assert!(
+        o.said.iter().any(|l| l == "still running elsewhere: j9"),
+        "{:?}",
+        o.said
+    );
+    let local = run({
+        let mut c = busy_case();
+        c.cancel = true;
+        c
+    })
+    .await;
+    assert!(
+        !local
+            .said
+            .iter()
+            .any(|l| l.starts_with("still running elsewhere")),
+        "{:?}",
+        local.said
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_page_of_the_queue_is_read_and_listed() {
+    let ids: Vec<String> = (1..=120).map(|i| format!("q{i}")).collect();
+    let asked = Mutex::new(Vec::new());
+    let (all, asked_ref) = (&ids, &asked);
+    let read = pages(|cursor: Option<String>| async move {
+        asked_ref.lock().unwrap().push(cursor.clone());
+        let from: usize = cursor.map_or(0, |c| c.parse().unwrap());
+        let to = (from + 50).min(all.len());
+        let next = (to < all.len()).then(|| to.to_string());
+        Ok((all[from..to].to_vec(), next))
+    })
+    .await
+    .unwrap();
+    assert_eq!(read.concat(), ids);
+    assert_eq!(
+        asked.lock().unwrap().clone(),
+        vec![None, Some("50".to_string()), Some("100".to_string())]
+    );
+    let activity = Activity {
+        queued: read.concat(),
+        ..Activity::default()
+    };
+    let lines = activity.cancel_lines(&Default::default());
+    assert_eq!(
+        lines.last().unwrap(),
+        &format!("staying queued: {}", ids.join(", "))
+    );
+    let stuck = pages(|_cursor: Option<String>| async {
+        Ok((vec!["x".to_string()], Some("same".to_string())))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        stuck.len(),
+        2,
+        "a token that comes back unchanged ends the reading"
+    );
 }
