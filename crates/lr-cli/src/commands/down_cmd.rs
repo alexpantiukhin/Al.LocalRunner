@@ -7,7 +7,7 @@
 
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
-use crate::os_service::state::{restart_command, service_running};
+use crate::os_service::state::{restart_command, service_running, status_command};
 use crate::os_service::{service_installed, Os};
 use crate::paths::Layout;
 use async_trait::async_trait;
@@ -334,8 +334,22 @@ pub enum ServiceState {
     Answers,
     /// It is installed and does not run.
     InstalledNotAnswering,
+    /// It is installed and neither its IPC nor the service manager told whether it runs.
+    InstalledStateUnknown,
     /// No service is installed.
     NotInstalled,
+}
+
+/// The state of the broker service from what could be learned without administrator rights:
+/// whether its normal IPC answered, what the service manager said (`None`: it could not be
+/// asked) and whether the service is installed.
+pub fn service_state(ipc_answers: bool, manager: Option<bool>, installed: bool) -> ServiceState {
+    match (ipc_answers, manager, installed) {
+        (true, _, _) | (_, Some(true), _) => ServiceState::Answers,
+        (_, _, false) => ServiceState::NotInstalled,
+        (_, Some(false), true) => ServiceState::InstalledNotAnswering,
+        (_, None, true) => ServiceState::InstalledStateUnknown,
+    }
 }
 
 /// What `down broker` says of a broker it could not reach on the admin channel; `None` when
@@ -350,6 +364,10 @@ pub fn unreachable_broker(state: ServiceState, os: Os) -> Option<String> {
             "broker: installed as an OS service and not running; `down` has nothing to stop"
                 .into(),
         ),
+        ServiceState::InstalledStateUnknown => Some(format!(
+            "broker: installed as an OS service; down cannot tell whether it runs (the service manager did not answer an unprivileged query) and its admin channel is open only to an administrator. Check it from an elevated shell: {}",
+            status_command(os)
+        )),
         ServiceState::NotInstalled => None,
     }
 }
@@ -399,15 +417,12 @@ impl Roles for IpcRoles<'_> {
         if !self.layout.broker_is_service() {
             return ServiceState::NotInstalled;
         }
-        if super::admin_cmd::service_running(self.layout).await
-            || service_running(Os::current()) == Some(true)
-        {
-            return ServiceState::Answers;
-        }
-        match service_installed(Os::current()) {
-            true => ServiceState::InstalledNotAnswering,
-            false => ServiceState::NotInstalled,
-        }
+        let os = Os::current();
+        service_state(
+            super::admin_cmd::service_running(self.layout).await,
+            service_running(os),
+            service_installed(os),
+        )
     }
 }
 

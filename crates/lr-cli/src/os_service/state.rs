@@ -48,6 +48,16 @@ pub fn service_running(os: Os) -> Option<bool> {
     }
 }
 
+/// The command that shows the state of the broker service, for an elevated shell.
+pub fn status_command(os: Os) -> String {
+    let name = service_name(os);
+    match os {
+        Os::Windows => format!("Get-Service {name}"),
+        Os::Linux => format!("sudo systemctl status {name}"),
+        Os::MacOs => format!("sudo launchctl print system/{name}"),
+    }
+}
+
 /// The command that restarts the broker service, for an elevated shell.
 pub fn restart_command(os: Os) -> String {
     let name = service_name(os);

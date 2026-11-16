@@ -210,7 +210,7 @@ localrunner broker install-service --dry-run
 localrunner broker install-service
 ```
 
-Remove the service with `localrunner autostart off broker` or `uninstall`. `down` does not stop the service: use the OS service manager. `up` does not start it. Configuration: `policy.toml` in the broker's state directory. Without the file the defaults apply. Main tables:
+Remove the service with `localrunner autostart off broker` or `uninstall`. `down` does not stop the service: use the OS service manager. Without administrator rights `down broker` names the running service and prints the command that restarts it from an elevated shell (exit code 1). `up` does not start it. Configuration: `policy.toml` in the broker's state directory. Without the file the defaults apply. Main tables:
 
 | Table | Purpose |
 |---|---|

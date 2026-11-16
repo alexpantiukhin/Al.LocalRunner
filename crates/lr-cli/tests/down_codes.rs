@@ -2,10 +2,13 @@ mod common;
 
 use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
-use lr_cli::commands::down_cmd::{down, down_with, ServiceState};
+use lr_cli::commands::down_cmd::{down, down_with, service_state, ServiceState};
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
-use lr_cli::os_service::{state::restart_command, Os};
+use lr_cli::os_service::{
+    state::{restart_command, status_command},
+    Os,
+};
 use lr_cli::paths::Layout;
 use lr_proto::DownMode;
 use std::future::pending;
@@ -185,10 +188,7 @@ async fn down_broker_names_a_running_service_it_cannot_reach() {
     )
     .await;
     assert_eq!(code, Ok(1));
-    let said = roles.said_err().join(
-        "
-",
-    );
+    let said = roles.said_err().join("\n");
     let want = format!(
         "broker: running as an OS service; its admin channel is open only to an administrator, so down cannot stop it from here. Restart it from an elevated shell: {}",
         restart_command(Os::current())
@@ -204,13 +204,7 @@ async fn a_bare_down_names_the_unreachable_service_and_keeps_code_0() {
     let roles = FakeRoles::unreachable_broker(ServiceState::Answers);
     let code = down_with(&layout, Vec::new(), false, &roles, pending::<()>()).await;
     assert_eq!(code, Ok(0));
-    assert!(roles
-        .said()
-        .join(
-            "
-"
-        )
-        .contains("admin channel"));
+    assert!(roles.said().join("\n").contains("admin channel"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -239,10 +233,7 @@ async fn down_broker_still_says_not_running_when_nothing_answers() {
     )
     .await;
     assert_eq!(code, Ok(1));
-    let said = stopped.said_err().join(
-        "
-",
-    );
+    let said = stopped.said_err().join("\n");
     assert!(
         said.contains("installed as an OS service and not running"),
         "{said}"
@@ -286,5 +277,56 @@ async fn up_broker_and_down_broker_agree() {
         stopped.said_err()[0].starts_with(up_head),
         "{:?}",
         stopped.said_err()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_installed_service_whose_state_cannot_be_read_is_not_called_stopped() {
+    let dir = TempDir::new("down-unknown");
+    let layout = layout(&dir);
+    let roles = FakeRoles::unreachable_broker(ServiceState::InstalledStateUnknown);
+    let code = down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(1));
+    let want = format!(
+        "broker: installed as an OS service; down cannot tell whether it runs (the service manager did not answer an unprivileged query) and its admin channel is open only to an administrator. Check it from an elevated shell: {}",
+        status_command(Os::current())
+    );
+    assert_eq!(roles.said_err(), vec![want]);
+
+    let bare = FakeRoles::unreachable_broker(ServiceState::InstalledStateUnknown);
+    let code = down_with(&layout, Vec::new(), false, &bare, pending::<()>()).await;
+    assert_eq!(code, Ok(0));
+    assert!(!bare.said().join("\n").contains("not running"));
+}
+
+#[test]
+fn an_unreadable_service_manager_is_told_apart_from_a_stopped_service() {
+    assert_eq!(service_state(true, None, true), ServiceState::Answers);
+    assert_eq!(
+        service_state(false, Some(true), true),
+        ServiceState::Answers
+    );
+    assert_eq!(
+        service_state(false, Some(false), true),
+        ServiceState::InstalledNotAnswering
+    );
+    assert_eq!(
+        service_state(false, None, true),
+        ServiceState::InstalledStateUnknown
+    );
+    assert_eq!(
+        service_state(false, None, false),
+        ServiceState::NotInstalled
+    );
+    assert_eq!(
+        service_state(false, Some(false), false),
+        ServiceState::NotInstalled
     );
 }
