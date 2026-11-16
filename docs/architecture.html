@@ -966,7 +966,8 @@ volumes:
 <tr><td><code>jobs --mine [--as метка] [--active]</code></td><td>свои джобы (метка <code>--as</code> и пользователь ОС; без <code>--as</code> — метка последней по времени подачи ручки в <code>temp/runner/</code> текущего каталога)</td></tr>
 <tr><td><code>cancel &lt;job-id&gt; --as метка</code></td><td><code>cancel --mine --as метка [--yes]</code> — все свои активные (спрашивает подтверждение); <code>--force</code> для чужой метки, <code>--reason</code> записывается в лог</td></tr>
 <tr><td><code>status [--html [путь] [--history] [--with-logs]] [--project] [--source] [--as] [--broker]</code></td><td>очередь и выполняющиеся джобы с шагами и причиной ожидания; <code>--html</code> пишет снимок страницы (9.1) и печатает путь; брокер, к которому hub не подключён, печатается как <code>broker &lt;имя&gt; unreachable since &lt;время&gt;</code></td></tr>
-<tr><td><code>explain &lt;job-id&gt; [--broker]</code></td><td>почему заказ ждёт, с названием сработавшего правила политики</td></tr>
+<tr><td><code>explain &lt;job-id&gt; [--broker]</code></td><td>почему заказ ждёт, с названием сработавшего правила политики; для заказа, выданного раннеру, сколько он ждёт старта и когда раннер отвечал в последний раз; для <code>раннер занят</code> — какая джоба держит слот</td></tr>
+<tr><td><code>status &lt;job-id&gt; [--broker]</code></td><td>одна джоба: текст <code>explain</code> и запись <code>history show</code>; обычный <code>status</code> ещё перечисляет раннеры <code>stale</code> и <code>offline</code> (в <code>--json</code> массив <code>runners</code> у брокера)</td></tr>
 <tr><td><code>history [фильтры] [--all] [--broker]</code></td><td>свои запуски, новые первыми; <code>--all</code> — всё, что разрешает видимость; <code>history show &lt;job-id&gt;</code> — полная запись; фильтры: проект, источник, метка, профиль, результат (в том числе <code>lost</code>), период (<code>--since</code>), платформа, раннер, клиент</td></tr>
 <tr><td><code>log &lt;job-id&gt; [--step имя] [--tail N] [-f] [--broker]</code></td><td>сохранённый лог; с <code>-f</code> для идущей джобы следит за ним до конца; секреты маскируются (точные значения, на всю джобу, см. 3.13)</td></tr>
 <tr><td><code>stats [--project] [--profile] [--client] [--since] [--broker]</code></td><td>статистика и насыщение пула</td></tr>
@@ -1534,3 +1535,4 @@ spy();
 </script>
 </body>
 </html>
+

@@ -9,8 +9,8 @@ use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, JobRow, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
     split_text, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall,
-    ReadReply, ReadRequest, RunningView, StatsFilter, StatusFilter, StatusView, WireSource,
-    CHUNK_TEXT_LIMIT,
+    ReadReply, ReadRequest, RunnerLiveness, RunningView, StatsFilter, StatusFilter, StatusView,
+    WireSource, CHUNK_TEXT_LIMIT,
 };
 
 pub(super) const SCAN_LIMIT: usize = 10_000;
@@ -338,13 +338,16 @@ impl Engine {
         let key = &rec.job.key;
         let text = match self.find(key) {
             Some(j) if j.runner.is_none() => match (a.sees_fields(), self.waits.get(key)) {
-                (true, Some(w)) => format!("ждёт: {w}"),
+                (true, Some(w)) => {
+                    let holders = match self.wait_codes.get(key) {
+                        Some(&"runner_busy") => self.holders_text(viewer),
+                        _ => String::new(),
+                    };
+                    format!("ждёт: {w}{holders}")
+                }
                 _ => "ждёт в очереди".to_string(),
             },
-            Some(j) if j.started_at.is_none() => format!(
-                "выдан раннеру {}, ждёт старта",
-                j.runner.as_deref().unwrap_or_default()
-            ),
+            Some(j) if j.started_at.is_none() => self.granted_text(j),
             Some(j) => format!(
                 "выполняется на раннере {}",
                 j.runner.as_deref().unwrap_or_default()
@@ -360,6 +363,53 @@ impl Engine {
         ReadReply::Explain { job, text }
     }
 
+    fn holders_text(&self, viewer: &Viewer) -> String {
+        let now = self.now();
+        let holders: Vec<String> = self
+            .active
+            .iter()
+            .filter(|h| h.runner.is_some())
+            .map(|h| {
+                let since = h.started_at.unwrap_or(h.assigned_at);
+                let mut text = match self.access_to(viewer, &h.key.client) {
+                    Access::Hidden => "чужим заказом".to_string(),
+                    _ => format!("заказом {}", h.key.job),
+                };
+                let age = age_text(now.millis_since(since));
+                if h.started_at.is_some() {
+                    text.push_str(&format!(" ({age})"));
+                } else {
+                    text.push_str(&format!(" (выдан, не начат, {age})"));
+                }
+                text
+            })
+            .collect();
+        if holders.is_empty() {
+            return String::new();
+        }
+        format!(" {}", holders.join(", "))
+    }
+
+    fn granted_text(&self, j: &super::Job) -> String {
+        let now = self.now();
+        let runner = j.runner.as_deref().unwrap_or_default();
+        let mut text = format!(
+            "выдан раннеру {runner}, ждёт старта уже {}",
+            age_text(now.millis_since(j.assigned_at))
+        );
+        if let Some(slot) = self.runners.get(runner) {
+            text.push_str(&format!(
+                "; раннер отвечал {} назад",
+                age_text(now.millis_since(slot.last_heard))
+            ));
+            match slot.liveness(now) {
+                RunnerLiveness::Online => {}
+                RunnerLiveness::Stale => text.push_str(" (stale)"),
+                RunnerLiveness::Offline => text.push_str(" (offline)"),
+            }
+        }
+        text
+    }
     pub(crate) async fn log(
         &self,
         viewer: &Viewer,
@@ -451,6 +501,14 @@ fn finished_text(row: &JobRow, full: bool) -> String {
         text.push_str(&format!("; {peaks}"));
     }
     text
+}
+
+fn age_text(ms: u64) -> String {
+    match ms / 1000 {
+        0..=59 => format!("{} с", ms / 1000),
+        60..=3599 => format!("{} мин", ms / 60_000),
+        _ => format!("{} ч {} мин", ms / 3_600_000, ms / 60_000 % 60),
+    }
 }
 
 fn not_found(job: &JobId) -> ReadReply {

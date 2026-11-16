@@ -1,17 +1,18 @@
 //! `status` and `brokers` (spec 9.1, 11.1): text for people, `--json` for agents. Every job of
 //! the JSON carries its project, source and label (absent values are `null`).
 
+use super::history_cmd::show_lines;
 use super::jobs::hub;
 use super::log_cmd::cli_redactor;
-use super::timefmt::format_ms;
+use super::timefmt::{format_ms, format_time};
 use super::SourceArg;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
-use lr_core::Timestamp;
+use lr_core::{JobId, Timestamp};
 use lr_obs::Redactor;
 use lr_proto::{
-    BrokerStatus, CliRead, CliReply, CliRequest, JobSummary, ReadReply, ReadRequest, StatusFilter,
-    StatusView, WireSource,
+    BrokerStatus, CliRead, CliReply, CliRequest, JobDetail, JobSummary, ReadReply, ReadRequest,
+    RunnerInfo, RunnerLiveness, StatusFilter, StatusView, WireSource,
 };
 use serde_json::{json, Map, Value};
 
@@ -211,6 +212,143 @@ pub fn problem(broker: &str, reply: &ReadReply) -> String {
     }
 }
 
+/// The runners of an answer to `Runners`; `None` for a broker that does not know the request.
+pub fn runners_of(reply: ReadReply) -> Option<Vec<RunnerInfo>> {
+    match reply {
+        ReadReply::Runners { runners } => Some(runners),
+        _ => None,
+    }
+}
+
+fn not_serving(r: &RunnerInfo) -> Option<&'static str> {
+    match (r.liveness, r.online) {
+        (Some(RunnerLiveness::Stale), _) => Some("stale"),
+        (Some(RunnerLiveness::Offline), _) | (None, false) => Some("offline"),
+        _ => None,
+    }
+}
+
+/// Adds `runners` to every broker of a `status --json` document that answered `Runners`: the
+/// runners that are `stale` or `offline`, with their last seen time and the silence in seconds.
+pub fn add_runners(doc: &mut Value, per: &[(String, Vec<RunnerInfo>)]) {
+    let Some(brokers) = doc["brokers"].as_array_mut() else {
+        return;
+    };
+    for b in brokers {
+        let Some((_, runners)) = per.iter().find(|(name, _)| b["broker"] == name.as_str()) else {
+            continue;
+        };
+        let listed: Vec<Value> = runners
+            .iter()
+            .filter_map(|r| {
+                not_serving(r).map(|state| {
+                    json!({
+                        "name": r.name,
+                        "liveness": state,
+                        "last_seen": r.last_seen,
+                        "silent_for_s": r.silent_for_s,
+                    })
+                })
+            })
+            .collect();
+        b["runners"] = json!(listed);
+    }
+}
+
+/// The lines of `status` for runners that are `stale` or `offline`; empty when all serve.
+pub fn not_serving_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (broker, runners) in per {
+        let bad: Vec<(&RunnerInfo, &str)> = runners
+            .iter()
+            .filter_map(|r| not_serving(r).map(|s| (r, s)))
+            .collect();
+        if bad.is_empty() {
+            continue;
+        }
+        out.push(format!("broker {broker}: runners that do not take work"));
+        for (r, state) in bad {
+            let silent = r.silent_for_s.map_or(String::new(), |s| {
+                format!(", silent {}", format_ms(s * 1000))
+            });
+            out.push(format!(
+                "  {}  {state}  last seen {}{silent}",
+                r.name,
+                r.last_seen.map_or("-".into(), format_time)
+            ));
+        }
+    }
+    out
+}
+
+/// The lines of `status <job>`: the `explain` text and the record of `history show`, when the
+/// broker gave one.
+pub fn job_lines(broker: &str, job: &JobId, text: &str, detail: Option<&JobDetail>) -> Vec<String> {
+    let mut out = vec![format!("{job} (broker {broker}): {text}")];
+    if let Some(d) = detail {
+        out.extend(show_lines(broker, d));
+    }
+    out
+}
+
+/// `status <job>`: the answer of the first broker that has the job.
+pub async fn status_job(
+    layout: &Layout,
+    job: String,
+    broker: Option<String>,
+    json_out: bool,
+) -> Result<i32, String> {
+    let client = hub(layout).await?;
+    let found = find_job(&client, &JobId(job.clone()), broker.as_deref()).await;
+    client.close().await;
+    let (b, text, detail) = found?;
+    if json_out {
+        print_json(&json!({ "broker": b, "job": job, "text": text, "detail": detail }))?;
+    } else {
+        for l in job_lines(&b, &JobId(job), &text, detail.as_ref()) {
+            println!("{l}");
+        }
+    }
+    Ok(0)
+}
+
+async fn find_job(
+    client: &IpcClient,
+    job: &JobId,
+    broker: Option<&str>,
+) -> Result<(String, String, Option<JobDetail>), String> {
+    let (names, mut problems) = reachable(client, broker).await?;
+    let plain = format!("job {job}");
+    for b in names {
+        let ask = ReadRequest::Explain {
+            job: job.clone(),
+            client: None,
+        };
+        match read(client, &b, ask).await {
+            Ok(ReadReply::Explain { text, .. }) => {
+                let show = ReadRequest::HistoryShow {
+                    job: job.clone(),
+                    client: None,
+                };
+                let detail = match read(client, &b, show).await {
+                    Ok(ReadReply::Job(d)) => Some(*d),
+                    _ => None,
+                };
+                return Ok((b, text, detail));
+            }
+            Ok(ReadReply::NotFound { what }) if what == plain => {}
+            Ok(ReadReply::NotFound { what }) => problems.push(format!("broker {b}: {what}")),
+            Ok(other) => problems.push(problem(&b, &other)),
+            Err(e) => problems.push(e),
+        }
+    }
+    problems.insert(
+        0,
+        format!("job {job} is not found on the brokers of this hub"),
+    );
+    Err(problems.join("\n"))
+}
+
 /// Prints `value` as pretty JSON.
 pub fn print_json(value: &impl serde::Serialize) -> Result<(), String> {
     println!(
@@ -272,12 +410,21 @@ pub async fn status(
             Err(e) => problems.push(e),
         }
     }
+    let mut per_runners = Vec::new();
+    for (name, _) in &views {
+        if let Ok(reply) = read(&client, name, ReadRequest::Runners).await {
+            if let Some(runners) = runners_of(reply) {
+                per_runners.push((name.clone(), runners));
+            }
+        }
+    }
     mask_status(&mut views, &cli_redactor(layout));
     let now = super::timefmt::now();
     let drift = crate::config_drift::lines(layout).await;
     if json_out {
         let mut out = status_json(&views);
         add_ages(&mut out, now);
+        add_runners(&mut out, &per_runners);
         out["config_drift"] = json!(drift);
         if let Some(lock) = crate::upgrade_lock::live_here(layout) {
             out["upgrade"] = json!(crate::upgrade_lock::describe(&lock));
@@ -294,6 +441,9 @@ pub async fn status(
         let text = status_text(&views, now);
         if !text.is_empty() {
             println!("{text}");
+        }
+        for line in not_serving_lines(&per_runners) {
+            println!("{line}");
         }
         for line in &drift {
             println!("warn: {line}");

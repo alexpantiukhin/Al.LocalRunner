@@ -966,7 +966,8 @@ volumes:
 <tr><td><code>jobs --mine [--as label] [--active]</code></td><td>own jobs (the <code>--as</code> label and the OS user; without <code>--as</code>, the label of the handle most recently submitted in <code>temp/runner/</code> of the current directory)</td></tr>
 <tr><td><code>cancel &lt;job-id&gt; --as label</code></td><td><code>cancel --mine --as label [--yes]</code> cancels all own active jobs (asks for confirmation); <code>--force</code> for another label, <code>--reason</code> is written to the log</td></tr>
 <tr><td><code>status [--html [path] [--history] [--with-logs]] [--project] [--source] [--as] [--broker]</code></td><td>the queue and running jobs with steps and the reason for waiting; <code>--html</code> writes a page snapshot (9.1) and prints the path; a broker the hub is not connected to is printed as <code>broker &lt;name&gt; unreachable since &lt;time&gt;</code></td></tr>
-<tr><td><code>explain &lt;job-id&gt; [--broker]</code></td><td>why an order waits, with the name of the policy rule that applied</td></tr>
+<tr><td><code>explain &lt;job-id&gt; [--broker]</code></td><td>why an order waits, with the name of the policy rule that applied; for an order granted to a runner, how long it waits for the start and when the runner last answered; for <code>runner busy</code>, the job that holds the slot</td></tr>
+<tr><td><code>status &lt;job-id&gt; [--broker]</code></td><td>one job: the <code>explain</code> text and the record of <code>history show</code>; plain <code>status</code> also lists the <code>stale</code> and <code>offline</code> runners (<code>runners</code> per broker in <code>--json</code>)</td></tr>
 <tr><td><code>history [filters] [--all] [--broker]</code></td><td>own runs, newest first; <code>--all</code> shows everything that visibility allows; <code>history show &lt;job-id&gt;</code> shows the full record; filters: project, source, label, profile, result (including <code>lost</code>), period (<code>--since</code>), platform, runner, client</td></tr>
 <tr><td><code>log &lt;job-id&gt; [--step name] [--tail N] [-f] [--broker]</code></td><td>the saved log; with <code>-f</code> for a running job it follows the log to the end; secrets are masked (exact values, job-wide, see 3.13)</td></tr>
 <tr><td><code>stats [--project] [--profile] [--client] [--since] [--broker]</code></td><td>statistics and pool saturation</td></tr>
@@ -1534,3 +1535,4 @@ spy();
 </script>
 </body>
 </html>
+

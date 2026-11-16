@@ -552,7 +552,7 @@ All commands:
 | `log <job> [--step name] [--tail N] [-f]` | the job log |
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
-| `status`, `explain <job>` | the queue; why an order waits |
+| `status`, `status <job>`, `explain <job>` | the queue with the `stale` and `offline` runners (`--json`: a `runners` array per broker); one job with its record; why an order waits, how long it has waited for a runner to start it, and which job holds the slot |
 | `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "by commit" or "by work tree", arguments), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
 | `history [--all]`, `history show <job>` | history |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
@@ -571,3 +571,4 @@ Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lower
 ## License
 
 GPL-3.0-or-later: see [LICENSE](LICENSE). Additional terms (keep the author attribution in copies and documentation): [NOTICE](NOTICE).
+

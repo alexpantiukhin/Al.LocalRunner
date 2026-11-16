@@ -171,6 +171,12 @@ async fn status_jobs_and_brokers_filter_and_print_json_through_the_hub() {
 
     let all = cli(&dir, &repo, &["status", "--json"]);
     assert_eq!(status_jobs(&all), sorted(&[&a, &o, &c]));
+    assert!(all["brokers"][0]["runners"].as_array().unwrap().is_empty());
+    let one = cli(&dir, &repo, &["status", &a.0, "--json"]);
+    assert_eq!(one["broker"], "local");
+    assert_eq!(one["job"], a.0.as_str());
+    assert!(one["text"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(one["detail"]["summary"]["job"], a.0.as_str());
     let project = cli(
         &dir,
         &repo,

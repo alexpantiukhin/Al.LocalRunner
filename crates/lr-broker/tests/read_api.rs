@@ -533,3 +533,64 @@ async fn unknown_read_request_gets_unknown_reply() {
     };
     assert_eq!(a.reply, ReadReply::Unknown);
 }
+
+fn explain_text(reply: ReadReply) -> String {
+    match reply {
+        ReadReply::Explain { text, .. } => text,
+        other => panic!("expected explain, got {other:?}"),
+    }
+}
+
+fn explain_of(job: &str) -> ReadRequest {
+    ReadRequest::Explain {
+        job: JobId(job.into()),
+        client: None,
+    }
+}
+
+async fn pass_time_heard(h: &Harness, r: &mut Conn, alex: &mut Conn, steps: u64) {
+    for _ in 0..steps {
+        h.clock.advance(std::time::Duration::from_secs(20));
+        r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+        alex.sync().await;
+    }
+}
+
+#[tokio::test]
+async fn explain_of_a_granted_order_says_how_long_it_waits_and_when_the_runner_answered() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    pass_time_heard(&h, &mut r, &mut alex, 5).await;
+    h.clock.advance(std::time::Duration::from_secs(20));
+    let text = explain_text(alex.read(explain_of("j1")).await);
+    assert!(text.contains("выдан раннеру r1"), "{text}");
+    assert!(text.contains("ждёт старта уже 2 мин"), "{text}");
+    assert!(text.contains("раннер отвечал 20 с назад"), "{text}");
+    assert!(
+        !text.contains("stale") && !text.contains("offline"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn explain_names_the_job_that_holds_the_only_slot() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    assert_eq!(
+        alex.accepted().await.waiting.as_deref(),
+        Some("раннер занят")
+    );
+    pass_time_heard(&h, &mut r, &mut alex, 9).await;
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(text.contains("раннер занят заказом j1 (3 мин)"), "{text}");
+}

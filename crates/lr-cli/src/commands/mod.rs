@@ -156,6 +156,9 @@ pub enum Command {
     },
     /// Queue and running jobs with steps and wait reasons.
     Status {
+        /// Show this one job: why it waits or what it does, with its record.
+        #[arg(value_name = "JOB", conflicts_with = "html")]
+        job: Option<String>,
         /// Only this project.
         #[arg(long)]
         project: Option<String>,
@@ -364,6 +367,7 @@ pub async fn run(cli: Cli) -> i32 {
             yes,
         } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
         Command::Status {
+            job,
             project,
             source,
             label,
@@ -372,7 +376,10 @@ pub async fn run(cli: Cli) -> i32 {
             html,
         } => match html.html.clone() {
             Some(path) => snapshot_cmd::write(&layout, project, source, label, path, &html).await,
-            None => view::status(&layout, project, source, label, broker, json).await,
+            None => match job {
+                Some(job) => view::status_job(&layout, job, broker, json).await,
+                None => view::status(&layout, project, source, label, broker, json).await,
+            },
         },
         Command::Explain(a) => read_cmd::explain_cmd(&layout, a).await,
         Command::History(h) => match h.action {
@@ -526,3 +533,4 @@ pub async fn run(cli: Cli) -> i32 {
         }
     }
 }
+

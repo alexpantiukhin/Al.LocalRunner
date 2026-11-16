@@ -3,11 +3,12 @@ use lr_cli::commands::history_cmd::{history_filter, history_lines, newest_first,
 use lr_cli::commands::log_cmd::LogPrinter;
 use lr_cli::commands::read_cmd::{runner_lines, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
+use lr_cli::commands::view::{add_runners, job_lines, not_serving_lines, runners_of};
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
-    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, RunnerInfo, RunnerLiveness, SpreadView,
-    StatsView, StepView, WireCapabilities, WireSource,
+    HistoryFilter, JobDetail, JobSummary, ProfileStatsView, ReadReply, RunnerInfo, RunnerLiveness,
+    SpreadView, StatsView, StepView, WireCapabilities, WireSource,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -517,4 +518,144 @@ fn runner_outbox_drop_takes_a_job_and_an_optional_runner() {
         panic!("not runner outbox drop");
     };
     assert_eq!((runner.as_deref(), job.as_str()), (Some("r1"), "j2"));
+}
+
+fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo {
+    RunnerInfo {
+        name: name.into(),
+        online: liveness != RunnerLiveness::Offline,
+        caps: WireCapabilities {
+            platforms: BTreeSet::new(),
+            mem_mb: 4096,
+            cpu: 4,
+            disk_mb: 1000,
+            programs: BTreeSet::new(),
+            tags: BTreeSet::new(),
+            max_job_timeout_s: None,
+            services: BTreeMap::new(),
+            machine: None,
+            accept_min_mem_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: None,
+        },
+        last_seen: Some(Timestamp(1_700_000_000_000)),
+        free_mem_mb: 0,
+        free_cpu: 0,
+        held_tags: Vec::new(),
+        services: Vec::new(),
+        unmet: Vec::new(),
+        liveness: Some(liveness),
+        silent_for_s: Some(silent),
+    }
+}
+
+#[test]
+fn status_with_a_job_id_parses_and_prints_its_state_and_reason() {
+    match parse(&["status", "j2", "--broker", "office"]) {
+        Command::Status { job, broker, .. } => {
+            assert_eq!(job.as_deref(), Some("j2"));
+            assert_eq!(broker.as_deref(), Some("office"));
+        }
+        other => panic!("{other:?}"),
+    }
+    match parse(&["status"]) {
+        Command::Status { job, .. } => assert_eq!(job, None),
+        other => panic!("{other:?}"),
+    }
+    assert!(Cli::try_parse_from(["localrunner", "status", "j2", "--html"]).is_err());
+    let mut detail = JobDetail {
+        summary: summary("j2", H),
+        note: None,
+        branch: None,
+        cwd: None,
+        commit: None,
+        os_user: None,
+        source: Some(WireSource::Session),
+        github_run_url: None,
+        steps: Vec::new(),
+        secrets: Vec::new(),
+        cancelled_by: None,
+        wait_reason: Some("раннер занят заказом j1 (3 мин)".into()),
+    };
+    detail.summary.state = JobState::Queued;
+    let text = job_lines(
+        "office",
+        &JobId("j2".into()),
+        "ждёт: раннер занят заказом j1 (3 мин)",
+        Some(&detail),
+    )
+    .join("\n");
+    for needed in ["j2", "office", "queued", "раннер занят заказом j1 (3 мин)"]
+    {
+        assert!(text.contains(needed), "{needed} missing:\n{text}");
+    }
+    let bare = job_lines("office", &JobId("j2".into()), "ждёт в очереди", None).join("\n");
+    assert!(bare.contains("ждёт в очереди"), "{bare}");
+}
+
+#[test]
+fn status_lists_offline_and_stale_runners_with_last_seen() {
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            runner_info("r1", RunnerLiveness::Online, 3),
+            runner_info("r2", RunnerLiveness::Stale, 40),
+            runner_info("r3", RunnerLiveness::Offline, 7200),
+        ],
+    )];
+    let text = not_serving_lines(&per).join("\n");
+    assert!(!text.contains("r1"), "{text}");
+    for needed in [
+        "office",
+        "r2",
+        "stale",
+        "r3",
+        "offline",
+        "2023-11-14",
+        "2h00m",
+    ] {
+        assert!(text.contains(needed), "{needed} missing:\n{text}");
+    }
+    let healthy = vec![(
+        "office".to_string(),
+        vec![runner_info("r1", RunnerLiveness::Online, 3)],
+    )];
+    assert!(not_serving_lines(&healthy).is_empty());
+}
+
+#[test]
+fn status_json_has_a_runners_key() {
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "office" }, { "broker": "old" }] });
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            runner_info("r1", RunnerLiveness::Online, 3),
+            runner_info("r3", RunnerLiveness::Offline, 7200),
+        ],
+    )];
+    add_runners(&mut doc, &per);
+    let runners = doc["brokers"][0]["runners"].as_array().expect("runners");
+    assert_eq!(runners.len(), 1);
+    assert_eq!(runners[0]["name"], "r3");
+    assert_eq!(runners[0]["liveness"], "offline");
+    assert_eq!(runners[0]["silent_for_s"], 7200);
+    assert_eq!(runners[0]["last_seen"], 1_700_000_000_000u64);
+    assert!(doc["brokers"][1].get("runners").is_none());
+}
+
+#[test]
+fn status_survives_a_broker_that_does_not_know_runners() {
+    assert!(runners_of(ReadReply::Unknown).is_none());
+    assert!(runners_of(ReadReply::Runners {
+        runners: Vec::new()
+    })
+    .is_some());
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "old" }] });
+    add_runners(&mut doc, &[]);
+    assert!(doc["brokers"][0].get("runners").is_none());
+    assert!(not_serving_lines(&[]).is_empty());
 }
