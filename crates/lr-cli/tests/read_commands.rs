@@ -3,7 +3,7 @@ use lr_cli::commands::history_cmd::{history_filter, history_lines, newest_first,
 use lr_cli::commands::log_cmd::LogPrinter;
 use lr_cli::commands::read_cmd::{runner_lines, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
-use lr_cli::commands::{Cli, Command, HistoryAction};
+use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
     HistoryFilter, JobDetail, JobSummary, ProfileStatsView, RunnerInfo, RunnerLiveness, SpreadView,
@@ -493,4 +493,28 @@ fn a_cancelled_run_with_a_rejection_reason_is_shown_and_filtered_as_rejected() {
     assert!(lines[1].contains("\trejected\t"), "{}", lines[1]);
     let parsed = Cli::try_parse_from(["localrunner", "history", "--result", "rejected"]);
     assert!(parsed.is_ok());
+}
+
+#[test]
+fn runner_outbox_drop_takes_a_job_and_an_optional_runner() {
+    let Command::Runner {
+        action:
+            RunnerAction::Outbox {
+                action: OutboxAction::Drop { runner, job },
+            },
+    } = parse(&["runner", "outbox", "drop", "j1"])
+    else {
+        panic!("not runner outbox drop");
+    };
+    assert_eq!((runner, job.as_str()), (None, "j1"));
+    let Command::Runner {
+        action:
+            RunnerAction::Outbox {
+                action: OutboxAction::Drop { runner, job },
+            },
+    } = parse(&["runner", "outbox", "drop", "--runner", "r1", "j2"])
+    else {
+        panic!("not runner outbox drop");
+    };
+    assert_eq!((runner.as_deref(), job.as_str()), (Some("r1"), "j2"));
 }

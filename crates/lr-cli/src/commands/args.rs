@@ -176,6 +176,12 @@ pub enum RunnerAction {
         #[arg(long)]
         diff: bool,
     },
+    /// The outbox of a runner: what it still has to deliver to the broker.
+    Outbox {
+        /// What to do with it.
+        #[command(subcommand)]
+        action: OutboxAction,
+    },
     /// Runners of the pool (on the broker).
     List,
     /// Remove a runner and revoke its key (on the broker; asks for confirmation).
@@ -185,6 +191,20 @@ pub enum RunnerAction {
         /// Confirm without asking.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+/// `runner outbox ...`.
+#[derive(Subcommand, Debug)]
+pub enum OutboxAction {
+    /// Close the pending outbox entries of a job the broker has cancelled or lost; refused
+    /// while the runner still runs the job.
+    Drop {
+        /// Runner name; default: the only runner of this installation.
+        #[arg(long)]
+        runner: Option<String>,
+        /// The job whose entries are closed.
+        job: String,
     },
 }
 

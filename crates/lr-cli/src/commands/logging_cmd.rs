@@ -31,9 +31,11 @@ async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
     match reply {
         Ok(ControlReply::Ok) => Reload::Reloaded,
         Ok(ControlReply::Failed { message }) | Err(message) => Reload::Refused(message),
-        Ok(ControlReply::Link { .. } | ControlReply::Reloaded { .. }) => {
-            Reload::Refused("unexpected answer to logging reload".into())
-        }
+        Ok(
+            ControlReply::Link { .. }
+            | ControlReply::Reloaded { .. }
+            | ControlReply::Dropped { .. },
+        ) => Reload::Refused("unexpected answer to logging reload".into()),
     }
 }
 

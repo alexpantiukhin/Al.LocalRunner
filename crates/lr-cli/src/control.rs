@@ -59,6 +59,12 @@ async fn connection(
                     },
                 }
             }
+            Ok(Received::Message(RunnerControl::DropOutbox { job })) => {
+                match control.drop_outbox(&lr_core::JobId(job)).await {
+                    Ok(closed) => ControlReply::Dropped { closed },
+                    Err(message) => ControlReply::Failed { message },
+                }
+            }
             Ok(Received::Message(RunnerControl::Status)) => {
                 let (connected, since) = control.link();
                 ControlReply::Link {

@@ -407,6 +407,12 @@ pub enum RunnerControl {
     LoggingReload,
     /// `reload`: reread `runner.toml` and apply what can change while the runner runs.
     Reload,
+    /// `runner outbox drop`: close the pending outbox entries of a job that is no longer run;
+    /// answered with [`ControlReply::Dropped`], or refused while the job runs.
+    DropOutbox {
+        /// The job whose entries are closed.
+        job: String,
+    },
     /// Ask whether the runner is connected to its broker.
     Status,
 }
@@ -427,6 +433,11 @@ pub enum ControlReply {
     Reloaded {
         /// Names of the settings that differ and need a restart.
         restart_required: Vec<String>,
+    },
+    /// The outbox entries of a job were closed (answer to [`RunnerControl::DropOutbox`]).
+    Dropped {
+        /// How many pending entries were closed.
+        closed: u64,
     },
     /// The state of the link to the broker.
     Link {
@@ -501,7 +512,7 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "status"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "status"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed", "reloaded", "link"]);
+message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "link"]);

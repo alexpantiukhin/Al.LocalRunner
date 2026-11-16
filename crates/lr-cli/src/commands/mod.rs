@@ -16,6 +16,7 @@ pub mod read_cmd;
 pub mod reload_cmd;
 pub mod roles_cmd;
 pub mod runner_config_cmd;
+pub mod runner_outbox_cmd;
 pub mod service_cmd;
 pub mod setup;
 pub mod snapshot_cmd;
@@ -474,6 +475,9 @@ pub async fn run(cli: Cli) -> i32 {
                     0
                 })
             }
+            RunnerAction::Outbox {
+                action: OutboxAction::Drop { runner, job },
+            } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
             }

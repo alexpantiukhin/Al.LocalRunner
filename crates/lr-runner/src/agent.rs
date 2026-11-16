@@ -153,6 +153,30 @@ impl AgentControl {
         self.shared.wake.notify_one();
     }
 
+    /// `runner outbox drop`: closes the pending outbox entries of `job` and returns how many it
+    /// closed. Refused while the runner runs that job.
+    pub async fn drop_outbox(&self, job: &JobId) -> Result<u64, String> {
+        if self
+            .shared
+            .state()
+            .job
+            .as_ref()
+            .is_some_and(|c| &c.job == job)
+        {
+            return Err("job is still running".into());
+        }
+        let closed = self
+            .shared
+            .deps
+            .store
+            .discard_outbox(job)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.shared.outbox.forget_tail();
+        self.shared.wake.notify_one();
+        Ok(closed as u64)
+    }
+
     /// Whether the runner has a welcomed session and, when not, since when it has had none
     /// (its start while it never had one).
     pub fn link(&self) -> (bool, Option<Timestamp>) {
