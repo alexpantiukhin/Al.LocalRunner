@@ -224,6 +224,21 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
 /// How `up` starts a role: the command line without the binary; the pid on success.
 pub type Spawn<'a> = &'a (dyn Fn(&[String]) -> std::io::Result<u32> + Sync);
 
+/// Runners of `layout` that do not answer on the IPC of this user but run as an OS service
+/// (on Windows the service account has its own IPC names): `up` must not start them twice.
+fn runner_services_running(layout: &Layout, answering: &RunningRoles) -> Vec<String> {
+    use crate::os_service::{runner_service, Os};
+    let os = Os::current();
+    layout
+        .runner_names()
+        .into_iter()
+        .filter(|n| !answering.runners.contains(n))
+        .filter(|n| {
+            runner_service::installed(os, n) && runner_service::running(os, n) == Some(true)
+        })
+        .collect()
+}
+
 /// `up [role]`: [`up_with`] that starts the roles as background processes of this binary and
 /// waits for them at most 15 s.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
@@ -271,7 +286,12 @@ pub async fn up_with(
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
-    let before = running_roles(layout).await;
+    let mut before = running_roles(layout).await;
+    if roles.contains(&NodeRole::Runner) {
+        before
+            .runners
+            .extend(runner_services_running(layout, &before));
+    }
     let mut code = 0;
     if service {
         match service_broker(before.broker) {

@@ -2,6 +2,7 @@ use lr_cli::os_service::plans::{
     autostart_off, autostart_on, install_service, install_service_undo, task_name,
     uninstall_service, AutostartInputs, Entry, ServiceInputs,
 };
+use lr_cli::os_service::runner_service::{self, RunnerServiceInputs};
 use lr_cli::os_service::{
     apply_or_undo, ensure_local_user, service_account, Action, Os, System, Tolerate,
 };
@@ -439,14 +440,36 @@ fn autostart_on_linux_hints_at_enable_linger_and_nowhere_else() {
     assert_eq!(linger_hint(Os::MacOs, true, false), None);
 }
 
+fn runner_service(os: Os, name: &str) -> RunnerServiceInputs {
+    RunnerServiceInputs {
+        os,
+        exe: PathBuf::from("/home/alex/.local/bin/localrunner"),
+        name: name.into(),
+        state_dir: PathBuf::from("/home/alex/state & more"),
+        config_dir: None,
+        user: "alex".into(),
+    }
+}
+
+fn root_like(text: &str) -> bool {
+    text.contains("User=root")
+        || text.contains("<string>root</string>")
+        || text.contains("LocalSystem")
+        || text.contains(r"NT AUTHORITY\SYSTEM")
+        || text.contains("obj= SYSTEM")
+}
+
 #[test]
-fn a_runner_is_never_an_os_service_on_any_os() {
+fn broker_service_and_login_autostart_never_create_a_runner_service_and_the_runner_service_is_never_root(
+) {
     for os in ALL {
         let service = format!("{:?}", install_service(&inputs(os)));
         assert!(
             !service.contains("runner run") && !service.contains("\"runner\""),
-            "{os:?}: the only OS service is the broker"
+            "{os:?}: broker install-service installs only the broker"
         );
+        let runner = format!("{:?}", runner_service::install(&runner_service(os, "box")));
+        assert!(!root_like(&runner), "{os:?}: {runner}");
         for entry in [Entry::Runner(None), Entry::Runner(Some("gpu".into()))] {
             let plan = autostart_on(&autostart(os, entry));
             for r in runs(&plan) {
@@ -456,7 +479,7 @@ fn a_runner_is_never_an_os_service_on_any_os() {
                     || r.contains("system/");
                 assert!(
                     !system_wide,
-                    "{os:?}: a runner is started as a service: {r}"
+                    "{os:?}: login autostart starts a runner as a service: {r}"
                 );
             }
             for (path, _) in written(&plan) {
@@ -493,4 +516,249 @@ fn updating_the_service_stops_it_copies_the_binary_and_starts_it_without_touchin
         );
         assert!(!all.contains("create") && !all.contains("delete"), "{all}");
     }
+}
+
+#[test]
+fn runner_service_runs_under_a_non_root_account_on_every_os() {
+    for os in ALL {
+        let i = runner_service(os, "box");
+        assert_eq!(runner_service::check_identity(&i), Ok(()), "{os:?}");
+        let plan = runner_service::install(&i);
+        let runs = runs(&plan);
+        match os {
+            Os::Windows => {
+                assert_eq!(runner_service::service_name(os, "box"), "AlLocalRunner-box");
+                assert_eq!(runner_service::account(&i), r"NT SERVICE\AlLocalRunner-box");
+                let create = runs
+                    .iter()
+                    .find(|r| r.starts_with("sc.exe create AlLocalRunner-box "))
+                    .unwrap();
+                assert!(
+                    create.contains(r"obj= NT SERVICE\AlLocalRunner-box"),
+                    "{create}"
+                );
+                assert!(create.contains("start= demand"), "{create}");
+                assert!(
+                    runs.contains(
+                        &"sc.exe privs AlLocalRunner-box SeChangeNotifyPrivilege/SeCreateGlobalPrivilege"
+                            .to_string()
+                    ),
+                    "the service token keeps no impersonation privilege: {runs:?}"
+                );
+                assert!(runs.contains(
+                    &"sc.exe failure AlLocalRunner-box reset= 86400 actions= restart/5000"
+                        .to_string()
+                ));
+                let auto = runs
+                    .iter()
+                    .position(|r| r == "sc.exe config AlLocalRunner-box start= auto")
+                    .unwrap();
+                let start = runs
+                    .iter()
+                    .position(|r| r == "sc.exe start AlLocalRunner-box")
+                    .unwrap();
+                let grant = runs.iter().position(|r| r.starts_with("icacls")).unwrap();
+                assert!(grant < auto && auto < start, "{runs:?}");
+            }
+            Os::Linux => {
+                let (path, unit) = written(&plan).pop().unwrap();
+                assert_eq!(
+                    path,
+                    PathBuf::from("/etc/systemd/system/al-localrunner-runner-box.service")
+                );
+                assert!(unit.contains("\nUser=alex\n"), "{unit}");
+                assert!(unit.contains("\nNoNewPrivileges=true\n"), "{unit}");
+                assert!(unit.contains("\nRestart=on-failure\n"), "{unit}");
+                assert!(unit.contains("WantedBy=multi-user.target"), "{unit}");
+                assert_eq!(
+                    runs,
+                    vec![
+                        "systemctl daemon-reload".to_string(),
+                        "systemctl enable --now al-localrunner-runner-box.service".to_string()
+                    ]
+                );
+            }
+            Os::MacOs => {
+                let (path, daemon) = written(&plan).pop().unwrap();
+                assert_eq!(
+                    path,
+                    PathBuf::from("/Library/LaunchDaemons/com.al-localrunner.runner-box.plist")
+                );
+                assert!(
+                    daemon.contains("<key>UserName</key>\n  <string>alex</string>"),
+                    "{daemon}"
+                );
+                assert!(
+                    daemon.contains(
+                        "<key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>"
+                    ),
+                    "a runner stopped by `down` stays stopped: {daemon}"
+                );
+                assert!(runs.contains(&format!("launchctl bootstrap system {}", path.display())));
+            }
+        }
+        for root in ["root", "SYSTEM", r"NT AUTHORITY\SYSTEM", "LocalSystem"] {
+            let refused = runner_service::check_identity(&RunnerServiceInputs {
+                user: root.into(),
+                ..runner_service(os, "box")
+            })
+            .unwrap_err();
+            assert!(refused.contains(root), "{os:?}: {refused}");
+        }
+    }
+}
+
+#[test]
+fn runner_service_plan_names_the_runner_and_state_dir() {
+    for os in ALL {
+        let mut i = runner_service(os, "box");
+        i.config_dir = Some(PathBuf::from("/home/alex/config"));
+        let plan = runner_service::install(&i);
+        let args = runner_service::run_args(&i);
+        assert_eq!(args[0], "/home/alex/.local/bin/localrunner");
+        let words = args[1..].join(" ");
+        assert!(
+            words.starts_with("runner run --name box --service"),
+            "{os:?}: {words}"
+        );
+        assert!(
+            words.contains("--state-dir /home/alex/state & more --config-dir /home/alex/config"),
+            "{os:?}: {words}"
+        );
+        assert_eq!(
+            words.contains("--owner alex"),
+            os == Os::Windows,
+            "{os:?}: only the Windows service account differs from the installing user: {words}"
+        );
+        match os {
+            Os::Windows => {
+                let runs = runs(&plan);
+                let create = runs
+                    .iter()
+                    .find(|r| r.starts_with("sc.exe create"))
+                    .unwrap();
+                assert!(
+                    create.contains(
+                        r#"runner run --name box --service --owner alex --state-dir "/home/alex/state & more""#
+                    ),
+                    "{create}"
+                );
+                for (dir, rights) in [
+                    ("/home/alex/state & more", "M"),
+                    ("/home/alex/config", "RX"),
+                    ("/home/alex/.local/bin", "RX"),
+                ] {
+                    let grant = format!(
+                        r"icacls {} /grant NT SERVICE\AlLocalRunner-box:(OI)(CI){rights}",
+                        Path::new(dir).display()
+                    );
+                    assert!(runs.contains(&grant), "{grant} missing in {runs:?}");
+                }
+            }
+            Os::Linux => {
+                let (_, unit) = written(&plan).pop().unwrap();
+                assert!(
+                    unit.contains(
+                        "ExecStart=\"/home/alex/.local/bin/localrunner\" \"runner\" \"run\" \"--name\" \"box\" \"--service\" \"--state-dir\" \"/home/alex/state & more\""
+                    ),
+                    "{unit}"
+                );
+            }
+            Os::MacOs => {
+                let (_, daemon) = written(&plan).pop().unwrap();
+                assert!(daemon.contains("<string>box</string>"), "{daemon}");
+                assert!(
+                    daemon.contains("<string>/home/alex/state &amp; more</string>"),
+                    "{daemon}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn runner_service_off_removes_only_that_runner() {
+    for os in ALL {
+        let plan = runner_service::uninstall(&runner_service(os, "box"));
+        let text: Vec<String> = plan.iter().map(|a| a.to_string()).collect();
+        let all = text.join("\n");
+        assert!(!all.contains("Broker") && !all.contains("broker"), "{all}");
+        assert!(
+            !plan.iter().any(|a| matches!(a, Action::RemoveDirAll(_))),
+            "{os:?}: the runner's state stays"
+        );
+        for a in &plan {
+            if let Action::Run { tolerate, .. } = a {
+                assert_ne!(tolerate, &Tolerate::Nothing, "{os:?}: {a}");
+            }
+        }
+        let runs = runs(&plan);
+        match os {
+            Os::Windows => {
+                let stop = runs
+                    .iter()
+                    .position(|r| r == "sc.exe stop AlLocalRunner-box")
+                    .unwrap();
+                let revoke = runs
+                    .iter()
+                    .position(|r| r.starts_with("icacls") && r.contains("/remove"))
+                    .unwrap();
+                let delete = runs
+                    .iter()
+                    .position(|r| r == "sc.exe delete AlLocalRunner-box")
+                    .unwrap();
+                assert!(
+                    stop < revoke && revoke < delete,
+                    "the account is named while it still exists: {runs:?}"
+                );
+            }
+            Os::Linux => {
+                assert!(runs
+                    .contains(&"systemctl disable --now al-localrunner-runner-box.service".into()));
+                assert!(plan.contains(&Action::RemoveFile(PathBuf::from(
+                    "/etc/systemd/system/al-localrunner-runner-box.service"
+                ))));
+            }
+            Os::MacOs => {
+                assert!(
+                    runs.contains(&"launchctl bootout system/com.al-localrunner.runner-box".into())
+                );
+                assert!(plan.contains(&Action::RemoveFile(PathBuf::from(
+                    "/Library/LaunchDaemons/com.al-localrunner.runner-box.plist"
+                ))));
+            }
+        }
+        let other = format!(
+            "{:?}",
+            runner_service::uninstall(&runner_service(os, "gpu"))
+        );
+        assert!(!other.contains("box"), "{os:?}: {other}");
+    }
+}
+
+#[test]
+fn graphics_and_ci_runners_are_refused_a_service() {
+    let none: Vec<String> = Vec::new();
+    let refused = runner_service::refusal("ci", &none).unwrap();
+    assert!(refused.contains("`ci`"), "{refused}");
+    for marker in [
+        "emulator",
+        "android-emulator",
+        "gui",
+        "ios_simulator",
+        "graphics",
+        "desktop",
+        "display",
+    ] {
+        let refused = runner_service::refusal("box", &[marker.to_string()]).unwrap();
+        assert!(refused.contains(marker), "{refused}");
+    }
+    for fine in ["cargo", "gradle", "guide", "linux", "docker"] {
+        assert_eq!(
+            runner_service::refusal("box", &[fine.to_string()]),
+            None,
+            "{fine}"
+        );
+    }
+    assert_eq!(runner_service::refusal("ci-2", &none), None);
 }

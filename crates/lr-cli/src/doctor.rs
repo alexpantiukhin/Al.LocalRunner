@@ -200,6 +200,15 @@ fn names_another_user(entry: &lr_broker::policy::LocalUserEntry, owner: Option<&
     users.admit(&me).is_err()
 }
 
+static INSTALLATION_OWNER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Names the OS user the installation belongs to for this process, when the process runs under
+/// another account (a runner service under its Windows virtual account): [`same_user_risk`]
+/// then compares the policy's users with that user instead of the process's own.
+pub fn set_installation_owner(user: String) {
+    let _ = INSTALLATION_OWNER.set(user);
+}
+
 /// The risk of spec 3.12 when the broker of `layout` runs under this OS user, not as an OS
 /// service, next to a runner of the same user (`with_runner`) while its policy (the default
 /// one without `policy.toml`) admits clients other than the owner (a `[listen]` address or a
@@ -217,7 +226,10 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
         Err(_) => return None,
     };
     let file = lr_broker::policy::load(&text).ok()?;
-    let owner = lr_net::current_os_user().ok();
+    let owner = INSTALLATION_OWNER
+        .get()
+        .cloned()
+        .or_else(|| lr_net::current_os_user().ok());
     let others = file
         .local_users
         .iter()
@@ -307,6 +319,128 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
                 }
             }
         }
+    }
+}
+
+/// How runner autostart is set up for one runner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutostartFound {
+    /// The runner's OS service: `None` when it has none, else whether it runs (`None` when the
+    /// service manager did not say).
+    pub service: Option<Option<bool>>,
+    /// A login entry starts it (a scheduler task, a systemd user unit, a LaunchAgent).
+    pub login: bool,
+    /// Linux: `Linger` of the user (`loginctl show-user -p Linger`), `None` when unknown.
+    pub linger: Option<bool>,
+}
+
+/// `Linger` from `loginctl show-user -p Linger` output: `None` when the output has no such line.
+pub fn parse_linger(output: &str) -> Option<bool> {
+    output.lines().find_map(|line| {
+        let value = line.trim().strip_prefix("Linger=")?;
+        Some(value.trim() == "yes")
+    })
+}
+
+/// The `autostart` check of runner `name`: `ok` when it survives logout and starts after a
+/// reboot (an OS service, or a Linux user unit with lingering), `warn` for a login autostart
+/// only, a stopped service, or a service and a login entry at once; `None` without autostart.
+pub fn autostart_check(name: &str, found: &AutostartFound) -> Option<Check> {
+    let label = format!("runner {name} autostart");
+    let detail = match (found.service, found.login) {
+        (Some(_), true) => (
+            Status::Warn,
+            format!(
+                "an OS service and a login autostart both start it: remove the login one with \
+                 `localrunner autostart off runner {name}`"
+            ),
+        ),
+        (Some(Some(false)), false) => (
+            Status::Warn,
+            format!(
+                "the OS service is installed but not running; its state: {}",
+                crate::os_service::state::named_status_command(
+                    crate::os_service::Os::current(),
+                    &crate::os_service::runner_service::service_name(
+                        crate::os_service::Os::current(),
+                        name
+                    )
+                )
+            ),
+        ),
+        (Some(_), false) => (
+            Status::Ok,
+            "OS service: survives logout and starts after a reboot".to_string(),
+        ),
+        (None, true) if found.linger == Some(true) => (
+            Status::Ok,
+            "user unit with lingering (loginctl enable-linger): survives logout and starts after a reboot"
+                .to_string(),
+        ),
+        (None, true) => (
+            Status::Warn,
+            format!(
+                "starts at login only: it stops at logout and does not start after a reboot \
+                 until someone logs in; to keep it running: `localrunner autostart on runner \
+                 {name} --service` (administrator)"
+            ),
+        ),
+        (None, false) => return None,
+    };
+    Some(check(label, detail.0, detail.1))
+}
+
+fn output_of(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    let path = crate::os_service::programs::program_path(program).ok()?;
+    std::process::Command::new(path).args(args).output().ok()
+}
+
+fn login_entry(os: crate::os_service::Os, name: &str) -> bool {
+    use crate::os_service::Os;
+    let entry = crate::os_service::plans::Entry::Runner(Some(name.to_string())).name();
+    match os {
+        Os::Windows => {
+            let Ok(principal) = lr_net::current_os_principal() else {
+                return false;
+            };
+            let task = format!("Al.LocalRunner {entry} {principal}");
+            output_of("schtasks", &["/Query", "/TN", &task]).is_some_and(|o| o.status.success())
+        }
+        Os::Linux => crate::os_service::home_dir().is_ok_and(|h| {
+            h.join(".config/systemd/user")
+                .join(format!("al-localrunner-{entry}.service"))
+                .exists()
+        }),
+        Os::MacOs => crate::os_service::home_dir().is_ok_and(|h| {
+            h.join("Library/LaunchAgents")
+                .join(format!("com.al-localrunner.{entry}.plist"))
+                .exists()
+        }),
+    }
+}
+
+fn linger(os: crate::os_service::Os) -> Option<bool> {
+    if os != crate::os_service::Os::Linux {
+        return None;
+    }
+    let user = lr_net::current_os_user().ok()?;
+    let out = output_of("loginctl", &["show-user", "-p", "Linger", &user])?;
+    parse_linger(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn autostart(layout: &Layout, out: &mut Vec<Check>) {
+    use crate::os_service::{runner_service, Os};
+    let os = Os::current();
+    for name in layout.runner_names() {
+        let service =
+            runner_service::installed(os, &name).then(|| runner_service::running(os, &name));
+        let login = login_entry(os, &name);
+        let found = AutostartFound {
+            service,
+            login,
+            linger: if login { linger(os) } else { None },
+        };
+        out.extend(autostart_check(&name, &found));
     }
 }
 
@@ -428,6 +562,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     policy(layout, &mut out).await;
     runners(layout, &mut out);
     same_user(layout, &mut out);
+    autostart(layout, &mut out);
     brokers(layout, &mut out).await;
     runner_versions(layout, &mut out).await;
     out.extend(crate::link_report::checks(layout).await);

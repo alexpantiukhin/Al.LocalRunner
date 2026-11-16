@@ -1,9 +1,9 @@
-//! The Windows service host of `broker run --service`: talks to the service control manager,
-//! gives the process a hidden console (so the soft stop reaches steps of any role it hosts,
-//! spec 10) and runs the broker until the manager stops the service.
+//! The Windows service host of `broker run --service` and `runner run --service`: talks to the
+//! service control manager, gives the process a hidden console (so the soft stop reaches steps
+//! of any role it hosts, spec 10) and runs the role until the manager stops the service.
 
 use super::service_run::{self, ServiceEnd};
-use super::{service_name, Os};
+use super::{runner_service, service_name, Os};
 use crate::paths::Layout;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -23,7 +23,26 @@ const NO_ERROR: u32 = 0;
 const ERROR_CALL_NOT_IMPLEMENTED: u32 = 120;
 const ERROR_SERVICE_SPECIFIC_ERROR: u32 = 1066;
 
+/// The role a service hosts.
+#[derive(Debug, Clone)]
+pub enum Hosted {
+    /// The broker service.
+    Broker,
+    /// The service of one runner.
+    Runner(String),
+}
+
+impl Hosted {
+    fn service_name(&self) -> String {
+        match self {
+            Hosted::Broker => service_name(Os::Windows).to_string(),
+            Hosted::Runner(name) => runner_service::service_name(Os::Windows, name),
+        }
+    }
+}
+
 static LAYOUT: OnceLock<Layout> = OnceLock::new();
+static HOSTED: OnceLock<Hosted> = OnceLock::new();
 static STATUS: AtomicUsize = AtomicUsize::new(0);
 static CHECKPOINT: AtomicU32 = AtomicU32::new(0);
 static STOP: OnceLock<watch::Sender<bool>> = OnceLock::new();
@@ -84,7 +103,14 @@ async fn serve(layout: &Layout, mut stop: watch::Receiver<bool>) -> u32 {
     let stopped = async move {
         let _ = stop.wait_for(|s| *s).await;
     };
-    match service_run::serve(layout, || report(SERVICE_RUNNING, 0, 0), stopped).await {
+    let running = || report(SERVICE_RUNNING, 0, 0);
+    let end = match HOSTED.get() {
+        Some(Hosted::Runner(name)) => {
+            service_run::serve_runner(layout, name, running, stopped).await
+        }
+        _ => service_run::serve(layout, running, stopped).await,
+    };
+    match end {
         ServiceEnd::Stopped => 0,
         ServiceEnd::NotStarted => 1,
         ServiceEnd::Ended => BROKER_ENDED,
@@ -92,7 +118,10 @@ async fn serve(layout: &Layout, mut stop: watch::Receiver<bool>) -> u32 {
 }
 
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
-    let name = wide(service_name(Os::Windows));
+    let name = wide(&HOSTED.get().map_or_else(
+        || service_name(Os::Windows).to_string(),
+        Hosted::service_name,
+    ));
     let handle = RegisterServiceCtrlHandlerExW(name.as_ptr(), Some(handler), std::ptr::null());
     if handle.is_null() {
         return;
@@ -121,12 +150,13 @@ unsafe extern "system" fn service_main(_argc: u32, _argv: *mut PWSTR) {
     report(SERVICE_STOPPED, code, 0);
 }
 
-/// Hands this process to the service control manager and runs the broker of `layout` as the
-/// service; returns when the service stopped. Fails when the process was not started by the
+/// Hands this process to the service control manager and runs the `hosted` role of `layout` as
+/// the service; returns when the service stopped. Fails when the process was not started by the
 /// service manager.
-pub fn run(layout: Layout) -> Result<(), String> {
+pub fn run(layout: Layout, hosted: Hosted) -> Result<(), String> {
     let _ = LAYOUT.set(layout);
-    let mut name = wide(service_name(Os::Windows));
+    let mut name = wide(&hosted.service_name());
+    let _ = HOSTED.set(hosted);
     let table = [
         SERVICE_TABLE_ENTRYW {
             lpServiceName: name.as_mut_ptr(),

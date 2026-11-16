@@ -140,6 +140,12 @@ pub enum RunnerAction {
         /// Started by the OS at logon: hide or create the console.
         #[arg(long, hide = true)]
         background: bool,
+        /// Run under the OS service manager (`autostart on runner <name> --service` sets it).
+        #[arg(long, hide = true, requires = "name")]
+        service: bool,
+        /// The OS user the installation belongs to, when the service account is another one.
+        #[arg(long, hide = true, requires = "service")]
+        owner: Option<String>,
     },
     /// Join a broker's pool with a one-time code: one key, directory and record per runner.
     Join {

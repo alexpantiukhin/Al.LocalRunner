@@ -57,10 +57,15 @@ pub async fn broker_run(layout: &Layout, background: bool, service: bool) -> Res
     #[cfg(windows)]
     if service {
         let layout = layout.clone();
-        return tokio::task::spawn_blocking(move || crate::os_service::windows_host::run(layout))
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|()| 0);
+        return tokio::task::spawn_blocking(move || {
+            crate::os_service::windows_host::run(
+                layout,
+                crate::os_service::windows_host::Hosted::Broker,
+            )
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map(|()| 0);
     }
     if background || service {
         crate::os_service::background_console();
@@ -85,15 +90,60 @@ pub async fn broker_run(layout: &Layout, background: bool, service: bool) -> Res
     until_interrupted(running).await
 }
 
-/// `runner run`; `background` when the OS started it at logon.
+/// How `runner run` was started.
+#[derive(Debug, Clone, Default)]
+pub struct RunnerStart {
+    /// The OS started it at logon.
+    pub background: bool,
+    /// The OS service manager started it (`autostart on runner <name> --service`).
+    pub service: bool,
+    /// The OS user the installation belongs to, when the service account is another one.
+    pub owner: Option<String>,
+}
+
+/// `runner run`; see [`RunnerStart`] for how it was started. Under the service manager it runs
+/// the one runner `name` until the manager stops it (Windows: the service host).
 pub async fn runner_run(
     layout: &Layout,
     name: Option<String>,
     count: u32,
     config: Option<PathBuf>,
-    background: bool,
+    how: RunnerStart,
 ) -> Result<i32, String> {
-    if background {
+    if let Some(owner) = how.owner {
+        crate::doctor::set_installation_owner(owner);
+    }
+    if how.service {
+        let name = name.ok_or("--service runs one named runner: --name <name>")?;
+        #[cfg(windows)]
+        {
+            let layout = layout.clone();
+            let hosted = crate::os_service::windows_host::Hosted::Runner(name);
+            return tokio::task::spawn_blocking(move || {
+                crate::os_service::windows_host::run(layout, hosted)
+            })
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|()| 0);
+        }
+        #[cfg(not(windows))]
+        {
+            crate::os_service::background_console();
+            let stop = async {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminated() => {}
+                }
+            };
+            return Ok(
+                match service_run::serve_runner(layout, &name, || {}, stop).await {
+                    ServiceEnd::Stopped => 0,
+                    ServiceEnd::NotStarted | ServiceEnd::Ended => 1,
+                },
+            );
+        }
+    }
+    if how.background {
         crate::os_service::background_console();
     }
     let running =

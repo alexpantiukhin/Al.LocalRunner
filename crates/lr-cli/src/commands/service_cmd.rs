@@ -4,6 +4,8 @@
 use super::{RoleArg, Switch};
 use crate::init::{self, NodeRole};
 use crate::os_service::plans::{self, AutostartInputs, Entry, ServiceInputs};
+use crate::os_service::runner_service::{self, RunnerServiceInputs};
+use crate::os_service::state::named_status_command;
 use crate::os_service::{
     apply_all, apply_or_undo, current_uid, home_dir, original_user, service_binary,
     service_installed, Action, DryRun, Os, OsSystem, System,
@@ -313,16 +315,30 @@ fn runner_may_start(layout: &Layout, name: &str) -> Result<(), String> {
     }
 }
 
-/// `autostart on|off [role [runner-name]] [--dry-run]`: the broker becomes or stops being the
-/// OS service, hubs and runners start at the user's logon; `runner <name>` is one runner. A
-/// runner the same-user rule of spec 3.12 refuses gets no autostart entry.
+/// `autostart on|off [role [runner-name]] [--service] [--dry-run]`: the broker becomes or stops
+/// being the OS service, hubs and runners start at the user's logon; `runner <name>` is one
+/// runner, and with `service` that runner becomes or stops being an OS service
+/// ([`runner_service_with`]). A runner the same-user rule of spec 3.12 refuses gets no
+/// autostart entry.
 pub fn autostart(
     layout: &Layout,
     switch: Switch,
     role: Option<RoleArg>,
     runner: Option<String>,
+    service: bool,
     dry_run: bool,
 ) -> Result<i32, String> {
+    if service {
+        let verb = if switch == Switch::On { "on" } else { "off" };
+        let usage =
+            format!("--service is for one runner: autostart {verb} runner <name> --service");
+        return match (role, runner) {
+            (Some(RoleArg::Runner), Some(name)) => {
+                runner_service_with(layout, switch, &name, dry_run, crate::host::is_elevated())
+            }
+            _ => Err(usage),
+        };
+    }
     autostart_with(
         layout,
         switch,
@@ -359,7 +375,7 @@ pub fn autostart_with(
         let label = entry.name();
         apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
         if !dry_run {
-            println!("autostart {}: {label}", if on { "on" } else { "off" });
+            println!("{}", autostart_line(on, &label));
         }
         return Ok(0);
     }
@@ -389,8 +405,7 @@ pub fn autostart_with(
             let name = entry.name();
             apply(&autostart_plan(layout, entry, on)?, dry_run).map_err(task_hint)?;
             if !dry_run {
-                let state = if on { "on" } else { "off" };
-                println!("autostart {state}: {name}");
+                println!("{}", autostart_line(on, &name));
             }
         }
     }
@@ -399,6 +414,174 @@ pub fn autostart_with(
     }
     if left_for_admin {
         println!("{}", admin_left(on));
+    }
+    Ok(0)
+}
+
+/// The line `autostart on|off` prints for a login entry: `on` says when it starts.
+pub fn autostart_line(on: bool, entry: &str) -> String {
+    if on {
+        format!("autostart on: {entry} (starts at user login)")
+    } else {
+        format!("autostart off: {entry}")
+    }
+}
+
+fn runner_needs(layout: &Layout, name: &str) -> Vec<String> {
+    let Some(text) = crate::build::runner_config_path(layout, name, None)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+    else {
+        return Vec::new();
+    };
+    let Ok(table) = toml::from_str::<toml::Table>(&text) else {
+        return Vec::new();
+    };
+    let words = |key: &str| -> Vec<String> {
+        table
+            .get(key)
+            .and_then(toml::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let services = table
+        .get("service")
+        .and_then(toml::Value::as_table)
+        .map(|t| t.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    words("tags")
+        .into_iter()
+        .chain(words("platforms"))
+        .chain(services)
+        .collect()
+}
+
+fn shell_safe(word: &str) -> String {
+    let safe = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+:@%,=".contains(c));
+    if safe {
+        word.to_string()
+    } else {
+        crate::os_service::quote::shell_word(word)
+    }
+}
+
+/// The one command that runs `autostart on|off runner <name> --service` with administrator
+/// rights on `os` for the installation of `layout` (its directories are named, so the elevated
+/// run does not fall back to the administrator's own); printed, never run by this binary.
+pub fn runner_service_command(
+    os: Os,
+    exe: &Path,
+    switch: Switch,
+    name: &str,
+    layout: &Layout,
+) -> String {
+    let verb = if switch == Switch::On { "on" } else { "off" };
+    let mut dirs = vec![("--state-dir", &layout.root)];
+    if layout.config != layout.root {
+        dirs.push(("--config-dir", &layout.config));
+    }
+    let tail = format!("autostart {verb} runner {name} --service");
+    match os {
+        Os::Windows => {
+            let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "''"));
+            let dirs: String = dirs
+                .iter()
+                .map(|(flag, p)| format!(" {flag} {}", q(p)))
+                .collect();
+            format!("& {} {tail}{dirs}", q(exe))
+        }
+        _ => {
+            let dirs: String = dirs
+                .iter()
+                .map(|(flag, p)| format!(" {flag} {}", shell_safe(&p.display().to_string())))
+                .collect();
+            format!(
+                "sudo {} {tail}{dirs}",
+                shell_safe(&exe.display().to_string())
+            )
+        }
+    }
+}
+
+/// `autostart on|off runner <name> --service` in a process whose rights are `elevated`: the
+/// runner becomes or stops being an OS service ([`runner_service`]). `on` refuses the `ci`
+/// runner, a runner that needs a desktop session, a runner the same-user rule of spec 3.12
+/// refuses, and root or `SYSTEM` as its identity. Without administrator rights and without
+/// `--dry-run` it is refused before any change, with the exact command to run.
+pub fn runner_service_with(
+    layout: &Layout,
+    switch: Switch,
+    name: &str,
+    dry_run: bool,
+    elevated: bool,
+) -> Result<i32, String> {
+    let on = switch == Switch::On;
+    let verb = if on { "on" } else { "off" };
+    crate::runner_config::check_runner_name(name)?;
+    let os = Os::current();
+    let exe = exe()?;
+    if on {
+        if let Some(why) = runner_service::refusal(name, &runner_needs(layout, name)) {
+            return Err(format!("autostart on runner {name} --service: {why}"));
+        }
+        runner_may_start(layout, name)?;
+    }
+    if !dry_run && !elevated {
+        let how = if os == Os::Windows {
+            "run it in a terminal started as administrator"
+        } else {
+            "run"
+        };
+        return Err(format!(
+            "autostart {verb} runner {name} --service needs administrator rights; {how}: {}",
+            runner_service_command(os, &exe, switch, name, layout)
+        ));
+    }
+    let inputs = RunnerServiceInputs {
+        os,
+        exe,
+        name: name.to_string(),
+        state_dir: layout.root.clone(),
+        config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
+        user: original_user()?,
+    };
+    if on {
+        runner_service::check_identity(&inputs)?;
+    }
+    admin_marker(dry_run, elevated);
+    let plan = if on {
+        runner_service::install(&inputs)
+    } else {
+        runner_service::uninstall(&inputs)
+    };
+    apply(&plan, dry_run)?;
+    if dry_run {
+        return Ok(0);
+    }
+    let service = runner_service::service_name(os, name);
+    if on {
+        println!(
+            "autostart on: runner {name} runs as the OS service {service} under {}: it starts \
+             after a reboot and keeps running after logout",
+            runner_service::account(&inputs)
+        );
+        println!("its state: {}", named_status_command(os, &service));
+        println!(
+            "if it also has a login autostart, remove that as its user: localrunner autostart off runner {name}"
+        );
+        if os == Os::Windows {
+            println!(
+                "the service account has no user profile: jobs see only tools installed for all users"
+            );
+        }
+    } else {
+        println!("autostart off: runner {name} is no longer an OS service");
     }
     Ok(0)
 }

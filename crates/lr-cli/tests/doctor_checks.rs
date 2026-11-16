@@ -301,6 +301,85 @@ fn doctor_reports_a_broker_database_that_no_service_state_uses() {
     );
 }
 
+const LOGIN_ONLY: &str =
+    "starts at login only: it stops at logout and does not start after a reboot until someone logs in";
+
+#[test]
+fn doctor_warns_that_a_login_autostart_stops_at_logout() {
+    use lr_cli::doctor::{autostart_check, parse_linger, AutostartFound};
+    for linger in [None, Some(false)] {
+        let found = AutostartFound {
+            service: None,
+            login: true,
+            linger,
+        };
+        let c = autostart_check("box", &found).unwrap();
+        assert_eq!(c.name, "runner box autostart");
+        assert_eq!(c.status, Status::Warn, "{c:?}");
+        assert!(c.detail.starts_with(LOGIN_ONLY), "{c:?}");
+        assert!(
+            c.detail.contains("autostart on runner box --service"),
+            "{c:?}"
+        );
+    }
+    assert_eq!(parse_linger("Linger=no\n"), Some(false));
+    let nothing = AutostartFound {
+        service: None,
+        login: false,
+        linger: Some(true),
+    };
+    assert_eq!(
+        autostart_check("box", &nothing),
+        None,
+        "no autostart, nothing to say"
+    );
+}
+
+#[test]
+fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
+    use lr_cli::doctor::{autostart_check, parse_linger, AutostartFound};
+    assert_eq!(parse_linger("Linger=yes\n"), Some(true));
+    assert_eq!(parse_linger(""), None);
+    assert_eq!(parse_linger("Failed to get user: No such user\n"), None);
+    let lingering = AutostartFound {
+        service: None,
+        login: true,
+        linger: parse_linger("Linger=yes\n"),
+    };
+    let c = autostart_check("box", &lingering).unwrap();
+    assert_eq!(c.status, Status::Ok, "{c:?}");
+    assert!(c.detail.contains("linger"), "{c:?}");
+    for running in [Some(true), None] {
+        let service = AutostartFound {
+            service: Some(running),
+            login: false,
+            linger: None,
+        };
+        let c = autostart_check("box", &service).unwrap();
+        assert_eq!(c.status, Status::Ok, "{c:?}");
+        assert!(c.detail.contains("OS service"), "{c:?}");
+    }
+    let stopped = AutostartFound {
+        service: Some(Some(false)),
+        login: false,
+        linger: None,
+    };
+    let c = autostart_check("box", &stopped).unwrap();
+    assert_eq!(c.status, Status::Warn, "{c:?}");
+    assert!(c.detail.contains("not running"), "{c:?}");
+    let both = AutostartFound {
+        service: Some(Some(true)),
+        login: true,
+        linger: None,
+    };
+    let c = autostart_check("box", &both).unwrap();
+    assert_eq!(c.status, Status::Warn, "{c:?}");
+    assert!(
+        c.detail.contains("autostart off runner box"),
+        "a service and a login entry start the runner twice: {c:?}"
+    );
+}
+
 #[test]
 fn runners_on_another_version_are_named_per_broker() {
     use lr_cli::doctor::{runner_version_checks, Status};

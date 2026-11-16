@@ -1,4 +1,4 @@
-//! The broker inside the OS service (spec 10): a broker that did not start or ended on its own
+//! The broker or a runner inside an OS service (spec 10): a broker that did not start or ended on its own
 //! is a failure for the service manager, which restarts the service after 5 seconds, and the
 //! reason goes to `logs/service.log` of the service's state directory.
 
@@ -38,6 +38,37 @@ pub fn service_log(layout: &Layout, text: &str) {
         .open(dir.join("service.log"))
     {
         let _ = writeln!(f, "{at} {text}");
+    }
+}
+
+/// Runs runner `name` of `layout` as an OS service until `stop` completes; `started` is called
+/// once it runs. A runner stopped by `down` ends as [`ServiceEnd::Stopped`], so the service
+/// manager leaves it stopped; a runner the broker refused is noted in `logs/service.log` and
+/// stopped too, since a restart would be refused again.
+pub async fn serve_runner(
+    layout: &Layout,
+    name: &str,
+    started: impl FnOnce(),
+    stop: impl Future<Output = ()>,
+) -> ServiceEnd {
+    let running = match crate::roles::start_runners(layout, Some(name), 1, None, false).await {
+        Ok(r) => r,
+        Err(e) => {
+            service_log(layout, &format!("runner {name} did not start: {e}"));
+            return ServiceEnd::NotStarted;
+        }
+    };
+    started();
+    tokio::select! {
+        _ = stop => ServiceEnd::Stopped,
+        exits = running.wait() => {
+            for e in exits {
+                if let lr_runner::AgentExit::Refused(p) = e {
+                    service_log(layout, &format!("the broker refused runner {name}: {}", p.message));
+                }
+            }
+            ServiceEnd::Stopped
+        }
     }
 }
 

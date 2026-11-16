@@ -315,7 +315,8 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Enable or disable starting roles with the OS (`broker` = the broker service).
+    /// Enable or disable starting roles with the OS: the hub and runners start at user login,
+    /// `broker` is the broker service, `runner <name> --service` makes one runner an OS service.
     Autostart {
         /// `on` or `off`.
         #[arg(value_enum)]
@@ -325,6 +326,10 @@ pub enum Command {
         role: Option<RoleArg>,
         /// One runner of this installation (with the role `runner`).
         runner: Option<String>,
+        /// With `runner <name>`: an OS service that starts after a reboot and survives logout,
+        /// instead of the start at user login (administrator).
+        #[arg(long)]
+        service: bool,
         /// Print what would be done and change nothing.
         #[arg(long)]
         dry_run: bool,
@@ -472,7 +477,16 @@ pub async fn run(cli: Cli) -> i32 {
                 count,
                 config,
                 background,
-            } => roles_cmd::runner_run(&layout, name, count, config, background).await,
+                service,
+                owner,
+            } => {
+                let how = roles_cmd::RunnerStart {
+                    background,
+                    service,
+                    owner,
+                };
+                roles_cmd::runner_run(&layout, name, count, config, how).await
+            }
             RunnerAction::Join {
                 address,
                 code,
@@ -546,8 +560,9 @@ pub async fn run(cli: Cli) -> i32 {
             switch,
             role,
             runner,
+            service,
             dry_run,
-        } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
+        } => service_cmd::autostart(&layout, switch, role, runner, service, dry_run),
         Command::Profile { action } => profile_cmd::run(&layout, action),
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };

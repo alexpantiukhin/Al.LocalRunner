@@ -37,7 +37,12 @@ fn output_of(program: &str, args: &[&str]) -> Option<String> {
 /// Whether the broker service is running according to the service manager: `None` when that is
 /// not known (not installed, the manager cannot be asked).
 pub fn service_running(os: Os) -> Option<bool> {
-    let name = service_name(os);
+    named_service_running(os, service_name(os))
+}
+
+/// Whether the service `name` (a Windows service, a system unit, a `system/` launchd label) is
+/// running, as for [`service_running`].
+pub fn named_service_running(os: Os, name: &str) -> Option<bool> {
     match os {
         Os::Windows => parse_sc_state(&output_of("sc.exe", &["query", name])?),
         Os::Linux => parse_systemctl_active(&output_of("systemctl", &["is-active", name])?),
@@ -50,7 +55,11 @@ pub fn service_running(os: Os) -> Option<bool> {
 
 /// The command that shows the state of the broker service, for an elevated shell.
 pub fn status_command(os: Os) -> String {
-    let name = service_name(os);
+    named_status_command(os, service_name(os))
+}
+
+/// The command that shows the state of the service `name`, for an elevated shell.
+pub fn named_status_command(os: Os, name: &str) -> String {
     match os {
         Os::Windows => format!("Get-Service {name}"),
         Os::Linux => format!("sudo systemctl status {name}"),
@@ -60,7 +69,11 @@ pub fn status_command(os: Os) -> String {
 
 /// The command that restarts the broker service, for an elevated shell.
 pub fn restart_command(os: Os) -> String {
-    let name = service_name(os);
+    named_restart_command(os, service_name(os))
+}
+
+/// The command that restarts the service `name`, for an elevated shell.
+pub fn named_restart_command(os: Os, name: &str) -> String {
     match os {
         Os::Windows => format!("Restart-Service {name}"),
         Os::Linux => format!("sudo systemctl restart {name}"),

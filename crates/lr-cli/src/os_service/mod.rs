@@ -1,5 +1,6 @@
 //! What the OS does for LocalRunner (spec 3.12, 10, 10.3): the broker service under its own
-//! unprivileged account and the optional autostart of roles. Every change to the system is an
+//! unprivileged account, the optional autostart of roles at login and a runner as an OS
+//! service ([`runner_service`]). Every change to the system is an
 //! [`Action`] built by the pure functions of [`plans`] and carried out by a [`System`]: the real
 //! one ([`OsSystem`]) or one that only prints ([`DryRun`]), so tests never touch the machine.
 
@@ -8,6 +9,7 @@ pub mod autostart;
 pub mod plans;
 pub mod programs;
 pub mod quote;
+pub mod runner_service;
 mod self_remove;
 pub use self_remove::remove_leftover;
 pub mod service_run;
