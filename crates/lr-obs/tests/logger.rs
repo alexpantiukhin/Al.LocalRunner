@@ -471,12 +471,16 @@ fn reload_never_has_two_writers_on_one_path() {
     let logger = Arc::new(b.logger("[[sink]]\nkind = \"file\"\n"));
     logger.start_workers();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (wrote, first_write) = std::sync::mpsc::channel();
     let writer = {
         let (logger, stop) = (logger.clone(), stop.clone());
         std::thread::spawn(move || {
             let mut n = 0u64;
             while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                 logger.write(&record("engine", Level::Info, &format!("r{n}")));
+                if n == 0 {
+                    wrote.send(()).expect("the test waits for the first write");
+                }
                 n += 1;
                 if n.is_multiple_of(64) {
                     std::thread::yield_now();
@@ -484,6 +488,7 @@ fn reload_never_has_two_writers_on_one_path() {
             }
         })
     };
+    first_write.recv().expect("the writer wrote");
     let cfg = LoggingConfig::parse("[[sink]]\nkind = \"file\"\n").unwrap();
     for _ in 0..30 {
         logger.reload(&cfg).unwrap();

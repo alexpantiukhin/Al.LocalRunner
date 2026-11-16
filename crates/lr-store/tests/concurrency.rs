@@ -112,17 +112,19 @@ async fn a_store_call_waiting_on_the_database_does_not_block_the_runtime() {
     let store = Arc::new(SqliteBrokerStore::open(&path).unwrap());
     let other = Connection::open(&path).unwrap();
     other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (calling, called) = tokio::sync::oneshot::channel();
     let call = {
         let store = store.clone();
-        tokio::spawn(async move { store.accept(intake("c1", "j1", "check", T0)).await })
+        tokio::spawn(async move {
+            let _ = calling.send(());
+            store.accept(intake("c1", "j1", "check", T0)).await
+        })
     };
-    let mut ticks = 0;
-    for _ in 0..6 {
-        tokio::task::yield_now().await;
-        ticks += 1;
-        assert!(!call.is_finished(), "the call must wait for the write lock");
-    }
-    assert_eq!(ticks, 6);
+    called.await.expect("the call task runs");
+    assert!(
+        !call.is_finished(),
+        "the call was polled and must wait for the write lock off the runtime"
+    );
     other.execute_batch("COMMIT").unwrap();
     assert_eq!(call.await.unwrap().unwrap(), Admission::Accepted);
 }

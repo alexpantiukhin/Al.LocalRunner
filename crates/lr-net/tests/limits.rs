@@ -1,10 +1,14 @@
 mod common;
 
 use common::*;
-use lr_net::{Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES};
+use lr_net::{
+    pinned_client_config, server_name, Limits, HANDSHAKE_TIMEOUT, MAX_PENDING_HANDSHAKES,
+};
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::{TcpSocket, TcpStream};
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
 
 async fn junk_from(source: &str, broker: &str) -> TcpStream {
     let socket = TcpSocket::new_v4().unwrap();
@@ -12,7 +16,18 @@ async fn junk_from(source: &str, broker: &str) -> TcpStream {
     socket.connect(broker.parse().unwrap()).await.unwrap()
 }
 
-async fn dropped_within(s: &mut TcpStream, wait: Duration) -> bool {
+async fn held_from(source: &str, b: &Broker) -> TlsStream<TcpStream> {
+    let config = pinned_client_config(b.identity.fingerprint()).unwrap();
+    let tcp = tcp_from(source, &b.addr).await;
+    let mut tls = TlsConnector::from(config)
+        .connect(server_name(), tcp)
+        .await
+        .expect("the broker took the connection into a handshake slot");
+    challenge(&mut tls).await;
+    tls
+}
+
+async fn dropped_within<S: AsyncRead + Unpin>(s: &mut S, wait: Duration) -> bool {
     let mut buf = [0u8; 64];
     matches!(
         tokio::time::timeout(wait, s.read(&mut buf)).await,
@@ -44,8 +59,8 @@ async fn one_address_cannot_take_more_than_its_share() {
     let k = key();
     b.register(&k, "light").await;
     let mut held = vec![
-        junk_from("127.0.0.2", &b.addr).await,
-        junk_from("127.0.0.2", &b.addr).await,
+        held_from("127.0.0.2", &b).await,
+        held_from("127.0.0.2", &b).await,
     ];
     let mut third = junk_from("127.0.0.2", &b.addr).await;
     assert!(
@@ -68,7 +83,7 @@ async fn full_slots_drop_newcomers_but_not_known_members() {
     b.accept().await;
     let mut junk = Vec::new();
     for i in 2..6 {
-        junk.push(junk_from(&format!("127.0.0.{i}"), &b.addr).await);
+        junk.push(held_from(&format!("127.0.0.{i}"), &b).await);
     }
     let mut late = junk_from("127.0.0.9", &b.addr).await;
     assert!(
@@ -91,7 +106,7 @@ async fn reserved_slots_are_only_for_known_addresses() {
     b.register(&k, "light").await;
     let mut junk = Vec::new();
     for i in 2..6 {
-        junk.push(junk_from(&format!("127.0.0.{i}"), &b.addr).await);
+        junk.push(held_from(&format!("127.0.0.{i}"), &b).await);
     }
     assert!(
         b.dial(&k).await.is_err(),
@@ -109,7 +124,7 @@ async fn junk_from_a_member_address_cannot_lock_it_out() {
     b.accept().await;
     let mut junk = Vec::new();
     for _ in 0..3 {
-        junk.push(junk_from("127.0.0.1", &b.addr).await);
+        junk.push(held_from("127.0.0.1", &b).await);
     }
     b.dial(&k)
         .await
@@ -161,9 +176,9 @@ async fn both_pools_full_of_junk_from_one_member_source_spare_other_members() {
 
     let mut junk = Vec::new();
     for _ in 0..4 {
-        junk.push(junk_from("127.0.0.1", &b.addr).await);
+        junk.push(held_from("127.0.0.1", &b).await);
     }
-    junk.push(junk_from("127.0.0.3", &b.addr).await);
+    junk.push(held_from("127.0.0.3", &b).await);
     let mut over = junk_from("127.0.0.1", &b.addr).await;
     assert!(
         dropped_within(&mut over, Duration::from_secs(2)).await,

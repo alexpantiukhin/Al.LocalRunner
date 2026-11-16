@@ -10,8 +10,8 @@ struct Counts {
 
 const THRESHOLD: Counts = Counts {
     eventually: 3,
-    sleep: 7,
-    timeouts: 2,
+    sleep: 8,
+    timeouts: 3,
 };
 
 const LONG_WAITS: [&str; 5] = ["30", "45", "60", "90", "120"];
@@ -389,20 +389,60 @@ fn clock_argument(code: &[u8], at: usize) -> bool {
     name == b"advance" || (name == b"sleep" && method)
 }
 
+fn cfg_test(attr: &[u8]) -> bool {
+    let flat: Vec<u8> = attr
+        .iter()
+        .copied()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    flat.starts_with(b"cfg(") && flat.split(|&c| !ident_byte(c)).any(|word| word == b"test")
+}
+
+fn test_module_ranges(code: &[u8]) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    for at in words(code, b"mod") {
+        let name = skip_space(code, at + 3);
+        if !code.get(name).is_some_and(|&c| ident_byte(c)) {
+            continue;
+        }
+        let Some(open) = code[name..]
+            .iter()
+            .position(|&c| c == b'{' || c == b';')
+            .map(|p| name + p)
+            .filter(|&p| code[p] == b'{')
+        else {
+            continue;
+        };
+        if own_attributes(code, at).into_iter().any(cfg_test) {
+            ranges.push((open, closing(code, open)));
+        }
+    }
+    ranges
+}
+
 fn count(src: &str) -> Counts {
+    count_where(src, |_, _| true)
+}
+
+fn count_in_test_modules(src: &str) -> Counts {
+    count_where(src, |code, at| inside(&test_module_ranges(code), at))
+}
+
+fn count_where(src: &str, keep: impl Fn(&[u8], usize) -> bool) -> Counts {
     let code = blank(src);
     let paused = paused_ranges(&code);
     let asserts = assert_ranges(&code);
+    let counted = |at: usize| !inside(&paused, at) && keep(&code, at);
     let mut counts = Counts::default();
     for at in words(&code, b"eventually") {
-        if called(&code, at + 10) && !after_fn(&code, at) && !inside(&paused, at) {
+        if called(&code, at + 10) && !after_fn(&code, at) && counted(at) {
             counts.eventually += 1;
         }
     }
     for at in words(&code, b"sleep") {
         let before = space_back(&code, at);
         let method = before > 0 && code[before - 1] == b'.';
-        if called(&code, at + 5) && !method && !after_fn(&code, at) && !inside(&paused, at) {
+        if called(&code, at + 5) && !method && !after_fn(&code, at) && counted(at) {
             counts.sleep += 1;
         }
     }
@@ -414,7 +454,7 @@ fn count(src: &str) -> Counts {
         let close = closing(&code, open);
         let literal = String::from_utf8_lossy(&code[open + 1..close]);
         if LONG_WAITS.contains(&literal.trim())
-            && !inside(&paused, at)
+            && counted(at)
             && !inside(&asserts, at)
             && !clock_argument(&code, at)
         {
@@ -422,6 +462,11 @@ fn count(src: &str) -> Counts {
         }
     }
     counts
+}
+
+fn test_file_name(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    name.ends_with("_test.rs") || name.ends_with("_tests.rs") || name == "tests.rs"
 }
 
 fn test_sources(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -446,23 +491,35 @@ fn workspace_counts() -> Vec<(PathBuf, Counts)> {
         .to_path_buf();
     let mut members: Vec<PathBuf> = std::fs::read_dir(&crates)
         .expect("the crates directory is readable")
-        .map(|e| e.expect("directory entry").path().join("tests"))
+        .map(|e| e.expect("directory entry").path())
         .filter(|p| p.is_dir())
         .collect();
     members.sort();
-    let mut files = Vec::new();
-    for tests in members {
-        test_sources(&tests, &mut files);
+    let mut tests = Vec::new();
+    let mut sources = Vec::new();
+    for member in members {
+        if member.join("tests").is_dir() {
+            test_sources(&member.join("tests"), &mut tests);
+        }
+        if member.join("src").is_dir() {
+            test_sources(&member.join("src"), &mut sources);
+        }
     }
-    files
-        .into_iter()
-        .map(|path| {
-            let src = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            let rel = path.strip_prefix(&crates).unwrap_or(&path).to_path_buf();
-            (rel, count(&src))
-        })
-        .collect()
+    let read = |path: &Path| {
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+    };
+    let rel = |path: &Path| path.strip_prefix(&crates).unwrap_or(path).to_path_buf();
+    let whole = tests.iter().map(|path| (rel(path), count(&read(path))));
+    let in_sources = sources.iter().map(|path| {
+        let src = read(path);
+        let counts = if test_file_name(path) {
+            count(&src)
+        } else {
+            count_in_test_modules(&src)
+        };
+        (rel(path), counts)
+    });
+    whole.chain(in_sources).collect()
 }
 
 #[test]
@@ -570,6 +627,54 @@ async fn paused_by_hand() {
             timeouts: 4,
         }
     );
+}
+
+#[test]
+fn wait_ratchet_counts_only_test_modules_in_library_sources() {
+    let fixture = r##"
+const PERIOD: Duration = Duration::from_secs(30);
+fn production() {
+    std::thread::sleep(PERIOD);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn waits() {
+        std::thread::sleep(Duration::from_millis(5));
+        let _ = Duration::from_secs(60);
+    }
+}
+
+#[cfg(all(test, windows))]
+pub(crate) mod windows_tests {
+    async fn waits() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[cfg(feature = "testing")]
+mod not_a_test_module {
+    fn waits() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(test)]
+#[path = "elsewhere_tests.rs"]
+mod elsewhere;
+"##;
+    assert_eq!(
+        count_in_test_modules(fixture),
+        Counts {
+            eventually: 0,
+            sleep: 2,
+            timeouts: 1,
+        }
+    );
+    assert!(test_file_name(Path::new("src/acl_windows_tests.rs")));
+    assert!(test_file_name(Path::new("src/outbox_cancel_test.rs")));
+    assert!(!test_file_name(Path::new("src/listener.rs")));
 }
 
 #[test]
