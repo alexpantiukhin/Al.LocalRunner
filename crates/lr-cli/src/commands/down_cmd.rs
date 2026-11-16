@@ -231,8 +231,8 @@ async fn ctrl_c() {
 fn still_running(name: &str, has_job: Option<bool>) -> String {
     match has_job {
         Some(false) => format!(
-            "{name}: no job runs, but it did not stop within {} s: its connection is stuck; run `down --cancel` again or end the process",
-            STOPPED_WITHIN.as_secs()
+            "{name}: still running with no job: it is delivering its outbox or stopping its services; it leaves on its own within {} s of the stop, or once its services have stopped (what it could not deliver is sent on its next start)",
+            lr_runner::STOP_BOUND.as_secs()
         ),
         _ => format!(
             "{name}: still running, it stops when its job ends (`localrunner status` shows the job)"
@@ -242,7 +242,8 @@ fn still_running(name: &str, has_job: Option<bool>) -> String {
 
 /// Waits up to [`STOPPED_WITHIN`] for the runners `names` to stop answering and reports each:
 /// `stopped`, or `still running` (it is stopping: it finishes or cancels its job first, so
-/// this is not an error). A runner known to run no job is told apart: its link is stuck.
+/// this is not an error). A runner known to run no job is told apart: it is delivering its
+/// outbox or stopping its services and leaves on its own.
 async fn report_stopped(roles: &dyn Roles, names: &[String]) {
     let start = tokio::time::Instant::now();
     let mut left: Vec<&String> = names.iter().collect();

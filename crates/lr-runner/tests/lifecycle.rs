@@ -479,6 +479,28 @@ async fn a_running_job_keeps_the_runner_alive_while_the_send_is_stuck() {
 }
 
 #[tokio::test]
+async fn an_idle_runner_whose_broker_reads_but_never_acks_stops_within_the_bound() {
+    let rig = Rig::new();
+    fill_outbox(&rig, 100).await;
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    let mut seen = 0;
+    while seen < 100 {
+        if let Some(RunnerToBroker::Chunk(_)) = b.recv().await {
+            seen += 1;
+        }
+    }
+    c.drain(lr_proto::DrainReason::Down).await;
+    b.until(|m| matches!(m, RunnerToBroker::Drain { .. })).await;
+    rig.advance(SEC).await;
+    assert!(!h.is_finished(), "the runner gives its broker time first");
+    rig.advance(STOP_BOUND).await;
+    assert!(h.is_finished(), "an unacknowledged outbox kept the runner");
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert_eq!(rig.pending().await.len(), 100, "the outbox is kept");
+}
+
+#[tokio::test]
 async fn an_idle_runner_with_an_undelivered_outbox_and_no_broker_stops_within_the_bound() {
     let rig = Rig::new();
     fill_outbox(&rig, 10).await;

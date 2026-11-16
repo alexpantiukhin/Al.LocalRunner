@@ -152,8 +152,9 @@ async fn a_runner_with_no_job_that_does_not_stop_is_not_told_to_wait_for_a_job()
     let said = idle.said();
     assert_eq!(
         said,
-        vec!["r1: no job runs, but it did not stop within 3 s: its connection is stuck; run `down --cancel` again or end the process".to_string()]
+        vec!["r1: still running with no job: it is delivering its outbox or stopping its services; it leaves on its own within 10 s of the stop, or once its services have stopped (what it could not deliver is sent on its next start)".to_string()]
     );
+    assert!(!said[0].contains("stuck") && !said[0].contains("--cancel"));
 
     let busy = FakeRoles::new(false, usize::MAX);
     *busy.jobs.lock().unwrap() = Some(vec!["job-1 on r1 (rust-unit), running 1 s".into()]);

@@ -560,6 +560,19 @@ pub(crate) async fn session(
             t.close().await;
             return End::Stopped;
         }
+        if stop_is_due(shared) && shared.services_down() {
+            shared.diag.event(
+                Level::Warn,
+                "told to stop and the broker has not acknowledged the outbox, leaving; the outbox is kept",
+                &[],
+            );
+            s.send(&RunnerToBroker::Bye(Bye {
+                reason: Some("runner stopped".into()),
+            }))
+            .await;
+            t.close().await;
+            return End::Stopped;
+        }
         let deadline = after(last_rx, silence);
         tokio::select! {
             f = inbox.next() => match f {
@@ -599,6 +612,7 @@ pub(crate) async fn session(
                     s.on_control(cmd);
                 }
             }
+            () = stop_due(shared), if !stop_is_due(shared) => {}
         }
     }
 }
