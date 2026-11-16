@@ -85,6 +85,33 @@ impl Running {
         self.halt();
     }
 
+    /// Stops the role like [`Running::stop`] and waits until its own tasks have ended, so
+    /// what they held is let go; for callers that reuse the role's state or addresses next.
+    pub async fn stopped(mut self) {
+        let tasks = std::mem::take(&mut self.tasks);
+        let exits = std::mem::take(&mut self.exits);
+        for t in &tasks {
+            t.abort();
+        }
+        for e in &exits {
+            e.abort();
+        }
+        self.halt();
+        for t in tasks {
+            let _ = t.await;
+        }
+        for e in exits {
+            let _ = e.await;
+        }
+    }
+
+    /// Writes out the diagnostics the role's loggers hold so far.
+    pub fn flush(&self) {
+        for l in &self.loggers {
+            l.flush();
+        }
+    }
+
     fn halt(&mut self) {
         for t in self.tasks.drain(..) {
             t.abort();

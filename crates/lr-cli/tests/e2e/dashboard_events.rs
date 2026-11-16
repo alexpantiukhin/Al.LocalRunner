@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::watch;
 
 const QUICK: &str =
     "[profile.quick]\ncommand = \"echo e2e-event\"\ntimeout_s = 120\nmem_mb = 256\n";
@@ -51,6 +52,7 @@ pub async fn http(addr: &str, path: &str) -> String {
 pub struct Watched {
     pub running: RunningDashboard,
     events: Arc<Mutex<Vec<Value>>>,
+    changes: watch::Receiver<usize>,
     pub addr: String,
     pub cookie: String,
 }
@@ -94,6 +96,7 @@ impl Watched {
         assert!(text.starts_with("HTTP/1.1 200"), "{text}");
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
+        let (changed, changes) = watch::channel(0usize);
         tokio::spawn(async move {
             let mut pending = text.split_once("\r\n\r\n").unwrap().1.to_string();
             loop {
@@ -102,6 +105,7 @@ impl Watched {
                     if let Some(data) = line.trim().strip_prefix("data:") {
                         if let Ok(v) = serde_json::from_str::<Value>(data.trim()) {
                             sink.lock().unwrap().push(v);
+                            changed.send_modify(|n| *n += 1);
                         }
                     }
                 }
@@ -114,6 +118,7 @@ impl Watched {
         Watched {
             running,
             events,
+            changes,
             addr: addr.to_string(),
             cookie,
         }
@@ -133,11 +138,36 @@ impl Watched {
     }
 
     pub async fn until(&self, what: &str, f: impl Fn(&Value) -> bool) -> Value {
-        eventually(what, Duration::from_secs(60), || {
+        self.until_check(what, || {
             let found = self.events.lock().unwrap().iter().find(|e| f(e)).cloned();
             async move { found }
         })
         .await
+    }
+
+    /// Checks `check` now and again after every event the page receives until it gives a
+    /// value.
+    pub async fn until_check<T, F, Fut>(&self, what: &str, mut check: F) -> T
+    where
+        F: FnMut() -> Fut,
+        Fut: std::future::Future<Output = Option<T>>,
+    {
+        let mut changes = self.changes.clone();
+        let found = async {
+            loop {
+                changes.borrow_and_update();
+                if let Some(v) = check().await {
+                    return v;
+                }
+                changes
+                    .changed()
+                    .await
+                    .expect("the event stream of the page");
+            }
+        };
+        tokio::time::timeout(HANG, found)
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {what}"))
     }
 }
 
@@ -177,16 +207,12 @@ async fn two_hubs(
     let guest_hub = start_hub(&guest, false)
         .await
         .unwrap_or_else(|e| panic!("guest hub starts: {e}"));
-    eventually(
-        "the guest hub reads the broker",
-        Duration::from_secs(60),
-        || async {
-            let client = hub(&guest).await.ok()?;
-            let answer = read(&client, "main", ReadRequest::Runners).await.ok();
-            client.close().await;
-            answer.map(|_| ())
-        },
-    )
+    until_hub(&guest, "the guest hub reads the broker", || async {
+        let client = hub(&guest).await.ok()?;
+        let answer = read(&client, "main", ReadRequest::Runners).await.ok();
+        client.close().await;
+        answer.map(|_| ())
+    })
     .await;
     let owner = Watched::open(&main).await;
     let other = Watched::open(&guest).await;
@@ -201,7 +227,7 @@ async fn two_hubs(
 
 async fn run_quick(main: &Layout, repo: &std::path::Path) -> JobId {
     let (client, job) = submit(main, repo, "quick", None).await;
-    let ended = until_exit(client, &job, Duration::from_secs(120)).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     job
 }

@@ -42,49 +42,46 @@ fn job_of<'a>(snap: &'a Value, job: &JobId) -> Option<&'a Value> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dashboard_streams_queue_updates_after_the_token_exchange() {
     let dir = TempDir::new("e2e-dash");
-    let gate = dir.path().join("gate");
-    let mut release = Release::new(&[&gate]);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let (main, mut roles) = machine(&dir, "main", "", &["r1"], &runner_toml()).await;
     let profiles = format!(
         "{}\n{}",
-        held_profile("busy", dir.path(), &gate, 120, "mem_mb = 256\n"),
+        held_profile("busy", &gate, 120, "mem_mb = 256\n"),
         echo_profile("next", "after-the-busy-one", 60, "mem_mb = 256\n"),
     );
     let repo = repo(&dir, &profiles);
     let (busy_client, busy) = submit(&main, &repo, "busy", None).await;
-    release.watch(started(dir.path(), "busy", "child").await);
+    gate.started("busy", "child").await;
 
     let view = status(&main).await.expect("status");
     assert!(
         view.running.iter().any(|r| r.summary.job == busy),
         "{view:?}"
     );
-    eventually(
-        "the log of the running job to hold what its child printed",
-        Duration::from_secs(30),
-        || async {
-            let client = hub(&main).await.expect("hub channel");
-            let query = LogQuery {
-                job: busy.clone(),
-                step: None,
-                tail: None,
-                follow: false,
-            };
-            let mut log = String::new();
-            find_log(
-                &client,
-                None,
-                &query,
-                &Arc::new(Redactor::new(&[])),
-                &mut |t| log.push_str(t),
-            )
-            .await
-            .expect("the log of the running job");
-            client.close().await;
-            log.contains("child-started").then_some(())
-        },
+    until_output(&busy_client, &busy, "child-started").await;
+    let client = hub(&main).await.expect("hub channel");
+    let query = LogQuery {
+        job: busy.clone(),
+        step: None,
+        tail: None,
+        follow: false,
+    };
+    let mut log = String::new();
+    find_log(
+        &client,
+        None,
+        &query,
+        &Arc::new(Redactor::new(&[])),
+        &mut |t| log.push_str(t),
     )
-    .await;
+    .await
+    .expect("the log of the running job");
+    client.close().await;
+    assert!(
+        log.contains("child-started"),
+        "the log of the running job holds what its child printed: {log}"
+    );
 
     let page = Watched::open(&main).await;
     let (next_client, next) = submit(&main, &repo, "next", None).await;
@@ -98,20 +95,20 @@ async fn dashboard_streams_queue_updates_after_the_token_exchange() {
     assert_eq!(waiting["list"], "queued", "{snap}");
 
     roles.take_broker().stop();
-    let stale = eventually(
-        "the last snapshot of the stopped broker, marked stale",
-        Duration::from_secs(60),
-        || async {
-            let snap = snapshot(&page).await;
-            let down = snap["brokers"]
-                .as_array()?
-                .iter()
-                .any(|b| b["name"] == "local" && b["available"] == false);
-            let kept = job_of(&snap, &busy)?.clone();
-            (down && kept["stale"] == true).then_some(kept)
-        },
-    )
-    .await;
+    let stale = page
+        .until_check(
+            "the last snapshot of the stopped broker, marked stale",
+            || async {
+                let snap = snapshot(&page).await;
+                let down = snap["brokers"]
+                    .as_array()?
+                    .iter()
+                    .any(|b| b["name"] == "local" && b["available"] == false);
+                let kept = job_of(&snap, &busy)?.clone();
+                (down && kept["stale"] == true).then_some(kept)
+            },
+        )
+        .await;
     assert_eq!(stale["list"], "running", "{stale}");
 
     page.running.shutdown().await;

@@ -8,7 +8,6 @@ use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::{JobState, Zone};
 use lr_proto::{AdminReply, AdminRequest};
 use std::path::Path;
-use std::time::Duration;
 
 const PLATFORM: &str = "e2e-remote";
 
@@ -91,7 +90,7 @@ async fn join_runner_by_code_then_job_runs_remote() {
     common::git(&repo, &["remote", "add", "origin", &url]);
     common::git(&repo, &["push", "-q", "-u", "origin", "HEAD"]);
     let (client, job) = submit(&main, &repo, "remote", Some(PLATFORM)).await;
-    let ended = until_exit(client, &job, Duration::from_secs(120)).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(
         ended.output.contains("ran-on-the-joined-runner"),
@@ -157,11 +156,11 @@ async fn hub_joins_by_code_with_the_owner_label_and_its_orders_carry_it() {
     let repo = repo(&dir, &profiles);
     push_origin(&dir, &repo);
     let (client, from_laptop) = submit(&laptop, &repo, "remote", Some(PLATFORM)).await;
-    let ended = until_exit(client, &from_laptop, Duration::from_secs(120)).await;
+    let ended = until_exit(client, &from_laptop, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("from-the-laptop"), "{}", ended.output);
     let (client, from_main) = submit(&main, &repo, "here", None).await;
-    let ended = until_exit(client, &from_main, Duration::from_secs(60)).await;
+    let ended = until_exit(client, &from_main, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
 
     let laptop_row = row(&main, &from_laptop).await;

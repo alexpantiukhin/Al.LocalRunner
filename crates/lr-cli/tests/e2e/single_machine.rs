@@ -6,7 +6,6 @@ use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::JobState;
 use lr_obs::Redactor;
 use std::sync::Arc;
-use std::time::Duration;
 
 const MASKED_LINE: &str = "e2e-out [***] done";
 
@@ -39,7 +38,7 @@ async fn single_machine_submit_wait_passes_and_history_has_one_row() {
     );
     let repo = repo(&dir, &profiles);
     let (client, job) = submit(&layout, &repo, "unit", None).await;
-    let ended = until_exit(client, &job, Duration::from_secs(60)).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert_eq!(ended.exit_code, Some(0), "{ended:?}");
     assert!(

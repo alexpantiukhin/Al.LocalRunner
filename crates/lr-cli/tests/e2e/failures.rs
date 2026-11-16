@@ -1,70 +1,23 @@
 use crate::common::TempDir;
-use crate::helper::{helper_command, Mode};
+use crate::kit::{alive, Gate, Mode, Release};
 use crate::support::*;
-use lr_abstractions::{Liveness, ProcessInspector};
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::JobState;
-use lr_exec::{process_start, OsProcessInspector};
 use lr_proto::{QueueEvent, ReasonCode};
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
-fn helper_profile(name: &str, mode: Mode, dir: &TempDir, timeout_s: u64) -> String {
-    let pids = dir.path().join(format!("{name}.pid"));
-    let gate = dir.path().join("gate");
+fn helper_profile(name: &str, mode: Mode, gate: &Gate, timeout_s: u64) -> String {
     format!(
         "[profile.{name}]\ncommand = {}\ntimeout_s = {timeout_s}\nmem_mb = 256\n",
-        toml_str(&helper_command(mode, &pids, &gate))
+        toml_str(&gate.command(mode, name))
     )
-}
-
-fn pids(dir: &TempDir, name: &str) -> std::path::PathBuf {
-    dir.path().join(format!("{name}.pid"))
-}
-
-fn open_gate(dir: &TempDir) {
-    std::fs::write(dir.path().join("gate"), b"open").unwrap();
-}
-
-/// Opens the gate of the helpers when the test ends, even by a panic, and waits until the job
-/// processes it watches are gone, so none of them holds the temporary directory.
-struct Release {
-    dir: PathBuf,
-    watched: Vec<(u32, u64)>,
-}
-
-impl Release {
-    fn new(dir: &TempDir) -> Release {
-        Release {
-            dir: dir.path().to_path_buf(),
-            watched: Vec::new(),
-        }
-    }
-
-    fn watch(&mut self, pid: u32) {
-        if let Some(start) = process_start(pid) {
-            self.watched.push((pid, start));
-        }
-    }
-}
-
-impl Drop for Release {
-    fn drop(&mut self) {
-        let _ = std::fs::write(self.dir.join("gate"), b"open");
-        let started = Instant::now();
-        while self.watched.iter().any(|&(p, s)| alive(p, s))
-            && started.elapsed() < Duration::from_secs(20)
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
 }
 
 // scenario: 16.21
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
     let dir = TempDir::new("e2e-lost");
-    let mut release = Release::new(&dir);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let layout = layout(&dir, "machine", "[grace]\nlost_min = 1\n");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -74,7 +27,7 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
         .expect("r1 starts");
     runner_online(&layout, "r1").await;
 
-    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &dir, 10));
+    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &gate, 10));
     let mut events = broker.broker_events().expect("broker events");
     let (held_client, held) = submit(&layout, &repo, "held", None).await;
     broker_event(&mut events, "the held job to start", |e| match e {
@@ -82,7 +35,7 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
         _ => None,
     })
     .await;
-    release.watch(helper_pid(&pids(&dir, "held"), "child").await);
+    gate.started("held", "child").await;
 
     runner.stop();
     broker_event(
@@ -112,7 +65,8 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn broker_restart_keeps_queue() {
     let dir = TempDir::new("e2e-restart");
-    let mut release = Release::new(&dir);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let layout = layout(&dir, "machine", "");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -124,15 +78,16 @@ async fn broker_restart_keeps_queue() {
 
     let profiles = format!(
         "{}\n[profile.next]\ncommand = \"echo queued-before-restart\"\ntimeout_s = 60\nmem_mb = 256\n",
-        helper_profile("first", Mode::Wait, &dir, 120)
+        helper_profile("first", Mode::Wait, &gate, 120)
     );
     let repo = repo(&dir, &profiles);
     let (first_client, first) = submit(&layout, &repo, "first", None).await;
-    release.watch(helper_pid(&pids(&dir, "first"), "child").await);
+    gate.started("first", "child").await;
+    let mut events = broker.broker_events().expect("broker events");
     let (next_client, next) = submit(&layout, &repo, "next", None).await;
-    eventually("the next job queued", Duration::from_secs(30), || async {
-        let v = status(&layout).await?;
-        v.queue.iter().any(|q| q.summary.job == next).then_some(())
+    broker_event(&mut events, "the next job queued", |e| match e {
+        QueueEvent::JobQueued { job } if job.job == next => Some(()),
+        _ => None,
     })
     .await;
 
@@ -141,7 +96,7 @@ async fn broker_restart_keeps_queue() {
         .await
         .expect("the broker starts again on the same state");
     runner_online(&layout, "r1").await;
-    let view = eventually("the restored queue", Duration::from_secs(30), || async {
+    let view = until_hub(&layout, "the restored queue", || async {
         let v = status(&layout).await?;
         let queued = v.queue.iter().any(|q| q.summary.job == next);
         let running = v.running.iter().any(|r| r.summary.job == first);
@@ -150,10 +105,10 @@ async fn broker_restart_keeps_queue() {
     .await;
     assert_eq!(view.queue.len(), 1, "{view:?}");
 
-    open_gate(&dir);
-    let a = until_exit(first_client, &first, Duration::from_secs(60)).await;
+    gate.open();
+    let a = until_exit(first_client, &first, HANG).await;
     assert_eq!(a.state, JobState::Passed, "{a:?}");
-    let b = until_exit(next_client, &next, Duration::from_secs(60)).await;
+    let b = until_exit(next_client, &next, HANG).await;
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("queued-before-restart"), "{}", b.output);
     let rows = history(&layout).await;
@@ -170,7 +125,8 @@ async fn broker_restart_keeps_queue() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() {
     let dir = TempDir::new("e2e-cancel");
-    let mut release = Release::new(&dir);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let layout = layout(&dir, "machine", "");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -180,9 +136,9 @@ async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() 
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &dir, 120));
+    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &gate, 120));
     let (client, job) = submit(&layout, &repo, "held", None).await;
-    release.watch(helper_pid(&pids(&dir, "held"), "child").await);
+    gate.started("held", "child").await;
     let reason = "superseded by a newer push";
     let code = lr_cli::commands::jobs::cancel(
         &layout,
@@ -196,7 +152,7 @@ async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() 
     .expect("cancel");
     assert_eq!(code, 0);
 
-    let ended = until_exit(client, &job, Duration::from_secs(60)).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Cancelled, "{ended:?}");
     assert_eq!(ended.reason, Some(ReasonCode::CancelledByUser), "{ended:?}");
     let log = std::fs::read_to_string(
@@ -225,15 +181,12 @@ async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() 
     remove(dir).await;
 }
 
-fn alive(pid: u32, start: u64) -> bool {
-    OsProcessInspector.liveness(pid, start) == Liveness::Alive
-}
-
 // scenario: 16.21
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn timeout_kills_grandchildren() {
     let dir = TempDir::new("e2e-timeout");
-    let mut release = Release::new(&dir);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let layout = layout(&dir, "machine", "");
     add_runner(&layout, "r1");
     let broker = start_broker(&layout, false).await.expect("broker starts");
@@ -243,28 +196,23 @@ async fn timeout_kills_grandchildren() {
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    let repo = repo(&dir, &helper_profile("tree", Mode::Tree, &dir, 20));
+    let timeout_s = 5;
+    let repo = repo(&dir, &helper_profile("tree", Mode::Tree, &gate, timeout_s));
     let (client, job) = submit(&layout, &repo, "tree", None).await;
-    let file = pids(&dir, "tree");
-    let grandchild = helper_pid(&file, "grandchild").await;
-    let child = helper_pid(&file, "child").await;
-    let tree: Vec<(u32, u64)> = [child, grandchild]
-        .into_iter()
-        .filter_map(|pid| process_start(pid).map(|s| (pid, s)))
-        .collect();
-    assert_eq!(tree.len(), 2, "both helpers run before the timeout");
-    assert!(tree.iter().all(|&(p, s)| alive(p, s)));
-    release.watched.extend(tree.iter().copied());
+    let grandchild = gate.started("tree", "grandchild").await;
+    let child = gate.started("tree", "child").await;
+    let tree = [child.process(), grandchild.process()];
+    assert!(
+        tree.iter().all(|&p| alive(p)),
+        "both helpers run before the timeout"
+    );
 
-    let ended = until_exit(client, &job, Duration::from_secs(60)).await;
+    let limit = HANG + std::time::Duration::from_secs(timeout_s);
+    let ended = until_exit(client, &job, limit).await;
     assert_eq!(ended.state, JobState::Timeout, "{ended:?}");
     assert!(ended.output.contains("child-started"), "{}", ended.output);
-    eventually(
-        "the whole tree to be gone",
-        Duration::from_secs(10),
-        || async { tree.iter().all(|&(p, s)| !alive(p, s)).then_some(()) },
-    )
-    .await;
+    child.gone("the child to be killed").await;
+    grandchild.gone("the grandchild to be killed").await;
 
     runner.stop();
     hub_role.stop();

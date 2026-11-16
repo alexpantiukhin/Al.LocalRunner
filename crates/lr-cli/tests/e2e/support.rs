@@ -8,12 +8,12 @@ use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
-    CliReply, CliRequest, HistoryFilter, JobSummary, QueueEvent, ReadReply, ReadRequest,
-    ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
+    CliReply, CliRequest, DashboardEvent, HistoryFilter, JobSummary, QueueEvent, ReadReply,
+    ReadRequest, ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::broadcast::{error::RecvError, Receiver};
 
 pub const LABEL: &str = "e2e";
@@ -110,13 +110,14 @@ pub async fn broker_event<T>(
         .unwrap_or_else(|_| panic!("no broker event for {what}"))
 }
 
-/// Polls `probe` until it gives a value; panics after `limit`.
+/// Polls `probe` until it gives a value; panics after `limit`. Only for what no role signals:
+/// the files and the port a stopped role's detached tasks let go of.
 pub async fn eventually<T, F, Fut>(what: &str, limit: Duration, mut probe: F) -> T
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
 {
-    let started = Instant::now();
+    let started = std::time::Instant::now();
     loop {
         if let Some(v) = probe().await {
             return v;
@@ -124,6 +125,80 @@ where
         assert!(started.elapsed() < limit, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// The live events of the hub of `layout` (the dashboard's stream).
+pub struct HubEvents(IpcClient);
+
+impl HubEvents {
+    pub async fn open(layout: &Layout) -> HubEvents {
+        let client = hub(layout).await.expect("hub channel");
+        match client.call::<_, CliReply>(&CliRequest::Events).await {
+            Ok(CliReply::Watching) => HubEvents(client),
+            other => panic!("the hub did not open its event stream: {other:?}"),
+        }
+    }
+
+    /// The next event the hub relays.
+    pub async fn next(&mut self) -> DashboardEvent {
+        loop {
+            match self.0.recv::<CliReply>().await {
+                Ok(CliReply::Event(e)) => return e,
+                Ok(_) => {}
+                Err(e) => panic!("the hub's event stream ended: {e}"),
+            }
+        }
+    }
+}
+
+/// Checks `check` now and again after every event the hub of `layout` relays (a broker's
+/// queue or runner event, a broker connection coming or going) until it gives a value.
+pub async fn until_hub<T, F, Fut>(layout: &Layout, what: &str, mut check: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Option<T>>,
+{
+    let mut events = HubEvents::open(layout).await;
+    let found = async {
+        loop {
+            if let Some(v) = check().await {
+                return v;
+            }
+            events.next().await;
+        }
+    };
+    let found = tokio::time::timeout(HANG, found).await;
+    events.0.close().await;
+    found.unwrap_or_else(|_| panic!("timed out waiting for {what}"))
+}
+
+/// Reads the output of `job` on `client` until it holds `text`; the broker stores a chunk,
+/// and the hub writes it to its copy of the log, before passing it on.
+pub async fn until_output(client: &IpcClient, job: &JobId, text: &str) -> String {
+    let mut output = String::new();
+    let seen = async {
+        while !output.contains(text) {
+            match client.recv::<CliReply>().await.expect("hub answer") {
+                CliReply::Output { job: j, text } if &j == job => output.push_str(&text),
+                CliReply::Exit { .. } => panic!("job {job} ended before printing {text}"),
+                _ => {}
+            }
+        }
+    };
+    if tokio::time::timeout(HANG, seen).await.is_err() {
+        panic!("job {job} did not print {text}");
+    }
+    output
+}
+
+/// A channel of the hub of `layout` that follows `job` to its end.
+pub async fn follow(layout: &Layout, job: &JobId) -> IpcClient {
+    let client = hub(layout).await.expect("hub channel");
+    client
+        .send(&CliRequest::Wait { job: job.clone() })
+        .await
+        .expect("wait");
+    client
 }
 
 /// Submits `profile` from `repo` through the hub of `layout`; the channel stays open to follow
@@ -251,19 +326,16 @@ pub async fn runners(layout: &Layout) -> Option<Vec<RunnerInfo>> {
     Some(fetched?.0.into_iter().flat_map(|(_, r)| r).collect())
 }
 
-/// Waits until a runner whose name ends with `name` is online.
+/// Waits until the hub of `layout` reaches a broker and a runner whose name ends with `name`
+/// is online there.
 pub async fn runner_online(layout: &Layout, name: &str) -> RunnerInfo {
-    eventually(
-        &format!("runner {name} online"),
-        Duration::from_secs(60),
-        || async {
-            broker_available(layout).await?;
-            runners(layout)
-                .await?
-                .into_iter()
-                .find(|r| r.online && r.name.ends_with(name))
-        },
-    )
+    until_hub(layout, &format!("runner {name} online"), || async {
+        broker_available(layout).await?;
+        runners(layout)
+            .await?
+            .into_iter()
+            .find(|r| r.online && r.name.ends_with(name))
+    })
     .await
 }
 
@@ -316,32 +388,18 @@ pub async fn try_history(layout: &Layout, mine: bool) -> Result<Vec<JobSummary>,
     Ok(per.into_iter().flat_map(|(_, jobs)| jobs).collect())
 }
 
-/// Waits until the helper of `role` has written its pid under `pids`.
-pub async fn helper_pid(pids: &Path, role: &str) -> u32 {
-    eventually(
-        &format!("the {role} helper to start"),
-        Duration::from_secs(30),
-        || async { crate::helper::recorded_pid(pids, role) },
-    )
-    .await
-}
-
-/// Removes the test directory once the stopped roles and job processes let go of it: their
-/// tasks end after the abort, so files can stay open for a moment (Windows refuses to delete
-/// open files).
+/// Removes the test directory once the stopped roles let go of it. The helpers are released
+/// before, but a stopped hub's detached tasks (its broker links) keep its database open until
+/// they notice and give no signal when they end (Windows refuses to delete open files).
 pub async fn remove(dir: TempDir) {
     let root = dir.path().parent().unwrap().to_path_buf();
-    eventually(
-        "the test directory to be removed",
-        Duration::from_secs(20),
-        || {
-            let gone = match std::fs::remove_dir_all(&root) {
-                Ok(()) => true,
-                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-            };
-            async move { gone.then_some(()) }
-        },
-    )
+    eventually("the test directory to be removed", HANG, || {
+        let gone = match std::fs::remove_dir_all(&root) {
+            Ok(()) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        async move { gone.then_some(()) }
+    })
     .await;
     drop(dir);
 }
