@@ -11,7 +11,7 @@ use lr_proto::{
 
 async fn connected(brokers: &[&common::broker::FakeBroker]) {
     for b in brokers {
-        eventually("broker connected", || b.resumed()).await;
+        until(b, "broker connected", || b.resumed()).await;
     }
     settle().await;
 }
@@ -41,7 +41,10 @@ async fn least_loaded_tie(order: &[&str]) -> (usize, usize) {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || a.orders().len() + b.orders().len() == 1).await;
+    until_any(&[&a, &b], "order placed", || {
+        a.orders().len() + b.orders().len() == 1
+    })
+    .await;
     settle().await;
     (a.orders().len(), b.orders().len())
 }
@@ -98,7 +101,7 @@ async fn done_has_no_reply_and_the_reaper_still_follows_the_sender() {
     rig.start();
     let cli = rig.cli().await;
     let job = cli.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     cli.send(CliRequest::Done { job: job.clone() }).await;
     assert!(cli.recv_frame().await.is_none(), "done has no answer");
     cli.close().await;
@@ -109,7 +112,10 @@ async fn done_has_no_reply_and_the_reaper_still_follows_the_sender() {
 
     rig.inspector.remove(SENDER_PID);
     rig.step(12).await;
-    eventually("cancelled after done", || local.cancels().len() == 1).await;
+    until(&local, "cancelled after done", || {
+        local.cancels().len() == 1
+    })
+    .await;
     assert_eq!(local.cancels()[0].job, job);
     assert_eq!(local.cancels()[0].code, ReasonCode::SenderGone);
 }
@@ -129,7 +135,7 @@ async fn a_message_from_a_broker_not_holding_the_order_is_acked_and_not_applied(
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("accepted by a", || a.orders().len() == 1).await;
+    until(&a, "accepted by a", || a.orders().len() == 1).await;
     settle().await;
     b.send(BrokerToHub::Chunk(Chunk {
         job: job.clone(),
@@ -172,7 +178,7 @@ async fn jobs_without_active_also_lists_finished_results_kept_in_memory() {
     let cli = rig.cli().await;
     let done = cli.submit(submit("unit", None)).await;
     let running = cli.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 2).await;
+    until(&local, "accepted", || local.orders().len() == 2).await;
     settle().await;
     local.started(&done).await;
     local.result(&done, JobState::Passed, Some(0)).await;

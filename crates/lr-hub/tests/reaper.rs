@@ -12,7 +12,7 @@ async fn two_jobs_one_running(rig: &mut Rig) -> (FakeBroker, JobId, JobId) {
     let cli = rig.cli().await;
     let queued = cli.submit(submit("unit", None)).await;
     let running = cli.submit(submit("unit", None)).await;
-    eventually("both accepted", || local.orders().len() == 2).await;
+    until(&local, "both accepted", || local.orders().len() == 2).await;
     settle().await;
     local.started(&running).await;
     settle().await;
@@ -30,7 +30,7 @@ async fn dead_sender_cancels_queued_and_kills_running() {
         "dead at the 5 s check, not yet confirmed"
     );
     rig.step(1).await;
-    eventually("both cancelled", || local.cancels().len() == 2).await;
+    until(&local, "both cancelled", || local.cancels().len() == 2).await;
     let mut jobs: Vec<JobId> = local.cancels().iter().map(|c| c.job.clone()).collect();
     jobs.sort();
     let mut want = vec![queued, running];
@@ -50,7 +50,7 @@ async fn detach_survives_dead_sender() {
     let mut req = submit("unit", None);
     req.detach = true;
     let job = rig.cli().await.submit(req).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     assert!(rig.active(&job).await.unwrap().detached);
     rig.inspector.remove(SENDER_PID);
     rig.step(20).await;
@@ -64,7 +64,7 @@ async fn wait_interrupt_cancels_nothing() {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     let watcher = rig.cli().await;
     watcher.send(CliRequest::Wait { job: job.clone() }).await;
@@ -115,7 +115,7 @@ async fn reused_pid_with_other_start_counts_as_dead() {
         start: Some(SENDER_START + 1),
     });
     rig.step(7).await;
-    eventually("cancelled", || local.cancels().len() == 2).await;
+    until(&local, "cancelled", || local.cancels().len() == 2).await;
 }
 
 #[tokio::test]

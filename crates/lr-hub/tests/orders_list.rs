@@ -20,7 +20,7 @@ async fn an_order_no_broker_accepted_is_listed_as_outbox_with_its_log_copy() {
     rig.start();
     let cli = rig.cli().await;
     let job = cli.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     let list = orders(&rig.cli().await).await;
     assert_eq!(list.len(), 1, "{list:?}");
     assert_eq!(list[0].summary.job, job);
@@ -42,7 +42,7 @@ async fn an_accepted_order_is_listed_outside_the_outbox_and_only_to_its_os_user(
     rig.start();
     let cli = rig.cli().await;
     let job = cli.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local.started(&job).await;
     settle().await;
@@ -60,7 +60,7 @@ async fn jobs_mine_shows_only_jobs_of_the_callers_os_user() {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     let mine = CliRequest::Jobs {
         label: "agent".into(),

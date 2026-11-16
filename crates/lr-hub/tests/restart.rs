@@ -20,22 +20,22 @@ async fn after_restart_a_returned_order_goes_to_another_broker_at_seq_one() {
     let a = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
     let b = rig.broker("lan-b", Zone::Lan, Script::linux(Zone::Lan));
     let hub = rig.start();
-    eventually("a connected", || a.resumed()).await;
-    eventually("b connected", || b.resumed()).await;
+    until(&a, "a connected", || a.resumed()).await;
+    until(&b, "b connected", || b.resumed()).await;
     settle().await;
     let job = rig
         .cli()
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("accepted by a", || a.orders().len() == 1).await;
+    until(&a, "accepted by a", || a.orders().len() == 1).await;
     settle().await;
     assert!(rig.pending().await.is_empty());
     let _hub = rig.restart(hub).await;
-    eventually("a reconnected", || a.hellos() == 2).await;
+    until(&a, "a reconnected", || a.hellos() == 2).await;
     settle().await;
     a.returned(&job, ReasonCode::RunnerRemoved).await;
-    eventually("replacement at b", || b.orders().len() == 1).await;
+    until(&b, "replacement at b", || b.orders().len() == 1).await;
     let order = &b.orders()[0];
     assert_eq!((order.job.clone(), order.seq), (job.clone(), 1));
     assert_eq!(order.spec.enqueued_at.0, START);
@@ -53,10 +53,10 @@ async fn restored_same_machine_order_returned_ends_with_the_up_hint() {
     let local = rig.local_broker(Script::local_runner());
     let hub = rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     let _hub = rig.restart(hub).await;
-    eventually("reconnected", || local.hellos() == 2).await;
+    until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
     local
         .returned(&job, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine))
@@ -75,7 +75,7 @@ async fn job_ids_stay_unique_across_a_restart_with_the_clock_gone_back() {
     let local = rig.local_broker(Script::local_runner());
     let hub = rig.start();
     let first = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local.result(&first, JobState::Passed, Some(0)).await;
     settle().await;
@@ -132,7 +132,10 @@ async fn restored_pending_cancel_is_not_cancelled_twice() {
     let local = rig.local_broker(Script::local_runner());
     rig.inspector.remove(SENDER_PID);
     rig.start();
-    eventually("pending cancel resent", || local.cancels().len() == 1).await;
+    until(&local, "pending cancel resent", || {
+        local.cancels().len() == 1
+    })
+    .await;
     rig.step(10).await;
     let seqs: Vec<u64> = local.cancels().iter().map(|c| c.seq).collect();
     assert_eq!(seqs, vec![2], "the restored cancel only");
@@ -164,7 +167,7 @@ async fn corrupt_outbox_entry_ends_its_job_with_an_error() {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     rig.store
         .push_outbox(&job, OutboxKind::Cancel, "garbage".into(), Timestamp(START))
@@ -172,7 +175,7 @@ async fn corrupt_outbox_entry_ends_its_job_with_an_error() {
         .unwrap();
     local.disconnect().await;
     rig.step(2).await;
-    eventually("reconnected", || local.hellos() == 2).await;
+    until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
     assert!(rig.active(&job).await.is_none());
     let log = log_of(&rig, &job);

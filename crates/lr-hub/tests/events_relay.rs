@@ -43,7 +43,7 @@ async fn the_hub_subscribes_to_its_brokers_and_relays_their_events_to_a_watching
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     let _hub = rig.start();
-    eventually("the hub subscribes to the broker's events", || {
+    until(&local, "the hub subscribes to the broker's events", || {
         local.received().iter().any(|m| {
             matches!(m, HubToBroker::Read(c) if matches!(&c.request,
                 ReadRequest::Subscribe { topics } if topics.contains(&Topic::Queue)
@@ -110,7 +110,7 @@ async fn a_lost_and_regained_broker_connection_tells_the_watchers_to_reread() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     let _hub = rig.start();
-    eventually("hub connects", || local.hellos() == 1).await;
+    until(&local, "hub connects", || local.hellos() == 1).await;
     settle().await;
     let watcher = rig.cli().await;
     watcher.send(CliRequest::Events).await;
@@ -124,7 +124,7 @@ async fn a_lost_and_regained_broker_connection_tells_the_watchers_to_reread() {
     );
     settle().await;
     rig.step(1).await;
-    eventually("redialed", || local.hellos() == 2).await;
+    until(&local, "redialed", || local.hellos() == 2).await;
     assert_eq!(
         watcher.reply().await,
         reread_of("local"),
@@ -137,7 +137,7 @@ async fn a_repeated_events_request_opens_no_second_stream() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     let _hub = rig.start();
-    eventually("hub connects", || local.hellos() == 1).await;
+    until(&local, "hub connects", || local.hellos() == 1).await;
     settle().await;
     let watcher = rig.cli().await;
     watcher.send(CliRequest::Events).await;
