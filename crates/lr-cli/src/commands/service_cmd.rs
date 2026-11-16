@@ -602,6 +602,7 @@ pub fn runner_service_for(
     let key = runner_service::key_path(&inputs);
     let account = runner_service::account(&inputs);
     let user_id = (ctx.principal)(&ctx.user);
+    let service_id = (ctx.principal)(&account);
     let installed = (ctx.service_owner)(name);
     let mut restore_key = false;
     if on {
@@ -629,6 +630,8 @@ pub fn runner_service_for(
                             name,
                             &ctx.user,
                             user_id.as_deref(),
+                            service_id.as_deref(),
+                            &key,
                             &(ctx.access)(&key),
                             installed.clone(),
                         )
@@ -670,17 +673,22 @@ pub fn runner_service_for(
     admin_marker(dry_run, elevated);
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     if on {
-        let undo = match os {
-            Os::Windows => runner_service::uninstall(&inputs, true),
-            _ => Vec::new(),
-        };
-        apply_or_undo(system, &runner_service::install(&inputs), &undo)
-            .map_err(|e| runner_service::install_failure(os, name, e))?;
+        runner_service::apply_install(system, &inputs, installed.is_some())?;
+        if os == Os::Windows && !dry_run {
+            runner_service::handover_verdict(
+                name,
+                &key,
+                &(ctx.access)(&key),
+                &account,
+                (ctx.principal)(&account).as_deref(),
+                &ctx.user,
+            )?;
+        }
     } else {
         apply_all(system, &runner_service::uninstall(&inputs, restore_key)).map_err(|e| {
             if restore_key {
                 format!(
-                    "{e}; the key of runner {name} may not be {}'s again: as administrator run: {}",
+                    "{e}; the key of runner {name} may not be {}'s again; as administrator run:{}",
                     inputs.user,
                     runner_service::key_recovery(&key, &inputs.user, &account)
                 )
