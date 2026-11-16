@@ -30,6 +30,7 @@ pub struct FaultyStore {
     pub pending: Mutex<Vec<OutboxEntry>>,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
+    pub runner_states: AtomicUsize,
     changed: watch::Sender<u64>,
 }
 
@@ -54,6 +55,7 @@ impl FaultyStore {
             pending: Mutex::new(Vec::new()),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
+            runner_states: AtomicUsize::new(0),
             changed: watch::channel(0).0,
         }
     }
@@ -219,7 +221,10 @@ impl BrokerStore for FaultyStore {
         state: RunnerState,
         at: Timestamp,
     ) -> Result<(), StoreError> {
-        self.inner.set_runner_state(name, state, at).await
+        let done = self.inner.set_runner_state(name, state, at).await;
+        self.runner_states.fetch_add(1, Ordering::SeqCst);
+        self.changed();
+        done
     }
     async fn runners(&self) -> Result<Vec<RunnerRow>, StoreError> {
         self.inner.runners().await
