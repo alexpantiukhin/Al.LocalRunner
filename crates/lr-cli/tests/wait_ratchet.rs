@@ -10,7 +10,7 @@ struct Counts {
 
 const THRESHOLD: Counts = Counts {
     eventually: 62,
-    sleep: 63,
+    sleep: 45,
     timeouts: 62,
 };
 
@@ -216,8 +216,102 @@ fn after_fn(code: &[u8], at: usize) -> bool {
     end >= 2 && &code[end - 2..end] == b"fn" && !ident_before(code, end - 2)
 }
 
-fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+fn opening(code: &[u8], close: usize) -> usize {
+    let (up, down) = match code[close] {
+        b'}' => (b'{', b'}'),
+        b']' => (b'[', b']'),
+        _ => (b'(', b')'),
+    };
+    let mut depth = 0usize;
+    for k in (0..=close).rev() {
+        if code[k] == down {
+            depth += 1;
+        } else if code[k] == up {
+            depth -= 1;
+            if depth == 0 {
+                return k;
+            }
+        }
+    }
+    0
+}
+
+fn own_attributes(code: &[u8], at: usize) -> Vec<&[u8]> {
+    let mut attrs = Vec::new();
+    let mut i = space_back(code, at);
+    while i > 0 {
+        match code[i - 1] {
+            b']' => {
+                let open = opening(code, i - 1);
+                let hash = space_back(code, open);
+                if hash == 0 || code[hash - 1] != b'#' {
+                    break;
+                }
+                attrs.push(&code[open + 1..i - 1]);
+                i = space_back(code, hash - 1);
+            }
+            b')' => {
+                let end = space_back(code, opening(code, i - 1));
+                let start = ident_start(code, end);
+                if &code[start..end] != b"pub" {
+                    break;
+                }
+                i = space_back(code, start);
+            }
+            c if ident_byte(c) => {
+                let start = ident_start(code, i);
+                if !matches!(&code[start..i], b"async" | b"pub" | b"unsafe" | b"const") {
+                    break;
+                }
+                i = space_back(code, start);
+            }
+            _ => break,
+        }
+    }
+    attrs
+}
+
+fn paused_runtime(attr: &[u8]) -> bool {
+    let flat: Vec<u8> = attr
+        .iter()
+        .copied()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let Some(args) = flat
+        .strip_prefix(b"tokio::test(")
+        .or_else(|| flat.strip_prefix(b"tokio::main("))
+        .and_then(|a| a.strip_suffix(b")"))
+    else {
+        return false;
+    };
+    args.split(|&c| c == b',')
+        .any(|a| a == b"start_paused=true")
+}
+
+fn paused_by_hand(code: &[u8], open: usize, close: usize) -> bool {
+    words(&code[..close], b"pause")
+        .into_iter()
+        .filter(|&p| p > open && called(code, p + 5))
+        .any(|p| {
+            let mut start = p;
+            while start >= 2 && &code[start - 2..start] == b"::" {
+                start = ident_start(code, start - 2);
+            }
+            let path: Vec<u8> = code[start..p + 5]
+                .iter()
+                .copied()
+                .filter(|c| !c.is_ascii_whitespace())
+                .collect();
+            let nested = code[open + 1..start].iter().fold(0i64, |d, &c| match c {
+                b'{' => d + 1,
+                b'}' => d - 1,
+                _ => d,
+            });
+            let before = space_back(code, start);
+            path.ends_with(b"time::pause")
+                && nested == 0
+                && matches!(code[before - 1], b';' | b'{' | b'}')
+        })
 }
 
 fn paused_ranges(code: &[u8]) -> Vec<(usize, usize)> {
@@ -236,12 +330,8 @@ fn paused_ranges(code: &[u8]) -> Vec<(usize, usize)> {
             continue;
         };
         let close = closing(code, open);
-        let head_start = code[..at]
-            .iter()
-            .rposition(|&c| c == b'}' || c == b';' || c == b'{')
-            .map_or(0, |p| p + 1);
-        if contains(&code[head_start..at], b"start_paused")
-            || contains(&code[open..close], b"time::pause(")
+        if own_attributes(code, at).into_iter().any(paused_runtime)
+            || paused_by_hand(code, open, close)
         {
             ranges.push((open, close));
         }
@@ -309,17 +399,10 @@ fn count(src: &str) -> Counts {
             counts.eventually += 1;
         }
     }
-    let mut i = 0;
-    while let Some(p) = code[i..].windows(5).position(|w| w == b"sleep") {
-        let at = i + p;
-        i = at + 5;
-        if code.get(at + 5).is_some_and(|&c| ident_byte(c)) || !called(&code, at + 5) {
-            continue;
-        }
-        let start = ident_start(&code, at);
-        let before = space_back(&code, start);
+    for at in words(&code, b"sleep") {
+        let before = space_back(&code, at);
         let method = before > 0 && code[before - 1] == b'.';
-        if !method && !after_fn(&code, start) && !inside(&paused, at) {
+        if called(&code, at + 5) && !method && !after_fn(&code, at) && !inside(&paused, at) {
             counts.sleep += 1;
         }
     }
@@ -424,11 +507,69 @@ async fn paused_by_hand() {
         count(fixture),
         Counts {
             eventually: 2,
-            sleep: 3,
+            sleep: 2,
             timeouts: 4,
         }
     );
     assert!(count("fn sleep(d: Duration) {}\nfn eventually() {}\n").is_zero());
+}
+
+#[test]
+fn wait_ratchet_exempts_only_functions_on_a_paused_clock() {
+    let fixture = r##"
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn paused_with_a_flavor() {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[allow(unused)]
+#[tokio::test(flavor = "multi_thread", start_paused = true)]
+pub async fn paused_after_another_attribute() {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[tokio::test(start_paused = false)]
+async fn not_paused() {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn paused_before() {}
+
+#[tokio::test]
+async fn after_a_paused_one() {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[tokio::test]
+async fn pause_in_a_closure() {
+    let paused = || tokio::time::pause();
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[tokio::test]
+async fn pause_in_a_nested_fn() {
+    fn paused() {
+        tokio::time::pause();
+    }
+    tokio::time::sleep(Duration::from_secs(60)).await;
+}
+
+#[tokio::test]
+async fn paused_by_hand() {
+    let clock = 1;
+    tokio::time::pause();
+    tokio::time::sleep(Duration::from_secs(90)).await;
+}
+"##;
+    assert_eq!(
+        count(fixture),
+        Counts {
+            eventually: 0,
+            sleep: 4,
+            timeouts: 4,
+        }
+    );
 }
 
 #[test]
@@ -450,16 +591,17 @@ fn source_does_not_wait_on_real_time_more_than_the_threshold() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    assert!(
-        !total.above(&THRESHOLD),
-        "tests wait on real time more than allowed ({total} > {THRESHOLD}); wait on an event the \
-         code produces or a manual clock instead (AGENTS.md), and lower the threshold in the same \
-         commit as you remove waits. Files:\n{}",
-        listing()
-    );
+    let advice = if total.above(&THRESHOLD) {
+        "tests wait on real time more than allowed: wait on an event the code produces or a \
+         manual clock instead (AGENTS.md)"
+    } else {
+        "fewer waits on real time than the threshold"
+    };
     assert_eq!(
-        total, THRESHOLD,
-        "fewer waits on real time than the threshold: lower the threshold in the same commit as \
-         you remove waits, to {total}"
+        total,
+        THRESHOLD,
+        "{advice}; set THRESHOLD to {total}: lower the threshold (or raise it if you added waits) \
+         in the same commit as you remove waits. Files:\n{}",
+        listing()
     );
 }

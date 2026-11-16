@@ -10,6 +10,7 @@ const GRACE: &str = "[grace]\nlost_min = 1\n";
 const TIMEOUT_S: u64 = 10;
 const DEADLINE_MS: u64 = (TIMEOUT_S + 60) * 1000;
 const STEP_MS: u64 = 10_000;
+const HANG: Duration = Duration::from_secs(5);
 
 async fn keep_alive(h: &Harness, runner: &Conn, hub: &Conn, mut ms: u64) {
     while ms > 0 {
@@ -55,8 +56,23 @@ async fn a_killed_runner_loses_its_job_at_the_deadline_and_the_pool_takes_the_ne
     r2.quiet().await;
     hub.until_runner("r2", true).await;
 
+    let mut events = h.events.resubscribe();
     keep_alive(&h, &r2, &hub, 1).await;
-    let row = h.until_state(ALEX, "held", JobState::Lost).await;
+    let finished = tokio::time::timeout(HANG, async {
+        loop {
+            if let QueueEvent::JobFinished { job, state, reason } =
+                events.recv().await.expect("broker bus").event
+            {
+                if job == JobId("held".into()) {
+                    return (state, reason);
+                }
+            }
+        }
+    })
+    .await
+    .expect("the held job finishes");
+    assert_eq!(finished, (JobState::Lost, Some(ReasonCode::RunnerLost)));
+    let row = h.job_row(ALEX, "held").await.expect("held row");
     let started_at = row.job.started_at.expect("it was started");
     assert_eq!(
         row.job.finished_at,

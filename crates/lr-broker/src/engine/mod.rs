@@ -34,7 +34,7 @@ mod start;
 mod wire;
 
 pub use admin::BrokerHandle;
-pub use events::BusEvent;
+pub use events::{BusEvent, BusEvents};
 pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 pub use retention::RETENTION_EVERY_S;
 
@@ -182,6 +182,11 @@ impl Broker {
     /// Receives every change of jobs and runners from now on.
     pub fn subscribe(&self) -> broadcast::Receiver<BusEvent> {
         self.engine.bus.subscribe()
+    }
+
+    /// The bus to subscribe to later, while [Broker::run] runs.
+    pub fn events(&self) -> BusEvents {
+        BusEvents(self.engine.bus.clone())
     }
 
     /// Serves until the listener closes.
