@@ -11,6 +11,7 @@ pub mod quote;
 mod self_remove;
 pub use self_remove::remove_leftover;
 pub mod service_run;
+pub mod state;
 pub mod trust;
 #[cfg(windows)]
 pub mod windows_host;

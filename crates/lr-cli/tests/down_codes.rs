@@ -2,9 +2,10 @@ mod common;
 
 use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
-use lr_cli::commands::down_cmd::{down, down_with};
+use lr_cli::commands::down_cmd::{down, down_with, ServiceState};
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
+use lr_cli::os_service::{state::restart_command, Os};
 use lr_cli::paths::Layout;
 use lr_proto::DownMode;
 use std::future::pending;
@@ -167,5 +168,123 @@ async fn a_runner_with_no_job_that_does_not_stop_is_not_told_to_wait_for_a_job()
             "r1: still running, it stops when its job ends (`localrunner status` shows the job)"
                 .to_string()
         ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_broker_names_a_running_service_it_cannot_reach() {
+    let dir = TempDir::new("down-service");
+    let layout = layout(&dir);
+    let roles = FakeRoles::unreachable_broker(ServiceState::Answers);
+    let code = down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(1));
+    let said = roles.said_err().join(
+        "
+",
+    );
+    let want = format!(
+        "broker: running as an OS service; its admin channel is open only to an administrator, so down cannot stop it from here. Restart it from an elevated shell: {}",
+        restart_command(Os::current())
+    );
+    assert_eq!(said, want);
+    assert!(!said.contains("not running"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_bare_down_names_the_unreachable_service_and_keeps_code_0() {
+    let dir = TempDir::new("down-service-bare");
+    let layout = layout(&dir);
+    let roles = FakeRoles::unreachable_broker(ServiceState::Answers);
+    let code = down_with(&layout, Vec::new(), false, &roles, pending::<()>()).await;
+    assert_eq!(code, Ok(0));
+    assert!(roles
+        .said()
+        .join(
+            "
+"
+        )
+        .contains("admin channel"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_broker_still_says_not_running_when_nothing_answers() {
+    let dir = TempDir::new("down-nothing");
+    let layout = layout(&dir);
+    let roles = FakeRoles::unreachable_broker(ServiceState::NotInstalled);
+    let code = down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(1));
+    assert_eq!(roles.said_err(), vec!["broker: not running".to_string()]);
+
+    let stopped = FakeRoles::unreachable_broker(ServiceState::InstalledNotAnswering);
+    let code = down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &stopped,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(1));
+    let said = stopped.said_err().join(
+        "
+",
+    );
+    assert!(
+        said.contains("installed as an OS service and not running"),
+        "{said}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn up_broker_and_down_broker_agree() {
+    let dir = TempDir::new("down-up-agree");
+    let layout = layout(&dir);
+    let running = FakeRoles::unreachable_broker(ServiceState::Answers);
+    down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &running,
+        pending::<()>(),
+    )
+    .await
+    .unwrap();
+    let up = service_broker(true).unwrap();
+    assert!(
+        running.said_err()[0].starts_with(&format!("{up}; ")),
+        "{:?}",
+        running.said_err()
+    );
+
+    let stopped = FakeRoles::unreachable_broker(ServiceState::InstalledNotAnswering);
+    down_with(
+        &layout,
+        vec!["broker".into()],
+        false,
+        &stopped,
+        pending::<()>(),
+    )
+    .await
+    .unwrap();
+    let up = service_broker(false).unwrap_err();
+    let up_head = up.split(';').next().unwrap();
+    assert!(
+        stopped.said_err()[0].starts_with(up_head),
+        "{:?}",
+        stopped.said_err()
     );
 }

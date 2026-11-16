@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use lr_cli::commands::down_cmd::Roles;
+use lr_cli::commands::down_cmd::{Roles, ServiceState};
 use lr_cli::paths::Layout;
 use lr_proto::{DownMode, DrainReason};
 use std::path::PathBuf;
@@ -28,6 +28,9 @@ pub struct FakeRoles {
     pub broker_stops: AtomicUsize,
     pub jobs: Mutex<Option<Vec<String>>>,
     pub said: Mutex<Vec<String>>,
+    pub said_err: Mutex<Vec<String>>,
+    pub broker_unreachable: bool,
+    pub broker_state: ServiceState,
 }
 
 impl FakeRoles {
@@ -43,7 +46,23 @@ impl FakeRoles {
             broker_stops: AtomicUsize::new(0),
             jobs: Mutex::new(None),
             said: Mutex::new(Vec::new()),
+            said_err: Mutex::new(Vec::new()),
+            broker_unreachable: false,
+            broker_state: ServiceState::NotInstalled,
         }
+    }
+
+    /// A broker whose admin channel cannot be reached; `state` is what the OS says of it.
+    pub fn unreachable_broker(state: ServiceState) -> FakeRoles {
+        FakeRoles {
+            broker_unreachable: true,
+            broker_state: state,
+            ..FakeRoles::new(true, 0)
+        }
+    }
+
+    pub fn said_err(&self) -> Vec<String> {
+        self.said_err.lock().unwrap().clone()
     }
 
     pub fn said(&self) -> Vec<String> {
@@ -98,6 +117,9 @@ impl Roles for FakeRoles {
 
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String> {
         self.broker_stops.fetch_add(1, Ordering::SeqCst);
+        if self.broker_unreachable {
+            return Ok(None);
+        }
         match self.service {
             true => Ok(Some(vec!["runs as an OS service and stays".into()])),
             false => Ok(Some(Vec::new())),
@@ -106,5 +128,13 @@ impl Roles for FakeRoles {
 
     fn broker_is_service(&self) -> bool {
         self.service
+    }
+
+    fn say_err(&self, line: &str) {
+        self.said_err.lock().unwrap().push(line.to_string());
+    }
+
+    async fn broker_service_state(&self) -> ServiceState {
+        self.broker_state
     }
 }

@@ -7,6 +7,8 @@
 
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
+use crate::os_service::state::{restart_command, service_running};
+use crate::os_service::{service_installed, Os};
 use crate::paths::Layout;
 use async_trait::async_trait;
 use lr_proto::{
@@ -315,6 +317,41 @@ pub trait Roles: Send + Sync {
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String>;
     /// Whether the broker runs under the OS service manager.
     fn broker_is_service(&self) -> bool;
+    /// Prints an error line of the report of `down`.
+    fn say_err(&self, line: &str) {
+        eprintln!("{line}");
+    }
+    /// What is known of the broker service when its admin channel could not be reached.
+    async fn broker_service_state(&self) -> ServiceState {
+        ServiceState::NotInstalled
+    }
+}
+
+/// The broker service as seen without administrator rights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceState {
+    /// It runs: it answers on the normal IPC or the service manager says so.
+    Answers,
+    /// It is installed and does not run.
+    InstalledNotAnswering,
+    /// No service is installed.
+    NotInstalled,
+}
+
+/// What `down broker` says of a broker it could not reach on the admin channel; `None` when
+/// nothing is installed and the plain "not running" applies.
+pub fn unreachable_broker(state: ServiceState, os: Os) -> Option<String> {
+    match state {
+        ServiceState::Answers => Some(format!(
+            "broker: running as an OS service; its admin channel is open only to an administrator, so down cannot stop it from here. Restart it from an elevated shell: {}",
+            restart_command(os)
+        )),
+        ServiceState::InstalledNotAnswering => Some(
+            "broker: installed as an OS service and not running; `down` has nothing to stop"
+                .into(),
+        ),
+        ServiceState::NotInstalled => None,
+    }
 }
 
 /// The roles of `layout` of OS principal `principal`, over their local channels.
@@ -356,6 +393,21 @@ impl Roles for IpcRoles<'_> {
 
     fn broker_is_service(&self) -> bool {
         self.layout.broker_is_service()
+    }
+
+    async fn broker_service_state(&self) -> ServiceState {
+        if !self.layout.broker_is_service() {
+            return ServiceState::NotInstalled;
+        }
+        if super::admin_cmd::service_running(self.layout).await
+            || service_running(Os::current()) == Some(true)
+        {
+            return ServiceState::Answers;
+        }
+        match service_installed(Os::current()) {
+            true => ServiceState::InstalledNotAnswering,
+            false => ServiceState::NotInstalled,
+        }
     }
 }
 
@@ -439,14 +491,15 @@ pub async fn down_for(
     let service = targets.contains(&Target::Broker) && roles.broker_is_service();
     let mut interrupt = Some(interrupt);
     let mut code = 0;
-    let not_running = |what: &str, code: &mut i32| {
+    let report = |line: &str, code: &mut i32| {
         if explicit {
-            eprintln!("{what}: not running");
+            roles.say_err(line);
             *code = 1;
         } else {
-            println!("{what}: not running");
+            roles.say(line);
         }
     };
+    let not_running = |what: &str, code: &mut i32| report(&format!("{what}: not running"), code);
     let mut stopping = Vec::new();
     let mut waited_for_runners = false;
     for t in &targets {
@@ -518,7 +571,13 @@ pub async fn down_for(
                             println!("broker: {w}");
                         }
                     }
-                    Ok(None) => not_running("broker", &mut code),
+                    Ok(None) => {
+                        let state = roles.broker_service_state().await;
+                        match unreachable_broker(state, Os::current()) {
+                            Some(line) => report(&line, &mut code),
+                            None => not_running("broker", &mut code),
+                        }
+                    }
                     Err(e) => {
                         eprintln!("broker: {e}");
                         code = 1;

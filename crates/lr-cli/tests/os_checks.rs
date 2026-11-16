@@ -7,8 +7,11 @@ use lr_cli::commands::join_cmd::{join_code, pick_code, CodeFrom};
 use lr_cli::net::NetAdmission;
 use lr_cli::os_service::programs::{unix_program, windows_program};
 use lr_cli::os_service::quote::{systemd_command_line, windows_arg};
+use lr_cli::os_service::state::{
+    parse_launchctl_state, parse_sc_state, parse_systemctl_active, restart_command,
+};
 use lr_cli::os_service::trust::{check_children, facts, judge, trusted_principals, Facts};
-use lr_cli::os_service::{choose_user, path_script, profile_line, profile_without};
+use lr_cli::os_service::{choose_user, path_script, profile_line, profile_without, Os};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -288,4 +291,52 @@ fn hub_and_runner_sockets_live_in_ipc_of_the_state_directory() {
     let ipc = root.join("ipc");
     assert!(Path::new(&layout.hub_ipc("1000")).starts_with(&ipc));
     assert!(Path::new(&layout.runner_ipc("1000", "r1")).starts_with(&ipc));
+}
+
+#[test]
+fn sc_query_output_gives_the_running_state() {
+    let running = "\r\nSERVICE_NAME: AlLocalRunnerBroker\r\n        TYPE               : 10  WIN32_OWN_PROCESS\r\n        STATE              : 4  RUNNING\r\n                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)\r\n        WIN32_EXIT_CODE    : 0  (0x0)\r\n";
+    assert_eq!(parse_sc_state(running), Some(true));
+    let stopped = running.replace("4  RUNNING", "1  STOPPED");
+    assert_eq!(parse_sc_state(&stopped), Some(false));
+    let starting = running.replace("4  RUNNING", "2  START_PENDING");
+    assert_eq!(parse_sc_state(&starting), Some(false));
+    let missing = "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\r\n";
+    assert_eq!(parse_sc_state(missing), None);
+    assert_eq!(parse_sc_state(""), None);
+}
+
+#[test]
+fn systemctl_is_active_output_gives_the_running_state() {
+    assert_eq!(parse_systemctl_active("active\n"), Some(true));
+    assert_eq!(parse_systemctl_active("inactive\n"), Some(false));
+    assert_eq!(parse_systemctl_active("failed\n"), Some(false));
+    assert_eq!(parse_systemctl_active("activating\n"), Some(false));
+    assert_eq!(parse_systemctl_active(""), None);
+}
+
+#[test]
+fn launchctl_print_output_gives_the_running_state() {
+    let print = |state: &str| {
+        format!("system/com.al-localrunner.broker = {{\n\tactive count = 1\n\tstate = {state}\n\n\tprogram = /usr/local/libexec/al-localrunner/localrunner\n}}\n")
+    };
+    assert_eq!(parse_launchctl_state(&print("running")), Some(true));
+    assert_eq!(parse_launchctl_state(&print("not running")), Some(false));
+    assert_eq!(parse_launchctl_state("Could not find service\n"), None);
+}
+
+#[test]
+fn the_restart_command_names_the_service_of_each_os() {
+    assert_eq!(
+        restart_command(Os::Windows),
+        "Restart-Service AlLocalRunnerBroker"
+    );
+    assert_eq!(
+        restart_command(Os::Linux),
+        "sudo systemctl restart al-localrunner-broker"
+    );
+    assert_eq!(
+        restart_command(Os::MacOs),
+        "sudo launchctl kickstart -k system/com.al-localrunner.broker"
+    );
 }
