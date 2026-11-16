@@ -1,6 +1,6 @@
 use crate::background::{background, recover};
 use crate::cache::{CacheLayout, Caches};
-use crate::connect::{give_up, session, End};
+use crate::connect::{give_up, session, stop_due, End, STOP_BOUND};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
 use crate::service_book::Book;
@@ -174,6 +174,7 @@ pub(crate) struct State {
     pub(crate) broker_lost_kill_s: Option<u64>,
     pub(crate) draining: bool,
     pub(crate) drain_reason: Option<DrainReason>,
+    pub(crate) stop_by: Option<Timestamp>,
     pub(crate) caps_dirty: bool,
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
@@ -225,6 +226,7 @@ impl Shared {
             let mut st = self.state();
             st.draining = false;
             st.drain_reason = None;
+            st.stop_by = None;
         }
         self.diag.event(
             Level::Info,
@@ -379,6 +381,7 @@ impl RunnerAgent {
                     broker_lost_kill_s: None,
                     draining: false,
                     drain_reason: None,
+                    stop_by: None,
                     caps_dirty: false,
                     lost_since,
                     in_use: Vec::new(),
@@ -418,7 +421,10 @@ impl RunnerAgent {
             };
             match end {
                 Some(End::Refused(e)) => return AgentExit::Refused(e),
-                Some(End::Stopped) => return AgentExit::Stopped,
+                Some(End::Stopped) => {
+                    shared.stop_all_services().await;
+                    return AgentExit::Stopped;
+                }
                 Some(End::Lost { welcomed: true }) => {
                     backoff = MIN_BACKOFF;
                     shared.set_lost(Some(shared.now()));
@@ -438,11 +444,14 @@ impl RunnerAgent {
     }
 
     /// Waits for the next dial; `true` when the runner was told to stop while the broker is
-    /// unreachable and has nothing left to deliver, so it exits instead of waiting for the broker.
+    /// unreachable and has nothing left to deliver, or has run no job for [`STOP_BOUND`], so it
+    /// exits instead of waiting for the broker.
     async fn wait_offline(&mut self, shared: &Shared, backoff: Duration) -> bool {
         let retry_at = after(shared.now(), backoff);
         loop {
             tokio::select! {
+                biased;
+                () = stop_due(shared) => return true,
                 _ = shared.deps.clock.sleep_until(retry_at) => return false,
                 cmd = self.control_rx.recv() => {
                     if let Some(cmd) = cmd {
@@ -504,10 +513,14 @@ pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
         Control::Drain(reason) => reason,
         Control::CancelAndStop => DrainReason::Down,
     };
+    let stop_by = after(shared.now(), STOP_BOUND);
     {
         let mut st = shared.state();
         st.draining = true;
         st.drain_reason = Some(reason);
+        if st.job.is_none() {
+            st.stop_by.get_or_insert(stop_by);
+        }
     }
     shared.diag.event(
         Level::Info,

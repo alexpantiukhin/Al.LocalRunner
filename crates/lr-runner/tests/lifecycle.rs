@@ -3,11 +3,11 @@ mod common;
 use common::*;
 use lr_abstractions::fakes::{JobScript, StepScript};
 use lr_abstractions::{
-    Level, ProcessRef, ProcessRunner, RunnerStore, ServiceRow, ServiceState, SpawnSpec,
+    Level, OutboxKind, ProcessRef, ProcessRunner, RunnerStore, ServiceRow, ServiceState, SpawnSpec,
 };
-use lr_core::{JobState, Timestamp};
-use lr_proto::{BrokerToRunner, ReasonCode, RunnerToBroker, StopService};
-use lr_runner::{AgentExit, RunnerSettings};
+use lr_core::{JobId, JobState, Timestamp};
+use lr_proto::{BrokerToRunner, Chunk, ReasonCode, RunnerToBroker, StopService};
+use lr_runner::{AgentExit, RunnerSettings, STOP_BOUND};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -382,13 +382,119 @@ async fn bye_is_sent_when_the_broker_comes_back() {
     );
     assert!(!h.is_finished(), "no Bye has been sent, the agent waits");
     rig.net.set_reachable(BROKER, true);
-    rig.advance(10 * SEC).await;
+    rig.advance(4 * SEC).await;
     let back = Broker::accept(&rig).await;
     let r = result_of(&back.until_result().await);
     assert_eq!(r.state, JobState::Passed);
     let bye = back.until(|m| matches!(m, RunnerToBroker::Bye(_))).await;
     assert!(matches!(bye, RunnerToBroker::Bye(_)));
     assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
+}
+
+async fn fill_outbox(rig: &Rig, rows: usize) {
+    let job = JobId("job-old".into());
+    for _ in 0..rows {
+        let m = RunnerToBroker::Chunk(Chunk {
+            job: job.clone(),
+            seq: 0,
+            step: Some(0),
+            text: "x".into(),
+        });
+        rig.store
+            .push_outbox(
+                &job,
+                OutboxKind::Chunk,
+                serde_json::to_string(&m).unwrap(),
+                Timestamp(START),
+            )
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn stop_request_interrupts_a_stuck_flush_and_keeps_the_outbox() {
+    let rig = Rig::new();
+    fill_outbox(&rig, 3000).await;
+    let (c, h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    rig.gate.limit_pipe(50);
+    c.drain(lr_proto::DrainReason::Down).await;
+    rig.advance(SEC).await;
+    assert!(rig.gate.sent() >= 50, "the replay began");
+    assert!(!h.is_finished(), "the runner waits for its link first");
+    rig.advance(STOP_BOUND).await;
+    assert!(h.is_finished(), "the stuck runner did not stop");
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert_eq!(rig.pending().await.len(), 3000, "the outbox is kept");
+}
+
+#[tokio::test]
+async fn cancel_and_stop_with_a_stuck_send_stops_too() {
+    let rig = Rig::new();
+    fill_outbox(&rig, 3000).await;
+    let (c, h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    rig.gate.stall_sends(true);
+    c.cancel_and_stop().await;
+    rig.advance(STOP_BOUND + SEC).await;
+    assert!(h.is_finished(), "the stuck runner did not stop");
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert_eq!(rig.pending().await.len(), 3000, "the outbox is kept");
+}
+
+#[tokio::test]
+async fn a_running_job_keeps_the_runner_alive_while_the_send_is_stuck() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(30 * SEC, 0)]));
+    let (c, h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    rig.gate.stall_sends(true);
+    c.drain(lr_proto::DrainReason::Down).await;
+    rig.advance(STOP_BOUND + SEC).await;
+    assert!(!h.is_finished(), "the runner left while its job runs");
+    rig.advance(19 * SEC).await;
+    assert!(!h.is_finished(), "the runner left as soon as its job ended");
+    rig.advance(STOP_BOUND + SEC).await;
+    assert!(
+        h.is_finished(),
+        "the stuck runner did not stop after its job"
+    );
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert!(
+        rig.pending()
+            .await
+            .iter()
+            .any(|e| e.kind == OutboxKind::JobResult),
+        "the result waits in the outbox"
+    );
+}
+
+#[tokio::test]
+async fn an_idle_runner_with_an_undelivered_outbox_and_no_broker_stops_within_the_bound() {
+    let rig = Rig::new();
+    fill_outbox(&rig, 10).await;
+    rig.net.set_reachable(BROKER, false);
+    let (c, h) = rig.start();
+    rig.settle().await;
+    c.drain(lr_proto::DrainReason::Down).await;
+    rig.advance(SEC).await;
+    assert!(!h.is_finished(), "the runner waits for its broker first");
+    rig.advance(STOP_BOUND).await;
+    assert!(
+        h.is_finished(),
+        "the runner waits for a broker it cannot reach"
+    );
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert_eq!(rig.pending().await.len(), 10, "the outbox is kept");
 }
 
 #[tokio::test]

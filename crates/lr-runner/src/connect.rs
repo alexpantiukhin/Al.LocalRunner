@@ -14,6 +14,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// How long a runner told to stop, once it runs no job, may spend delivering its outbox before
+/// it leaves anyway, whatever its link to the broker does; what it could not deliver stays in
+/// the outbox and is replayed on the next start.
+pub const STOP_BOUND: Duration = Duration::from_secs(10);
+
 pub(crate) enum End {
     Lost { welcomed: bool },
     Refused(ProtocolError),
@@ -32,6 +37,49 @@ pub(crate) struct Session<'a> {
     replay: Replay,
     kind: PeerKind,
     limit: Duration,
+    control: &'a mut mpsc::Receiver<Control>,
+    told: bool,
+    stopped: bool,
+}
+
+fn stop_is_due(s: &Shared) -> bool {
+    let at = {
+        let st = s.state();
+        if st.draining && st.job.is_none() {
+            st.stop_by
+        } else {
+            None
+        }
+    };
+    at.is_some_and(|t| s.now() >= t) && !s.upgrade_ended()
+}
+
+/// Resolves once the runner was told to stop and has run no job for [`STOP_BOUND`]; never while
+/// it is not told to stop.
+pub(crate) async fn stop_due(s: &Shared) {
+    loop {
+        if stop_is_due(s) {
+            return;
+        }
+        let (draining, at) = {
+            let st = s.state();
+            (st.draining, st.stop_by.filter(|_| st.job.is_none()))
+        };
+        if !draining {
+            std::future::pending::<()>().await;
+        }
+        match at.filter(|t| *t > s.now()) {
+            Some(t) => s.deps.clock.sleep_until(t).await,
+            None => s.deps.clock.sleep(STOP_BOUND).await,
+        }
+    }
+}
+
+async fn next_frame(inbox: &mut Option<&mut Inbox>) -> Option<Frame> {
+    match inbox {
+        Some(i) => i.frames.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn send_within(s: &Shared, t: &dyn Transport, frame: Frame, limit: Duration) -> bool {
@@ -65,14 +113,79 @@ impl Inbox {
 }
 
 impl Session<'_> {
-    pub(crate) async fn send(&self, msg: &RunnerToBroker) -> bool {
+    pub(crate) async fn send(&mut self, msg: &RunnerToBroker) -> bool {
         match Frame::json(msg) {
-            Ok(f) => send_within(self.shared, self.t, f, self.limit).await,
+            Ok(f) => self.send_frame(f, None).await,
             Err(_) => false,
         }
     }
 
-    pub(crate) async fn ack(&self, job: &JobId, seq: u64) -> bool {
+    /// Sends one frame within the session limit while taking stop requests, and, with `inbox`,
+    /// reading what the broker says (see [`Session::send_reading`]). A send pending for
+    /// [`STOP_BOUND`] while a stop is due ([`stop_due`]) is given up: the link is closed and the
+    /// session ends stopped.
+    async fn send_frame(&mut self, frame: Frame, mut inbox: Option<&mut Inbox>) -> bool {
+        if self.stopped {
+            return false;
+        }
+        let shared = self.shared;
+        let stuck_at = after(shared.now(), STOP_BOUND);
+        let send = send_within(shared, self.t, frame, self.limit);
+        tokio::pin!(send);
+        let stuck = || async move {
+            stop_due(shared).await;
+            shared.deps.clock.sleep_until(stuck_at).await;
+        };
+        let mut due = Box::pin(stuck());
+        loop {
+            tokio::select! {
+                biased;
+                sent = &mut send => return sent,
+                got = next_frame(&mut inbox) => match (got, inbox.as_deref_mut()) {
+                    (Some(frame), Some(i)) => {
+                        i.heard = true;
+                        self.absorb(frame, i).await;
+                    }
+                    _ => return false,
+                },
+                cmd = self.control.recv() => {
+                    if let Some(cmd) = cmd {
+                        self.on_control(cmd);
+                        due = Box::pin(stuck());
+                    }
+                }
+                () = &mut due => {
+                    self.leave_stuck().await;
+                    return false;
+                }
+            }
+        }
+    }
+
+    fn on_control(&mut self, cmd: Control) {
+        apply_control(self.shared, cmd);
+        self.told = true;
+    }
+
+    async fn leave_stuck(&mut self) {
+        self.shared.diag.event(
+            Level::Warn,
+            "told to stop and the broker takes no frames, leaving; the outbox is kept",
+            &[],
+        );
+        self.t.close().await;
+        self.stopped = true;
+    }
+
+    fn lost(&self) -> End {
+        if self.stopped {
+            End::Stopped
+        } else {
+            End::Lost { welcomed: true }
+        }
+    }
+
+    pub(crate) async fn ack(&mut self, job: &JobId, seq: u64) -> bool {
         self.send(&RunnerToBroker::Ack(Ack {
             job: job.clone(),
             seq,
@@ -80,7 +193,7 @@ impl Session<'_> {
         .await
     }
 
-    pub(crate) async fn refuse_gap(&self, job: &JobId, expected: u64, got: u64) -> bool {
+    pub(crate) async fn refuse_gap(&mut self, job: &JobId, expected: u64, got: u64) -> bool {
         self.send(&RunnerToBroker::Error(ProtocolError {
             code: ProtocolErrorCode::SeqGap,
             message: format!("job {job}: expected seq {expected}, got {got}"),
@@ -94,24 +207,11 @@ impl Session<'_> {
     /// full, so a sender that does not read them deadlocks against it. Acknowledgements are
     /// applied at once; other frames wait in `inbox` until the send is over, because handling
     /// them may need to send, and the write in flight must neither be cut nor overtaken.
-    async fn send_reading(&self, frame: Frame, inbox: &mut Inbox) -> bool {
-        let send = send_within(self.shared, self.t, frame, self.limit);
-        tokio::pin!(send);
-        loop {
-            tokio::select! {
-                sent = &mut send => return sent,
-                got = inbox.frames.recv() => match got {
-                    Some(frame) => {
-                        inbox.heard = true;
-                        self.absorb(frame, inbox).await;
-                    }
-                    None => return false,
-                },
-            }
-        }
+    async fn send_reading(&mut self, frame: Frame, inbox: &mut Inbox) -> bool {
+        self.send_frame(frame, Some(inbox)).await
     }
 
-    async fn send_msg_reading(&self, msg: &RunnerToBroker, inbox: &mut Inbox) -> bool {
+    async fn send_msg_reading(&mut self, msg: &RunnerToBroker, inbox: &mut Inbox) -> bool {
         match Frame::json(msg) {
             Ok(f) => self.send_reading(f, inbox).await,
             Err(_) => false,
@@ -395,6 +495,9 @@ pub(crate) async fn session(
                 replay: Replay::default(),
                 kind: peer_kind(t),
                 limit: Duration::from_secs(HEARTBEAT_INTERVAL_S),
+                control,
+                told: false,
+                stopped: false,
             };
             return s.refused(e).await;
         }
@@ -408,8 +511,10 @@ pub(crate) async fn session(
         replay: Replay::default(),
         kind: peer_kind(t),
         limit: silence,
+        control,
+        told: false,
+        stopped: false,
     };
-    let lost = || End::Lost { welcomed: true };
     let (_reader, frames) = read_frames(transport.clone());
     let mut inbox = Inbox {
         frames,
@@ -422,30 +527,27 @@ pub(crate) async fn session(
         || !s.send(&RunnerToBroker::ServicesReport(report)).await
         || !s.flush(&mut inbox).await
     {
-        return lost();
+        return s.lost();
     }
-    let (draining, drain_reason) = {
-        let st = shared.state();
-        (st.draining, st.drain_reason)
-    };
-    if draining
-        && !s
-            .send(&RunnerToBroker::Drain {
-                reason: drain_reason,
-            })
-            .await
-    {
-        return lost();
-    }
+    s.told = shared.state().draining;
     let clock = shared.deps.clock.clone();
     let mut next_beat = after(shared.now(), heartbeat);
     let mut last_rx = shared.now();
     loop {
+        if s.stopped {
+            return End::Stopped;
+        }
+        if std::mem::take(&mut s.told) {
+            let reason = shared.state().drain_reason;
+            if !s.send(&RunnerToBroker::Drain { reason }).await {
+                return s.lost();
+            }
+        }
         if s.idle_and_stopping().await && shared.services_down() {
             if shared.upgrade_ended() {
                 shared.resume_after_upgrade();
                 t.close().await;
-                return lost();
+                return s.lost();
             }
             s.flush(&mut inbox).await;
             shared
@@ -467,11 +569,11 @@ pub(crate) async fn session(
                         return end;
                     }
                 }
-                None => return lost(),
+                None => return s.lost(),
             },
             _ = shared.wake.notified() => {
                 if !s.flush(&mut inbox).await {
-                    return lost();
+                    return s.lost();
                 }
                 if inbox.take_heard() {
                     last_rx = shared.now();
@@ -484,21 +586,17 @@ pub(crate) async fn session(
                         load: shared.machine_load(),
                     })
                     .await {
-                    return lost();
+                    return s.lost();
                 }
             }
             _ = clock.sleep_until(deadline) => {
                 shared.diag.event(Level::Warn, "broker silent for three heartbeats, reconnecting", &[]);
                 t.close().await;
-                return lost();
+                return s.lost();
             }
-            cmd = control.recv() => {
+            cmd = s.control.recv() => {
                 if let Some(cmd) = cmd {
-                    apply_control(shared, cmd);
-                    let reason = shared.state().drain_reason;
-                    if !s.send(&RunnerToBroker::Drain { reason }).await {
-                        return lost();
-                    }
+                    s.on_control(cmd);
                 }
             }
         }

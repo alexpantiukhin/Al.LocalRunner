@@ -54,7 +54,7 @@ enum Seq {
     Dropped,
 }
 
-async fn accept(s: &Session<'_>, job: &JobId, seq: u64) -> Seq {
+async fn accept(s: &mut Session<'_>, job: &JobId, seq: u64) -> Seq {
     match s.shared.deps.store.accept_seq(job, seq).await {
         Ok(true) => Seq::New,
         Ok(false) => {
@@ -107,7 +107,7 @@ pub(crate) async fn finish(shared: &Shared, job: &JobId, f: Final) {
         .await;
 }
 
-async fn refuse(s: &Session<'_>, a: &Assign, f: Final) {
+async fn refuse(s: &mut Session<'_>, a: &Assign, f: Final) {
     let why = f.detail.clone().unwrap_or_default();
     s.shared.diag.event(
         Level::Warn,
@@ -338,9 +338,13 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
             &[("job", &job.0), ("error", &e.to_string())],
         );
     }
+    let stop_by = crate::agent::after(shared.now(), crate::connect::STOP_BOUND);
     {
         let mut st = shared.state();
         st.job = None;
+        if st.draining {
+            st.stop_by = Some(stop_by);
+        }
         st.in_use.clear();
         st.caps_dirty = true;
     }

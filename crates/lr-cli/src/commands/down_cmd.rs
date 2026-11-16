@@ -228,9 +228,21 @@ async fn ctrl_c() {
     }
 }
 
+fn still_running(name: &str, has_job: Option<bool>) -> String {
+    match has_job {
+        Some(false) => format!(
+            "{name}: no job runs, but it did not stop within {} s: its connection is stuck; run `down --cancel` again or end the process",
+            STOPPED_WITHIN.as_secs()
+        ),
+        _ => format!(
+            "{name}: still running, it stops when its job ends (`localrunner status` shows the job)"
+        ),
+    }
+}
+
 /// Waits up to [`STOPPED_WITHIN`] for the runners `names` to stop answering and reports each:
 /// `stopped`, or `still running` (it is stopping: it finishes or cancels its job first, so
-/// this is not an error).
+/// this is not an error). A runner known to run no job is told apart: its link is stuck.
 async fn report_stopped(roles: &dyn Roles, names: &[String]) {
     let start = tokio::time::Instant::now();
     let mut left: Vec<&String> = names.iter().collect();
@@ -240,7 +252,7 @@ async fn report_stopped(roles: &dyn Roles, names: &[String]) {
             if roles.runner_answers(n).await {
                 still.push(n);
             } else {
-                println!("{n}: stopped");
+                roles.say(&format!("{n}: stopped"));
             }
         }
         left = still;
@@ -249,9 +261,8 @@ async fn report_stopped(roles: &dyn Roles, names: &[String]) {
         }
         if start.elapsed() >= STOPPED_WITHIN {
             for n in left {
-                println!(
-                    "{n}: still running, it stops when its job ends (`localrunner status` shows the job)"
-                );
+                let has_job = roles.runner_has_job(n).await;
+                roles.say(&still_running(n, has_job));
             }
             return;
         }
@@ -283,6 +294,17 @@ pub trait Roles: Send + Sync {
     /// The running jobs as lines, or `None` when they are not known.
     async fn running_jobs(&self) -> Option<Vec<String>> {
         None
+    }
+    /// Whether runner `name` runs a job, from [`Roles::running_jobs`]; `None` when not known.
+    async fn runner_has_job(&self, name: &str) -> Option<bool> {
+        let on = format!(" on {name} (");
+        self.running_jobs()
+            .await
+            .map(|lines| lines.iter().any(|l| l.contains(&on)))
+    }
+    /// Prints a line of the report of `down`.
+    fn say(&self, line: &str) {
+        println!("{line}");
     }
     /// Whether runner `name` still answers on its control channel.
     async fn runner_answers(&self, name: &str) -> bool;

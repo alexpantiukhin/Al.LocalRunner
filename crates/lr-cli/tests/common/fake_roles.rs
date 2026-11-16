@@ -26,6 +26,8 @@ pub struct FakeRoles {
     pub lock_seen: Mutex<Vec<bool>>,
     pub hub_stops: AtomicUsize,
     pub broker_stops: AtomicUsize,
+    pub jobs: Mutex<Option<Vec<String>>>,
+    pub said: Mutex<Vec<String>>,
 }
 
 impl FakeRoles {
@@ -39,7 +41,13 @@ impl FakeRoles {
             lock_seen: Mutex::new(Vec::new()),
             hub_stops: AtomicUsize::new(0),
             broker_stops: AtomicUsize::new(0),
+            jobs: Mutex::new(None),
+            said: Mutex::new(Vec::new()),
         }
+    }
+
+    pub fn said(&self) -> Vec<String> {
+        self.said.lock().unwrap().clone()
     }
 
     pub fn broker_stops(&self) -> usize {
@@ -61,6 +69,14 @@ impl Roles for FakeRoles {
             self.lock_seen.lock().unwrap().push(path.exists());
         }
         Ok(true)
+    }
+
+    async fn running_jobs(&self) -> Option<Vec<String>> {
+        self.jobs.lock().unwrap().clone()
+    }
+
+    fn say(&self, line: &str) {
+        self.said.lock().unwrap().push(line.to_string());
     }
 
     async fn runner_answers(&self, _name: &str) -> bool {

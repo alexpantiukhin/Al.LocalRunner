@@ -140,3 +140,31 @@ async fn down_of_a_runner_alone_reports_stopped_and_for_a_slow_one_still_running
         "{took:?}"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_with_no_job_that_does_not_stop_is_not_told_to_wait_for_a_job() {
+    let dir = TempDir::new("down-stuck-idle");
+    let layout = with_runner(&dir);
+    let idle = FakeRoles::new(false, usize::MAX);
+    *idle.jobs.lock().unwrap() = Some(vec!["job-9 on r2 (rust-unit), running 1 s".into()]);
+    let code = down_with(&layout, vec!["r1".into()], false, &idle, pending::<()>()).await;
+    assert_eq!(code, Ok(0));
+    let said = idle.said();
+    assert_eq!(
+        said,
+        vec!["r1: no job runs, but it did not stop within 3 s: its connection is stuck; run `down --cancel` again or end the process".to_string()]
+    );
+
+    let busy = FakeRoles::new(false, usize::MAX);
+    *busy.jobs.lock().unwrap() = Some(vec!["job-1 on r1 (rust-unit), running 1 s".into()]);
+    down_with(&layout, vec!["r1".into()], false, &busy, pending::<()>())
+        .await
+        .unwrap();
+    assert_eq!(
+        busy.said(),
+        vec![
+            "r1: still running, it stops when its job ends (`localrunner status` shows the job)"
+                .to_string()
+        ]
+    );
+}
