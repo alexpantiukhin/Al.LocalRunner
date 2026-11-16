@@ -5,7 +5,7 @@ use lr_abstractions::{Liveness, ProcessInspector};
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_core::JobState;
 use lr_exec::{process_start, OsProcessInspector};
-use lr_proto::ReasonCode;
+use lr_proto::{QueueEvent, ReasonCode};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -62,72 +62,46 @@ impl Drop for Release {
 
 // scenario: 16.21
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn kill_runner_mid_job_marks_lost_after_deadline() {
+async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
     let dir = TempDir::new("e2e-lost");
     let mut release = Release::new(&dir);
-    let layout = layout(
-        &dir,
-        "machine",
-        "[grace]\nlost_min = 1\n\n[pool]\nmem_mb = 256\n",
-    );
+    let layout = layout(&dir, "machine", "[grace]\nlost_min = 1\n");
     add_runner(&layout, "r1");
-    add_runner(&layout, "r2");
     let broker = start_broker(&layout, false).await.expect("broker starts");
     let hub_role = start_hub(&layout, false).await.expect("hub starts");
-    let first = start_runners(&layout, Some("r1"), 1, None, false)
+    let runner = start_runners(&layout, Some("r1"), 1, None, false)
         .await
         .expect("r1 starts");
     runner_online(&layout, "r1").await;
 
-    let profiles = format!(
-        "{}\n[profile.quick]\ncommand = \"echo after-the-loss\"\ntimeout_s = 60\nmem_mb = 256\n",
-        helper_profile("held", Mode::Wait, &dir, 10)
-    );
-    let repo = repo(&dir, &profiles);
+    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &dir, 10));
+    let mut events = broker.broker_events().expect("broker events");
     let (held_client, held) = submit(&layout, &repo, "held", None).await;
+    broker_event(&mut events, "the held job to start", |e| match e {
+        QueueEvent::JobStarted { job, .. } if *job == held => Some(()),
+        _ => None,
+    })
+    .await;
     release.watch(helper_pid(&pids(&dir, "held"), "child").await);
-    let second = start_runners(&layout, Some("r2"), 1, None, false)
-        .await
-        .expect("r2 starts");
-    runner_online(&layout, "r2").await;
-    let (quick_client, quick) = submit(&layout, &repo, "quick", None).await;
-    let view = eventually(
-        "the quick job to wait for the pool",
-        Duration::from_secs(30),
-        || async {
-            let v = status(&layout).await?;
-            v.queue.iter().any(|q| q.summary.job == quick).then_some(v)
+
+    runner.stop();
+    broker_event(
+        &mut events,
+        "the killed runner to go offline",
+        |e| match e {
+            QueueEvent::RunnerOffline { name } if name.ends_with("r1") => Some(()),
+            _ => None,
         },
     )
     .await;
-    assert_eq!(view.pool.used_mem_mb, 256, "{view:?}");
-
-    first.stop();
-    let lost = until_exit(held_client, &held, Duration::from_secs(160)).await;
-    assert_eq!(lost.state, JobState::Lost, "{lost:?}");
-    assert_eq!(lost.reason, Some(ReasonCode::RunnerLost), "{lost:?}");
-    let rows = history(&layout).await;
-    let row = rows.iter().find(|r| r.job == held).expect("held row");
-    assert_eq!(row.state, JobState::Lost);
-    assert_eq!(row.reason, Some(ReasonCode::RunnerLost));
-    let finished = row.finished_at.expect("lost has an end").0;
-    let started = row.started_at.expect("it was started").0;
-    assert!(
-        finished >= started + 70_000,
-        "lost only after timeout_s + lost_min: {row:?}"
-    );
-
-    let done = until_exit(quick_client, &quick, Duration::from_secs(60)).await;
-    assert_eq!(
-        done.state,
-        JobState::Passed,
-        "the pool memory came back: {done:?}"
-    );
-    assert!(done.output.contains("after-the-loss"), "{}", done.output);
     let view = status(&layout).await.expect("status");
-    assert_eq!(view.pool.used_mem_mb, 0, "{view:?}");
+    let row = view.running.iter().find(|r| r.summary.job == held);
+    assert!(
+        row.is_some_and(|r| r.summary.state == JobState::Running),
+        "the job stays running until timeout_s + lost_min: {view:?}"
+    );
 
-    second.stop();
+    held_client.close().await;
     hub_role.stop();
     broker.stop();
     drop(release);

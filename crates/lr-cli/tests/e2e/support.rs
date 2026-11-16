@@ -1,4 +1,5 @@
 use crate::common::{self, TempDir};
+use lr_broker::BusEvent;
 use lr_cli::commands::history_cmd::fetch_history;
 use lr_cli::commands::jobs::hub;
 use lr_cli::commands::read_cmd::fetch_runners;
@@ -7,12 +8,13 @@ use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
-    CliReply, CliRequest, HistoryFilter, JobSummary, ReadReply, ReadRequest, ReasonCode,
-    RunnerInfo, StatusFilter, StatusView, SubmitRequest,
+    CliReply, CliRequest, HistoryFilter, JobSummary, QueueEvent, ReadReply, ReadRequest,
+    ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast::{error::RecvError, Receiver};
 
 pub const LABEL: &str = "e2e";
 pub const SECRET_NAME: &str = "e2e_token";
@@ -78,6 +80,34 @@ pub fn repo(dir: &TempDir, profiles: &str) -> PathBuf {
 /// A TOML string value for `text`.
 pub fn toml_str(text: &str) -> String {
     toml::Value::String(text.to_string()).to_string()
+}
+
+/// The longest wait for an event a role is about to produce: only an upper bound against a
+/// hang.
+pub const HANG: Duration = Duration::from_secs(20);
+
+/// Waits for the first broker event that `pick` turns into a value.
+pub async fn broker_event<T>(
+    events: &mut Receiver<BusEvent>,
+    what: &str,
+    mut pick: impl FnMut(&QueueEvent) -> Option<T>,
+) -> T {
+    let seen = async {
+        loop {
+            match events.recv().await {
+                Ok(e) => {
+                    if let Some(v) = pick(&e.event) {
+                        return v;
+                    }
+                }
+                Err(RecvError::Lagged(n)) => panic!("{n} broker events lost waiting for {what}"),
+                Err(RecvError::Closed) => panic!("the broker stopped before {what}"),
+            }
+        }
+    };
+    tokio::time::timeout(HANG, seen)
+        .await
+        .unwrap_or_else(|_| panic!("no broker event for {what}"))
 }
 
 /// Polls `probe` until it gives a value; panics after `limit`.

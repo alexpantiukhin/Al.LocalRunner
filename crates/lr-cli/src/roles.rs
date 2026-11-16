@@ -6,13 +6,14 @@ use crate::paths::Layout;
 use crate::runner_config::{instance_names, RunnerConfig};
 use crate::{admin, build, control};
 use lr_abstractions::Listener;
+use lr_broker::BusEvent;
 use lr_net::IpcListener;
 use lr_obs::{Logger, Metrics};
 use lr_runner::AgentExit;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 
 /// A role running in this process.
@@ -25,9 +26,16 @@ pub struct Running {
     exits: Vec<JoinHandle<AgentExit>>,
     stop_signal: Option<Arc<Notify>>,
     listeners: Vec<Arc<IpcListener>>,
+    events: Option<broadcast::Receiver<BusEvent>>,
 }
 
 impl Running {
+    /// Receives the broker's bus events (an order queued, a runner online after its hello) from
+    /// now on, for callers that wait on what the broker did; `None` for a hub or runners.
+    pub fn broker_events(&self) -> Option<broadcast::Receiver<BusEvent>> {
+        self.events.as_ref().map(broadcast::Receiver::resubscribe)
+    }
+
     /// The broker's bound network addresses, empty while it does not listen.
     pub fn network_addresses(&self) -> Vec<SocketAddr> {
         self.tls.as_ref().map(|t| t.bound()).unwrap_or_default()
@@ -101,6 +109,7 @@ impl Drop for Running {
 /// Starts the broker with its admin channel.
 pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, String> {
     let parts = build::broker(layout, foreground).await?;
+    let events = parts.broker.subscribe();
     let broker_task = tokio::spawn(parts.broker.run());
     let listeners = vec![parts.admin_ipc.clone(), parts.admin.ipc.clone()];
     let admin_ipc: Arc<dyn Listener> = parts.admin_ipc;
@@ -114,6 +123,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
         exits: Vec::new(),
         stop_signal: Some(stop),
         listeners,
+        events: Some(events),
     })
 }
 
@@ -129,6 +139,7 @@ pub async fn start_hub(layout: &Layout, foreground: bool) -> Result<Running, Str
         exits: Vec::new(),
         stop_signal: None,
         listeners: vec![parts.ipc],
+        events: None,
     })
 }
 
@@ -180,6 +191,7 @@ pub async fn start_runners(
         exits: Vec::new(),
         stop_signal: None,
         listeners: Vec::new(),
+        events: None,
     };
     for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;
