@@ -708,9 +708,34 @@ pub fn runner_service_for(
         ));
     }
     admin_marker(dry_run, elevated);
+    if !on && os == Os::Windows && installed.is_none() {
+        let service = runner_service::service_name(os, name);
+        let left = runner_service::restore_verdict(
+            name,
+            &key,
+            &(ctx.access)(&key),
+            &ctx.user,
+            user_id.as_deref(),
+            &account,
+        )
+        .map_err(|e| {
+            format!("autostart off runner {name} --service: there is no OS service {service}; {e}")
+        })?;
+        if let Some(note) = left {
+            println!("{note}");
+        }
+        println!("autostart off: runner {name} has no OS service {service}; nothing to stop");
+        return Ok(0);
+    }
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     if on {
-        runner_service::apply_install(system, &inputs, installed.is_some())?;
+        runner_service::apply_install(
+            system,
+            &inputs,
+            installed.is_some(),
+            &mut || (ctx.service)(name),
+            &mut || dry_run || (ctx.confirm_stopped)(name),
+        )?;
         if os == Os::Windows && !dry_run {
             runner_service::handover_verdict(
                 name,

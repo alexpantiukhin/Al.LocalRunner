@@ -422,11 +422,14 @@ pub fn service_config_for(i: &RunnerServiceInputs) -> ServiceConfig {
     }
 }
 
-fn file_name(path: &str) -> String {
-    path.rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(path)
-        .to_ascii_lowercase()
+fn same_program(a: &str, b: &str) -> bool {
+    let norm = |p: &str| {
+        p.trim_matches('"')
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    norm(a) == norm(b)
 }
 
 fn same_dir(a: &str, b: &str) -> bool {
@@ -435,14 +438,16 @@ fn same_dir(a: &str, b: &str) -> bool {
 }
 
 /// Why the installed service `config` of runner `name` is not one this installation registered
-/// for `i`: another program, not `runner run --name <name> --service`, another state directory,
+/// for `i`: another program (full path, ignoring case, quotes and `/` against `\`), not `runner run --name <name> --service`, another state directory,
 /// or another account. Such a service is never changed or removed. `None` when it is ours.
 pub fn not_ours(name: &str, config: &ServiceConfig, i: &RunnerServiceInputs) -> Option<String> {
     let args = split_command_line(&config.command);
     let expected = account(i);
-    let reason = if args.first().map(|p| file_name(p)) != Some(file_name(&s(&i.exe))) {
+    let exe = s(&i.exe);
+    let reason = if !args.first().is_some_and(|p| same_program(p, &exe)) {
         format!(
-            "it starts {}",
+            "it starts {}, while this command is {exe}; if the program was moved, run this \
+             command with the program the service starts",
             args.first().map_or("nothing", String::as_str)
         )
     } else if args.get(1).map(String::as_str) != Some("runner")
@@ -583,13 +588,17 @@ pub fn start_failure(os: Os, name: &str, state: Option<bool>, log: &Path) -> Str
 /// Applies the install plan of `i` through `system`. A service that `existed` before this run,
 /// or that `sc create` finds already there (code 1073, created by someone else meanwhile), is
 /// never undone: the message says whether its definition was changed (the single `sc config`
-/// comes after the risky steps). A service this run created on Windows is undone (the key goes
-/// back to the user when a key step had run, then the service is removed); the undo stops at a
-/// failed key step, keeping the service and printing the commands that give the key back.
+/// comes after the risky steps). After a 1073 the service is read again (`reread`) and nothing
+/// more is done unless it is this installation's ([`not_ours`]). A service this run created on
+/// Windows is undone once `stopped` confirms it stopped (the key goes back to the user when a
+/// key step had run, then the service is removed); the undo stops at a service that keeps
+/// running or at a failed key step, keeping the service and printing the commands to finish.
 pub fn apply_install(
     system: &dyn super::System,
     i: &RunnerServiceInputs,
     existed: bool,
+    reread: &mut dyn FnMut() -> Option<Option<ServiceConfig>>,
+    stopped: &mut dyn FnMut() -> bool,
 ) -> Result<(), String> {
     let plan = install(i);
     let mut existed = existed;
@@ -609,6 +618,25 @@ pub fn apply_install(
             match system.apply(&strict) {
                 Ok(()) => continue,
                 Err(e) if e.starts_with("exit code 1073") => {
+                    let why = match reread() {
+                        Some(Some(config)) => not_ours(&i.name, &config, i),
+                        Some(None) => Some(format!(
+                            "its configuration cannot be read; it is left alone; check it as \
+                             administrator: {}",
+                            super::state::named_status_command(i.os, &service_name(i.os, &i.name))
+                        )),
+                        None => Some(
+                            "it was gone again when read; it is left alone; run the command again"
+                                .to_string(),
+                        ),
+                    };
+                    if let Some(why) = why {
+                        return Err(format!(
+                            "{a}: {e}; the service {} appeared after this run checked for it, so \
+                             nothing was changed: {why}",
+                            service_name(i.os, &i.name)
+                        ));
+                    }
                     existed = true;
                     continue;
                 }
@@ -652,7 +680,7 @@ pub fn apply_install(
     let touched = plan[..=at]
         .iter()
         .any(|a| matches!(a, Action::Run { args, .. } if args.contains(&key)));
-    match apply_uninstall(system, i, touched, &mut || true) {
+    match apply_uninstall(system, i, touched, stopped) {
         Ok(()) => Err(format!(
             "{e} (undone: the service this run registered was removed{})",
             if touched {
@@ -718,7 +746,15 @@ pub fn apply_uninstall(
                 ));
             }
         }
-        return Err(format!("{a}: {e}"));
+        let mut e = format!("{a}: {e}");
+        if !missed.is_empty() {
+            e.push_str(&format!(
+                "; the rights of {account} were not taken back from every directory either; as \
+                 administrator run:\n{}",
+                missed.join("\n")
+            ));
+        }
+        return Err(e);
     }
     if missed.is_empty() {
         return Ok(());

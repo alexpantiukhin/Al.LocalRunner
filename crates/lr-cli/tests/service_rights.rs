@@ -474,6 +474,20 @@ fn on_windows_the_key_is_handed_over_only_by_its_owner_and_given_back_to_the_ser
         ..fake()
     };
     assert_eq!(run(&installed, r"PC\bob", Switch::Off), Ok(0));
+    assert_eq!(
+        run(&fake(), r"PC\alex", Switch::Off),
+        Ok(0),
+        "off without a service has nothing to stop"
+    );
+    let left = Fake {
+        key: owned_by("S-1-5-80-1"),
+        ..fake()
+    };
+    let e = run(&left, r"PC\alex", Switch::Off).unwrap_err();
+    assert!(
+        e.contains("takeown /F") && e.contains("no OS service"),
+        "a key left with a removed service is named with the commands that give it back: {e}"
+    );
     let foreign = Fake {
         service: Some(Some(r"PC\alex".into())),
         foreign: true,
