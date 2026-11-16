@@ -26,7 +26,21 @@ pub enum Outcome {
 async fn runner(layout: &Layout, principal: &str, name: &str) -> Outcome {
     let address = layout.runner_ipc(principal, name);
     let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
-        return Outcome::NotRunning;
+        use crate::os_service::{runner_service, Os};
+        let os = Os::current();
+        let n = name.to_string();
+        let service = tokio::task::spawn_blocking(move || {
+            runner_service::installed(os, &n).then(|| runner_service::running(os, &n))
+        })
+        .await
+        .ok()
+        .flatten();
+        return match service {
+            Some(running) => Outcome::Refused(runner_service::unreachable_line(
+                os, name, running, "reload",
+            )),
+            None => Outcome::NotRunning,
+        };
     };
     let reply = c.call::<_, ControlReply>(&RunnerControl::Reload).await;
     c.close().await;

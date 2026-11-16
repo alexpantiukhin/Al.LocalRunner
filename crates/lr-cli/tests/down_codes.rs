@@ -44,6 +44,33 @@ fn up_leaves_a_stopped_broker_service_to_the_service_manager_with_exit_code_1() 
     assert!(stopped.contains("OS service manager"), "{stopped}");
 }
 
+#[tokio::test(start_paused = true)]
+async fn down_names_a_runner_that_runs_as_an_os_service_instead_of_calling_it_stopped() {
+    let dir = TempDir::new("down-service-runner");
+    let layout = with_runner(&dir);
+    let mut roles = FakeRoles::new(false, 0);
+    roles.service_runner = Some(Some(true));
+    let code = down_with(&layout, vec!["r1".into()], false, &roles, pending::<()>()).await;
+    assert_eq!(
+        code,
+        Ok(1),
+        "the runner keeps running: down did not stop it"
+    );
+    let err = roles.said_err().join("\n");
+    assert!(
+        err.contains("runner r1 runs as the OS service") && err.contains("down does not reach it"),
+        "{err}"
+    );
+    assert!(!err.contains("not running"), "{err}");
+    let mut all = FakeRoles::new(false, 0);
+    all.service_runner = Some(Some(true));
+    assert_eq!(
+        down_with(&layout, Vec::new(), false, &all, pending::<()>()).await,
+        Ok(1),
+        "a full down that leaves a runner running says so in its exit code"
+    );
+}
+
 fn within_30_to_31_s(start: tokio::time::Instant) {
     let took = start.elapsed();
     assert!(

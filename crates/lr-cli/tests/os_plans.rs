@@ -736,6 +736,176 @@ fn runner_service_off_removes_only_that_runner() {
     }
 }
 
+fn key_of(i: &RunnerServiceInputs) -> String {
+    i.state_dir
+        .join("runner")
+        .join(&i.name)
+        .join("participant.key")
+        .display()
+        .to_string()
+}
+
+fn at(runs: &[String], line: &str) -> usize {
+    runs.iter()
+        .position(|r| r == line)
+        .unwrap_or_else(|| panic!("{line} missing in {runs:#?}"))
+}
+
+#[test]
+fn windows_runner_service_hands_the_runner_key_to_the_service_account_before_it_starts() {
+    let i = runner_service(Os::Windows, "box");
+    let runs = runs(&runner_service::install(&i));
+    let key = key_of(&i);
+    let create = runs
+        .iter()
+        .position(|r| r.starts_with("sc.exe create"))
+        .unwrap();
+    let owner = at(
+        &runs,
+        &format!(r"icacls {key} /setowner NT SERVICE\AlLocalRunner-box"),
+    );
+    let grant = at(
+        &runs,
+        &format!(r"icacls {key} /grant:r NT SERVICE\AlLocalRunner-box:(F)"),
+    );
+    let user_out = at(&runs, &format!("icacls {key} /remove alex"));
+    let auto = at(&runs, "sc.exe config AlLocalRunner-box start= auto");
+    let start = at(&runs, "sc.exe start AlLocalRunner-box");
+    assert!(
+        create < owner && owner < grant && grant < user_out && user_out < auto && auto < start,
+        "the account exists before it owns the key, and the key is its own before the start: {runs:#?}"
+    );
+    for os in [Os::Linux, Os::MacOs] {
+        let text = format!("{:?}", runner_service::install(&runner_service(os, "box")));
+        assert!(
+            !text.contains("participant.key"),
+            "{os:?}: the user's key stays the user's"
+        );
+    }
+}
+
+#[test]
+fn windows_runner_service_off_gives_the_key_back_while_the_account_still_exists() {
+    let i = runner_service(Os::Windows, "box");
+    let plan = runner_service::uninstall(&i);
+    let runs = runs(&plan);
+    let key = key_of(&i);
+    let stop = at(&runs, "sc.exe stop AlLocalRunner-box");
+    let owner = at(&runs, &format!("icacls {key} /setowner alex"));
+    let grant = at(&runs, &format!("icacls {key} /grant:r alex:(F)"));
+    let service_out = at(
+        &runs,
+        &format!(r"icacls {key} /remove NT SERVICE\AlLocalRunner-box"),
+    );
+    let delete = at(&runs, "sc.exe delete AlLocalRunner-box");
+    assert!(
+        stop < owner && owner < grant && grant < service_out && service_out < delete,
+        "{runs:#?}"
+    );
+}
+
+#[test]
+fn a_local_ipc_runner_is_refused_a_windows_service_and_a_joined_one_is_not() {
+    let refused = runner_service::local_runner_refusal(Os::Windows, "box", false).unwrap();
+    assert!(
+        refused.contains("runner join") && refused.contains("box"),
+        "{refused}"
+    );
+    assert_eq!(
+        runner_service::local_runner_refusal(Os::Windows, "box", true),
+        None
+    );
+    for os in [Os::Linux, Os::MacOs] {
+        assert_eq!(
+            runner_service::local_runner_refusal(os, "box", false),
+            None,
+            "{os:?}: the service runs as the user and reaches the user's broker"
+        );
+    }
+}
+
+#[test]
+fn a_missing_foreign_or_login_started_runner_is_refused_a_service() {
+    let missing = runner_service::runner_dir_refusal("box", false, true, "alex").unwrap();
+    assert!(missing.contains("no runner box"), "{missing}");
+    let foreign = runner_service::runner_dir_refusal("box", true, false, "alex").unwrap();
+    assert!(
+        foreign.contains("not owned by alex") && foreign.contains("--state-dir"),
+        "{foreign}"
+    );
+    assert_eq!(
+        runner_service::runner_dir_refusal("box", true, true, "alex"),
+        None
+    );
+    let twice = runner_service::login_entry_refusal("box", true, "alex").unwrap();
+    assert!(
+        twice.contains("localrunner autostart off runner box") && twice.contains("alex"),
+        "{twice}"
+    );
+    assert_eq!(
+        runner_service::login_entry_refusal("box", false, "alex"),
+        None
+    );
+}
+
+#[test]
+fn a_service_runner_the_user_cannot_reach_is_named_with_the_command_that_can() {
+    let down = runner_service::unreachable_line(Os::Windows, "box", Some(true), "down");
+    assert!(
+        down.starts_with(
+            "runner box runs as the OS service AlLocalRunner-box: down does not reach it"
+        ),
+        "{down}"
+    );
+    assert!(down.ends_with("Stop-Service AlLocalRunner-box"), "{down}");
+    for what in ["reload", "upgrade"] {
+        let line = runner_service::unreachable_line(Os::Windows, "box", None, what);
+        assert!(
+            line.ends_with("Restart-Service AlLocalRunner-box"),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("{what} does not reach it")),
+            "{line}"
+        );
+    }
+    let linux = runner_service::unreachable_line(Os::Linux, "box", Some(true), "down");
+    assert!(
+        linux.ends_with("sudo systemctl stop al-localrunner-runner-box"),
+        "{linux}"
+    );
+    let stopped = runner_service::unreachable_line(Os::Linux, "box", Some(false), "down");
+    assert!(
+        stopped.contains("is stopped")
+            && stopped.ends_with("sudo systemctl restart al-localrunner-runner-box"),
+        "{stopped}"
+    );
+}
+
+#[test]
+fn up_and_upgrade_leave_a_runner_service_to_its_manager_and_say_how_to_restart_it() {
+    use lr_cli::commands::up_cmd::service_runner_line;
+    assert_eq!(
+        service_runner_line(Os::Windows, "box", Some(true)),
+        "runner box: runs as the OS service AlLocalRunner-box"
+    );
+    for running in [Some(false), None] {
+        let line = service_runner_line(Os::Linux, "box", running);
+        assert!(
+            line.contains("does not start a second copy")
+                && line.ends_with("sudo systemctl restart al-localrunner-runner-box"),
+            "{line}"
+        );
+    }
+    let upgrade = runner_service::upgrade_line(Os::MacOs, "box");
+    assert!(
+        upgrade.contains("does not restart the service")
+            && upgrade
+                .ends_with("sudo launchctl kickstart -k system/com.al-localrunner.runner-box"),
+        "{upgrade}"
+    );
+}
+
 #[test]
 fn graphics_and_ci_runners_are_refused_a_service() {
     let none: Vec<String> = Vec::new();

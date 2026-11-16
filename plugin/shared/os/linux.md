@@ -6,7 +6,7 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 |---|---|
 | State directory | `~/.local/share/al-localrunner` (`XDG_DATA_HOME` is not read; `LOCALRUNNER_STATE_DIR` overrides it); runners in `runner/<name>/` of it; broker service: `/var/lib/al-localrunner` |
 | IPC | Unix sockets in `ipc/` of the state directory (closed to the user, 0700): `hub-<user>.sock`, `runner-<user>-<name>.sock`, `broker.sock`, `broker-admin.sock`; broker service: `/run/al-localrunner/broker.sock` (group `al-localrunner`); not `$XDG_RUNTIME_DIR`, which autostart without login, containers and `sudo -u` lack |
-| Runner as an OS service | `sudo localrunner autostart on runner <name> --service --state-dir <state>` (the command prints the exact line): system unit `/etc/systemd/system/al-localrunner-runner-<name>.service`, `User=` the installing user, `NoNewPrivileges=true`; survives logout and starts at boot. A user unit with `loginctl enable-linger` also survives logout |
+| Runner as an OS service | `sudo localrunner autostart on runner <name> --service --state-dir <state>` (the command prints the exact line): system unit `/etc/systemd/system/al-localrunner-runner-<name>.service`, `User=` the installing user, `NoNewPrivileges=true`; survives logout and starts at boot. A user unit with `loginctl enable-linger` also survives logout. A `systemctl stop` kills running jobs without a drain; `down`/`reload`/`up`/`upgrade` do not reach the service and print the `sudo systemctl` command |
 | Process-tree kill | own process group or cgroup, `killpg` then SIGKILL after a grace period |
 | Free memory and CPU | `MemAvailable` in `/proc/meminfo`, `nproc` |
 

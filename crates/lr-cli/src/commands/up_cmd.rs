@@ -226,17 +226,34 @@ pub type Spawn<'a> = &'a (dyn Fn(&[String]) -> std::io::Result<u32> + Sync);
 
 /// Runners of `layout` that do not answer on the IPC of this user but run as an OS service
 /// (on Windows the service account has its own IPC names): `up` must not start them twice.
-fn runner_services_running(layout: &Layout, answering: &RunningRoles) -> Vec<String> {
+fn runner_services(layout: &Layout, answering: &RunningRoles) -> Vec<(String, Option<bool>)> {
     use crate::os_service::{runner_service, Os};
     let os = Os::current();
     layout
         .runner_names()
         .into_iter()
         .filter(|n| !answering.runners.contains(n))
-        .filter(|n| {
-            runner_service::installed(os, n) && runner_service::running(os, n) == Some(true)
+        .filter(|n| runner_service::installed(os, n))
+        .map(|n| {
+            let running = runner_service::running(os, &n);
+            (n, running)
         })
         .collect()
+}
+
+/// The line `up` prints for runner `name` that it leaves to its OS service, which runs or not
+/// (`None`: unknown): a second copy as a user process would run the same runner twice.
+pub fn service_runner_line(os: crate::os_service::Os, name: &str, running: Option<bool>) -> String {
+    use crate::os_service::{runner_service, state::named_restart_command};
+    let service = runner_service::service_name(os, name);
+    match running {
+        Some(true) => format!("runner {name}: runs as the OS service {service}"),
+        _ => format!(
+            "runner {name}: installed as the OS service {service}, which does not run; up does \
+             not start a second copy, start the service as administrator: {}",
+            named_restart_command(os, &service)
+        ),
+    }
 }
 
 /// `up [role]`: [`up_with`] that starts the roles as background processes of this binary and
@@ -286,13 +303,21 @@ pub async fn up_with(
     let chosen = chosen_roles(layout, role)?;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
-    let mut before = running_roles(layout).await;
-    if roles.contains(&NodeRole::Runner) {
-        before
-            .runners
-            .extend(runner_services_running(layout, &before));
-    }
+    let before = running_roles(layout).await;
+    let mut planned = before.clone();
     let mut code = 0;
+    if roles.contains(&NodeRole::Runner) {
+        for (name, running) in runner_services(layout, &before) {
+            let line = service_runner_line(crate::os_service::Os::current(), &name, running);
+            if running == Some(true) {
+                println!("{line}");
+            } else {
+                eprintln!("{line}");
+                code = 1;
+            }
+            planned.runners.insert(name);
+        }
+    }
     if service {
         match service_broker(before.broker) {
             Ok(line) => println!("{line}"),
@@ -317,7 +342,7 @@ pub async fn up_with(
             eprintln!("{line}");
         }
     }
-    let mut plan = up_plan(layout, &roles, &before);
+    let mut plan = up_plan(layout, &roles, &planned);
     if plan.is_empty() {
         return Ok(code);
     }

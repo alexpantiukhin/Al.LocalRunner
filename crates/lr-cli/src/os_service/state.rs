@@ -67,6 +67,15 @@ pub fn named_status_command(os: Os, name: &str) -> String {
     }
 }
 
+/// The command that stops the service `name`, for an elevated shell.
+pub fn named_stop_command(os: Os, name: &str) -> String {
+    match os {
+        Os::Windows => format!("Stop-Service {name}"),
+        Os::Linux => format!("sudo systemctl stop {name}"),
+        Os::MacOs => format!("sudo launchctl kill TERM system/{name}"),
+    }
+}
+
 /// The command that restarts the broker service, for an elevated shell.
 pub fn restart_command(os: Os) -> String {
     named_restart_command(os, service_name(os))

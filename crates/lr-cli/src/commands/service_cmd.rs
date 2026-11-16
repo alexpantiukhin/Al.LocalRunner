@@ -5,7 +5,7 @@ use super::{RoleArg, Switch};
 use crate::init::{self, NodeRole};
 use crate::os_service::plans::{self, AutostartInputs, Entry, ServiceInputs};
 use crate::os_service::runner_service::{self, RunnerServiceInputs};
-use crate::os_service::state::named_status_command;
+use crate::os_service::state::{named_restart_command, named_status_command};
 use crate::os_service::{
     apply_all, apply_or_undo, current_uid, home_dir, original_user, service_binary,
     service_installed, Action, DryRun, Os, OsSystem, System,
@@ -304,6 +304,15 @@ fn task_hint(e: String) -> String {
 }
 
 fn runner_may_start(layout: &Layout, name: &str) -> Result<(), String> {
+    let os = Os::current();
+    if runner_service::installed(os, name) {
+        return Err(format!(
+            "autostart runner {name}: it runs as the OS service {}, and a login autostart would \
+             start it twice; remove the service first (`localrunner autostart off runner {name} \
+             --service`, administrator) or keep it",
+            runner_service::service_name(os, name)
+        ));
+    }
     let allowed = crate::doctor::runner_allows_same_user(layout, name);
     match crate::doctor::same_user_verdict(layout, allowed) {
         Ok(Some(risk)) => {
@@ -521,16 +530,85 @@ pub fn runner_service_with(
     dry_run: bool,
     elevated: bool,
 ) -> Result<i32, String> {
+    let user = original_user()?;
+    let owned = |p: &Path| runner_service::owned_by(p, &user);
+    let login = |n: &str| runner_service::login_entry(Os::current(), &user, n);
+    let ctx = ServiceContext {
+        user: user.clone(),
+        elevated,
+        owned_by_user: &owned,
+        login_entry: &login,
+    };
+    runner_service_for(layout, switch, name, dry_run, &ctx)
+}
+
+/// What [`runner_service_for`] learns from the machine: the installing user (under `sudo` the
+/// one who called it, elevated on Windows the session user), the rights of this process,
+/// whether a path belongs to that user, and whether a login entry of that user starts a runner.
+pub struct ServiceContext<'a> {
+    /// The installing OS user: the runner's owner and, on Linux and macOS, its account.
+    pub user: String,
+    /// Whether this process has administrator rights.
+    pub elevated: bool,
+    /// Whether a path belongs to [`ServiceContext::user`].
+    pub owned_by_user: &'a dyn Fn(&Path) -> bool,
+    /// Whether a login entry of [`ServiceContext::user`] starts the named runner.
+    pub login_entry: &'a dyn Fn(&str) -> bool,
+}
+
+/// [`runner_service_with`] for `ctx`. `on` refuses, in this order: root or `SYSTEM` as the
+/// user; the `ci` runner and a runner that needs a desktop session; a runner missing from the
+/// installation or not owned by the user; on Windows a runner without its own broker key; a
+/// runner a login entry also starts; a runner the same-user rule of spec 3.12 refuses for the
+/// installing user. Then the rights. `off` is refused only without the rights.
+pub fn runner_service_for(
+    layout: &Layout,
+    switch: Switch,
+    name: &str,
+    dry_run: bool,
+    ctx: &ServiceContext<'_>,
+) -> Result<i32, String> {
     let on = switch == Switch::On;
     let verb = if on { "on" } else { "off" };
+    let elevated = ctx.elevated;
     crate::runner_config::check_runner_name(name)?;
     let os = Os::current();
     let exe = exe()?;
+    let inputs = RunnerServiceInputs {
+        os,
+        exe: exe.clone(),
+        name: name.to_string(),
+        state_dir: layout.root.clone(),
+        config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
+        user: ctx.user.clone(),
+    };
     if on {
-        if let Some(why) = runner_service::refusal(name, &runner_needs(layout, name)) {
-            return Err(format!("autostart on runner {name} --service: {why}"));
+        let refused = |why: String| format!("autostart on runner {name} --service: {why}");
+        runner_service::check_identity(&inputs).map_err(refused)?;
+        let dir = layout.runner_dir(name);
+        let joined = dir.join(crate::build::BROKER_FILE).is_file();
+        let why = runner_service::refusal(name, &runner_needs(layout, name))
+            .or_else(|| {
+                runner_service::runner_dir_refusal(
+                    name,
+                    dir.is_dir(),
+                    dir.is_dir() && (ctx.owned_by_user)(&dir),
+                    &ctx.user,
+                )
+            })
+            .or_else(|| runner_service::local_runner_refusal(os, name, joined))
+            .or_else(|| {
+                runner_service::login_entry_refusal(name, (ctx.login_entry)(name), &ctx.user)
+            });
+        if let Some(why) = why {
+            return Err(refused(why));
         }
-        runner_may_start(layout, name)?;
+        let allowed = crate::doctor::runner_allows_same_user(layout, name);
+        if let Some(risk) = crate::doctor::same_user_verdict_for(layout, allowed, Some(&ctx.user))
+            .map_err(|e| format!("autostart runner {name}: {e}"))?
+        {
+            eprintln!("runner {name}: warning: {risk}");
+        }
     }
     if !dry_run && !elevated {
         let how = if os == Os::Windows {
@@ -543,23 +621,13 @@ pub fn runner_service_with(
             runner_service_command(os, &exe, switch, name, layout)
         ));
     }
-    let inputs = RunnerServiceInputs {
-        os,
-        exe,
-        name: name.to_string(),
-        state_dir: layout.root.clone(),
-        config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
-        user: original_user()?,
-    };
-    if on {
-        runner_service::check_identity(&inputs)?;
-    }
     admin_marker(dry_run, elevated);
     let plan = if on {
         runner_service::install(&inputs)
     } else {
         runner_service::uninstall(&inputs)
     };
+    let existed = on && !dry_run && runner_service::installed(os, name);
     apply(&plan, dry_run)?;
     if dry_run {
         return Ok(0);
@@ -572,14 +640,23 @@ pub fn runner_service_with(
             runner_service::account(&inputs)
         );
         println!("its state: {}", named_status_command(os, &service));
-        println!(
-            "if it also has a login autostart, remove that as its user: localrunner autostart off runner {name}"
-        );
-        if os == Os::Windows {
+        if existed {
             println!(
-                "the service account has no user profile: jobs see only tools installed for all users"
+                "the service existed already: restart it so the running runner takes this \
+                 definition: {}",
+                named_restart_command(os, &service)
             );
         }
+        if os == Os::Windows {
+            println!(
+                "the service account does not have your PATH or the tools installed for your \
+                 user only: jobs see only tools installed for all users"
+            );
+        }
+        println!(
+            "stopping the service ends running jobs at once, without a drain; use `localrunner \
+             down {name}` first where it reaches the runner"
+        );
     } else {
         println!("autostart off: runner {name} is no longer an OS service");
     }

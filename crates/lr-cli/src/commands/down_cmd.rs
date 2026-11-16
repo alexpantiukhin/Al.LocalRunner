@@ -330,6 +330,11 @@ pub trait Roles: Send + Sync {
     async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
         Vec::new()
     }
+    /// The OS service of runner `name` when one is installed: whether it runs (`None`: the
+    /// service manager did not say); `None` without a service.
+    async fn runner_service(&self, _name: &str) -> Option<Option<bool>> {
+        None
+    }
 }
 
 /// The broker service as seen without administrator rights.
@@ -420,6 +425,18 @@ impl Roles for IpcRoles<'_> {
 
     async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
         super::upgrade_pool::all_runners(self.layout).await
+    }
+
+    async fn runner_service(&self, name: &str) -> Option<Option<bool>> {
+        let os = Os::current();
+        let name = name.to_string();
+        tokio::task::spawn_blocking(move || {
+            crate::os_service::runner_service::installed(os, &name)
+                .then(|| crate::os_service::runner_service::running(os, &name))
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     async fn broker_service_state(&self) -> ServiceState {
@@ -533,7 +550,23 @@ pub async fn down_for(
                     println!("{name}: stopping ({mode:?})");
                     stopping.push(name.clone());
                 }
-                Ok(false) => not_running(name, &mut code),
+                Ok(false) => match roles.runner_service(name).await {
+                    Some(running) => {
+                        let line = crate::os_service::runner_service::unreachable_line(
+                            Os::current(),
+                            name,
+                            running,
+                            "down",
+                        );
+                        if running == Some(false) {
+                            report(&line, &mut code);
+                        } else {
+                            roles.say_err(&line);
+                            code = 1;
+                        }
+                    }
+                    None => not_running(name, &mut code),
+                },
                 Err(e) => {
                     eprintln!("{name}: {e}");
                     code = 1;

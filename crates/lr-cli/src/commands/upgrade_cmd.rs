@@ -329,6 +329,15 @@ impl Job<'_> {
                 "the broker runs as an OS service with its own copy of the binary: this command does not touch it; update it afterwards with `localrunner broker update-service`, which needs administrator rights (see README, \"Update\")"
             );
         }
+        {
+            use crate::os_service::{runner_service, Os};
+            let os = Os::current();
+            for name in self.layout.runner_names() {
+                if runner_service::installed(os, &name) {
+                    println!("{}", runner_service::upgrade_line(os, &name));
+                }
+            }
+        }
         println!("directory: {}", self.dir.display());
         for line in self.activity.lines() {
             println!("{line}");

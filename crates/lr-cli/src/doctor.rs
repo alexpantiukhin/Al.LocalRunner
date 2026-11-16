@@ -216,6 +216,17 @@ pub fn set_installation_owner(user: String) {
 /// such a client then acts as the pool owner (admin channel, broker key and databases). `None`
 /// when that is not the case or the policy is unreadable.
 pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
+    same_user_risk_for(layout, with_runner, None)
+}
+
+/// [`same_user_risk`] for the installation of OS user `owner`; `None` means the owner set by
+/// [`set_installation_owner`], else the user of this process. An elevated run (`sudo`, another
+/// administrator) names the installing user, since its own user is not the owner.
+pub fn same_user_risk_for(
+    layout: &Layout,
+    with_runner: bool,
+    owner: Option<&str>,
+) -> Option<String> {
     use lr_broker::policy::CommandMode;
     if !with_runner || layout.broker_is_service() {
         return None;
@@ -226,9 +237,9 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
         Err(_) => return None,
     };
     let file = lr_broker::policy::load(&text).ok()?;
-    let owner = INSTALLATION_OWNER
-        .get()
-        .cloned()
+    let owner = owner
+        .map(str::to_string)
+        .or_else(|| INSTALLATION_OWNER.get().cloned())
         .or_else(|| lr_net::current_os_user().ok());
     let others = file
         .local_users
@@ -259,7 +270,16 @@ pub fn same_user_risk(layout: &Layout, with_runner: bool) -> Option<String> {
 /// `allow_same_user_as_broker = true` (`allowed`), which keeps the risk as a warning. `Ok(None)`
 /// when there is no risk.
 pub fn same_user_verdict(layout: &Layout, allowed: bool) -> Result<Option<String>, String> {
-    match same_user_risk(layout, true) {
+    same_user_verdict_for(layout, allowed, None)
+}
+
+/// [`same_user_verdict`] for the installation of OS user `owner` (see [`same_user_risk_for`]).
+pub fn same_user_verdict_for(
+    layout: &Layout,
+    allowed: bool,
+    owner: Option<&str>,
+) -> Result<Option<String>, String> {
+    match same_user_risk_for(layout, true, owner) {
         None => Ok(None),
         Some(risk) if allowed => Ok(Some(risk)),
         Some(risk) => Err(format!(
@@ -396,27 +416,8 @@ fn output_of(program: &str, args: &[&str]) -> Option<std::process::Output> {
 }
 
 fn login_entry(os: crate::os_service::Os, name: &str) -> bool {
-    use crate::os_service::Os;
-    let entry = crate::os_service::plans::Entry::Runner(Some(name.to_string())).name();
-    match os {
-        Os::Windows => {
-            let Ok(principal) = lr_net::current_os_principal() else {
-                return false;
-            };
-            let task = format!("Al.LocalRunner {entry} {principal}");
-            output_of("schtasks", &["/Query", "/TN", &task]).is_some_and(|o| o.status.success())
-        }
-        Os::Linux => crate::os_service::home_dir().is_ok_and(|h| {
-            h.join(".config/systemd/user")
-                .join(format!("al-localrunner-{entry}.service"))
-                .exists()
-        }),
-        Os::MacOs => crate::os_service::home_dir().is_ok_and(|h| {
-            h.join("Library/LaunchAgents")
-                .join(format!("com.al-localrunner.{entry}.plist"))
-                .exists()
-        }),
-    }
+    lr_net::current_os_user()
+        .is_ok_and(|user| crate::os_service::runner_service::login_entry(os, &user, name))
 }
 
 fn linger(os: crate::os_service::Os) -> Option<bool> {
@@ -477,6 +478,17 @@ async fn brokers(layout: &Layout, out: &mut Vec<Check>) {
             continue;
         };
         let label = format!("runner {name} broker");
+        let os = crate::os_service::Os::current();
+        if os == crate::os_service::Os::Windows
+            && crate::os_service::runner_service::installed(os, &name)
+        {
+            out.push(check(
+                label,
+                Status::Ok,
+                "not checked: the runner runs as an OS service, which owns its key",
+            ));
+            continue;
+        }
         match toml::from_str::<BrokerFile>(&text) {
             Ok(BrokerFile {
                 address,

@@ -33,6 +33,7 @@ pub struct FakeRoles {
     pub broker_unreachable: bool,
     pub broker_state: ServiceState,
     pub after_restart: Mutex<Vec<PoolRunner>>,
+    pub service_runner: Option<Option<bool>>,
 }
 
 impl FakeRoles {
@@ -52,6 +53,7 @@ impl FakeRoles {
             broker_unreachable: false,
             broker_state: ServiceState::NotInstalled,
             after_restart: Mutex::new(Vec::new()),
+            service_runner: None,
         }
     }
 
@@ -90,7 +92,11 @@ impl Roles for FakeRoles {
         if let Some(path) = self.lock_file.lock().unwrap().as_ref() {
             self.lock_seen.lock().unwrap().push(path.exists());
         }
-        Ok(true)
+        Ok(self.service_runner.is_none())
+    }
+
+    async fn runner_service(&self, _name: &str) -> Option<Option<bool>> {
+        self.service_runner
     }
 
     async fn running_jobs(&self) -> Option<Vec<String>> {

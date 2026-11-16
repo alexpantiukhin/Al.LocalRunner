@@ -116,6 +116,161 @@ pub fn refusal(name: &str, needs: &[String]) -> Option<String> {
     ))
 }
 
+/// Why runner `name` gets no service on `os` when it is not `joined` to a broker with its own
+/// key: on Windows the service account is not the user, so it cannot use this user's local
+/// broker channel (the broker admits it by OS user, and the channel names are the user's).
+pub fn local_runner_refusal(os: Os, name: &str, joined: bool) -> Option<String> {
+    (os == Os::Windows && !joined).then(|| {
+        format!(
+            "runner {name} reaches its broker over this user's local channel, which a Windows \
+             service account cannot use; join it to the broker with its own key (`localrunner \
+             broker add --runners 1`, then `localrunner runner join <address> --name {name}`) \
+             or keep its login autostart"
+        )
+    })
+}
+
+/// Why runner `name` gets no service: its directory is missing (a typo, or the elevated run
+/// looked at another installation) or not owned by `user`.
+pub fn runner_dir_refusal(name: &str, exists: bool, owned: bool, user: &str) -> Option<String> {
+    if !exists {
+        return Some(format!(
+            "there is no runner {name} in this installation; name an existing runner, and give \
+             the user's installation with --state-dir when the command runs elevated"
+        ));
+    }
+    (!owned).then(|| {
+        format!(
+            "the directory of runner {name} is not owned by {user}: this is another user's \
+             installation; give the installing user's own with --state-dir"
+        )
+    })
+}
+
+/// Why runner `name` gets no service while a login entry of `user` also starts it: both would
+/// run the same runner at once.
+pub fn login_entry_refusal(name: &str, login: bool, user: &str) -> Option<String> {
+    login.then(|| {
+        format!(
+            "runner {name} also starts at user login, and both would run it at once; remove that \
+             first as {user}: localrunner autostart off runner {name}"
+        )
+    })
+}
+
+/// What `what` (`down`, `reload`, `upgrade`) says of runner `name` whose OS service it cannot
+/// reach, given whether the service runs (`None`: unknown), with the command for an
+/// administrator.
+pub fn unreachable_line(os: Os, name: &str, running: Option<bool>, what: &str) -> String {
+    use super::state::{named_restart_command, named_stop_command};
+    let service = service_name(os, name);
+    if running == Some(false) {
+        return format!(
+            "runner {name}: its OS service {service} is stopped; start it as administrator: {}",
+            named_restart_command(os, &service)
+        );
+    }
+    let (verb, command) = if what == "down" {
+        ("stop", named_stop_command(os, &service))
+    } else {
+        ("restart", named_restart_command(os, &service))
+    };
+    format!(
+        "runner {name} runs as the OS service {service}: {what} does not reach it; {verb} it as \
+         administrator: {command}"
+    )
+}
+
+/// What `upgrade` says of runner `name` installed as an OS service: the service keeps running
+/// the old binary (Windows) or stays stopped after the drain (Linux, macOS), and `up` does not
+/// start a copy of it, so an administrator restarts it.
+pub fn upgrade_line(os: Os, name: &str) -> String {
+    let service = service_name(os, name);
+    format!(
+        "runner {name} runs as the OS service {service}: upgrade replaces the binary but does \
+         not restart the service; afterwards restart it as administrator: {}",
+        super::state::named_restart_command(os, &service)
+    )
+}
+
+/// The runner's key file, which the Windows service account must own.
+pub fn key_path(i: &RunnerServiceInputs) -> PathBuf {
+    i.state_dir
+        .join("runner")
+        .join(&i.name)
+        .join(crate::build::KEY_FILE)
+}
+
+/// Whether a login entry of `user` starts runner `name` (a scheduler task, a systemd user unit,
+/// a LaunchAgent); `false` when that cannot be told.
+pub fn login_entry(os: Os, user: &str, name: &str) -> bool {
+    let entry = super::autostart::Entry::Runner(Some(name.to_string())).name();
+    match os {
+        Os::Windows => {
+            let Ok(principal) = lr_net::account_principal(user) else {
+                return false;
+            };
+            let task = format!("Al.LocalRunner {entry} {principal}");
+            super::programs::program_path("schtasks").is_ok_and(|p| {
+                std::process::Command::new(p)
+                    .args(["/Query", "/TN", &task])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
+            })
+        }
+        Os::Linux => home_of(user).is_some_and(|h| {
+            h.join(".config/systemd/user")
+                .join(format!("al-localrunner-{entry}.service"))
+                .exists()
+        }),
+        Os::MacOs => home_of(user).is_some_and(|h| {
+            h.join("Library/LaunchAgents")
+                .join(format!("com.al-localrunner.{entry}.plist"))
+                .exists()
+        }),
+    }
+}
+
+#[cfg(unix)]
+fn home_of(user: &str) -> Option<PathBuf> {
+    use std::ffi::{CStr, CString};
+    let name = CString::new(user).ok()?;
+    let entry = unsafe { libc::getpwnam(name.as_ptr()) };
+    if entry.is_null() {
+        return None;
+    }
+    let dir = unsafe { CStr::from_ptr((*entry).pw_dir) };
+    Some(PathBuf::from(dir.to_string_lossy().into_owned()))
+}
+
+#[cfg(not(unix))]
+fn home_of(_user: &str) -> Option<PathBuf> {
+    None
+}
+
+/// Whether `path` belongs to OS user `user` (Unix: its owner uid); always `true` on Windows,
+/// where the state directory of a user's profile is not checked this way.
+pub fn owned_by(path: &Path, user: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        lr_net::account_principal(user)
+            .ok()
+            .and_then(|uid| uid.parse::<u32>().ok())
+            .is_some_and(|uid| uid == meta.uid())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, user);
+        true
+    }
+}
+
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
 /// `--owner <user>` (the service account is not the installing user), and the directories.
 pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
@@ -198,6 +353,13 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             &[&s(&dir), "/grant", &format!("{account}:(OI)(CI){rights}")],
         ));
     }
+    let key = s(&key_path(i));
+    out.push(Action::run("icacls", &[&key, "/setowner", &account]));
+    out.push(Action::run(
+        "icacls",
+        &[&key, "/grant:r", &format!("{account}:(F)")],
+    ));
+    out.push(Action::run("icacls", &[&key, "/remove", &i.user]));
     out.push(Action::run("sc.exe", &["config", &name, "start=", "auto"]));
     out.push(Action::run("sc.exe", &["start", &name]).tolerating(Tolerate::Codes(vec![1056])));
     out
@@ -271,7 +433,8 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 /// `autostart on runner <name> --service`: registers the runner with the service manager under
 /// [`account`], started at boot and restarted after a failure, and starts it now. On Windows
 /// the service account also gets the state directory (modify) and the configuration and binary
-/// directories (read).
+/// directories (read), and becomes the owner and only user of the runner's key ([`key_path`]),
+/// as the key's owner check requires; `uninstall` gives the key back to the user.
 pub fn install(i: &RunnerServiceInputs) -> Vec<Action> {
     match i.os {
         Os::Windows => windows(i),
@@ -287,8 +450,14 @@ pub fn uninstall(i: &RunnerServiceInputs) -> Vec<Action> {
     match i.os {
         Os::Windows => {
             let account = account(i);
-            let mut out =
-                vec![Action::run("sc.exe", &["stop", &name]).tolerating(Tolerate::Anything)];
+            let key = s(&key_path(i));
+            let mut out = vec![
+                Action::run("sc.exe", &["stop", &name]).tolerating(Tolerate::Anything),
+                Action::run("icacls", &[&key, "/setowner", &i.user]).tolerating(Tolerate::Anything),
+                Action::run("icacls", &[&key, "/grant:r", &format!("{}:(F)", i.user)])
+                    .tolerating(Tolerate::Anything),
+                Action::run("icacls", &[&key, "/remove", &account]).tolerating(Tolerate::Anything),
+            ];
             for (dir, _) in windows_dirs(i) {
                 out.push(
                     Action::run("icacls", &[&s(&dir), "/remove", &account])
