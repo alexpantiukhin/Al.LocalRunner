@@ -43,6 +43,7 @@ pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
         commands: Default::default(),
         enforcement: None,
         version: None,
+        enforce_limit: false,
     }
 }
 

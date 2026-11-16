@@ -92,6 +92,7 @@ pub fn caps() -> WireCapabilities {
         commands: Default::default(),
         enforcement: None,
         version: None,
+        enforce_limit: false,
     }
 }
 

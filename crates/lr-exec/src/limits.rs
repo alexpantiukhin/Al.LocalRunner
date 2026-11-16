@@ -18,8 +18,31 @@ pub(crate) fn backstop_mb(ceiling_mb: u64) -> u64 {
         .max(ceiling_mb + 1)
 }
 
-/// The hard memory limit of a Windows Job Object: at the ceiling in limit mode (allocations
-/// beyond it fail), at the backstop in kill mode, none otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemoryHold {
+    Unheld,
+    JobObject,
+    Scope,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn job_object_hold(limits: &ResourceLimits) -> MemoryHold {
+    if limits.mode == Enforce::Limit && os_memory_limit_mb(limits).is_some() {
+        MemoryHold::JobObject
+    } else {
+        MemoryHold::Unheld
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn scope_hold(properties: &[String]) -> MemoryHold {
+    if properties.iter().any(|p| p.starts_with("MemoryHigh=")) {
+        MemoryHold::Scope
+    } else {
+        MemoryHold::Unheld
+    }
+}
+
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn os_memory_limit_mb(limits: &ResourceLimits) -> Option<u64> {
     let mem = limits.mem_mb?;
@@ -30,11 +53,6 @@ pub(crate) fn os_memory_limit_mb(limits: &ResourceLimits) -> Option<u64> {
     }
 }
 
-/// The `systemd-run -p` properties of a job scope for `limits` given the controllers the user
-/// manager delegates. In kill mode the hard memory limit sits above the ceiling the watcher
-/// enforces, so the watcher ends the job with the proper reason first; in limit mode the soft
-/// limit `MemoryHigh` sits at the ceiling (the kernel throttles and reclaims, it does not
-/// kill) and the hard limit stays at the backstop.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn scope_properties(limits: &ResourceLimits, controllers: &[String]) -> Vec<String> {
     let has = |name: &str| controllers.iter().any(|c| c == name);
@@ -67,36 +85,40 @@ pub(crate) fn scope_properties(limits: &ResourceLimits, controllers: &[String]) 
     out
 }
 
-/// The excess to report when a job held at its memory ceiling (limit mode) failed: a refused
-/// allocation is an obscure error, so a non-zero exit with the peak within 10% of the ceiling
-/// (or above it, where the OS limit is soft) is reported as the ceiling reached.
 pub(crate) fn limit_exceeded(
     limits: &ResourceLimits,
     code: i32,
+    hold: MemoryHold,
+    evidence: MemoryEvidence,
     peak_mb: Option<u64>,
 ) -> Option<Exceeded> {
     let ceiling = limits.mem_mb?;
-    let peak = peak_mb?;
     if limits.mode != Enforce::Limit || code == 0 {
         return None;
     }
-    if peak.saturating_mul(10) < ceiling.saturating_mul(9) {
-        return None;
-    }
-    Some(Exceeded {
+    let peak = peak_mb.unwrap_or(0).max(evidence.peak_mb);
+    let reached = match hold {
+        MemoryHold::Unheld => false,
+        MemoryHold::JobObject => peak >= ceiling,
+        MemoryHold::Scope => {
+            evidence.high_events > 0 || evidence.max_events > 0 || evidence.oom_kills > 0
+        }
+    };
+    reached.then(|| Exceeded {
         resource: LimitedResource::Memory,
         limit_mb: ceiling,
         declared_mb: limits.declared_mem_mb,
-        peak_mb: peak,
+        peak_mb: peak.max(ceiling),
     })
 }
 
 /// What the OS remembers about a job's memory: kernel OOM kills of its scope, how often it hit
-/// its hard limit, and its peak (the last needs a kernel with `memory.peak`).
+/// its hard limit and its soft limit, and its peak (the last needs a kernel with `memory.peak`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct MemoryEvidence {
     pub(crate) oom_kills: u64,
     pub(crate) max_events: u64,
+    pub(crate) high_events: u64,
     pub(crate) peak_mb: u64,
 }
 
@@ -309,6 +331,7 @@ mod tests {
             oom_kills: 1,
             max_events: 5,
             peak_mb: 340,
+            ..MemoryEvidence::default()
         };
         let ex = oom_exceeded(&kill_limits(), 137, seen, Some(200)).unwrap();
         assert_eq!(ex.resource, LimitedResource::Memory);
@@ -320,6 +343,7 @@ mod tests {
             oom_kills: 0,
             max_events: 0,
             peak_mb: 320,
+            ..MemoryEvidence::default()
         };
         assert!(oom_exceeded(&kill_limits(), 137, peak, None).is_some());
         let limit_hit = MemoryEvidence {
@@ -335,6 +359,7 @@ mod tests {
             oom_kills: 1,
             max_events: 1,
             peak_mb: 352,
+            ..MemoryEvidence::default()
         };
         assert!(oom_exceeded(&kill_limits(), 1, oom, None).is_none());
         assert!(oom_exceeded(&kill_limits(), 143, oom, None).is_some());
@@ -348,6 +373,7 @@ mod tests {
             oom_kills: 0,
             max_events: 0,
             peak_mb: 100,
+            ..MemoryEvidence::default()
         };
         assert!(oom_exceeded(&kill_limits(), 137, low, Some(100)).is_none());
         let mut warn = kill_limits();
@@ -396,30 +422,99 @@ mod tests {
         assert_eq!(disk.observe(50), Verdict::Within);
     }
 
+    fn quiet() -> MemoryEvidence {
+        MemoryEvidence::default()
+    }
+
     #[test]
-    fn a_failure_at_the_ceiling_in_limit_mode_is_an_excess() {
-        let ex = limit_exceeded(&limit_limits(), 3, Some(1240)).unwrap();
+    fn a_failure_at_the_job_object_limit_is_an_excess() {
+        let held = MemoryHold::JobObject;
+        let ex = limit_exceeded(&limit_limits(), 3, held, quiet(), Some(1254)).unwrap();
         assert_eq!(ex.resource, LimitedResource::Memory);
         assert_eq!(
             (ex.limit_mb, ex.declared_mb, ex.peak_mb),
-            (1250, Some(1000), 1240)
+            (1250, Some(1000), 1254)
         );
-        assert_eq!(
-            limit_exceeded(&limit_limits(), 137, Some(1400)).map(|e| e.peak_mb),
-            Some(1400)
-        );
-        assert!(limit_exceeded(&limit_limits(), 3, Some(1125)).is_some());
-        assert!(limit_exceeded(&limit_limits(), 3, Some(1124)).is_none());
-        assert!(limit_exceeded(&limit_limits(), 0, Some(1250)).is_none());
-        assert!(limit_exceeded(&limit_limits(), 3, None).is_none());
+        assert!(limit_exceeded(&limit_limits(), 3, held, quiet(), Some(1250)).is_some());
+        assert!(limit_exceeded(&limit_limits(), 2, held, quiet(), Some(1249)).is_none());
+        assert!(limit_exceeded(&limit_limits(), 2, held, quiet(), Some(1125)).is_none());
+        assert!(limit_exceeded(&limit_limits(), 0, held, quiet(), Some(1300)).is_none());
+        assert!(limit_exceeded(&limit_limits(), 3, held, quiet(), None).is_none());
         for mode in [Enforce::Off, Enforce::Warn, Enforce::Kill] {
             let mut other = limit_limits();
             other.mode = mode;
-            assert!(limit_exceeded(&other, 3, Some(1250)).is_none(), "{mode:?}");
+            assert!(
+                limit_exceeded(&other, 3, held, quiet(), Some(1300)).is_none(),
+                "{mode:?}"
+            );
         }
         let mut none = limit_limits();
         none.mem_mb = None;
-        assert!(limit_exceeded(&none, 3, Some(1250)).is_none());
+        assert!(limit_exceeded(&none, 3, held, quiet(), Some(1300)).is_none());
+    }
+
+    #[test]
+    fn a_failure_in_a_scope_is_an_excess_only_when_the_kernel_counted_the_limit() {
+        let held = MemoryHold::Scope;
+        let high = MemoryEvidence {
+            high_events: 4,
+            peak_mb: 1400,
+            ..quiet()
+        };
+        let ex = limit_exceeded(&limit_limits(), 1, held, high, Some(1300)).unwrap();
+        assert_eq!((ex.limit_mb, ex.peak_mb), (1250, 1400));
+        let oom = MemoryEvidence {
+            oom_kills: 1,
+            ..quiet()
+        };
+        assert_eq!(
+            limit_exceeded(&limit_limits(), 137, held, oom, None).map(|e| e.peak_mb),
+            Some(1250)
+        );
+        let max = MemoryEvidence {
+            max_events: 1,
+            ..quiet()
+        };
+        assert!(limit_exceeded(&limit_limits(), 1, held, max, Some(1200)).is_some());
+        let busy = MemoryEvidence {
+            peak_mb: 1300,
+            ..quiet()
+        };
+        assert!(limit_exceeded(&limit_limits(), 1, held, busy, Some(1300)).is_none());
+        assert!(limit_exceeded(&limit_limits(), 0, held, high, Some(1300)).is_none());
+    }
+
+    #[test]
+    fn without_an_os_limit_limit_mode_never_names_an_excess() {
+        let mut limits = limit_limits();
+        limits.procs = Some(64);
+        let no_memory_controller: Vec<String> = ["cpu", "pids"].map(String::from).to_vec();
+        let props = scope_properties(&limits, &no_memory_controller);
+        assert_eq!(scope_hold(&props), MemoryHold::Unheld);
+        let all: Vec<String> = ["memory", "cpu", "pids"].map(String::from).to_vec();
+        assert_eq!(
+            scope_hold(&scope_properties(&limits, &all)),
+            MemoryHold::Scope
+        );
+        let everything = MemoryEvidence {
+            oom_kills: 1,
+            max_events: 1,
+            high_events: 1,
+            peak_mb: 5000,
+        };
+        for code in [1, 2, 137] {
+            assert!(
+                limit_exceeded(&limits, code, MemoryHold::Unheld, everything, Some(5000)).is_none()
+            );
+        }
+        assert_eq!(job_object_hold(&limits), MemoryHold::JobObject);
+        for mode in [Enforce::Off, Enforce::Warn, Enforce::Kill] {
+            limits.mode = mode;
+            assert_eq!(job_object_hold(&limits), MemoryHold::Unheld, "{mode:?}");
+        }
+        let mut no_ceiling = limit_limits();
+        no_ceiling.mem_mb = None;
+        assert_eq!(job_object_hold(&no_ceiling), MemoryHold::Unheld);
     }
 
     #[test]

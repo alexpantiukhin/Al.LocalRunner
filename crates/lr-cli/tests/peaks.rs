@@ -124,6 +124,7 @@ fn runners_list_shows_enforcement() {
         commands: Default::default(),
         enforcement: enforcement.map(str::to_string),
         version: None,
+        enforce_limit: false,
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
         name: name.into(),
@@ -142,11 +143,21 @@ fn runners_list_shows_enforcement() {
         can_start_now: None,
         busy: None,
     };
+    let mut current = runner("r3", Some("os"));
+    current.caps.enforce_limit = true;
     let text = runner_lines(&[(
         "office".into(),
-        vec![runner("r1", Some("watcher")), runner("r2", None)],
+        vec![runner("r1", Some("watcher")), runner("r2", None), current],
     )])
     .join("\n");
-    assert_eq!(text.matches("enforcement").count(), 1, "{text}");
-    assert!(text.contains("    enforcement watcher"), "{text}");
+    assert_eq!(text.matches("enforcement").count(), 2, "{text}");
+    assert!(
+        text.contains("    enforcement watcher (limit mode not supported: runs as warn)\n"),
+        "{text}"
+    );
+    let plain = text
+        .lines()
+        .filter(|l| l.starts_with("    enforcement os"))
+        .collect::<Vec<_>>();
+    assert_eq!(plain, ["    enforcement os"], "{text}");
 }

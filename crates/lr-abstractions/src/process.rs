@@ -41,8 +41,8 @@ pub enum Enforce {
     Warn,
     /// The OS holds the memory of the tree at the ceiling where it can (allocations beyond it
     /// fail or are throttled) and nothing is killed for it; where the OS cannot, this acts as
-    /// [`Enforce::Warn`]. Disk acts as [`Enforce::Warn`]. A job that fails with its memory peak
-    /// at the ceiling ends with [`JobOutcome::exceeded`] set.
+    /// [`Enforce::Warn`]. Disk acts as [`Enforce::Warn`]. A job that fails after the OS limit was
+    /// reached ends with [`JobOutcome::exceeded`] set.
     Limit,
     /// The whole tree is killed and the job ends failed with [`JobOutcome::exceeded`] set.
     Kill,

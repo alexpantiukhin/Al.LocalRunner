@@ -96,4 +96,14 @@ impl ResourcesSection {
             disk_headroom_pct: self.disk_headroom.percent(),
         }
     }
+
+    /// The part of the section sent to one runner: `limit` goes as `warn` to a runner that does
+    /// not announce `enforce_limit` (one of an earlier version could not read the assignment).
+    pub fn wire_for(&self, enforce_limit: bool) -> WireLimits {
+        let mut wire = self.wire();
+        if wire.mode == WireEnforce::Limit && !enforce_limit {
+            wire.mode = WireEnforce::Warn;
+        }
+        wire
+    }
 }

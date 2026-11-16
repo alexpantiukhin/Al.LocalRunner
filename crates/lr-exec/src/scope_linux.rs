@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::process::Command;
 
-use crate::limits::MemoryEvidence;
+use crate::limits::{MemoryEvidence, MemoryHold};
 
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 const UNIT_PREFIX: &str = "lr-";
@@ -173,6 +173,7 @@ pub(crate) fn job_owns_bus(job_vars: &[&str]) -> bool {
 pub(crate) struct Scope {
     dir: PathBuf,
     cpu_capped: bool,
+    hold: MemoryHold,
     evidence: Arc<Mutex<MemoryEvidence>>,
     stop: Arc<AtomicBool>,
 }
@@ -183,23 +184,24 @@ impl Drop for Scope {
     }
 }
 
-/// The `(oom_kill, max)` counters of a `memory.events` text.
-pub(crate) fn event_counters(text: &str) -> (u64, u64) {
+/// The `(oom_kill, max, high)` counters of a `memory.events` text.
+pub(crate) fn event_counters(text: &str) -> (u64, u64, u64) {
     let get = |key: &str| {
         text.lines()
             .find_map(|l| l.strip_prefix(key)?.strip_prefix(' '))
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(0)
     };
-    (get("oom_kill"), get("max"))
+    (get("oom_kill"), get("max"), get("high"))
 }
 
 fn remember(seen: &Mutex<MemoryEvidence>, dir: &Path, events: Option<&str>) {
     let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(text) = events {
-        let (kills, max) = event_counters(text);
+        let (kills, max, high) = event_counters(text);
         seen.oom_kills = seen.oom_kills.max(kills);
         seen.max_events = seen.max_events.max(max);
+        seen.high_events = seen.high_events.max(high);
     }
     if let Ok(text) = std::fs::read_to_string(dir.join("memory.peak")) {
         if let Ok(bytes) = text.trim().parse::<u64>() {
@@ -290,6 +292,7 @@ impl Scope {
         let cpu_capped = props.iter().any(|p| p.starts_with("CPUQuota="));
         let mut scope = Scope::bare(dir);
         scope.cpu_capped = cpu_capped;
+        scope.hold = crate::limits::scope_hold(&props);
         Some((cmd, extra, scope))
     }
 
@@ -309,6 +312,7 @@ impl Scope {
         Scope {
             dir,
             cpu_capped: false,
+            hold: MemoryHold::Unheld,
             evidence: Arc::default(),
             stop: Arc::default(),
         }
@@ -341,6 +345,10 @@ impl Scope {
     /// Whether a CPU quota was requested for the scope.
     pub(crate) fn cpu_capped(&self) -> bool {
         self.cpu_capped
+    }
+
+    pub(crate) fn memory_hold(&self) -> MemoryHold {
+        self.hold
     }
 
     /// Sends `sig` to every process of the scope; `SIGKILL` goes through `cgroup.kill` where
@@ -399,10 +407,10 @@ mod tests {
 
     #[test]
     fn the_counters_are_read_from_memory_events() {
-        let text = "low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\noom_group_kill 0\n";
-        assert_eq!(event_counters(text), (2, 3));
-        assert_eq!(event_counters("max 3\n"), (0, 3));
-        assert_eq!(event_counters("oom_kill x\nmaxx 4\n"), (0, 0));
+        let text = "low 0\nhigh 5\nmax 3\noom 1\noom_kill 2\noom_group_kill 0\n";
+        assert_eq!(event_counters(text), (2, 3, 5));
+        assert_eq!(event_counters("max 3\n"), (0, 3, 0));
+        assert_eq!(event_counters("oom_kill x\nmaxx 4\nhighx 1\n"), (0, 0, 0));
     }
 
     #[test]

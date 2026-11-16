@@ -405,6 +405,7 @@ fn runners_on_another_version_are_named_per_broker() {
             commands: Default::default(),
             enforcement: None,
             version: version.map(str::to_string),
+            enforce_limit: false,
         },
         last_seen: Some(Timestamp(1)),
         free_mem_mb: 0,

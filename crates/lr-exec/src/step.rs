@@ -233,9 +233,13 @@ pub(crate) async fn supervise<'a>(
                 };
                 let held = if hold_mem && run.decided.is_none() {
                     tree.refresh_memory_evidence();
-                    let os_peak = tree.memory_evidence().peak_mb;
-                    let peak = watch.peak_mem_mb().map_or(os_peak, |p| p.max(os_peak));
-                    limit_exceeded(limits.resources, code, Some(peak).filter(|p| *p > 0))
+                    limit_exceeded(
+                        limits.resources,
+                        code,
+                        tree.memory_hold(),
+                        tree.memory_evidence(),
+                        watch.peak_mem_mb(),
+                    )
                 } else {
                     None
                 };

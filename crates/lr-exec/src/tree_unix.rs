@@ -1,5 +1,5 @@
 use crate::guard::Reaped;
-use crate::limits::MemoryEvidence;
+use crate::limits::{MemoryEvidence, MemoryHold};
 use crate::mem_unix::rss_bytes;
 use crate::os_unix::signal;
 use crate::probe::{descendants, probe, Probe};
@@ -30,6 +30,10 @@ impl Scope {
 
     fn cpu_capped(&self) -> bool {
         false
+    }
+
+    fn memory_hold(&self) -> MemoryHold {
+        MemoryHold::Unheld
     }
 
     fn of_pid(_: u32) -> Option<Scope> {
@@ -168,6 +172,12 @@ impl Tree {
         if let Some(scope) = &self.scope {
             scope.refresh_memory();
         }
+    }
+
+    pub(crate) fn memory_hold(&self) -> MemoryHold {
+        self.scope
+            .as_ref()
+            .map_or(MemoryHold::Unheld, |s| s.memory_hold())
     }
 
     pub(crate) fn memory_evidence(&self) -> MemoryEvidence {

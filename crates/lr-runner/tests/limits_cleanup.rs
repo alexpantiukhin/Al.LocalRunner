@@ -62,6 +62,12 @@ fn the_limit_mode_is_parsed() {
 }
 
 #[test]
+fn the_runner_announces_that_it_understands_limit() {
+    let s = parse("").unwrap();
+    assert!(s.capabilities(None).enforce_limit);
+}
+
+#[test]
 fn bad_limits_keys_are_refused() {
     assert!(refused("[limits]\nenforce = \"stop\"\n").contains("enforce"));
     let hold = refused("[limits]\nenforce = \"hold\"\n");

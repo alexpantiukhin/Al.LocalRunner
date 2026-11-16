@@ -144,14 +144,47 @@ async fn kill_mode_limits_travel_with_the_assignment() {
 }
 
 #[tokio::test]
-async fn limit_mode_travels_with_the_assignment() {
+async fn limit_mode_travels_to_a_runner_that_announces_it() {
     let h = Harness::start("[resources]\nmode = \"limit\"\n");
-    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut caps = linux();
+    caps.enforce_limit = true;
+    let mut r = h.member_runner("r1", "10.0.0.7", caps).await;
     let mut hub = h.local_hub("alex").await;
     hub.send(&order("j1", req(512, 1, 60))).await;
     hub.accepted().await;
     let limits = r.assign().await.spec.limits.expect("limits present");
     assert_eq!(limits.mode, WireEnforce::Limit);
+}
+
+#[tokio::test]
+async fn a_runner_of_an_earlier_version_gets_warn_instead_of_limit() {
+    let h = Harness::start("[resources]\nmode = \"limit\"\nmem_headroom = 1.5\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    let limits = r.assign().await.spec.limits.expect("limits present");
+    assert_eq!(limits.mode, WireEnforce::Warn);
+    assert_eq!(limits.mem_headroom_pct, 150);
+}
+
+#[test]
+fn only_limit_is_lowered_for_a_runner_without_the_capability() {
+    let section = |mode: &str| {
+        ok(&format!("[resources]\nmode = \"{mode}\"\n"))
+            .resources
+            .expect("section present")
+    };
+    assert_eq!(section("limit").wire_for(true).mode, WireEnforce::Limit);
+    assert_eq!(section("limit").wire_for(false).mode, WireEnforce::Warn);
+    for (mode, wire) in [
+        ("off", WireEnforce::Off),
+        ("warn", WireEnforce::Warn),
+        ("kill", WireEnforce::Kill),
+    ] {
+        assert_eq!(section(mode).wire_for(false).mode, wire);
+        assert_eq!(section(mode).wire_for(true).mode, wire);
+    }
 }
 
 #[tokio::test]

@@ -156,7 +156,7 @@
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
-          el("td", { text: r.caps.enforcement || "" }),
+          el("td", { text: (r.caps.enforcement || "") + (r.caps.enforcement && !r.caps.enforce_limit ? " (limit runs as warn)" : "") }),
           el("td", { text: r.caps.version || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));

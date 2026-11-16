@@ -792,6 +792,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             commands: Default::default(),
             enforcement: None,
             version: Some(version.into()),
+            enforce_limit: false,
         };
         lr_proto::RunnerInfo {
             name: name.into(),
