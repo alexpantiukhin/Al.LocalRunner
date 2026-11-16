@@ -8,7 +8,7 @@ description: >-
 
 # status-runner
 
-Read only; changes nothing. Read commands take `--json`.
+Read only; changes nothing, except `runner outbox drop` below. Read commands take `--json`.
 
 - `localrunner status`: queue and running jobs with steps and the wait reason. Filters: `--project`, `--source session|github`, `--as <label>`, `--broker <name>`.
 - `status --html [path]`: one self-contained HTML file, default `temp/runner/queue.html`; add `--history` for the history table. `--with-logs` embeds job logs, which may hold secrets of profile commands: use it only when the user asks. Give the user the printed path.
