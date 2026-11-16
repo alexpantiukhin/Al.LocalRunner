@@ -199,6 +199,53 @@ fn a_changed_hash_restores_the_view_with_its_tab_and_filters() {
 }
 
 #[test]
+fn a_runner_is_shown_online_stale_or_offline_by_how_recently_it_was_heard() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    let base = v["runners"][0]["runners"][0].clone();
+    let named = |name: &str, online: bool, liveness: Option<&str>, silent: Option<u64>| {
+        let mut r = base.clone();
+        r["name"] = name.into();
+        r["online"] = online.into();
+        if let Some(l) = liveness {
+            r["liveness"] = l.into();
+        }
+        if let Some(s) = silent {
+            r["silent_for_s"] = s.into();
+        }
+        r
+    };
+    v["runners"][0]["runners"] = serde_json::json!([
+        named("fresh", true, Some("online"), Some(0)),
+        named("quiet", true, Some("stale"), Some(40)),
+        named("gone", false, Some("offline"), Some(90)),
+        named("legacy-up", true, None, None),
+        named("legacy-down", false, None, None),
+    ]);
+    let scenario = r##"
+  location.hash = "#tab=runners";
+  handlers.hashchange();
+  out.rows = $("tab-runners").text();
+"##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "a_runner_is_shown_online_stale_or_offline",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert_eq!(text.matches("stale (silent 40 s)").count(), 1, "{text}");
+    assert_eq!(text.matches("offline").count(), 2, "{text}");
+    assert_eq!(text.matches("online").count(), 2, "{text}");
+}
+
+#[test]
 fn a_step_that_never_ran_shows_a_full_skipped_bar_once_the_run_is_over() {
     let over = running(StepState::Failed, StepState::Queued, JobState::Cancelled);
     let scenario = format!(

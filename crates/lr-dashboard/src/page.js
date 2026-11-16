@@ -134,6 +134,12 @@
     kids.push(el("div", { cls: "group scroll" }, [LRCharts.lanes(S.data.jobs, now(), 86400000)]));
     root.replaceChildren.apply(root, kids);
   }
+  function runnerState(r) {
+    if (r.liveness === "stale") return "stale (silent " + (r.silent_for_s || 0) + " s)";
+    if (r.liveness === "offline") return "offline";
+    if (r.liveness === "online") return "online";
+    return r.online ? "online" : "offline";
+  }
   function renderRunners() {
     var root = $("tab-runners");
     var kids = (S.data.runners || []).map(function (b) {
@@ -143,7 +149,7 @@
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
-          el("td", { text: (r.online ? "online" : "offline") + (r.last_seen ? " · " + when(r.last_seen) : "") }),
+          el("td", { text: runnerState(r) + (r.last_seen ? " · " + when(r.last_seen) : "") }),
           el("td", { text: (r.caps.platforms || []).join(", ") }),
           el("td", { text: String(queued.filter(function (j) { var p = j.detail.summary.platform; return !p || (r.caps.platforms || []).indexOf(p) >= 0; }).length) }),
           el("td", {}, [meter(r.free_mem_mb, r.caps.mem_mb, "MB")]),
