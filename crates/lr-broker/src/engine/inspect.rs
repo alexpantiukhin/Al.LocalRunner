@@ -1,7 +1,7 @@
 use super::conn::ConnId;
 use super::runners::RunnerSlot;
 use super::{Client, Engine};
-use crate::api::{Access, Viewer};
+use crate::api::Viewer;
 use lr_core::{JobId, Requirements, Scheduler};
 use lr_proto::{
     BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, PoolInfo, RunnerCaps, RunnerInfo,
@@ -63,12 +63,7 @@ impl Engine {
             .is_ok()
     }
 
-    fn held_tags(
-        &self,
-        viewer: &Viewer,
-        runner: Option<&str>,
-        ids_need_fields: bool,
-    ) -> Vec<HeldTag> {
+    fn held_tags(&self, viewer: &Viewer, runner: Option<&str>) -> Vec<HeldTag> {
         let pool = self.policy.policy().pool();
         let mut held = Vec::new();
         for job in self
@@ -77,12 +72,7 @@ impl Engine {
             .filter(|j| runner.is_none_or(|r| j.runner.as_deref() == Some(r)))
         {
             let req = &job.entry.order.requirements;
-            let access = self.access_to(viewer, &job.key.client);
-            let visible = match access {
-                Access::Hidden => false,
-                _ => !ids_need_fields || access.sees_fields(),
-            };
-            let shown = if visible {
+            let shown = if self.access_to(viewer, &job.key.client).sees_fields() {
                 job.key.job.clone()
             } else {
                 JobId(String::new())
@@ -118,7 +108,7 @@ impl Engine {
                     last_seen: Some(slot.last_seen),
                     free_mem_mb: free_mem,
                     free_cpu,
-                    held_tags: self.held_tags(viewer, Some(name), false),
+                    held_tags: self.held_tags(viewer, Some(name)),
                     services: slot.services.clone(),
                     unmet: Vec::new(),
                     liveness: Some(liveness),
@@ -147,7 +137,7 @@ impl Engine {
             mem_free_mb,
             cpu_total: pool.cpu,
             cpu_free,
-            held_tags: self.held_tags(viewer, None, true),
+            held_tags: self.held_tags(viewer, None),
             runners: self.runners.keys().cloned().collect(),
         }]
     }

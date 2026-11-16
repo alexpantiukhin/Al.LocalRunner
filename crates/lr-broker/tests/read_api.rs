@@ -875,7 +875,11 @@ async fn foreign_jobs_are_summarised_for_a_viewer_with_summary_visibility() {
         alex.send(&order("j1", want)).await;
         alex.accepted().await;
         r1.assign().await;
-        let (_, seen_by_bob) = runners_and_pools(&mut bob).await;
+        let (bobs_runners, seen_by_bob) = runners_and_pools(&mut bob).await;
+        let on_runner = &bobs_runners[0].held_tags;
+        assert_eq!(on_runner.len(), 1, "{others}");
+        assert_eq!(on_runner[0].tag, "gpu", "{others}");
+        assert_eq!(!on_runner[0].job.0.is_empty(), shown, "{others}");
         let pool = &seen_by_bob[0];
         assert_eq!(
             (pool.mem_free_mb, pool.cpu_free),
@@ -886,7 +890,12 @@ async fn foreign_jobs_are_summarised_for_a_viewer_with_summary_visibility() {
         assert_eq!(pool.held_tags[0].tag, "gpu", "{others}");
         let id = &pool.held_tags[0].job;
         assert_eq!(!id.0.is_empty(), shown, "{others}: {id:?}");
-        let (_, seen_by_alex) = runners_and_pools(&mut alex).await;
+        let (alexs_runners, seen_by_alex) = runners_and_pools(&mut alex).await;
         assert_eq!(seen_by_alex[0].held_tags[0].job, JobId("j1".into()));
+        assert_eq!(
+            alexs_runners[0].held_tags[0].job,
+            JobId("j1".into()),
+            "{others}"
+        );
     }
 }

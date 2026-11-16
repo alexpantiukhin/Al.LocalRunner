@@ -904,6 +904,30 @@ fn runners_are_grouped_by_pool_under_one_header_with_idle_and_can_start() {
     assert!(text.contains("busy; can start a job now: no"), "{text}");
     assert!(text.contains("idle; can start a job now: no"), "{text}");
     assert_eq!(text.matches("pool default").count(), 1, "{text}");
+    assert!(text.contains("\n    r1\tonline"), "{text}");
+    assert!(text.contains("\n    r2\tonline"), "{text}");
+    assert!(
+        text.contains("\n      busy; can start a job now: no"),
+        "{text}"
+    );
+
+    let mut small = default_pool();
+    small.mem_free_mb = 512;
+    small.held_tags.push(lr_proto::HeldTag {
+        tag: "android".into(),
+        job: lr_core::JobId(String::new()),
+        exclusive: false,
+    });
+    let header = pool_runner_lines(&[(
+        "office".to_string(),
+        vec![pooled("r1", false, true)],
+        vec![small],
+    )])[1]
+        .clone();
+    assert_eq!(
+        header,
+        "  pool default: memory 512 MB/32 GB free, cpu 6/16 free, tags held: android, gradle"
+    );
 
     let mut free = default_pool();
     free.held_tags.clear();

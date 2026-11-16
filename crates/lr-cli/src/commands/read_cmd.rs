@@ -253,15 +253,22 @@ fn pool_header(p: &PoolInfo) -> String {
     let held = if tags.is_empty() {
         "none".to_string()
     } else {
-        tags.join(",")
+        tags.join(", ")
+    };
+    let memory = if p.mem_total_mb < 1024 {
+        format!("{}/{} MB", p.mem_free_mb, p.mem_total_mb)
+    } else if p.mem_free_mb < 1024 {
+        format!("{} MB/{} GB", p.mem_free_mb, gigabytes(p.mem_total_mb))
+    } else {
+        format!(
+            "{}/{} GB",
+            gigabytes(p.mem_free_mb),
+            gigabytes(p.mem_total_mb)
+        )
     };
     format!(
-        "  pool {}: memory {}/{} GB free, cpu {}/{} free, tags held: {held}",
-        p.name,
-        gigabytes(p.mem_free_mb),
-        gigabytes(p.mem_total_mb),
-        p.cpu_free,
-        p.cpu_total
+        "  pool {}: memory {memory} free, cpu {}/{} free, tags held: {held}",
+        p.name, p.cpu_free, p.cpu_total
     )
 }
 
@@ -289,7 +296,9 @@ pub fn pool_runner_lines(per: &[RunnerView]) -> Vec<String> {
             for (i, r) in runners.iter().enumerate() {
                 if r.pool.as_deref() == Some(p.name.as_str()) {
                     shown[i] = true;
-                    runner_block(r, &mut out);
+                    let mut block = Vec::new();
+                    runner_block(r, &mut block);
+                    out.extend(block.into_iter().map(|line| format!("  {line}")));
                 }
             }
         }
