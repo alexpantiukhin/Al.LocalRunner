@@ -2,16 +2,13 @@ use crate::common::TempDir;
 use crate::kit::*;
 use crate::support::*;
 use lr_core::JobState;
-use std::time::Duration;
-
-const ENDS: Duration = Duration::from_secs(90);
 
 // scenario: 16.14
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn small_order_fills_the_hole_without_delaying_the_head() {
     let dir = TempDir::new("e2e-hole");
-    let gate = dir.path().join("gate");
-    let mut release = Release::new(&[&gate]);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let (main, roles) = machine(
         &dir,
         "main",
@@ -22,7 +19,7 @@ async fn small_order_fills_the_hole_without_delaying_the_head() {
     .await;
     let profiles = format!(
         "{}\n{}\n{}\n{}",
-        held_profile("running", dir.path(), &gate, 120, "mem_mb = 512\n"),
+        held_profile("running", &gate, 120, "mem_mb = 512\n"),
         echo_profile("heavy", "heavy-ran", 60, "mem_mb = 1024\n"),
         echo_profile("small", "small-filled-the-hole", 20, "mem_mb = 256\n"),
         echo_profile("long", "long-ran-last", 600, "mem_mb = 256\n"),
@@ -30,7 +27,7 @@ async fn small_order_fills_the_hole_without_delaying_the_head() {
     let repo = repo(&dir, &profiles);
 
     let (running_client, running) = submit(&main, &repo, "running", None).await;
-    release.watch(started(dir.path(), "running", "child").await);
+    gate.started("running", "child").await;
     let (heavy_client, heavy) = submit(&main, &repo, "heavy", None).await;
     let head = queued(&main, &heavy).await;
     assert_eq!(
@@ -39,7 +36,7 @@ async fn small_order_fills_the_hole_without_delaying_the_head() {
     );
 
     let (small_client, small) = submit(&main, &repo, "small", None).await;
-    let filled = until_exit(small_client, &small, ENDS).await;
+    let filled = until_exit(small_client, &small, HANG).await;
     assert_eq!(
         filled.state,
         JobState::Passed,
@@ -63,12 +60,12 @@ async fn small_order_fills_the_hole_without_delaying_the_head() {
     let view = status(&main).await.expect("status");
     assert_eq!(view.pool.used_mem_mb, 512, "{view:?}");
 
-    open(&gate);
-    let first = until_exit(running_client, &running, ENDS).await;
+    gate.open();
+    let first = until_exit(running_client, &running, HANG).await;
     assert_eq!(first.state, JobState::Passed, "{first:?}");
-    let h = until_exit(heavy_client, &heavy, ENDS).await;
+    let h = until_exit(heavy_client, &heavy, HANG).await;
     assert_eq!(h.state, JobState::Passed, "{h:?}");
-    let l = until_exit(long_client, &long, ENDS).await;
+    let l = until_exit(long_client, &long, HANG).await;
     assert_eq!(l.state, JobState::Passed, "{l:?}");
     let rows = history(&main).await;
     let started_at = |job| {

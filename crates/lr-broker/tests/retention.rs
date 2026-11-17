@@ -12,18 +12,12 @@ const ALEX: &str = "local:alex";
 const MONTH_S: u64 = 30 * 86_400;
 const RETENTION_EVERY: Duration = Duration::from_secs(RETENTION_EVERY_S);
 
-async fn eventually<F, Fut>(what: &str, mut f: F)
+async fn until_store<F, Fut>(h: &Harness, what: &str, f: F)
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    for _ in 0..2000 {
-        if f().await {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("never happened: {what}");
+    until_changed(h.faults.changes(), what, f).await;
 }
 
 async fn settle() {
@@ -74,7 +68,7 @@ async fn history_retention_prunes_on_the_tick() {
 
     h.clock.advance(RETENTION_EVERY);
     h.poke().await;
-    eventually("the log of j1 is pruned", || async {
+    until_store(&h, "the log of j1 is pruned", || async {
         log_len(&h, "j1").await == 0
     })
     .await;
@@ -82,7 +76,7 @@ async fn history_retention_prunes_on_the_tick() {
 
     h.clock.advance(Duration::from_secs(86_400));
     h.poke().await;
-    eventually("the row of j1 is pruned", || async {
+    until_store(&h, "the row of j1 is pruned", || async {
         h.job_row(ALEX, "j1").await.is_none()
     })
     .await;
@@ -129,7 +123,7 @@ async fn expires_after_keep_hours(h: &Harness) {
 
     h.clock.advance(RETENTION_EVERY);
     h.poke().await;
-    eventually("results for the absent hub are removed", || async {
+    until_store(h, "results for the absent hub are removed", || async {
         pending(h).await == 0
     })
     .await;

@@ -161,13 +161,17 @@ async fn listed_principal_gets_client_rights_only() {
     assert!(!sddl.contains(";;;WD)"), "{sddl}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reload_changes_the_dacl_for_new_clients() {
     let name = format!(r"\\.\pipe\lr-acl-reload-{}", std::process::id());
     let listener = IpcListener::bind(&name, IpcAccess::OwnerOnly)
         .await
         .unwrap();
     let open = || {
+        let wide = crate::os_windows::wide(&name);
+        let free =
+            unsafe { windows_sys::Win32::System::Pipes::WaitNamedPipeW(wide.as_ptr(), 20_000) };
+        assert_ne!(free, 0, "an instance of {name} waits for a client");
         tokio::net::windows::named_pipe::ClientOptions::new()
             .open(&name)
             .unwrap()
@@ -178,7 +182,6 @@ async fn reload_changes_the_dacl_for_new_clients() {
         !before.contains("BU)") && !before.contains(USERS_SID),
         "{before}"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     listener
         .set_access(IpcAccess::Principals(vec![USERS_SID.into()]))
         .await
@@ -190,7 +193,6 @@ async fn reload_changes_the_dacl_for_new_clients() {
         "{after}"
     );
     listener.set_access(IpcAccess::OwnerOnly).await.unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     let third = open();
     let back = handle_sddl(third.as_raw_handle() as HANDLE);
     assert!(!back.contains("BU)") && !back.contains(USERS_SID), "{back}");

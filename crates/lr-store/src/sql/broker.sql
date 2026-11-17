@@ -74,6 +74,7 @@ CREATE TABLE job (
 );
 CREATE INDEX job_queued_at ON job (queued_at);
 CREATE INDEX job_state_finished ON job (state, finished_at);
+CREATE INDEX job_finished_at ON job (finished_at);
 
 CREATE TRIGGER job_final_state_is_written_once
 BEFORE UPDATE OF state, finished_at, exit_code ON job

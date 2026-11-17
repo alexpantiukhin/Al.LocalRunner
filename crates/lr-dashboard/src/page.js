@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", step: "", stepAuto: true, as: params.get("as") || ""
+    sel: -1, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -29,7 +29,7 @@
     if (s < 3600) return Math.floor(s / 60) + "m" + (s % 60) + "s";
     return Math.floor(s / 3600) + "h" + Math.floor(s % 3600 / 60) + "m";
   }
-  function when(ms) { return ms ? new Date(ms).toLocaleString() : ""; }
+  function when(ms) { return ms != null ? new Date(ms).toLocaleString() : ""; }
   function store(key, value) { try { localStorage.setItem("lr." + key, value); } catch (e) { return; } }
   function load(key) { try { return localStorage.getItem("lr." + key); } catch (e) { return null; } }
 
@@ -44,7 +44,7 @@
       j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
       source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
-      queued: s.queued_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
+      queued: s.queued_at, finished: s.finished_at == null ? null : s.finished_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
   }
   function matches(r) {
@@ -63,10 +63,11 @@
   function sorted(rows) {
     var c = S.sort.col, d = S.sort.dir;
     rows.sort(function (a, b) {
-      var pa = S.as && a.label === S.as ? 0 : 1, pb = S.as && b.label === S.as ? 0 : 1;
+      var pin = S.tab === "queue" && S.as, pa = pin && a.label === S.as ? 0 : 1, pb = pin && b.label === S.as ? 0 : 1;
       if (pa !== pb) return pa - pb;
       if (!c) return 0;
       var x = a[c], y = b[c];
+      if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1;
       if (typeof x === "number" && typeof y === "number") return (x - y) * d;
       return String(x).localeCompare(String(y), undefined, { numeric: true }) * d;
     });
@@ -78,6 +79,9 @@
     if (S.tab === "queue" && !S.sort.col) {
       rows.sort(function (a, b) { return lists.indexOf(a.list) - lists.indexOf(b.list) || (a.position || 0) - (b.position || 0); });
     }
+    if (S.tab === "history" && !S.sort.col) {
+      rows.sort(function (a, b) { return a.finished == null || b.finished == null ? (a.finished == null) - (b.finished == null) : b.finished - a.finished || (a.job < b.job ? 1 : a.job > b.job ? -1 : 0); });
+    }
     return sorted(rows);
   }
 
@@ -87,7 +91,7 @@
     S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
-        var v = c === "queued" ? when(r.queued) : c === "duration" ? dur(r.duration) : String(r[c]);
+        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
         if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
@@ -104,7 +108,7 @@
     }));
   }
   var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "duration"];
+  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "finished", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
@@ -134,6 +138,12 @@
     kids.push(el("div", { cls: "group scroll" }, [LRCharts.lanes(S.data.jobs, now(), 86400000)]));
     root.replaceChildren.apply(root, kids);
   }
+  function runnerState(r) {
+    if (r.liveness === "stale") return "stale (silent " + (r.silent_for_s || 0) + " s)";
+    if (r.liveness === "offline") return "offline";
+    if (r.liveness === "online") return "online";
+    return r.online ? "online" : "offline";
+  }
   function renderRunners() {
     var root = $("tab-runners");
     var kids = (S.data.runners || []).map(function (b) {
@@ -143,14 +153,14 @@
       b.runners.filter(function (r) { return !S.filters.runner || r.name.indexOf(S.filters.runner) >= 0; }).forEach(function (r) {
         t.appendChild(el("tr", { cls: b.stale ? "stale" : "" }, [
           el("td", { text: r.name }),
-          el("td", { text: (r.online ? "online" : "offline") + (r.last_seen ? " · " + when(r.last_seen) : "") }),
+          el("td", { text: runnerState(r) + (r.last_seen ? " · " + when(r.last_seen) : "") }),
           el("td", { text: (r.caps.platforms || []).join(", ") }),
           el("td", { text: String(queued.filter(function (j) { var p = j.detail.summary.platform; return !p || (r.caps.platforms || []).indexOf(p) >= 0; }).length) }),
           el("td", {}, [meter(r.free_mem_mb, r.caps.mem_mb, "MB")]),
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
-          el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
+          el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + (h.job ? "←" + h.job : ""); }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
-          el("td", { text: r.caps.enforcement || "" }),
+          el("td", { text: (r.caps.enforcement || "unknown") + (r.caps.enforce_limit ? "" : " (limit runs as warn)") }),
           el("td", { text: r.caps.version || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));
@@ -240,9 +250,22 @@
     }));
     $("card-cancel").hidden = !config.live || FINAL.indexOf(s.state) >= 0;
     $("card").hidden = false;
+    if (FINAL.indexOf(s.state) >= 0 && !$("log-follow").disabled) finishFollow();
     if (S.step !== was && S.log) showLog();
   }
+  function finishFollow() {
+    var f = $("log-follow");
+    S.stick = f.checked;
+    f.checked = false;
+    f.disabled = true;
+    loadLog();
+  }
   function openCard(j) {
+    var over = FINAL.indexOf(j.detail.summary.state) >= 0;
+    $("log-follow").checked = !over;
+    $("log-follow").disabled = over;
+    S.stick = false;
+    S.logGen += 1;
     S.stepAuto = true;
     S.log = "";
     S.noLog = false;
@@ -271,8 +294,9 @@
     $("log-copy").disabled = $("log-download").disabled = !!S.noLog;
     var text = q ? all.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : all;
     var pre = $("log");
+    var top = pre.scrollTop;
     pre.textContent = text;
-    if ($("log-follow").checked && !q) pre.scrollTop = pre.scrollHeight;
+    if (($("log-follow").checked || S.stick) && !q) { pre.scrollTop = pre.scrollHeight; } else { pre.scrollTop = top; }
   }
   function loadLog() {
     if (!S.open) return;
@@ -283,10 +307,11 @@
       showLog();
       return;
     }
+    var gen = ++S.logGen;
     fetch("/api/log/" + encodeURIComponent(id), { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : ""; })
-      .then(function (t) { if (S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); } }).catch(function () { return; });
+      .then(function (t) { if (gen === S.logGen && S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); S.stick = false; } }).catch(function () { return; });
   }
-  function closeCard() { $("card").hidden = true; S.open = null; }
+  function closeCard() { $("card").hidden = true; S.open = null; S.logGen += 1; }
 
   function askCancel(jobs) {
     if (!jobs.length) return;
@@ -395,6 +420,11 @@
   $("help").addEventListener("click", function () { $("help-dialog").showModal(); });
   $("help-close").addEventListener("click", function () { $("help-dialog").close(); });
   $("log-search").addEventListener("input", showLog);
+  $("log-follow").addEventListener("change", showLog);
+  $("log").addEventListener("scroll", function () {
+    var f = $("log-follow"), pre = $("log");
+    if ((f.checked || S.stick) && pre.scrollHeight - pre.scrollTop - pre.clientHeight > 8) { f.checked = false; S.stick = false; }
+  });
   $("log-copy").addEventListener("click", function () { if (navigator.clipboard) navigator.clipboard.writeText($("log").textContent); });
   $("log-download").addEventListener("click", function () { if (S.open) download(S.open.detail.summary.job + ".log", S.log, "text/plain"); });
   $("export-csv").addEventListener("click", function () { exportRows("csv"); });

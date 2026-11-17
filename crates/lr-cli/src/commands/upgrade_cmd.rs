@@ -8,9 +8,9 @@ use super::args::{RoleArg, UpgradeArgs};
 use super::confirm::{Console, Stdio};
 use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
 use super::setup::{binary_name, default_bin_dir, upgrade_plan};
-use super::up_cmd::{running_roles, starter, up_with, RunningRoles, Spawn};
+use super::up_cmd::{running_roles, starter, up_with, up_with_services, RunningRoles, Spawn};
 use super::upgrade_jobs::{activity, choose, Activity, Mode};
-use super::upgrade_pool::{plan_lines, pool, report_lines, PoolRunner};
+use super::upgrade_pool::{plan_lines, pool, reconnected, report_lines, PoolRunner, Reconnected};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
 use crate::upgrade_lock::{write, UpgradeLock};
@@ -23,6 +23,11 @@ use std::time::Duration;
 const STARTED_WITHIN: Duration = Duration::from_secs(15);
 const BUSY_FOR: Duration = Duration::from_secs(20);
 const JOBS_REFRESH: Duration = Duration::from_secs(5);
+
+/// How long `upgrade` waits for the runners it restarted to reconnect to their broker before it
+/// reports; longer than a heartbeat.
+pub const RECONNECT_WITHIN: Duration = Duration::from_secs(20);
+const RECONNECT_POLL: Duration = Duration::from_millis(200);
 
 /// Printed with the plan: the old file is renamed, not overwritten.
 pub const KEEP_OLD_NOTE: &str =
@@ -318,11 +323,29 @@ impl Job<'_> {
         }
         let service = self.layout.broker_is_service();
         let stop = stop_names(self.running, service);
-        let again = restart_roles(self.running, service);
+        let mut services = std::collections::BTreeSet::new();
+        let mut names: std::collections::BTreeSet<String> =
+            self.layout.runner_names().into_iter().collect();
+        names.extend(self.running.runners.iter().cloned());
+        for name in names {
+            if roles.runner_service(&name).await.is_some() {
+                services.insert(name);
+            }
+        }
+        let mut again = restart_roles(self.running, service);
+        if self.running.runners.iter().all(|r| services.contains(r)) {
+            again.retain(|r| *r != RoleArg::Runner);
+        }
         if self.running.broker && service {
             println!(
                 "the broker runs as an OS service with its own copy of the binary: this command does not touch it; update it afterwards with `localrunner broker update-service`, which needs administrator rights (see README, \"Update\")"
             );
+        }
+        for name in &services {
+            roles.say(&crate::os_service::runner_service::upgrade_line(
+                crate::os_service::Os::current(),
+                name,
+            ));
         }
         println!("directory: {}", self.dir.display());
         for line in self.activity.lines() {
@@ -348,9 +371,22 @@ impl Job<'_> {
             return Ok(0);
         }
         let question = format!("upgrade {old_text} to {}?", self.new.text);
-        let Some(mode) = choose(self.activity, self.yes, self.cancel, &question, console)? else {
+        let Some(mode) = choose(
+            self.activity,
+            &self.running.runners,
+            self.yes,
+            self.cancel,
+            &question,
+            console,
+        )?
+        else {
             return Ok(1);
         };
+        if mode == Mode::Cancel {
+            for line in self.activity.cancel_lines(&self.running.runners) {
+                roles.say(&line);
+            }
+        }
         let _lock = write(
             self.layout,
             &UpgradeLock::of_this_process(&self.new.text, super::timefmt::now()),
@@ -365,20 +401,62 @@ impl Job<'_> {
         let mut code = 0;
         for role in again {
             code = code.max(
-                up_with(self.layout, Some(role), STARTED_WITHIN, start)
+                up_with_services(self.layout, Some(role), STARTED_WITHIN, start, false)
                     .await
                     .unwrap_or(1),
             );
         }
         replaced?;
-        println!(
+        let restarted = self.reconnects(roles, &services).await;
+        roles.say(&format!(
             "upgraded to {}; check the node: localrunner doctor",
             self.new.text
-        );
-        for line in report_lines(self.pool, self.new, protocol_changed) {
-            println!("{line}");
+        ));
+        for line in report_lines(self.pool, &restarted, self.new, protocol_changed) {
+            roles.say(&line);
         }
         Ok(code)
+    }
+
+    /// Waits up to [`RECONNECT_WITHIN`] for the runners started again to be online on the new
+    /// version, asking every [`RECONNECT_POLL`]; a failed answer while the hub restarts counts as
+    /// not back yet, and a question still unanswered at the deadline ends the wait with what
+    /// the last answer said.
+    async fn reconnects(
+        &self,
+        roles: &dyn Roles,
+        services: &std::collections::BTreeSet<String>,
+    ) -> Vec<(String, Reconnected)> {
+        let names: Vec<String> = self
+            .running
+            .runners
+            .iter()
+            .filter(|n| !services.contains(*n))
+            .cloned()
+            .collect();
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let until = tokio::time::Instant::now() + RECONNECT_WITHIN;
+        let mut now = Vec::new();
+        loop {
+            let answer = tokio::time::timeout_at(until, roles.pool_after_restart()).await;
+            let late = answer.is_err();
+            if let Ok(listed) = answer {
+                now = listed;
+            }
+            let seen: Vec<(String, Reconnected)> = names
+                .iter()
+                .map(|n| (n.clone(), reconnected(&now, n, &self.new.text)))
+                .collect();
+            if late
+                || seen.iter().all(|(_, back)| *back == Reconnected::Yes)
+                || tokio::time::Instant::now() >= until
+            {
+                return seen;
+            }
+            tokio::time::sleep(RECONNECT_POLL).await;
+        }
     }
 
     /// Stops the runners (draining or cancelling), waits for them, and only then the hub and a

@@ -8,15 +8,145 @@ use lr_abstractions::fakes::ManualClock;
 use lr_abstractions::{Clock, JobEvent, JobOutput, JobSpec};
 use lr_core::{JobId, StepSpec, Timestamp};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
 #[allow(unused_imports)]
 pub use helper::{helper_command, Helper};
 
 pub const T0: Timestamp = Timestamp(1_700_000_000_000);
+
+pub const HANG: Duration = Duration::from_secs(20);
+
+pub struct Links {
+    listener: TcpListener,
+    addr: String,
+}
+
+impl Links {
+    pub async fn new() -> Links {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        Links { listener, addr }
+    }
+
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
+
+    pub async fn next(&self) -> Link {
+        let link = async {
+            let (stream, _) = self.listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            let mut words = line.trim_end().splitn(3, ' ');
+            let role = words.next().unwrap_or_default().to_string();
+            let pid = words.next().and_then(|p| p.parse().ok()).expect("pid");
+            let shown = words.next().unwrap_or_default().to_string();
+            Link {
+                role,
+                pid,
+                shown,
+                stream,
+            }
+        };
+        tokio::time::timeout(HANG, link)
+            .await
+            .expect("no helper process connected")
+    }
+
+    pub async fn roles(&self, roles: &[&str]) -> Vec<Link> {
+        let mut links = Vec::new();
+        for _ in roles {
+            links.push(self.next().await);
+        }
+        roles
+            .iter()
+            .map(|role| {
+                let at = links.iter().position(|l| l.role == *role);
+                links.remove(at.unwrap_or_else(|| panic!("no {role} connected")))
+            })
+            .collect()
+    }
+}
+
+pub struct Link {
+    pub role: String,
+    pub pid: u32,
+    pub shown: String,
+    stream: BufReader<TcpStream>,
+}
+
+impl Link {
+    pub async fn open(&mut self) {
+        self.stream.get_mut().write_all(b"g").await.unwrap();
+    }
+
+    pub async fn ping(&mut self) -> bool {
+        if self.stream.get_mut().write_all(b"p").await.is_err() {
+            return false;
+        }
+        let mut byte = [0u8; 1];
+        let answer = tokio::time::timeout(HANG, self.stream.read(&mut byte)).await;
+        matches!(answer, Ok(Ok(1)))
+    }
+
+    pub async fn gone(mut self) {
+        let closed = async {
+            let mut sink = Vec::new();
+            let _ = self.stream.read_to_end(&mut sink).await;
+        };
+        if tokio::time::timeout(HANG, closed).await.is_err() {
+            panic!("{} {} still runs", self.role, self.pid);
+        }
+    }
+}
+
+pub async fn exited(pid: u32) {
+    let wait = tokio::task::spawn_blocking(move || wait_exit(pid));
+    tokio::time::timeout(HANG, wait)
+        .await
+        .unwrap_or_else(|_| panic!("process {pid} did not exit"))
+        .unwrap();
+}
+
+#[cfg(windows)]
+fn wait_exit(pid: u32) {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid);
+        assert!(!handle.is_null(), "cannot open process {pid}");
+        let waited = WaitForSingleObject(handle, INFINITE);
+        CloseHandle(handle);
+        assert_eq!(waited, WAIT_OBJECT_0);
+    }
+}
+
+#[cfg(unix)]
+fn wait_exit(pid: u32) {
+    loop {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let flags = libc::WEXITED | libc::WNOWAIT;
+        let done = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
+        if done == 0 {
+            return;
+        }
+        let err = std::io::Error::last_os_error();
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::Interrupted,
+            "waitid {pid}: {err}"
+        );
+    }
+}
 
 #[test]
 fn helper_process() {
@@ -89,8 +219,10 @@ pub fn events_bytes(events: &[JobEvent]) -> Vec<u8> {
 pub struct Recorder {
     events: Mutex<Vec<JobEvent>>,
     notify: Notify,
-    delay_first: AtomicUsize,
+    hold_at: Mutex<Option<&'static str>>,
+    released: AtomicBool,
     block_after: Mutex<Option<usize>>,
+    blocked: AtomicBool,
     max_chunk: AtomicUsize,
 }
 
@@ -99,9 +231,14 @@ impl Recorder {
         Arc::new(Recorder::default())
     }
 
-    pub fn slow_first(self: &Arc<Self>, count: usize) -> Arc<Self> {
-        self.delay_first.store(count, Ordering::SeqCst);
+    pub fn hold_at(self: &Arc<Self>, needle: &'static str) -> Arc<Self> {
+        *self.hold_at.lock().unwrap() = Some(needle);
         self.clone()
+    }
+
+    pub fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
     }
 
     pub fn block_after(self: &Arc<Self>, count: usize) -> Arc<Self> {
@@ -122,18 +259,36 @@ impl Recorder {
     }
 
     pub async fn wait_for(&self, needle: &str) -> String {
-        let found = tokio::time::timeout(Duration::from_secs(30), async {
+        self.wait_count(needle, 1).await
+    }
+
+    pub async fn wait_count(&self, needle: &str, count: usize) -> String {
+        let found = tokio::time::timeout(HANG, async {
             loop {
                 let notified = self.notify.notified();
                 let text = self.text();
-                if text.contains(needle) {
+                if text.matches(needle).count() >= count {
                     return text;
                 }
                 notified.await;
             }
         })
         .await;
-        found.unwrap_or_else(|_| panic!("`{needle}` not seen in output: {}", self.text()))
+        found.unwrap_or_else(|_| panic!("`{needle}` not seen {count}x in output: {}", self.text()))
+    }
+
+    pub async fn until_blocked(&self) {
+        let blocked = tokio::time::timeout(HANG, async {
+            loop {
+                let notified = self.notify.notified();
+                if self.blocked.load(Ordering::SeqCst) {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await;
+        blocked.expect("the consumer never blocked");
     }
 
     pub async fn pid_of(&self, role: &str) -> u32 {
@@ -155,11 +310,33 @@ impl JobOutput for Recorder {
         let block_after = *self.block_after.lock().unwrap();
         if let Some(limit) = block_after {
             if seen >= limit {
+                self.blocked.store(true, Ordering::SeqCst);
+                self.notify.notify_waiters();
                 std::future::pending::<()>().await;
             }
         }
-        if seen < self.delay_first.load(Ordering::SeqCst) {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        let hold = match &event {
+            JobEvent::Output { data, .. } => {
+                let mut at = self.hold_at.lock().unwrap();
+                let hit = at.is_some_and(|n| data.windows(n.len()).any(|w| w == n.as_bytes()));
+                if hit {
+                    *at = None;
+                }
+                hit
+            }
+            _ => false,
+        };
+        if hold {
+            loop {
+                let notified = self.notify.notified();
+                if !self.blocked.swap(true, Ordering::SeqCst) {
+                    self.notify.notify_waiters();
+                }
+                if self.released.load(Ordering::SeqCst) {
+                    break;
+                }
+                notified.await;
+            }
         }
         if let JobEvent::Output { data, .. } = &event {
             self.max_chunk.fetch_max(data.len(), Ordering::SeqCst);
@@ -197,10 +374,6 @@ pub fn pid_alive(pid: u32) -> bool {
         .unwrap()
         .status
         .success()
-}
-
-pub async fn real_sleep(ms: u64) {
-    tokio::time::sleep(Duration::from_millis(ms)).await;
 }
 
 pub async fn settle() {

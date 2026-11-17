@@ -3,6 +3,7 @@ mod common;
 use common::harness::*;
 use lr_core::{JobId, JobState};
 use lr_proto::*;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 const ALEX: &str = "local:alex";
@@ -97,8 +98,12 @@ async fn hub_absent_cancel_of_an_assigned_order_survives_a_restart() {
     let (mut r, hub) = assigned(&h).await;
     hub.close().await;
     for _ in 0..3 {
+        let before = h.faults.runner_states.load(Ordering::SeqCst);
         r.send(&RunnerToBroker::Heartbeat { load: None }).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        until_changed(h.faults.changes(), "the heartbeat is recorded", || {
+            std::future::ready(h.faults.runner_states.load(Ordering::SeqCst) > before)
+        })
+        .await;
         h.clock.advance(Duration::from_secs(20));
     }
     h.poke().await;

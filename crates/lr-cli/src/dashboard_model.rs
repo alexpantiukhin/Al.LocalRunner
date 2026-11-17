@@ -147,7 +147,9 @@ pub async fn build_snapshot(
                 snap.jobs.push(job(name, DashboardList::History, d));
             }
         }
-        if let Ok(ReadReply::Runners { runners }) = read(client, name, ReadRequest::Runners).await {
+        if let Ok(ReadReply::Runners { runners, .. }) =
+            read(client, name, ReadRequest::Runners).await
+        {
             snap.runners.push(BrokerRunners {
                 broker: name.to_string(),
                 pool: status.pool,

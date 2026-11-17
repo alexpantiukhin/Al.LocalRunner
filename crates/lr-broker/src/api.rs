@@ -57,7 +57,7 @@ pub fn access(viewer: &Viewer, run_client: &str, others: OthersOrders) -> Access
 }
 
 /// The summary as `access` allows: `None` when hidden; project, label, profile, source, note,
-/// branch and directory removed at `summary`.
+/// branch, directory and canceller removed at `summary`.
 pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
     match access {
         Access::Hidden => None,
@@ -74,6 +74,7 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.peak_mem_mb = None;
             s.peak_disk_mb = None;
             s.labels = Vec::new();
+            s.cancelled_by = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -189,6 +190,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         peak_mem_mb: row.peak_mem_mb,
         peak_disk_mb: row.peak_disk_mb,
         labels: Vec::new(),
+        cancelled_by: row.cancelled_by.clone().filter(|b| !b.is_empty()),
     }
 }
 
@@ -278,7 +280,7 @@ pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
             row.started_at,
         ),
         secrets: row.secrets.clone(),
-        cancelled_by: row.cancelled_by.clone(),
+        cancelled_by: row.cancelled_by.clone().filter(|b| !b.is_empty()),
         wait_reason,
     }
 }
@@ -318,6 +320,7 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: job.spec.labels.clone(),
+        cancelled_by: job.cancel.as_ref().and_then(|c| c.actor()),
     }
 }
 

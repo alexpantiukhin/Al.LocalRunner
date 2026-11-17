@@ -5,6 +5,7 @@ use super::{Engine, Job};
 use lr_abstractions::metric::*;
 use lr_abstractions::Level;
 use lr_core::{JobId, JobState, Timestamp, Wait};
+use lr_proto::RunnerLiveness;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Saturation reasons of `saturation_wait_seconds`, always all reported.
@@ -183,7 +184,11 @@ impl Engine {
             self.meter.set(RUNNING_JOBS, &labels, jobs as f64);
             self.meter.set(POOL_MEMORY_USED_MB, &labels, mem as f64);
             self.meter.set(POOL_CPU_USED, &labels, cpu as f64);
-            let online = if slot.conn.is_some() { 1.0 } else { 0.0 };
+            let online = if slot.liveness(now) == RunnerLiveness::Online {
+                1.0
+            } else {
+                0.0
+            };
             self.meter
                 .set(RUNNER_ONLINE, &[(RUNNER, name.as_str())], online);
         }

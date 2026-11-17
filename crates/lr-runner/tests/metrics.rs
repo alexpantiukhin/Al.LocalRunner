@@ -1,6 +1,7 @@
 mod common;
 
 use common::*;
+use lr_abstractions::fakes::MemoryMeter;
 use lr_abstractions::metric::{
     CACHE_EVICTED_TOTAL, CACHE_USED_MB, OUTBOX_OLDEST_AGE_SECONDS, OUTBOX_PENDING, OUTBOX_SAMPLE_S,
     REASON, ROLE, RUNNER,
@@ -15,14 +16,18 @@ const DAY: u64 = 86_400_000;
 const MB: u64 = 1024 * 1024;
 const ME: &[(&str, &str)] = &[(RUNNER, "runner-a")];
 
-async fn eventually(what: &str, check: impl Fn() -> bool) {
-    for _ in 0..30_000 {
-        if check() {
-            return;
+const HANG: Duration = Duration::from_secs(20);
+
+async fn until_metered(meter: &MemoryMeter, what: &str, check: impl Fn() -> bool) {
+    let mut changes = meter.changes();
+    let wait = async {
+        while !check() {
+            changes.changed().await.expect("the meter lives");
         }
-        tokio::task::yield_now().await;
-    }
-    panic!("{what} never happened");
+    };
+    tokio::time::timeout(HANG, wait)
+        .await
+        .unwrap_or_else(|_| panic!("{what} never happened"));
 }
 
 fn entry(client: &str, name: &str, bytes: u64, last_used: u64) -> CacheEntry {
@@ -110,14 +115,14 @@ async fn outbox_is_sampled_at_start_and_every_period() {
     let (_c, _h) = rig.start();
     let m = rig.meter.clone();
     let role = [(ROLE, "runner")];
-    eventually("first sample", || {
+    until_metered(&m, "first sample", || {
         m.gauge(OUTBOX_PENDING, &role) == Some(1.0)
+            && m.gauge(OUTBOX_OLDEST_AGE_SECONDS, &role) == Some(30.0)
     })
     .await;
-    assert_eq!(m.gauge(OUTBOX_OLDEST_AGE_SECONDS, &role), Some(30.0));
     rig.advance(Duration::from_secs(OUTBOX_SAMPLE_S)).await;
     let expected = (30 + OUTBOX_SAMPLE_S) as f64;
-    eventually("second sample", || {
+    until_metered(&m, "second sample", || {
         m.gauge(OUTBOX_OLDEST_AGE_SECONDS, &role) == Some(expected)
     })
     .await;

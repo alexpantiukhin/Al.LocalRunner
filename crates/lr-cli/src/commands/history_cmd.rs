@@ -1,5 +1,5 @@
 //! `history [filters]` and `history show <job>` (spec 8, 11.1): runs come from the brokers
-//! through the hub, newest first, by default only this client's. What a broker's visibility
+//! through the hub, most recently finished first, by default only this client's. What a broker's visibility
 //! policy hides arrives empty and is printed as `-`.
 
 use super::jobs::hub;
@@ -50,7 +50,23 @@ pub fn shown_state(s: &JobSummary) -> String {
     }
 }
 
-/// The runs of every broker as one list, newest first, at most `limit`.
+/// Why the run ended as `history` and `status --recent` show it: `cancelled by <actor>: <code>`
+/// for a cancelled run whose canceller is known, the reason code otherwise (a refusal is
+/// already `rejected` in the state), `-` without one.
+pub fn reason_text(s: &JobSummary) -> String {
+    let by = s.cancelled_by.as_ref().filter(|b| !b.is_empty());
+    match (&s.reason, by) {
+        (Some(code), Some(by)) if s.state == JobState::Cancelled && !is_rejected(s) => {
+            format!("cancelled by {by}: {code}")
+        }
+        (Some(code), _) => code.to_string(),
+        (None, Some(by)) if s.state == JobState::Cancelled => format!("cancelled by {by}"),
+        (None, _) => "-".into(),
+    }
+}
+
+/// The runs of every broker as one list, the most recently finished first (ties by job id,
+/// runs without a finish time last in the order they came), at most `limit`.
 pub fn newest_first(
     per: Vec<(String, Vec<JobSummary>)>,
     limit: usize,
@@ -59,7 +75,12 @@ pub fn newest_first(
         .into_iter()
         .flat_map(|(b, jobs)| jobs.into_iter().map(move |j| (b.clone(), j)))
         .collect();
-    rows.sort_by(|a, b| (b.1.queued_at, &b.1.job).cmp(&(a.1.queued_at, &a.1.job)));
+    rows.sort_by(|a, b| match (a.1.finished_at, b.1.finished_at) {
+        (Some(x), Some(y)) => (y, &b.1.job).cmp(&(x, &a.1.job)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
     rows.truncate(limit);
     rows
 }
@@ -86,15 +107,16 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER"
+        "JOB\tSTATE\tQUEUED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
             .into(),
     ];
     for (b, s) in rows {
         out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}\t{}",
             s.job,
             shown_state(s),
             format_time(s.queued_at),
+            when(s.finished_at),
             span(s.started_at, s.finished_at),
             dash(&s.profile),
             dash(&s.project),
@@ -108,6 +130,7 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
             dash(&s.runner),
             mb(s.peak_mem_mb),
             mb(s.peak_disk_mb),
+            reason_text(s),
         ));
     }
     out
@@ -157,7 +180,10 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
     }
     let optional = [
         ("github    ", &d.github_run_url),
-        ("cancelled ", &d.cancelled_by),
+        (
+            "cancelled ",
+            &d.cancelled_by.clone().filter(|b| !b.is_empty()),
+        ),
         ("waits     ", &d.wait_reason),
     ];
     for (name, value) in optional {

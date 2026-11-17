@@ -329,3 +329,54 @@ async fn a_tail_longer_than_the_brokers_queue_is_delivered_and_acknowledged() {
     }
     panic!("{} frames stay unacknowledged", rig.pending().await.len());
 }
+
+#[tokio::test]
+async fn drop_outbox_closes_pending_rows_of_a_finished_job_and_reports_the_count() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (control, _h) = rig.start();
+    let mut b = Broker::accept(&rig).await;
+    b.auto_ack = false;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.until_result().await;
+    rig.settle().await;
+    let before = rig.pending().await.len();
+    assert_eq!(before, 3);
+    let closed = control.drop_outbox(&JobId("job-1".into())).await;
+    assert_eq!(closed, Ok(before as u64));
+    assert!(rig.pending().await.is_empty());
+}
+
+#[tokio::test]
+async fn drop_outbox_refuses_while_the_job_runs() {
+    let rig = Rig::new();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script("job-1", JobScript::new(vec![StepScript::new(60 * SEC, 0)]));
+    let (control, _h) = rig.start();
+    let mut b = Broker::accept(&rig).await;
+    b.auto_ack = false;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 120)], 120),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    let before = rig.pending().await.len();
+    let refused = control.drop_outbox(&JobId("job-1".into())).await;
+    assert_eq!(refused, Err("job is still running".to_string()));
+    assert_eq!(rig.pending().await.len(), before);
+}
+
+#[tokio::test]
+async fn drop_outbox_of_an_unknown_job_reports_zero() {
+    let rig = Rig::new();
+    let (control, _h) = rig.start();
+    let _b = Broker::accept(&rig).await;
+    assert_eq!(control.drop_outbox(&JobId("nope".into())).await, Ok(0));
+}

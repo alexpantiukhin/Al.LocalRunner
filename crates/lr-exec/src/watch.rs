@@ -191,6 +191,18 @@ mod tests {
     }
 
     #[test]
+    fn limit_warns_for_memory_and_disk_once_and_never_kills() {
+        let mut w = Watch::new(&limits(Enforce::Limit));
+        let first = w.feed(Some(120), Some(20));
+        let text = String::from_utf8(first.warnings).unwrap();
+        assert!(text.contains("memory peak 120 MB exceeds the declared mem_mb 80 MB"));
+        assert!(text.contains("disk peak 20 MB"));
+        assert!(first.kill.is_none());
+        let second = w.feed(Some(900), Some(90));
+        assert!(second.warnings.is_empty() && second.kill.is_none());
+    }
+
+    #[test]
     fn kill_reports_memory_before_disk() {
         let mut w = Watch::new(&limits(Enforce::Kill));
         assert!(w.feed(Some(100), Some(10)).kill.is_none());

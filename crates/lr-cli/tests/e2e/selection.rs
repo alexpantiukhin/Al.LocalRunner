@@ -8,34 +8,26 @@ use lr_cli::roles::{start_broker, start_hub, Running};
 use lr_core::{JobState, Zone};
 use lr_proto::{CliReply, CliRequest, ReasonCode, RejectReason, SubmitRequest};
 use std::path::Path;
-use std::time::Duration;
 
 const LAN: &str = "[networks]\nhere = [\"127.0.0.0/8\", \"::1/128\"]\n";
-const ENDS: Duration = Duration::from_secs(120);
 
 async fn zone_of_main(layout: &Layout, zone: Zone) {
-    eventually(
-        &format!("the broker main in zone {}", zone.as_str()),
-        ENDS,
-        || async {
-            brokers(layout)
-                .await
-                .iter()
-                .any(|b| b.name == "main" && b.available && b.zone == Some(zone))
-                .then_some(())
-        },
-    )
+    let what = format!("the broker main in zone {}", zone.as_str());
+    until_hub(layout, &what, || async {
+        brokers(layout)
+            .await
+            .iter()
+            .any(|b| b.name == "main" && b.available && b.zone == Some(zone))
+            .then_some(())
+    })
     .await;
 }
 
 async fn restart_hub(layout: &Layout, old: Running) -> Running {
-    old.stop();
-    eventually(
-        "the hub to start again",
-        Duration::from_secs(30),
-        || async { start_hub(layout, false).await.ok() },
-    )
-    .await
+    old.stopped().await;
+    start_hub(layout, false)
+        .await
+        .expect("the hub starts again")
 }
 
 fn remote_profile(name: &str, text: &str, extra: &str) -> String {
@@ -88,8 +80,8 @@ async fn leave_the_lan(main: &Layout, roles: &mut Roles, address: &str) {
         .unwrap()
         .replace(LAN, "")
         .replace("127.0.0.1:0", address);
-    roles.take_broker().stop();
-    eventually("the broker's port to be free", ENDS, || {
+    roles.take_broker().stopped().await;
+    eventually("the broker's port to be free", HANG, || {
         let free = std::net::TcpListener::bind(address).is_ok();
         async move { free.then_some(()) }
     })
@@ -156,13 +148,13 @@ async fn a_hub_only_laptop_refuses_a_lan_order_once_no_admissible_broker_is_left
         "the hint fits a machine without a broker: {detail}"
     );
     let (client, job) = submit(&laptop, &repo, "lan-only", Some(PLATFORM)).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
 
     leave_the_lan(&main, &mut roles, &address).await;
     zone_of_main(&laptop, Zone::Remote).await;
     let (client, job) = submit(&laptop, &repo, "lan-only", Some(PLATFORM)).await;
-    let (code, detail) = until_rejected(client, &job, ENDS).await;
+    let (code, detail) = until_rejected(client, &job, HANG).await;
     assert_eq!(
         code,
         ReasonCode::Rejected(RejectReason::ZoneNotServed),
@@ -173,7 +165,7 @@ async fn a_hub_only_laptop_refuses_a_lan_order_once_no_admissible_broker_is_left
         "the remote broker never saw the lan order"
     );
     let (client, job) = submit(&laptop, &repo, "anywhere", Some(PLATFORM)).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 
@@ -200,12 +192,12 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
     push_origin(&dir, &repo);
 
     let (client, job) = submit(&laptop, &repo, "lan-only", Some(PLATFORM)).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("inside-the-lan"), "{}", ended.output);
 
     let (client, job) = submit(&laptop, &repo, "huge", Some(PLATFORM)).await;
-    let (code, detail) = until_rejected(client, &job, ENDS).await;
+    let (code, detail) = until_rejected(client, &job, HANG).await;
     assert_eq!(
         code,
         ReasonCode::Rejected(RejectReason::NoMatchingRunner),
@@ -220,7 +212,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
     zone_of_main(&laptop, Zone::Remote).await;
 
     let (client, job) = submit(&laptop, &repo, "lan-only", Some(PLATFORM)).await;
-    let (code, detail) = until_rejected(client, &job, ENDS).await;
+    let (code, detail) = until_rejected(client, &job, HANG).await;
     assert_eq!(
         code,
         ReasonCode::Rejected(RejectReason::NoMatchingRunner),
@@ -235,7 +227,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
         "the remote broker never saw the lan order"
     );
     let (client, job) = submit(&laptop, &repo, "anywhere", Some(PLATFORM)).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 

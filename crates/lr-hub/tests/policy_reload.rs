@@ -30,16 +30,16 @@ async fn a_changed_brokers_order_applies_to_the_next_order() {
     let hub = Hub::new(rig.deps()).with_policy_reload(reloader(&file));
     tokio::spawn(hub.run());
     for x in [&a, &b] {
-        eventually("broker connected", || x.resumed()).await;
+        until(x, "broker connected", || x.resumed()).await;
     }
     settle().await;
     let cli = rig.cli().await;
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("first order placed", || a.orders().len() == 1).await;
+    until(&a, "first order placed", || a.orders().len() == 1).await;
     cli.send(CliRequest::PolicyReload).await;
     assert_eq!(cli.reply().await, CliReply::Reloaded);
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("second order placed", || b.orders().len() == 1).await;
+    until(&b, "second order placed", || b.orders().len() == 1).await;
     assert_eq!(a.orders().len(), 1, "the order before the reload stays");
 }
 
@@ -56,7 +56,7 @@ async fn an_invalid_hub_policy_keeps_the_old_one() {
     let hub = Hub::new(rig.deps()).with_policy_reload(reloader(&file));
     tokio::spawn(hub.run());
     for x in [&a, &b] {
-        eventually("broker connected", || x.resumed()).await;
+        until(x, "broker connected", || x.resumed()).await;
     }
     settle().await;
     let cli = rig.cli().await;
@@ -69,7 +69,7 @@ async fn an_invalid_hub_policy_keeps_the_old_one() {
         other => panic!("{other:?}"),
     }
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("order placed", || a.orders().len() == 1).await;
+    until(&a, "order placed", || a.orders().len() == 1).await;
     assert!(b.orders().is_empty(), "the old order [lan-a, lan-b] stays");
 }
 

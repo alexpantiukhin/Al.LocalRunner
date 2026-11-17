@@ -535,3 +535,50 @@ fn submit_and_order_args_are_optional_on_the_wire() {
     assert_eq!(v["args"], json!([["target", "a"]]));
     assert_eq!(serde_json::from_value::<OrderSpec>(v).unwrap(), spec);
 }
+
+#[test]
+fn the_canceller_and_the_recent_filter_are_optional_both_ways() {
+    let mut s = summary();
+    let old = serde_json::to_value(&s).unwrap();
+    assert!(
+        old.get("cancelled_by").is_none(),
+        "absent canceller not sent"
+    );
+    assert_eq!(
+        serde_json::from_value::<JobSummary>(old)
+            .unwrap()
+            .cancelled_by,
+        None
+    );
+    s.cancelled_by = Some("upgrade".into());
+    let v = serde_json::to_value(&s).unwrap();
+    assert_eq!(v["cancelled_by"], "upgrade");
+    assert_eq!(serde_json::from_value::<JobSummary>(v).unwrap(), s);
+
+    let mut f = StatusFilter::default();
+    let old = serde_json::to_value(&f).unwrap();
+    assert!(old.get("recent").is_none());
+    assert_eq!(
+        serde_json::from_value::<StatusFilter>(old).unwrap().recent,
+        None
+    );
+    f.recent = Some(RecentFilter {
+        count: Some(5),
+        since: None,
+    });
+    let v = serde_json::to_value(&f).unwrap();
+    assert_eq!(v["recent"], json!({ "count": 5 }));
+    assert_eq!(serde_json::from_value::<StatusFilter>(v).unwrap(), f);
+    let none = RecentFilter::default();
+    assert_eq!(none.effective_count(10), 10);
+    let since = RecentFilter {
+        count: None,
+        since: Some(lr_core::Timestamp(1)),
+    };
+    assert_eq!(since.effective_count(10), STATUS_LIMIT_MAX);
+    let big = RecentFilter {
+        count: Some(1_000_000),
+        since: None,
+    };
+    assert_eq!(big.effective_count(10), STATUS_LIMIT_MAX);
+}

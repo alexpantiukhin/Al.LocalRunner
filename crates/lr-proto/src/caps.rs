@@ -82,6 +82,10 @@ pub struct WireCapabilities {
     /// version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Whether the runner understands the `limit` enforcement mode; absent (false) from runners
+    /// of an earlier minor version, to which the broker sends `warn` instead.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub enforce_limit: bool,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -113,6 +117,7 @@ impl From<&Capabilities> for WireCapabilities {
             commands: c.commands.clone(),
             enforcement: None,
             version: None,
+            enforce_limit: false,
         }
     }
 }

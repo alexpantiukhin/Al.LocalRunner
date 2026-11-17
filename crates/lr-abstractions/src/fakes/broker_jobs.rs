@@ -277,6 +277,23 @@ impl BrokerState {
             .map(|r| r.record.clone())
             .collect();
         out.sort_by(|a, b| (b.job.queued_at, &b.job.key).cmp(&(a.job.queued_at, &a.job.key)));
+        if filter.by_finish {
+            out.sort_by(|a, b| {
+                let (x, y) = (&a.job, &b.job);
+                match (x.finished_at, y.finished_at) {
+                    (Some(fx), Some(fy)) => {
+                        (fy, &y.key.job, &y.key.client).cmp(&(fx, &x.key.job, &x.key.client))
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => (y.queued_at, &y.key.job, &y.key.client).cmp(&(
+                        x.queued_at,
+                        &x.key.job,
+                        &x.key.client,
+                    )),
+                }
+            });
+        }
         if let Some(limit) = filter.limit {
             out.truncate(limit);
         }

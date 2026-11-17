@@ -44,7 +44,7 @@ fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
         finished_at: col_opt_time(r, 19)?,
         state: col_enum(r, 20)?,
         exit_code: r.get(21)?,
-        cancelled_by: r.get(22)?,
+        cancelled_by: r.get::<_, Option<String>>(22)?.filter(|b| !b.is_empty()),
         cancel_reason: r.get(23)?,
         peak_mem_mb: col_opt_u64(r, 24)?,
         peak_disk_mb: col_opt_u64(r, 25)?,
@@ -165,14 +165,36 @@ pub(crate) fn jobs(conn: &Connection, filter: &JobFilter) -> R<Vec<JobRecord>> {
     if filter.active_only {
         sql.push_str(&format!(" AND state NOT IN {}", final_list()));
     }
-    sql.push_str(" ORDER BY queued_at DESC, client_key DESC, id DESC");
-    if let Some(limit) = filter.limit {
-        sql.push_str(&format!(" LIMIT {limit}"));
-    }
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(params_from_iter(args.iter()), job_row)?
-        .collect::<Result<Vec<_>, _>>()?;
+    let select = |order: &str, limit: Option<usize>| -> R<Vec<_>> {
+        let mut sql = format!("{sql}{order}");
+        if let Some(limit) = limit {
+            sql.push_str(&format!(" LIMIT {limit}"));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(args.iter()), job_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    };
+    let rows = if filter.by_finish {
+        let mut rows = select(
+            " AND finished_at IS NOT NULL ORDER BY finished_at DESC, id DESC, client_key DESC",
+            filter.limit,
+        )?;
+        let left = filter.limit.map(|l| l.saturating_sub(rows.len()));
+        if left != Some(0) {
+            rows.extend(select(
+                " AND finished_at IS NULL ORDER BY queued_at DESC, id DESC, client_key DESC",
+                left,
+            )?);
+        }
+        rows
+    } else {
+        select(
+            " ORDER BY queued_at DESC, client_key DESC, id DESC",
+            filter.limit,
+        )?
+    };
     rows.into_iter().map(|j| record(conn, j)).collect()
 }
 

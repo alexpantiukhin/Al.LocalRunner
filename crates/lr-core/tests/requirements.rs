@@ -141,7 +141,13 @@ fn platform_job_is_not_tied_to_a_machine() {
 fn same_machine_job_needs_runner_with_that_machine() {
     let r = req(BASIC, None);
     let mut caps = runner();
-    assert_eq!(reasons(&caps, &r), [MismatchReason::NotSameMachine]);
+    assert_eq!(
+        reasons(&caps, &r),
+        [MismatchReason::NotSameMachine {
+            runner: String::new(),
+            joined: false
+        }]
+    );
     caps.machine = Some(MachineRef("other".into()));
     assert!(satisfies(&caps, &r).is_err());
     caps.machine = Some(MachineRef("m1".into()));

@@ -8,6 +8,9 @@ pub const HEARTBEAT_INTERVAL_S: u64 = 15;
 /// Missed heartbeats after which a runner or a client counts as offline (spec 3.9, 15.4).
 pub const MISSED_HEARTBEATS_OFFLINE: u32 = 3;
 
+/// Missed heartbeats after which a runner counts as stale: still connected, but not given work.
+pub const STALE_AFTER_MISSED: u32 = 1;
+
 /// Protocol version carried by the handshake: roles with an equal `major` work together, the
 /// `minor` only grows by adding messages and fields that an older peer may ignore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

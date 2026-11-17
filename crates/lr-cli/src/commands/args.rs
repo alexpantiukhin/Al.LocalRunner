@@ -140,6 +140,12 @@ pub enum RunnerAction {
         /// Started by the OS at logon: hide or create the console.
         #[arg(long, hide = true)]
         background: bool,
+        /// Run under the OS service manager (`autostart on runner <name> --service` sets it).
+        #[arg(long, hide = true, requires = "name")]
+        service: bool,
+        /// The OS user the installation belongs to, when the service account is another one.
+        #[arg(long, hide = true, requires = "service")]
+        owner: Option<String>,
     },
     /// Join a broker's pool with a one-time code: one key, directory and record per runner.
     Join {
@@ -176,6 +182,12 @@ pub enum RunnerAction {
         #[arg(long)]
         diff: bool,
     },
+    /// The outbox of a runner: what it still has to deliver to the broker.
+    Outbox {
+        /// What to do with it.
+        #[command(subcommand)]
+        action: OutboxAction,
+    },
     /// Runners of the pool (on the broker).
     List,
     /// Remove a runner and revoke its key (on the broker; asks for confirmation).
@@ -185,6 +197,20 @@ pub enum RunnerAction {
         /// Confirm without asking.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+/// `runner outbox ...`.
+#[derive(Subcommand, Debug)]
+pub enum OutboxAction {
+    /// Close the pending outbox entries of a job the broker has cancelled or lost; refused
+    /// while the runner still runs the job.
+    Drop {
+        /// Runner name; default: the only runner of this installation.
+        #[arg(long)]
+        runner: Option<String>,
+        /// The job whose entries are closed.
+        job: String,
     },
 }
 

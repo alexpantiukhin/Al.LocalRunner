@@ -20,7 +20,7 @@ fn limit_profiles_to_lan(rig: &Rig) {
 
 async fn connected(brokers: &[&common::broker::FakeBroker]) {
     for b in brokers {
-        eventually("broker connected", || b.resumed()).await;
+        until(b, "broker connected", || b.resumed()).await;
     }
     settle().await;
 }
@@ -50,7 +50,7 @@ async fn same_machine_order_waits_while_the_local_broker_is_down() {
     );
     rig.net.set_reachable(LOCAL_IPC, true);
     rig.step(40).await;
-    eventually("placed once the local broker is back", || {
+    until(&local, "placed once the local broker is back", || {
         local.orders().len() == 1
     })
     .await;
@@ -108,11 +108,11 @@ async fn returned_order_keeps_its_zone_limit_and_skips_the_returning_broker() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("accepted by lan-a", || a.orders().len() == 1).await;
+    until(&a, "accepted by lan-a", || a.orders().len() == 1).await;
     settle().await;
     let queries_of_a = a.queries();
     a.returned(&job, ReasonCode::RunnerRemoved).await;
-    eventually("replacement at lan-b", || b.orders().len() == 1).await;
+    until(&b, "replacement at lan-b", || b.orders().len() == 1).await;
     settle().await;
     assert_eq!(
         a.orders().len(),
@@ -142,7 +142,7 @@ async fn returned_order_with_no_broker_left_in_its_zone_is_rejected_not_sent_far
     let mut req = submit("remote", Some("linux"));
     req.wait = true;
     let job = cli.submit(req).await;
-    eventually("accepted by lan-a", || a.orders().len() == 1).await;
+    until(&a, "accepted by lan-a", || a.orders().len() == 1).await;
     settle().await;
     a.returned(&job, ReasonCode::RunnerRemoved).await;
     match cli.reply().await {
@@ -170,11 +170,11 @@ async fn every_choice_queries_the_brokers_afresh() {
     connected(&[&a, &b]).await;
     let cli = rig.cli().await;
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("first order at lan-a", || a.orders().len() == 1).await;
+    until(&a, "first order at lan-a", || a.orders().len() == 1).await;
     assert_eq!(a.queries(), 1);
     a.set(|s| s.runners[0].online = false);
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("second order at lan-b", || b.orders().len() == 1).await;
+    until(&b, "second order at lan-b", || b.orders().len() == 1).await;
     assert_eq!(
         a.queries(),
         2,

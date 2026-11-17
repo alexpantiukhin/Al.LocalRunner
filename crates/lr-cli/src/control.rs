@@ -41,7 +41,11 @@ async fn connection(
                             .drain(reason.unwrap_or(lr_proto::DrainReason::Down))
                             .await
                     }
-                    DownMode::Cancel => control.cancel_and_stop().await,
+                    DownMode::Cancel => {
+                        control
+                            .cancel_and_stop(reason.unwrap_or(lr_proto::DrainReason::Down))
+                            .await
+                    }
                 }
                 ControlReply::Ok
             }
@@ -57,6 +61,12 @@ async fn connection(
                     Err(e) => ControlReply::Failed {
                         message: e.to_string(),
                     },
+                }
+            }
+            Ok(Received::Message(RunnerControl::DropOutbox { job })) => {
+                match control.drop_outbox(&lr_core::JobId(job)).await {
+                    Ok(closed) => ControlReply::Dropped { closed },
+                    Err(message) => ControlReply::Failed { message },
                 }
             }
             Ok(Received::Message(RunnerControl::Status)) => {

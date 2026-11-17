@@ -71,7 +71,10 @@ pub fn cli_replies() -> Vec<CliReply> {
         },
         CliReply::Read {
             broker: "local".into(),
-            reply: ReadReply::Runners { runners: vec![] },
+            reply: ReadReply::Runners {
+                runners: vec![],
+                pools: vec![],
+            },
         },
         CliReply::Brokers {
             brokers: vec![BrokerStatus {
@@ -171,6 +174,7 @@ pub fn controls() -> Vec<RunnerControl> {
         },
         RunnerControl::LoggingReload,
         RunnerControl::Reload,
+        RunnerControl::DropOutbox { job: "j1".into() },
         RunnerControl::Status,
     ]
 }
@@ -184,6 +188,7 @@ pub fn control_replies() -> Vec<ControlReply> {
         ControlReply::Reloaded {
             restart_required: vec!["allow_elevated".into()],
         },
+        ControlReply::Dropped { closed: 3 },
         ControlReply::Link {
             connected: false,
             since: Some(lr_core::Timestamp(7)),

@@ -42,6 +42,35 @@ pub struct StatusFilter {
     pub limit: Option<u64>,
     /// Continue the queue list after the `next` token of the previous answer.
     pub cursor: Option<String>,
+    /// Which orders that left the queue `recent` lists (`status --recent`); without it the
+    /// latest [`StatusFilter::effective_limit`] ones. Absent from older senders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent: Option<RecentFilter>,
+}
+
+/// The orders that left the queue (finished, failed, cancelled, withdrawn, rejected) that
+/// `status` lists in `recent`, newest end first; every set field must hold.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentFilter {
+    /// At most this many; bounded by [`STATUS_LIMIT_MAX`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    /// Only orders that ended at or after this time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Timestamp>,
+}
+
+impl RecentFilter {
+    /// How many to list at most: `count`, else [`STATUS_LIMIT_MAX`] with `since` and
+    /// `default` without it.
+    pub fn effective_count(&self, default: u64) -> u64 {
+        let fallback = if self.since.is_some() {
+            STATUS_LIMIT_MAX
+        } else {
+            default
+        };
+        effective_limit(self.count, fallback, STATUS_LIMIT_MAX)
+    }
 }
 
 impl StatusFilter {
@@ -245,6 +274,12 @@ pub struct JobSummary {
     /// job and absent from older peers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    /// Who ended the order early: the `--as` label of `cancel`, the sender label of a withdrawn
+    /// order, `upgrade` or `down` for a runner stopped by them, `lock` for a runner that
+    /// stopped while an upgrade lock held it in drain, `broker` for a refusal or a return;
+    /// absent when not known (never empty), hidden at `summary`, absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_by: Option<String>,
 }
 
 /// A step of a run.
@@ -289,7 +324,7 @@ pub struct JobDetail {
     pub steps: Vec<StepView>,
     /// Names of the secrets requested, never values.
     pub secrets: Vec<String>,
-    /// Who cancelled it.
+    /// Who cancelled it, as in [`JobSummary::cancelled_by`]; absent when not known.
     pub cancelled_by: Option<String>,
     /// Why it waits, for a queued job.
     pub wait_reason: Option<String>,
@@ -360,12 +395,38 @@ pub struct HeldTag {
     pub exclusive: bool,
 }
 
+/// How recently a runner was heard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerLiveness {
+    /// Heard within the last one and a half heartbeat intervals (22.5 s at the default 15 s).
+    Online,
+    /// Connected, but a heartbeat is overdue; it is not given work.
+    Stale,
+    /// Not connected, or silent for the offline limit; also what an unknown value reads as.
+    #[serde(other)]
+    Offline,
+}
+
+/// How a runner is connected to the broker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerKind {
+    /// Connected over the local channel of the broker on this machine.
+    Local,
+    /// Connected by key; takes only commit orders.
+    Joined,
+    /// A kind this version does not know.
+    #[serde(other)]
+    Unknown,
+}
+
 /// A runner on the runners page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunnerInfo {
     /// Name.
     pub name: String,
-    /// Online or offline.
+    /// Connected and not silent for the offline limit (a stale runner is still true here).
     pub online: bool,
     /// What it offers, with cache figures.
     pub caps: WireCapabilities,
@@ -381,6 +442,45 @@ pub struct RunnerInfo {
     pub services: Vec<ServiceReport>,
     /// Characteristics that failed the check.
     pub unmet: Vec<String>,
+    /// How recently the runner was heard; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<RunnerLiveness>,
+    /// Seconds since the runner was last heard; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub silent_for_s: Option<u64>,
+    /// Whether the runner is local or joined by key; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<RunnerKind>,
+    /// Name of the pool whose budget the runner shares; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
+    /// Whether an order needing no tags and the least memory and CPU could start on this runner
+    /// now: the runner takes work, is not busy and the pool has memory and CPU left. Absent from
+    /// an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_start_now: Option<bool>,
+    /// Whether a job of the pool runs on this runner now; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<bool>,
+}
+
+/// A pool: the budget its runners share.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PoolInfo {
+    /// Name of the pool.
+    pub name: String,
+    /// Memory of the pool in MB.
+    pub mem_total_mb: u64,
+    /// Memory not claimed by running jobs, MB.
+    pub mem_free_mb: u64,
+    /// CPU of the pool.
+    pub cpu_total: u32,
+    /// CPU not claimed by running jobs.
+    pub cpu_free: u32,
+    /// Tags held by running jobs; the job is empty for a reader who may not see it.
+    pub held_tags: Vec<HeldTag>,
+    /// Runners that draw on the pool.
+    pub runners: Vec<String>,
 }
 
 /// Answers to read requests.
@@ -418,6 +518,9 @@ pub enum ReadReply {
     Runners {
         /// The runners.
         runners: Vec<RunnerInfo>,
+        /// The pools the runners draw on; absent from an older broker.
+        #[serde(default)]
+        pools: Vec<PoolInfo>,
     },
     /// A subscription is open.
     Subscribed {

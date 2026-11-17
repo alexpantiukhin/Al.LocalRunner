@@ -18,4 +18,4 @@ tokio = { workspace = true, features = ["rt"] }
 lr-abstractions = { workspace = true, features = ["test-support"] }
 rusqlite.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }

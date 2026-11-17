@@ -50,6 +50,7 @@ fn job(
                 peak_mem_mb: None,
                 peak_disk_mb: None,
                 labels: Vec::new(),
+                cancelled_by: None,
             },
             note: Some(XSS.into()),
             branch: Some("main".into()),

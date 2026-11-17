@@ -86,6 +86,7 @@ macro_rules! broker_store_contract {
             broker::log_cut_at_limit_with_mark_then_dropped,
             broker::log_tail_reads_only_the_end,
             broker_history::history_is_newest_first_filtered_and_limited,
+            broker_history::history_by_finish_time_keeps_a_late_finish_under_the_limit,
             broker_history::stats_count_final_runs_with_median_and_p95,
             broker_history::stats_count_timeouts_cancels_and_losses,
             broker_history::prune_removes_rows_and_logs_by_age,

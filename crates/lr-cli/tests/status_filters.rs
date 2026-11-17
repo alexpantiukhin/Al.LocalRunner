@@ -1,17 +1,20 @@
 mod common;
 
 use common::TempDir;
+use lr_broker::BusEvent;
 use lr_cli::commands::jobs::hub;
-use lr_cli::commands::read_cmd::fetch_runners;
-use lr_cli::commands::view::known_brokers;
 use lr_cli::paths::Layout;
-use lr_cli::roles::{start_broker, start_hub, start_runners};
+use lr_cli::roles::{start_broker, start_hub, start_runners, Running};
 use lr_core::{GithubInfo, JobId, Source};
-use lr_proto::{CliReply, CliRequest, SubmitRequest};
+use lr_proto::{CliReply, CliRequest, QueueEvent, SubmitRequest};
 use serde_json::Value;
+use std::future::Future;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
+use tokio::sync::broadcast::{error::RecvError, Receiver};
+
+const HANG: Duration = Duration::from_secs(20);
 
 fn layout(dir: &TempDir) -> Layout {
     let root = dir.path().join("state");
@@ -55,7 +58,45 @@ fn repo(dir: &TempDir) -> std::path::PathBuf {
     repo
 }
 
-async fn place(layout: &Layout, identity: lr_core::Identity) -> JobId {
+async fn until(events: &mut Receiver<BusEvent>, what: &str, hit: impl Fn(&QueueEvent) -> bool) {
+    let seen = async {
+        loop {
+            match events.recv().await {
+                Ok(e) if hit(&e.event) => return,
+                Ok(_) => {}
+                Err(RecvError::Lagged(n)) => panic!("{n} broker events lost waiting for {what}"),
+                Err(RecvError::Closed) => panic!("the broker stopped before {what}"),
+            }
+        }
+    };
+    tokio::time::timeout(HANG, seen)
+        .await
+        .unwrap_or_else(|_| panic!("no broker event for {what}"));
+}
+
+async fn start_runner(
+    layout: &Layout,
+    broker: &Running,
+    name: &str,
+) -> (Running, impl Future<Output = ()>) {
+    let mut events = broker.broker_events().expect("broker events");
+    let runners = start_runners(layout, Some(name), 1, None, false)
+        .await
+        .expect("runner starts");
+    let name = name.to_string();
+    let hello = async move {
+        until(
+            &mut events,
+            "the runner's hello",
+            |e| matches!(e, QueueEvent::RunnerOnline { name: n } if n.ends_with(&name)),
+        )
+        .await
+    };
+    (runners, hello)
+}
+
+async fn place(layout: &Layout, broker: &Running, identity: lr_core::Identity) -> JobId {
+    let mut events = broker.broker_events().expect("broker events");
     let client = hub(layout).await.expect("hub channel");
     let req = CliRequest::Submit(SubmitRequest {
         identity,
@@ -77,6 +118,12 @@ async fn place(layout: &Layout, identity: lr_core::Identity) -> JobId {
         .await
         .unwrap();
     client.close().await;
+    until(
+        &mut events,
+        "the order in the broker's queue",
+        |e| matches!(e, QueueEvent::JobQueued { job: s } if s.job == job),
+    )
+    .await;
     job
 }
 
@@ -127,28 +174,8 @@ async fn status_jobs_and_brokers_filter_and_print_json_through_the_hub() {
     let repo = repo(&dir);
     let broker = start_broker(&layout, false).await.expect("broker starts");
     let hub_role = start_hub(&layout, false).await.expect("hub starts");
-    let runners = start_runners(&layout, Some("r1"), 1, None, false)
-        .await
-        .expect("runner starts");
-    for _ in 0..150 {
-        let client = hub(&layout).await.unwrap();
-        let online = match fetch_runners(&client, None).await {
-            Ok((per, _)) => per
-                .iter()
-                .flat_map(|(_, r)| r)
-                .any(|r| r.online && r.name.ends_with("r1")),
-            Err(_) => false,
-        };
-        let ready = online
-            && known_brokers(&client)
-                .await
-                .is_ok_and(|b| b.iter().any(|b| b.available));
-        client.close().await;
-        if ready {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let (runners, hello) = start_runner(&layout, &broker, "r1").await;
+    hello.await;
 
     let agent = common::session("agent", Some("first"), &repo).unwrap();
     let mut other = agent.clone();
@@ -165,12 +192,31 @@ async fn status_jobs_and_brokers_filter_and_print_json_through_the_hub() {
         actor: "alex".into(),
         run_url: "https://github.com/acme/app/actions/runs/7".into(),
     });
-    let a = place(&layout, agent.clone()).await;
-    let o = place(&layout, other).await;
-    let c = place(&layout, ci).await;
+    let a = place(&layout, &broker, agent.clone()).await;
+    let o = place(&layout, &broker, other).await;
+    let c = place(&layout, &broker, ci).await;
 
     let all = cli(&dir, &repo, &["status", "--json"]);
     assert_eq!(status_jobs(&all), sorted(&[&a, &o, &c]));
+    assert!(all["brokers"][0]["runners"].as_array().unwrap().is_empty());
+    let one = cli(&dir, &repo, &["status", &a.0, "--json"]);
+    assert_eq!(one["broker"], "local");
+    assert_eq!(one["job"], a.0.as_str());
+    assert!(one["text"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(one["detail"]["summary"]["job"], a.0.as_str());
+    let missing = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["status", "no-such-job"])
+        .current_dir(&repo)
+        .env("LOCALRUNNER_STATE_DIR", dir.path().join("state"))
+        .env("LOCALRUNNER_CONFIG_DIR", dir.path().join("config"))
+        .output()
+        .expect("the binary runs");
+    assert!(!missing.status.success());
+    let said = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        said.contains("job no-such-job is not found on the brokers of this hub"),
+        "{said}"
+    );
     let project = cli(
         &dir,
         &repo,

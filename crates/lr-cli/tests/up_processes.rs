@@ -1,11 +1,11 @@
 mod common;
 
+use common::hub_events::HANG;
 use common::TempDir;
 use lr_cli::commands::up_cmd::running_roles;
 use lr_cli::paths::Layout;
 use std::collections::BTreeSet;
 use std::process::Command;
-use std::time::Duration;
 
 fn layout(dir: &TempDir) -> Layout {
     let root = dir.path().join("state");
@@ -57,15 +57,11 @@ impl Drop for StopOnDrop {
         else {
             return;
         };
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while std::time::Instant::now() < deadline {
-            if let Ok(Some(_)) = child.try_wait() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(child.wait());
+        });
+        let _ = rx.recv_timeout(HANG);
     }
 }
 
@@ -94,7 +90,7 @@ async fn up_starts_the_broker_the_hub_and_the_runner_as_separate_processes() {
         .kill_on_drop(true)
         .spawn()
         .expect("the binary runs");
-    let up = tokio::time::timeout(Duration::from_secs(60), up.wait_with_output())
+    let up = tokio::time::timeout(HANG, up.wait_with_output())
         .await
         .expect("up returns while the roles keep running: they hold none of its handles")
         .expect("up output");
@@ -122,12 +118,9 @@ async fn up_starts_the_broker_the_hub_and_the_runner_as_separate_processes() {
         "{}",
         String::from_utf8_lossy(&down.stderr)
     );
-    for _ in 0..100 {
-        let gone = running_roles(&layout).await;
-        if !gone.broker && !gone.hub && gone.runners.is_empty() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("the roles still answer after down");
+    let gone = running_roles(&layout).await;
+    assert!(
+        !gone.broker && !gone.hub && gone.runners.is_empty(),
+        "down returns once no role answers: {gone:?}"
+    );
 }

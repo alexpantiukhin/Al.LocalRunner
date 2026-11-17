@@ -28,7 +28,7 @@ async fn connected(rig: &mut Rig) -> FakeBroker {
 async fn started(rig: &mut Rig) -> (FakeBroker, tokio::task::JoinHandle<()>) {
     let local = rig.local_broker(Script::local_runner());
     let hub = rig.start();
-    eventually("hub connects", || local.hellos() == 1).await;
+    until(&local, "hub connects", || local.hellos() == 1).await;
     settle().await;
     (local, hub)
 }
@@ -48,7 +48,7 @@ fn reads(b: &FakeBroker) -> Vec<(u64, ReadRequest)> {
 }
 
 async fn asked(b: &FakeBroker) -> u64 {
-    eventually("the read reaches the broker", || !reads(b).is_empty()).await;
+    until(b, "the read reaches the broker", || !reads(b).is_empty()).await;
     reads(b)[0].0
 }
 
@@ -160,7 +160,7 @@ async fn a_viewer_that_leaves_unfollows_the_log() {
     local.send(chunk(req, "a\n", false)).await;
     assert!(matches!(cli.reply().await, CliReply::LogChunk { .. }));
     cli.close().await;
-    eventually("the hub unfollows", || {
+    until(&local, "the hub unfollows", || {
         reads(&local)
             .iter()
             .any(|(_, r)| *r == ReadRequest::Unfollow { req })
@@ -186,7 +186,7 @@ async fn a_followed_log_that_falls_behind_ends_and_unfollows() {
         }
     };
     assert_eq!(error.code, ProtocolErrorCode::Unavailable, "{error:?}");
-    eventually("the hub unfollows the lagging log", || {
+    until(&local, "the hub unfollows the lagging log", || {
         reads(&local)
             .iter()
             .any(|(_, r)| *r == ReadRequest::Unfollow { req })
@@ -225,7 +225,10 @@ async fn shutdown_stops_the_hub() {
     let cli = rig.cli().await;
     cli.send(CliRequest::Shutdown).await;
     assert_eq!(cli.reply().await, CliReply::Stopping);
-    eventually("the hub ends", || hub.is_finished()).await;
+    tokio::time::timeout(HANG, hub)
+        .await
+        .expect("the hub never ended")
+        .expect("the hub task failed");
 }
 
 async fn with_a_second_broker(rig: &mut Rig) -> (FakeBroker, FakeBroker) {
@@ -237,7 +240,7 @@ async fn with_a_second_broker(rig: &mut Rig) -> (FakeBroker, FakeBroker) {
     );
     let local = rig.local_broker(Script::local_runner());
     rig.start();
-    eventually("both brokers connect", || {
+    until_any(&[&local, &far], "both brokers connect", || {
         local.hellos() == 1 && far.hellos() == 1
     })
     .await;

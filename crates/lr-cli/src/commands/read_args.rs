@@ -51,6 +51,9 @@ impl ResultArg {
 pub struct ExplainArgs {
     /// The job.
     pub job: String,
+    /// The client key whose run to explain, when several clients use the same job id.
+    #[arg(long)]
+    pub client: Option<String>,
     /// Only this broker.
     #[arg(long)]
     pub broker: Option<String>,

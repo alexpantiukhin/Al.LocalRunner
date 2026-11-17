@@ -32,8 +32,8 @@ async fn rejection_with_no_allowed_broker_left_reports_the_last_reason() {
     );
     let far = rig.broker("far", Zone::Remote, Script::linux(Zone::Remote));
     rig.start();
-    eventually("lan connected", || lan.resumed()).await;
-    eventually("far connected", || far.resumed()).await;
+    until(&lan, "lan connected", || lan.resumed()).await;
+    until(&far, "far connected", || far.resumed()).await;
     settle().await;
     let cli = rig.cli().await;
     let mut req = submit("remote", Some("linux"));
@@ -55,7 +55,7 @@ async fn broker_choice_retried_when_recording_it_fails() {
     rig.join("lan-a").await;
     let lan = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     settle().await;
     rig.store.fail("set_broker", 1);
     let job = rig
@@ -68,7 +68,7 @@ async fn broker_choice_retried_when_recording_it_fails() {
     rig.step(4).await;
     assert!(lan.orders().is_empty(), "retried after query_retry_s = 5");
     rig.step(1).await;
-    eventually("placed on retry", || lan.orders().len() == 1).await;
+    until(&lan, "placed on retry", || lan.orders().len() == 1).await;
     settle().await;
     assert_eq!(
         rig.active(&job).await.unwrap().broker.as_deref(),

@@ -1,5 +1,6 @@
 mod common;
 
+use common::hub_events::until_hub;
 use common::TempDir;
 use lr_cli::commands::jobs::hub;
 use lr_cli::commands::view::{known_brokers, read};
@@ -7,7 +8,6 @@ use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_proto::{ReadReply, ReadRequest};
 use std::collections::BTreeSet;
-use std::time::Duration;
 
 fn runner_toml(layout: &Layout, programs: &str) {
     let dir = layout.root.join("runner").join("r1");
@@ -37,7 +37,7 @@ async fn online_r1(layout: &Layout) -> Option<BTreeSet<String>> {
     let brokers = known_brokers(&client).await.unwrap_or_default();
     let mut found = None;
     if let Some(b) = brokers.into_iter().find(|b| b.available) {
-        if let Ok(ReadReply::Runners { runners }) =
+        if let Ok(ReadReply::Runners { runners, .. }) =
             read(&client, &b.name, ReadRequest::Runners).await
         {
             found = runners
@@ -54,15 +54,12 @@ async fn until_online(
     layout: &Layout,
     expected: Option<&BTreeSet<String>>,
 ) -> Option<BTreeSet<String>> {
-    let mut last = None;
-    for _ in 0..150 {
-        last = online_r1(layout).await;
-        if last.as_ref() == expected {
-            return last;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    last
+    let what = format!("r1 online with programs {expected:?}");
+    until_hub(layout, &what, || async {
+        let now = online_r1(layout).await;
+        (now.as_ref() == expected).then_some(now)
+    })
+    .await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -1,4 +1,4 @@
-use crate::limits::{backstop_mb, bytes_of, cpu_rate, mb_of};
+use crate::limits::{bytes_of, cpu_rate, mb_of, os_memory_limit_mb};
 use lr_abstractions::{Enforce, ResourceLimits};
 use std::io;
 use std::mem::{size_of, zeroed};
@@ -20,9 +20,9 @@ pub(crate) fn apply(job: HANDLE, limits: &ResourceLimits) -> io::Result<()> {
         flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
         info.BasicLimitInformation.ActiveProcessLimit = procs.max(1);
     }
-    if let (Enforce::Kill, Some(mem)) = (limits.mode, limits.mem_mb) {
+    if let Some(mem) = os_memory_limit_mb(limits) {
         flags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-        info.JobMemoryLimit = usize::try_from(bytes_of(backstop_mb(mem))).unwrap_or(usize::MAX);
+        info.JobMemoryLimit = usize::try_from(bytes_of(mem)).unwrap_or(usize::MAX);
     }
     info.BasicLimitInformation.LimitFlags = flags;
     let ok = unsafe {

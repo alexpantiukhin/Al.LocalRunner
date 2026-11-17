@@ -21,12 +21,15 @@ async fn a_broker_reconnecting_from_another_network_is_judged_by_its_new_zone() 
     rig.join("laptop").await;
     let laptop = rig.broker("laptop", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || laptop.resumed()).await;
+    until(&laptop, "connected", || laptop.resumed()).await;
     settle().await;
 
     let cli = rig.cli().await;
     cli.submit(submit("remote", Some("linux"))).await;
-    eventually("the lan order is placed", || laptop.orders().len() == 1).await;
+    until(&laptop, "the lan order is placed", || {
+        laptop.orders().len() == 1
+    })
+    .await;
 
     laptop.report_zone(Some(Zone::Remote));
     laptop.disconnect().await;

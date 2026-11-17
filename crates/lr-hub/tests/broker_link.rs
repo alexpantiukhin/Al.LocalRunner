@@ -35,7 +35,7 @@ async fn since_moves_to_the_loss_when_a_connected_broker_goes_away() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     rig.start();
-    eventually("connected", || local.hellos() == 1).await;
+    until(&local, "connected", || local.hellos() == 1).await;
     settle().await;
     rig.step(5).await;
     rig.net.set_reachable(LOCAL_IPC, false);
@@ -53,7 +53,7 @@ async fn since_stays_at_the_first_loss_across_failed_redials() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     rig.start();
-    eventually("connected", || local.hellos() == 1).await;
+    until(&local, "connected", || local.hellos() == 1).await;
     settle().await;
     rig.step(5).await;
     rig.net.set_reachable(LOCAL_IPC, false);
@@ -71,7 +71,7 @@ async fn since_moves_to_the_return_when_the_broker_comes_back() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     rig.start();
-    eventually("connected", || local.hellos() == 1).await;
+    until(&local, "connected", || local.hellos() == 1).await;
     settle().await;
     rig.step(5).await;
     rig.net.set_reachable(LOCAL_IPC, false);
@@ -81,7 +81,7 @@ async fn since_moves_to_the_return_when_the_broker_comes_back() {
     rig.step(10).await;
     rig.net.set_reachable(LOCAL_IPC, true);
     rig.step(40).await;
-    eventually("reconnected", || local.hellos() == 2).await;
+    until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
     let b = local_status(&rig).await;
     assert!(b.available, "{b:?}");

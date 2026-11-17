@@ -1,7 +1,7 @@
 mod common;
 
 use common::{
-    clock, fresh_file, helper_command, job, pid_alive, real_sleep, step, Helper, Recorder, T0,
+    clock, fresh_file, helper_command, job, pid_alive, step, Helper, Links, Recorder, HANG, T0,
 };
 use lr_abstractions::{
     stop_signal, Clock, JobOutcome, JobSpec, ProcessRunner, Stop, StopHandle, DEFAULT_CANCEL_GRACE,
@@ -26,7 +26,7 @@ fn start(
 }
 
 async fn finish(task: JoinHandle<JobOutcome>) -> JobOutcome {
-    tokio::time::timeout(Duration::from_secs(20), task)
+    tokio::time::timeout(HANG, task)
         .await
         .expect("run_job did not return")
         .unwrap()
@@ -50,7 +50,6 @@ async fn timeout_kills_tree_without_soft_signal() {
     assert_eq!(outcome.state, JobState::Timeout);
     assert_eq!(outcome.steps[0].state, StepState::Timeout);
     assert_eq!(outcome.steps[0].exit_code, None);
-    real_sleep(300).await;
     assert!(
         !m1.exists() && !m2.exists(),
         "a soft signal was sent on timeout"
@@ -76,11 +75,11 @@ async fn cancel_sends_soft_signal_then_kills_after_grace_10s() {
     stop.stop_with_reason(Stop::Cancel, "bob at 12:00: stale");
     out.wait_for("child-got-soft").await;
     assert!(m1.exists());
-    real_sleep(500).await;
+    assert_eq!(manual.sleepers(), 2, "the step deadline and the grace wait");
     assert!(!task.is_finished(), "killed before the grace");
     assert!(pid_alive(child) && pid_alive(grand));
     manual.advance(Duration::from_millis(9_900));
-    real_sleep(500).await;
+    assert_eq!(manual.sleepers(), 2, "the grace ended before 10 s");
     assert!(!task.is_finished(), "killed before the grace of 10 s");
     assert!(pid_alive(child) && pid_alive(grand));
     manual.advance(Duration::from_millis(100));
@@ -127,7 +126,6 @@ async fn kill_stops_the_tree_at_once_without_soft_signal() {
     assert!(!pid_alive(child) && !pid_alive(grand));
     assert_eq!(outcome.state, JobState::Cancelled);
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);
-    real_sleep(300).await;
     assert!(!m1.exists());
     assert!(
         out.text().ends_with(&cancel_line("s", T0, None)),
@@ -198,22 +196,16 @@ async fn detached_leftover_descendant_dies_with_the_job_object() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropping_a_running_job_kills_its_tree() {
     let (_manual, clock) = clock();
-    let cmd = helper_command(&Helper::new("tree"));
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("tree").link(&links));
     let spec = job("drop", 600, vec![step("s", &cmd, 300)]);
-    let (task, out, _stop) = start(spec, clock);
-    let child = out.pid_of("child").await;
-    let grand = out.pid_of("grandchild").await;
+    let (task, _out, _stop) = start(spec, clock);
+    let tree = links.roles(&["child", "grandchild"]).await;
     task.abort();
     let _ = task.await;
-    let mut alive = true;
-    for _ in 0..50 {
-        alive = pid_alive(child) || pid_alive(grand);
-        if !alive {
-            break;
-        }
-        real_sleep(100).await;
+    for process in tree {
+        process.gone().await;
     }
-    assert!(!alive, "tree survived a dropped run_job");
 }
 
 #[cfg(target_os = "linux")]
@@ -248,20 +240,13 @@ async fn linux_detached_leftover_descendant_dies_with_the_cgroup_scope() {
         return;
     }
     let (_manual, clock) = clock();
-    let cmd = helper_command(&Helper::new("spawn-exit"));
+    let links = Links::new().await;
+    let cmd = helper_command(&Helper::new("spawn-exit").link(&links));
     let spec = job("cg", 600, vec![step("s", &cmd, 300)]);
-    let (task, out, _stop) = start(spec, clock);
-    let grand = out.pid_of("grandchild").await;
+    let (task, _out, _stop) = start(spec, clock);
+    let mut tree = links.roles(&["child", "grandchild"]).await;
     let outcome = finish(task).await;
-    let mut alive = true;
-    for _ in 0..50 {
-        alive = pid_alive(grand);
-        if !alive {
-            break;
-        }
-        real_sleep(100).await;
-    }
-    assert!(!alive, "detached leftover {grand} escaped the scope");
+    tree.remove(1).gone().await;
     assert_eq!(outcome.state, JobState::Passed);
 }
 
@@ -306,8 +291,6 @@ async fn linux_scope_probe_does_not_stall_a_single_threaded_runtime() {
     let (_manual, clock) = clock();
     let spec = job("single", 600, vec![step("s", "true", 30)]);
     let (task, _out, _stop) = start(spec, clock);
-    let outcome = tokio::time::timeout(std::time::Duration::from_secs(30), finish(task))
-        .await
-        .expect("the job finished");
+    let outcome = finish(task).await;
     assert_eq!(outcome.state, JobState::Passed);
 }

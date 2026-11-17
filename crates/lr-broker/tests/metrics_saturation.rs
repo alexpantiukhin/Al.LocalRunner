@@ -23,20 +23,16 @@ async fn saturation_after(h: &Harness, secs: u64, expected: Option<&str>) {
             Some(0.0)
         }
     };
-    for _ in 0..500 {
-        if REASONS
-            .iter()
-            .all(|r| h.meter.gauge(SATURATION_WAIT_SECONDS, &[(REASON, r)]) == want(r))
-        {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let got: Vec<(&str, Option<f64>)> = REASONS
-        .iter()
-        .map(|r| (*r, h.meter.gauge(SATURATION_WAIT_SECONDS, &[(REASON, r)])))
-        .collect();
-    panic!("expected only {expected:?} at {secs} s, got {got:?}");
+    until_meter(
+        &h.meter,
+        &format!("only {expected:?} saturates at {secs} s"),
+        || {
+            REASONS
+                .iter()
+                .all(|r| h.meter.gauge(SATURATION_WAIT_SECONDS, &[(REASON, r)]) == want(r))
+        },
+    )
+    .await;
 }
 
 async fn first_runs_second_waits(h: &Harness, first: Requirements, second: Requirements) {

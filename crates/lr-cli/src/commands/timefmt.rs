@@ -1,5 +1,6 @@
 //! Times and durations as the read commands print and take them: UTC, `YYYY-MM-DD HH:MM:SSZ`;
-//! `--since` as an age (`90s`, `30m`, `2h`, `7d`) or a UTC date (`2026-11-01`).
+//! `--since` as an age (`90s`, `30m`, `2h`, `7d`) or a UTC date (`2026-11-01`); `--recent` as
+//! a count or such a period.
 
 use lr_core::Timestamp;
 
@@ -117,6 +118,51 @@ pub fn parse_since(text: &str) -> Result<Since, String> {
         .and_then(|n| n.checked_mul(unit))
         .map(Since::Ago)
         .ok_or_else(bad)
+}
+
+/// How many recent orders `status --recent` lists by default.
+pub const RECENT_DEFAULT: u64 = 10;
+
+/// `status --recent [N|DURATION]`: the last `N` orders that left the queue, or those that left
+/// it within a period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Recent {
+    /// At most this many.
+    Count(u64),
+    /// Those that ended since then.
+    Since(Since),
+}
+
+impl Recent {
+    /// The broker's filter at `now`.
+    pub fn filter(self, now: Timestamp) -> lr_proto::RecentFilter {
+        match self {
+            Recent::Count(n) => lr_proto::RecentFilter {
+                count: Some(n),
+                since: None,
+            },
+            Recent::Since(s) => lr_proto::RecentFilter {
+                count: None,
+                since: Some(s.resolve(now)),
+            },
+        }
+    }
+}
+
+/// Parses `--recent`: a whole number above zero is a count, anything else a period as
+/// `--since` takes it (`30m`, `2h`, `7d`, `2026-11-01`).
+pub fn parse_recent(text: &str) -> Result<Recent, String> {
+    if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+        return match text.parse::<u64>() {
+            Ok(0) | Err(_) => Err(format!(
+                "`{text}` is not a count: give a number above zero (10) or a period (2h)"
+            )),
+            Ok(n) => Ok(Recent::Count(n)),
+        };
+    }
+    parse_since(text).map(Recent::Since).map_err(|_| {
+        format!("`{text}` is neither a count (10) nor a period (30m, 2h, 7d, 2026-11-01)")
+    })
 }
 
 /// Now on the wall clock.

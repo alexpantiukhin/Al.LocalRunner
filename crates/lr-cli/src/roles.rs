@@ -6,13 +6,14 @@ use crate::paths::Layout;
 use crate::runner_config::{instance_names, RunnerConfig};
 use crate::{admin, build, control};
 use lr_abstractions::Listener;
+use lr_broker::{BusEvent, BusEvents};
 use lr_net::IpcListener;
 use lr_obs::{Logger, Metrics};
 use lr_runner::AgentExit;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use tokio::task::JoinHandle;
 
 /// A role running in this process.
@@ -25,9 +26,17 @@ pub struct Running {
     exits: Vec<JoinHandle<AgentExit>>,
     stop_signal: Option<Arc<Notify>>,
     listeners: Vec<Arc<IpcListener>>,
+    events: Option<BusEvents>,
 }
 
 impl Running {
+    /// Subscribes to the broker's bus events (an order queued, a runner online after its hello)
+    /// from now on, for callers that wait on what the broker did: subscribe before the action.
+    /// `None` for a hub or runners.
+    pub fn broker_events(&self) -> Option<broadcast::Receiver<BusEvent>> {
+        self.events.as_ref().map(BusEvents::subscribe)
+    }
+
     /// The broker's bound network addresses, empty while it does not listen.
     pub fn network_addresses(&self) -> Vec<SocketAddr> {
         self.tls.as_ref().map(|t| t.bound()).unwrap_or_default()
@@ -76,6 +85,37 @@ impl Running {
         self.halt();
     }
 
+    /// Stops the role like [`Running::stop`] and waits until its own tasks have ended, so
+    /// what they held is let go; for callers that reuse the role's state or addresses next.
+    pub async fn stopped(mut self) {
+        let tasks = std::mem::take(&mut self.tasks);
+        let exits = std::mem::take(&mut self.exits);
+        let listeners = std::mem::take(&mut self.listeners);
+        for t in &tasks {
+            t.abort();
+        }
+        for e in &exits {
+            e.abort();
+        }
+        self.halt();
+        for l in &listeners {
+            l.closed().await;
+        }
+        for t in tasks {
+            let _ = t.await;
+        }
+        for e in exits {
+            let _ = e.await;
+        }
+    }
+
+    /// Writes out the diagnostics the role's loggers hold so far.
+    pub fn flush(&self) {
+        for l in &self.loggers {
+            l.flush();
+        }
+    }
+
     fn halt(&mut self) {
         for t in self.tasks.drain(..) {
             t.abort();
@@ -101,6 +141,7 @@ impl Drop for Running {
 /// Starts the broker with its admin channel.
 pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, String> {
     let parts = build::broker(layout, foreground).await?;
+    let events = parts.broker.events();
     let broker_task = tokio::spawn(parts.broker.run());
     let listeners = vec![parts.admin_ipc.clone(), parts.admin.ipc.clone()];
     let admin_ipc: Arc<dyn Listener> = parts.admin_ipc;
@@ -114,6 +155,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
         exits: Vec::new(),
         stop_signal: Some(stop),
         listeners,
+        events: Some(events),
     })
 }
 
@@ -129,6 +171,7 @@ pub async fn start_hub(layout: &Layout, foreground: bool) -> Result<Running, Str
         exits: Vec::new(),
         stop_signal: None,
         listeners: vec![parts.ipc],
+        events: None,
     })
 }
 
@@ -180,6 +223,7 @@ pub async fn start_runners(
         exits: Vec::new(),
         stop_signal: None,
         listeners: Vec::new(),
+        events: None,
     };
     for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;

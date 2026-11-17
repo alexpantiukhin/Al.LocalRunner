@@ -16,6 +16,7 @@ pub mod read_cmd;
 pub mod reload_cmd;
 pub mod roles_cmd;
 pub mod runner_config_cmd;
+pub mod runner_outbox_cmd;
 pub mod service_cmd;
 pub mod setup;
 pub mod snapshot_cmd;
@@ -155,18 +156,36 @@ pub enum Command {
     },
     /// Queue and running jobs with steps and wait reasons.
     Status {
-        /// Only this project.
-        #[arg(long)]
+        /// Show this one job: why it waits or what it does, with its record.
+        #[arg(value_name = "JOB", conflicts_with = "html")]
+        job: Option<String>,
+        /// The client key whose run to show, when several clients use the same job id.
+        #[arg(long, requires = "job")]
+        client: Option<String>,
+        /// Only this project; not with `JOB`.
+        #[arg(long, conflicts_with = "job")]
         project: Option<String>,
-        /// Only this source.
-        #[arg(long, value_enum)]
+        /// Only this source; not with `JOB`.
+        #[arg(long, value_enum, conflicts_with = "job")]
         source: Option<SourceArg>,
-        /// Only this label.
-        #[arg(long = "as", value_name = "LABEL")]
+        /// Only this label; not with `JOB`.
+        #[arg(long = "as", value_name = "LABEL", conflicts_with = "job")]
         label: Option<String>,
         /// Only this broker.
         #[arg(long)]
         broker: Option<String>,
+        /// Also the orders that left the queue (finished, cancelled, withdrawn, rejected) with
+        /// their reason and who ended them: the last N (10 when no value) or those of a period
+        /// (`30m`, `2h`, `7d`).
+        #[arg(
+            long,
+            value_name = "N|DURATION",
+            num_args = 0..=1,
+            default_missing_value = "10",
+            value_parser = timefmt::parse_recent,
+            conflicts_with_all = ["job", "html"]
+        )]
+        recent: Option<timefmt::Recent>,
         /// Print JSON.
         #[arg(long)]
         json: bool,
@@ -296,7 +315,8 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Enable or disable starting roles with the OS (`broker` = the broker service).
+    /// Enable or disable starting roles with the OS: the hub and runners start at user login,
+    /// `broker` is the broker service, `runner <name> --service` makes one runner an OS service.
     Autostart {
         /// `on` or `off`.
         #[arg(value_enum)]
@@ -306,6 +326,10 @@ pub enum Command {
         role: Option<RoleArg>,
         /// One runner of this installation (with the role `runner`).
         runner: Option<String>,
+        /// With `runner <name>`: an OS service that starts after a reboot and survives logout,
+        /// instead of the start at user login (administrator).
+        #[arg(long)]
+        service: bool,
         /// Print what would be done and change nothing.
         #[arg(long)]
         dry_run: bool,
@@ -363,15 +387,30 @@ pub async fn run(cli: Cli) -> i32 {
             yes,
         } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
         Command::Status {
+            job,
+            client,
             project,
             source,
             label,
             broker,
+            recent,
             json,
             html,
         } => match html.html.clone() {
             Some(path) => snapshot_cmd::write(&layout, project, source, label, path, &html).await,
-            None => view::status(&layout, project, source, label, broker, json).await,
+            None => match job {
+                Some(job) => view::status_job(&layout, job, broker, client, json).await,
+                None => {
+                    let filter = view::StatusArgs {
+                        project,
+                        source,
+                        label,
+                        broker,
+                        recent,
+                    };
+                    view::status(&layout, filter, json).await
+                }
+            },
         },
         Command::Explain(a) => read_cmd::explain_cmd(&layout, a).await,
         Command::History(h) => match h.action {
@@ -438,7 +477,16 @@ pub async fn run(cli: Cli) -> i32 {
                 count,
                 config,
                 background,
-            } => roles_cmd::runner_run(&layout, name, count, config, background).await,
+                service,
+                owner,
+            } => {
+                let how = roles_cmd::RunnerStart {
+                    background,
+                    service,
+                    owner,
+                };
+                roles_cmd::runner_run(&layout, name, count, config, how).await
+            }
             RunnerAction::Join {
                 address,
                 code,
@@ -474,6 +522,9 @@ pub async fn run(cli: Cli) -> i32 {
                     0
                 })
             }
+            RunnerAction::Outbox {
+                action: OutboxAction::Drop { runner, job },
+            } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
             RunnerAction::List => {
                 admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
             }
@@ -509,8 +560,9 @@ pub async fn run(cli: Cli) -> i32 {
             switch,
             role,
             runner,
+            service,
             dry_run,
-        } => service_cmd::autostart(&layout, switch, role, runner, dry_run),
+        } => service_cmd::autostart(&layout, switch, role, runner, service, dry_run),
         Command::Profile { action } => profile_cmd::run(&layout, action),
         Command::Doctor { json } => crate::doctor::run(&layout, json).await,
     };

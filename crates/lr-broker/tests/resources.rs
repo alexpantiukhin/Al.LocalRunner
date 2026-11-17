@@ -57,6 +57,13 @@ fn modes_and_headrooms_are_read() {
         .wire();
     assert_eq!(w.mode, WireEnforce::Warn);
     assert_eq!(w.mem_headroom_pct, 110);
+    let r = ok("[resources]\nmode = \"limit\"\nmem_headroom = 1.2\n")
+        .resources
+        .expect("section present");
+    assert_eq!(r.mode, ResourceMode::Limit);
+    let w = r.wire();
+    assert_eq!(w.mode, WireEnforce::Limit);
+    assert_eq!(w.mem_headroom_pct, 120);
 }
 
 #[test]
@@ -65,6 +72,8 @@ fn invalid_values_are_refused_with_table_key_and_line() {
     assert_eq!(e.table.as_deref(), Some("resources"));
     assert_eq!(e.key.as_deref(), Some("mode"));
     assert_eq!(e.line, Some(2));
+    let e = err("[resources]\nmode = \"unknown\"\n");
+    assert_eq!(e.key.as_deref(), Some("mode"));
     let e = err("[resources]\nmem_headroom = 0.9\n");
     assert_eq!(e.key.as_deref(), Some("mem_headroom"));
     assert_eq!(e.line, Some(2));
@@ -79,6 +88,11 @@ fn invalid_values_are_refused_with_table_key_and_line() {
 #[test]
 fn kill_mode_is_not_a_warning_but_a_headroom_without_effect_is() {
     assert!(check(&ok("[resources]\nmode = \"kill\"\n"), &HOST).is_empty());
+    assert!(check(
+        &ok("[resources]\nmode = \"limit\"\nmem_headroom = 2.0\n"),
+        &HOST
+    )
+    .is_empty());
     assert!(check(&ok("[resources]\nmode = \"off\"\n"), &HOST).is_empty());
     let w = check(
         &ok("[resources]\nmode = \"off\"\nmem_headroom = 2.0\n"),
@@ -127,6 +141,50 @@ async fn kill_mode_limits_travel_with_the_assignment() {
             disk_headroom_pct: 300,
         }
     );
+}
+
+#[tokio::test]
+async fn limit_mode_travels_to_a_runner_that_announces_it() {
+    let h = Harness::start("[resources]\nmode = \"limit\"\n");
+    let mut caps = linux();
+    caps.enforce_limit = true;
+    let mut r = h.member_runner("r1", "10.0.0.7", caps).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    let limits = r.assign().await.spec.limits.expect("limits present");
+    assert_eq!(limits.mode, WireEnforce::Limit);
+}
+
+#[tokio::test]
+async fn a_runner_of_an_earlier_version_gets_warn_instead_of_limit() {
+    let h = Harness::start("[resources]\nmode = \"limit\"\nmem_headroom = 1.5\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    let limits = r.assign().await.spec.limits.expect("limits present");
+    assert_eq!(limits.mode, WireEnforce::Warn);
+    assert_eq!(limits.mem_headroom_pct, 150);
+}
+
+#[test]
+fn only_limit_is_lowered_for_a_runner_without_the_capability() {
+    let section = |mode: &str| {
+        ok(&format!("[resources]\nmode = \"{mode}\"\n"))
+            .resources
+            .expect("section present")
+    };
+    assert_eq!(section("limit").wire_for(true).mode, WireEnforce::Limit);
+    assert_eq!(section("limit").wire_for(false).mode, WireEnforce::Warn);
+    for (mode, wire) in [
+        ("off", WireEnforce::Off),
+        ("warn", WireEnforce::Warn),
+        ("kill", WireEnforce::Kill),
+    ] {
+        assert_eq!(section(mode).wire_for(false).mode, wire);
+        assert_eq!(section(mode).wire_for(true).mode, wire);
+    }
 }
 
 #[tokio::test]
@@ -217,7 +275,7 @@ async fn enforcement_of_a_runner_is_shown_and_survives_a_restart() {
     let _r = h.member_runner("r1", "10.0.0.7", c).await;
     let mut hub = h.local_hub("alex").await;
     let runners = |reply: ReadReply| match reply {
-        ReadReply::Runners { runners } => runners,
+        ReadReply::Runners { runners, .. } => runners,
         other => panic!("expected runners, got {other:?}"),
     };
     let list = runners(hub.read(ReadRequest::Runners).await);

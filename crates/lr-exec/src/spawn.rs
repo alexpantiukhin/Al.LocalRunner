@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 #[cfg(unix)]
@@ -95,17 +95,26 @@ fn start(
     }
 }
 
-pub(crate) fn spawn_step(launch: &Launch<'_>, mask: &[&SecretValue]) -> io::Result<Spawned> {
+pub(crate) fn spawn_step(
+    launch: &Launch<'_>,
+    mask: &[&SecretValue],
+    waits: &watch::Sender<u64>,
+) -> io::Result<Spawned> {
     let (mut cmd, placement) = command(launch);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let (mut child, tree) = start(cmd, placement, launch.limits)?;
     let (tx, rx) = mpsc::channel(CHANNEL);
     let mut readers = Vec::new();
     if let Some(stdout) = child.stdout.take() {
-        readers.push(forward(stdout, Masker::new(mask), tx.clone()));
+        readers.push(forward(
+            stdout,
+            Masker::new(mask),
+            tx.clone(),
+            waits.clone(),
+        ));
     }
     if let Some(stderr) = child.stderr.take() {
-        readers.push(forward(stderr, Masker::new(mask), tx));
+        readers.push(forward(stderr, Masker::new(mask), tx, waits.clone()));
     }
     Ok(Spawned {
         child,
@@ -121,7 +130,12 @@ pub(crate) fn spawn_service(launch: &Launch<'_>) -> io::Result<(Child, Tree)> {
     start(cmd, placement, launch.limits)
 }
 
-fn forward<R>(mut stream: R, mut masker: Masker, out: mpsc::Sender<Vec<u8>>) -> JoinHandle<()>
+fn forward<R>(
+    mut stream: R,
+    mut masker: Masker,
+    out: mpsc::Sender<Vec<u8>>,
+    waits: watch::Sender<u64>,
+) -> JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
@@ -139,8 +153,13 @@ where
                 }
                 Ok(n) => {
                     let piece = masker.push(&buf[..n]);
-                    if open && !piece.is_empty() && out.send(piece).await.is_err() {
-                        open = false;
+                    if open && !piece.is_empty() {
+                        if out.capacity() == 0 {
+                            waits.send_modify(|n| *n += 1);
+                        }
+                        if out.send(piece).await.is_err() {
+                            open = false;
+                        }
                     }
                 }
             }

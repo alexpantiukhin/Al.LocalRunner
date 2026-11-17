@@ -26,7 +26,7 @@ async fn accepted_job(rig: &mut Rig) -> (common::broker::FakeBroker, JobId) {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     assert!(rig.pending().await.is_empty());
     (local, job)
@@ -108,10 +108,10 @@ async fn cancel_before_accepted_still_reaches_the_broker() {
     rig.start();
     let cli = rig.cli().await;
     let job = cli.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     cli.send(cancel(&job, "agent", false)).await;
     assert!(matches!(cli.reply().await, CliReply::Cancelled { .. }));
-    eventually("cancel sent", || local.cancels().len() == 1).await;
+    until(&local, "cancel sent", || local.cancels().len() == 1).await;
     let c = &local.cancels()[0];
     assert_eq!((c.seq, c.code.clone()), (2, ReasonCode::CancelledByUser));
     assert_eq!(c.reason.as_deref(), Some("not needed"));
@@ -132,7 +132,7 @@ async fn cancel_after_accepted_waits_in_outbox_until_acked() {
     let cli = rig.cli().await;
     cli.send(cancel(&job, "agent", false)).await;
     assert!(matches!(cli.reply().await, CliReply::Cancelled { .. }));
-    eventually("cancel sent", || local.cancels().len() == 1).await;
+    until(&local, "cancel sent", || local.cancels().len() == 1).await;
     settle().await;
     assert!(rig.pending().await.is_empty(), "acked by the broker");
     assert!(
@@ -152,7 +152,7 @@ async fn foreign_label_cancel_needs_force_and_is_logged() {
     assert!(local.cancels().is_empty());
     cli.send(cancel(&job, "intruder", true)).await;
     assert!(matches!(cli.reply().await, CliReply::Cancelled { .. }));
-    eventually("cancel sent", || local.cancels().len() == 1).await;
+    until(&local, "cancel sent", || local.cancels().len() == 1).await;
     assert!(local.cancels()[0].force);
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
     assert!(log.contains("intruder") && log.contains("--force"), "{log}");
@@ -168,7 +168,7 @@ async fn cancel_mine_touches_only_own_active_jobs() {
     let mut other = submit("unit", None);
     other.identity.label = "someone".into();
     let theirs = cli.submit(other).await;
-    eventually("accepted", || local.orders().len() == 2).await;
+    until(&local, "accepted", || local.orders().len() == 2).await;
     settle().await;
     cli.send(CliRequest::Cancel(CancelRequest {
         actor: identity("agent"),
@@ -183,7 +183,7 @@ async fn cancel_mine_touches_only_own_active_jobs() {
             jobs: vec![mine.clone()]
         }
     );
-    eventually("cancel sent", || local.cancels().len() == 1).await;
+    until(&local, "cancel sent", || local.cancels().len() == 1).await;
     assert_eq!(local.cancels()[0].job, mine);
     assert!(rig.active(&theirs).await.is_some());
 }
@@ -214,7 +214,10 @@ async fn broker_messages_deduplicated_by_seq_and_acked() {
     local.send(chunk(3, "gap\n")).await;
     settle().await;
     rig.step(2).await;
-    eventually("reconnected after a seq gap", || local.hellos() == 2).await;
+    until(&local, "reconnected after a seq gap", || {
+        local.hellos() == 2
+    })
+    .await;
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
     assert!(!log.contains("gap"), "{log}");
     assert_eq!(rig.active(&job).await.unwrap().last_seq, 1);
@@ -228,7 +231,7 @@ async fn resume_reports_last_seq_per_job_after_reconnect() {
     settle().await;
     local.disconnect().await;
     rig.step(2).await;
-    eventually("reconnected", || local.hellos() == 2).await;
+    until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
     let resumes: Vec<Vec<ResumePoint>> = local
         .received()
@@ -256,11 +259,11 @@ async fn hub_absent_cancel_after_resume_is_shown_and_not_resent() {
     let mut req = submit("unit", None);
     req.wait = true;
     let job = cli.submit(req).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local.disconnect().await;
     rig.step(2).await;
-    eventually("reconnected", || local.hellos() == 2).await;
+    until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
 
     let seq = local.next_seq(&job);
@@ -292,7 +295,7 @@ async fn hub_absent_cancel_after_resume_is_shown_and_not_resent() {
     assert!(log.contains("cancelled, hub_absent"), "{log}");
     local.disconnect().await;
     rig.step(10).await;
-    eventually("reconnected again", || local.hellos() == 3).await;
+    until(&local, "reconnected again", || local.hellos() == 3).await;
     settle().await;
     assert_eq!(
         local.orders().len(),
@@ -308,10 +311,10 @@ async fn unacknowledged_order_resent_after_reconnect() {
     let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Silent));
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     local.disconnect().await;
     rig.step(2).await;
-    eventually("order sent again", || local.orders().len() == 2).await;
+    until(&local, "order sent again", || local.orders().len() == 2).await;
     assert!(local.orders().iter().all(|o| o.job == job && o.seq == 1));
 }
 
@@ -322,10 +325,10 @@ async fn denied_cancel_ack_without_seq_is_understood() {
     rig.start();
     let cli = rig.cli().await;
     let job = cli.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     cli.send(cancel(&job, "agent", false)).await;
     let _ = cli.reply().await;
-    eventually("cancel sent", || local.cancels().len() == 1).await;
+    until(&local, "cancel sent", || local.cancels().len() == 1).await;
     let denied = serde_json::json!({
         "type": "cancel_ack", "job": job.0, "seq": 0, "cancel_seq": 2,
         "outcome": "denied", "denial": "заказ не найден"
@@ -376,7 +379,7 @@ async fn brokers_lists_zone_availability_and_outbox() {
     rig.start();
     let cli = rig.cli().await;
     cli.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     cli.send(CliRequest::Brokers).await;
     match cli.reply().await {
         CliReply::Brokers { brokers } => {

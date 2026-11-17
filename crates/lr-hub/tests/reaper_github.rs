@@ -40,14 +40,14 @@ async fn a_cancelled_workflow_kills_its_run_and_the_reaper_cancels_the_order() {
     let cli = rig.cli().await;
     let job = cli.submit(from_a_workflow(false)).await;
     let detached = cli.submit(from_a_workflow(true)).await;
-    eventually("accepted", || local.orders().len() == 2).await;
+    until(&local, "accepted", || local.orders().len() == 2).await;
     settle().await;
     local.started(&job).await;
     settle().await;
 
     rig.inspector.remove(RUN_PID);
     rig.step(7).await;
-    eventually("cancelled", || !local.cancels().is_empty()).await;
+    until(&local, "cancelled", || !local.cancels().is_empty()).await;
     rig.step(10).await;
     let cancels = local.cancels();
     assert_eq!(cancels.len(), 1, "the detached order stays");

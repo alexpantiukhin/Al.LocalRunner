@@ -1,6 +1,6 @@
 use crate::background::{background, recover};
 use crate::cache::{CacheLayout, Caches};
-use crate::connect::{give_up, session, End};
+use crate::connect::{give_up, or_stop, session, stop_due, End, STOP_BOUND};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
 use crate::service_book::Book;
@@ -115,7 +115,7 @@ pub enum AgentExit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
     Drain(DrainReason),
-    CancelAndStop,
+    CancelAndStop(DrainReason),
 }
 
 /// Local control of a running agent (`down`, spec 3.9).
@@ -132,9 +132,10 @@ impl AgentControl {
         let _ = self.tx.send(Control::Drain(reason)).await;
     }
 
-    /// `down --cancel`: cancel the current job with `runner_stopped`, then `Bye`.
-    pub async fn cancel_and_stop(&self) {
-        let _ = self.tx.send(Control::CancelAndStop).await;
+    /// `down --cancel` (or `upgrade --cancel`, by `reason`): cancel the current job with
+    /// `runner_stopped` and the detail `stopped by <reason>`, then `Bye`.
+    pub async fn cancel_and_stop(&self, reason: DrainReason) {
+        let _ = self.tx.send(Control::CancelAndStop(reason)).await;
     }
 
     /// Replaces the settings of the runner (`reload`): jobs that run keep the settings they
@@ -153,6 +154,30 @@ impl AgentControl {
         self.shared.wake.notify_one();
     }
 
+    /// `runner outbox drop`: closes the pending outbox entries of `job` and returns how many it
+    /// closed. Refused while the runner runs that job.
+    pub async fn drop_outbox(&self, job: &JobId) -> Result<u64, String> {
+        if self
+            .shared
+            .state()
+            .job
+            .as_ref()
+            .is_some_and(|c| &c.job == job)
+        {
+            return Err("job is still running".into());
+        }
+        let closed = self
+            .shared
+            .deps
+            .store
+            .discard_outbox(job)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.shared.outbox.forget_tail();
+        self.shared.wake.notify_one();
+        Ok(closed as u64)
+    }
+
     /// Whether the runner has a welcomed session and, when not, since when it has had none
     /// (its start while it never had one).
     pub fn link(&self) -> (bool, Option<Timestamp>) {
@@ -166,6 +191,7 @@ pub(crate) struct Current {
     pub(crate) settings: Arc<RunnerSettings>,
     pub(crate) stop: StopHandle,
     pub(crate) reason: Option<ReasonCode>,
+    pub(crate) detail: Option<String>,
     pub(crate) lost_killed: bool,
 }
 
@@ -174,6 +200,7 @@ pub(crate) struct State {
     pub(crate) broker_lost_kill_s: Option<u64>,
     pub(crate) draining: bool,
     pub(crate) drain_reason: Option<DrainReason>,
+    pub(crate) stop_by: Option<Timestamp>,
     pub(crate) caps_dirty: bool,
     pub(crate) lost_since: Option<Timestamp>,
     pub(crate) in_use: Vec<CacheKey>,
@@ -220,11 +247,32 @@ impl Shared {
         matches!(reason, Some(DrainReason::Upgrade | DrainReason::Lock)) && !live()
     }
 
+    /// Whether the runner drains for an upgrade that no longer runs, job or not. The check reads
+    /// a file and the process list, so it runs off the async threads.
+    pub(crate) async fn upgrade_gone(&self) -> bool {
+        let Some(live) = self.deps.upgrade_live.clone() else {
+            return false;
+        };
+        let for_upgrade = {
+            let st = self.state();
+            st.draining
+                && matches!(
+                    st.drain_reason,
+                    Some(DrainReason::Upgrade | DrainReason::Lock)
+                )
+        };
+        for_upgrade
+            && !tokio::task::spawn_blocking(move || live())
+                .await
+                .unwrap_or(true)
+    }
+
     pub(crate) fn resume_after_upgrade(&self) {
         {
             let mut st = self.state();
             st.draining = false;
             st.drain_reason = None;
+            st.stop_by = None;
         }
         self.diag.event(
             Level::Info,
@@ -300,6 +348,18 @@ impl Shared {
         if let Some(cur) = self.state().job.as_mut() {
             cur.reason.get_or_insert(reason);
             cur.stop.stop_with_reason(stop, text);
+        }
+    }
+
+    pub(crate) fn stop_for(&self, reason: DrainReason) {
+        let actor = actor_of(reason);
+        if let Some(cur) = self.state().job.as_mut() {
+            if cur.reason.is_none() {
+                cur.reason = Some(ReasonCode::RunnerStopped);
+                cur.detail = Some(format!("stopped by {actor}"));
+            }
+            cur.stop
+                .stop_with_reason(Stop::Cancel, &format!("runner stopped by {actor}"));
         }
     }
 
@@ -379,6 +439,7 @@ impl RunnerAgent {
                     broker_lost_kill_s: None,
                     draining: false,
                     drain_reason: None,
+                    stop_by: None,
                     caps_dirty: false,
                     lost_since,
                     in_use: Vec::new(),
@@ -418,7 +479,10 @@ impl RunnerAgent {
             };
             match end {
                 Some(End::Refused(e)) => return AgentExit::Refused(e),
-                Some(End::Stopped) => return AgentExit::Stopped,
+                Some(End::Stopped) => {
+                    shared.stop_all_services().await;
+                    return AgentExit::Stopped;
+                }
                 Some(End::Lost { welcomed: true }) => {
                     backoff = MIN_BACKOFF;
                     shared.set_lost(Some(shared.now()));
@@ -438,11 +502,14 @@ impl RunnerAgent {
     }
 
     /// Waits for the next dial; `true` when the runner was told to stop while the broker is
-    /// unreachable and has nothing left to deliver, so it exits instead of waiting for the broker.
+    /// unreachable and has nothing left to deliver, or has run no job for [`STOP_BOUND`], so it
+    /// exits instead of waiting for the broker.
     async fn wait_offline(&mut self, shared: &Shared, backoff: Duration) -> bool {
         let retry_at = after(shared.now(), backoff);
         loop {
             tokio::select! {
+                biased;
+                () = stop_due(shared) => return true,
                 _ = shared.deps.clock.sleep_until(retry_at) => return false,
                 cmd = self.control_rx.recv() => {
                     if let Some(cmd) = cmd {
@@ -463,12 +530,14 @@ async fn connect_once(
     control: &mut mpsc::Receiver<Control>,
 ) -> Option<End> {
     let b = &shared.deps.broker;
-    match shared
+    let dial = shared
         .deps
         .dialer
-        .dial(&b.address, b.fingerprint.as_deref())
-        .await
-    {
+        .dial(&b.address, b.fingerprint.as_deref());
+    let Some(dialed) = or_stop(shared, control, dial).await else {
+        return Some(End::Stopped);
+    };
+    match dialed {
         Ok(t) => Some(session(shared, Arc::from(t), slot, control).await),
         Err(e) => {
             if let Some(refusal) = handshake_refusal(&e) {
@@ -499,23 +568,36 @@ fn handshake_refusal(e: &TransportError) -> Option<ProtocolError> {
     })
 }
 
+fn actor_of(reason: DrainReason) -> &'static str {
+    match reason {
+        DrainReason::Down => "down",
+        DrainReason::Upgrade => "upgrade",
+        DrainReason::Lock => "lock",
+    }
+}
+
 pub(crate) fn apply_control(shared: &Shared, cmd: Control) {
     let reason = match cmd {
-        Control::Drain(reason) => reason,
-        Control::CancelAndStop => DrainReason::Down,
+        Control::Drain(reason) | Control::CancelAndStop(reason) => reason,
     };
-    {
+    let stop_by = after(shared.now(), STOP_BOUND);
+    let repeat = {
         let mut st = shared.state();
+        let repeat = st.draining && st.drain_reason == Some(reason);
         st.draining = true;
         st.drain_reason = Some(reason);
-    }
+        if st.job.is_none() {
+            st.stop_by.get_or_insert(stop_by);
+        }
+        repeat
+    };
     shared.diag.event(
-        Level::Info,
+        if repeat { Level::Debug } else { Level::Info },
         "drain requested",
         &[("reason", &format!("{reason:?}").to_lowercase())],
     );
-    if cmd == Control::CancelAndStop {
-        shared.stop_job(Stop::Cancel, ReasonCode::RunnerStopped, "runner stopped");
+    if let Control::CancelAndStop(reason) = cmd {
+        shared.stop_for(reason);
     }
     shared.wake.notify_one();
 }

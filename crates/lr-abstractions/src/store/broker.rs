@@ -105,7 +105,8 @@ pub trait BrokerStore: Send + Sync {
     /// One run with all its rows.
     async fn job(&self, key: &JobKey) -> Result<Option<JobRecord>, StoreError>;
 
-    /// Runs matching `filter`, newest `queued_at` first.
+    /// Runs matching `filter`, newest `queued_at` first (newest finished first with
+    /// [`JobFilter::by_finish`]); `limit` keeps the first runs of that order.
     async fn jobs(&self, filter: &JobFilter) -> Result<Vec<JobRecord>, StoreError>;
 
     /// Statistics of final runs, as [`super::compute_stats`] defines them.

@@ -1,5 +1,6 @@
 mod common;
 
+use common::hub_events::HANG;
 use common::TempDir;
 use lr_cli::commands::up_cmd::{running_roles, up_plan, up_with};
 use lr_cli::commands::RoleArg;
@@ -29,22 +30,28 @@ fn layout(dir: &TempDir) -> Layout {
     Layout::new(root, config)
 }
 
-fn reports(role: &Running, name: &str, label: &str) -> bool {
-    role.metrics().iter().any(|m| {
-        m.snapshot()
-            .iter()
-            .any(|p| p.name == name && p.labels.iter().any(|(k, v)| k == "role" && v == label))
-    })
-}
-
-async fn until(what: &str, probe: impl Fn() -> bool) {
-    for _ in 0..150 {
-        if probe() {
-            return;
+async fn until_reported(what: &str, role: &Running, name: &'static str, label: &'static str) {
+    let registries = role.metrics();
+    assert_eq!(registries.len(), 1, "one logger");
+    let metrics = registries[0].clone();
+    let seen = tokio::task::spawn_blocking(move || {
+        let deadline = std::time::Instant::now() + HANG;
+        loop {
+            let updates = metrics.updates();
+            let found = metrics
+                .snapshot()
+                .iter()
+                .any(|p| p.name == name && p.labels.iter().any(|(k, v)| k == "role" && v == label));
+            if found {
+                return true;
+            }
+            let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return false;
+            };
+            metrics.wait_updates(updates, left);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("timed out waiting for {what}");
+    });
+    assert!(seen.await.unwrap(), "timed out waiting for {what}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -70,13 +77,19 @@ async fn a_second_up_starts_nothing_and_hub_and_runner_report_into_their_logger_
         up_plan(&layout, &all, &now)
     );
 
-    until("the hub's outbox gauge", || {
-        reports(&hub, "localrunner_outbox_pending", "hub")
-    })
+    until_reported(
+        "the hub's outbox gauge",
+        &hub,
+        "localrunner_outbox_pending",
+        "hub",
+    )
     .await;
-    until("the runner's outbox gauge", || {
-        reports(&runners, "localrunner_outbox_pending", "runner")
-    })
+    until_reported(
+        "the runner's outbox gauge",
+        &runners,
+        "localrunner_outbox_pending",
+        "runner",
+    )
     .await;
     assert!(hub.metrics().iter().all(|m| m.rejected() == 0));
     assert!(runners.metrics().iter().all(|m| m.rejected() == 0));

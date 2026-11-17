@@ -31,7 +31,7 @@ async fn arg_fills_the_command_and_is_recorded() {
     ))
     .await;
     cli.submit(with_args("targeted", None, &[])).await;
-    eventually("orders sent", || local.orders().len() == 2).await;
+    until(&local, "orders sent", || local.orders().len() == 2).await;
     let first = &local.orders()[0].spec;
     assert_eq!(first.steps[0].command, "cargo test -p core alpha");
     assert_eq!(
@@ -52,7 +52,7 @@ async fn commit_order_gets_substitution_too() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     rig.cli()
         .await
         .submit(with_args(
@@ -61,7 +61,7 @@ async fn commit_order_gets_substitution_too() {
             &[("target", "beta")],
         ))
         .await;
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     assert_eq!(lan.orders()[0].spec.steps[0].command, "cargo test beta");
 }
 
@@ -71,7 +71,7 @@ async fn platform_override_command_gets_substitution() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     rig.cli()
         .await
         .submit(with_args(
@@ -80,7 +80,7 @@ async fn platform_override_command_gets_substitution() {
             &[("target", "beta")],
         ))
         .await;
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     assert_eq!(
         lan.orders()[0].spec.steps[0].command,
         "cargo test --linux beta"
@@ -128,7 +128,7 @@ async fn args_do_not_change_requirements() {
     let mut big = with_args("targeted", None, &[("target", "beta")]);
     big.mem_mb = Some(4096);
     cli.submit(big).await;
-    eventually("orders sent", || local.orders().len() == 2).await;
+    until(&local, "orders sent", || local.orders().len() == 2).await;
     assert_eq!(local.orders()[0].spec.requirements.mem_mb, 1024);
     assert_eq!(local.orders()[1].spec.requirements.mem_mb, 4096);
 }
@@ -139,7 +139,7 @@ async fn profile_without_args_is_unchanged() {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     rig.cli().await.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
     assert_eq!(spec.steps[0].command, "make test");
     assert!(spec.args.is_empty());

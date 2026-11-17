@@ -1,17 +1,18 @@
 use crate::common::{self, TempDir};
-use crate::helper::{helper_command, Mode};
+pub use crate::helper::{Gate, Mode, Release};
 use crate::support::*;
 use lr_abstractions::{Liveness, ProcessInspector};
+use lr_broker::BusEvent;
 use lr_cli::commands::jobs::hub;
 use lr_cli::commands::join_cmd::hub_join;
 use lr_cli::commands::view::known_brokers;
 use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners, Running};
-use lr_exec::{process_start, OsProcessInspector};
+use lr_exec::OsProcessInspector;
 use lr_proto::{AdminReply, AdminRequest, BrokerStatus, JobSummary, QueueItem};
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::path::Path;
+use tokio::sync::broadcast::Receiver;
 
 pub const PLATFORM: &str = "e2e-remote";
 
@@ -42,6 +43,20 @@ impl Roles {
     pub fn stop(mut self) {
         while let Some(r) = self.0.pop() {
             r.stop();
+        }
+    }
+
+    /// The bus events of the broker of a [`machine`] from now on.
+    pub fn broker_events(&self) -> Receiver<BusEvent> {
+        self.0[0]
+            .broker_events()
+            .expect("the broker of the machine")
+    }
+
+    /// Writes out the diagnostics of every role.
+    pub fn flush(&self) {
+        for r in &self.0 {
+            r.flush();
         }
     }
 }
@@ -128,11 +143,9 @@ pub async fn joined_hub(
     let hub = start_hub(&guest, false)
         .await
         .expect("the joined hub starts");
-    eventually(
-        "the joined hub reaches the broker",
-        Duration::from_secs(60),
-        || async { broker_available(&guest).await },
-    )
+    until_hub(&guest, "the joined hub reaches the broker", || {
+        broker_available(&guest)
+    })
     .await;
     (guest, hub)
 }
@@ -170,13 +183,12 @@ pub fn push_origin(dir: &TempDir, repo: &Path) {
     common::git(repo, &["push", "-q", "-u", "origin", "HEAD"]);
 }
 
-/// A profile whose step is the waiting helper: it writes its pid to `<dir>/<name>.pid.child`
-/// and ends when `gate` exists; `extra` adds lines such as `mem_mb`.
-pub fn held_profile(name: &str, dir: &Path, gate: &Path, timeout_s: u64, extra: &str) -> String {
-    let pids = pid_file(dir, name);
+/// A profile whose step is the waiting helper `name` of `gate`; `extra` adds lines such as
+/// `mem_mb`.
+pub fn held_profile(name: &str, gate: &Gate, timeout_s: u64, extra: &str) -> String {
     format!(
         "[profile.{name}]\ncommand = {}\ntimeout_s = {timeout_s}\n{extra}",
-        toml_str(&helper_command(Mode::Wait, &pids, gate))
+        toml_str(&gate.command(Mode::Wait, name))
     )
 }
 
@@ -185,91 +197,27 @@ pub fn echo_profile(name: &str, text: &str, timeout_s: u64, extra: &str) -> Stri
     format!("[profile.{name}]\ncommand = \"echo {text}\"\ntimeout_s = {timeout_s}\n{extra}")
 }
 
-pub fn pid_file(dir: &Path, name: &str) -> PathBuf {
-    dir.join(format!("{name}.pid"))
-}
-
-pub fn open(gate: &Path) {
-    std::fs::write(gate, b"open").unwrap();
-}
-
-pub fn alive(pid: u32, start: u64) -> bool {
-    OsProcessInspector.liveness(pid, start) == Liveness::Alive
-}
-
-/// The pid and start of the helper `role` of profile `name`, once it runs.
-pub async fn started(dir: &Path, name: &str, role: &str) -> (u32, u64) {
-    let pid = helper_pid(&pid_file(dir, name), role).await;
-    (pid, process_start(pid).expect("the helper runs"))
-}
-
-/// Waits until every process of `tree` is gone.
-pub async fn gone(what: &str, tree: &[(u32, u64)]) {
-    eventually(what, Duration::from_secs(30), || async {
-        tree.iter().all(|&(p, s)| !alive(p, s)).then_some(())
-    })
-    .await;
-}
-
-/// Opens the gates when the test ends, even by a panic, and waits until the watched
-/// processes are gone, so none of them holds the temporary directory.
-pub struct Release {
-    gates: Vec<PathBuf>,
-    watched: Vec<(u32, u64)>,
-}
-
-impl Release {
-    pub fn new(gates: &[&Path]) -> Release {
-        Release {
-            gates: gates.iter().map(|g| g.to_path_buf()).collect(),
-            watched: Vec::new(),
-        }
-    }
-
-    pub fn watch(&mut self, process: (u32, u64)) {
-        self.watched.push(process);
-    }
-}
-
-impl Drop for Release {
-    fn drop(&mut self) {
-        for gate in &self.gates {
-            let _ = std::fs::write(gate, b"open");
-        }
-        let started = Instant::now();
-        while self.watched.iter().any(|&(p, s)| alive(p, s))
-            && started.elapsed() < Duration::from_secs(20)
-        {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
+pub fn alive(process: (u32, u64)) -> bool {
+    OsProcessInspector.liveness(process.0, process.1) == Liveness::Alive
 }
 
 /// The queue entry of `job` at the local broker of `layout`, once it waits there.
 pub async fn queued(layout: &Layout, job: &lr_core::JobId) -> QueueItem {
-    eventually(
-        &format!("job {job} queued"),
-        Duration::from_secs(60),
-        || async {
-            let v = status(layout).await?;
-            v.queue.into_iter().find(|q| &q.summary.job == job)
-        },
-    )
+    until_hub(layout, &format!("job {job} queued"), || async {
+        let v = status(layout).await?;
+        v.queue.into_iter().find(|q| &q.summary.job == job)
+    })
     .await
 }
 
 /// The history row of `job` among the runs of every client the broker of `layout` shows.
 pub async fn row(layout: &Layout, job: &lr_core::JobId) -> JobSummary {
-    eventually(
-        &format!("job {job} in the history"),
-        Duration::from_secs(60),
-        || async {
-            try_history(layout, false)
-                .await
-                .ok()?
-                .into_iter()
-                .find(|r| &r.job == job && r.state.is_final())
-        },
-    )
+    until_hub(layout, &format!("job {job} in the history"), || async {
+        try_history(layout, false)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|r| &r.job == job && r.state.is_final())
+    })
     .await
 }

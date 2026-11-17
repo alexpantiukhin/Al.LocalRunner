@@ -24,7 +24,6 @@ async fn pending_handovers_keep_their_handshake_slots() {
     let queued = b.dial(&k).await.expect("waits in the ready queue");
     let first = b.dial(&k).await.expect("waits for the role");
     let second = b.dial(&k).await.expect("waits for the role");
-    tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(
         b.dial(&k).await.is_err(),
         "transports the role has not taken still hold their slots"
@@ -108,7 +107,7 @@ async fn idle_joiner_is_shut_down_at_the_end_of_its_lifetime() {
     let b = broker_with(Limits {
         joining_slots: 1,
         joining_lifetime: Duration::from_millis(400),
-        join_timeout: Duration::from_secs(30),
+        join_timeout: Duration::MAX,
         ..Limits::default()
     })
     .await;

@@ -13,7 +13,7 @@ fn no_runner() -> ReasonCode {
 
 async fn wait_connected(brokers: &[&common::broker::FakeBroker]) {
     for b in brokers {
-        eventually("broker connected", || b.resumed()).await;
+        until(b, "broker connected", || b.resumed()).await;
     }
     settle().await;
 }
@@ -34,7 +34,7 @@ async fn broker_choice_follows_order_and_zone_preference() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || lan_b.orders().len() == 1).await;
+    until(&lan_b, "order placed", || lan_b.orders().len() == 1).await;
     settle().await;
     assert!(
         lan_a.orders().is_empty(),
@@ -61,7 +61,7 @@ async fn reversed_zone_order_prefers_remote() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || far.orders().len() == 1).await;
+    until(&far, "order placed", || far.orders().len() == 1).await;
     assert_eq!(lan.queries(), 0);
 }
 
@@ -80,7 +80,7 @@ async fn next_zone_when_nearer_has_no_suitable_runner() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || far.orders().len() == 1).await;
+    until(&far, "order placed", || far.orders().len() == 1).await;
     assert_eq!(lan.queries(), 1);
     assert!(lan.orders().is_empty());
 }
@@ -100,7 +100,7 @@ async fn offline_runner_does_not_count_as_suitable() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || far.orders().len() == 1).await;
+    until(&far, "order placed", || far.orders().len() == 1).await;
     assert!(lan.orders().is_empty());
 }
 
@@ -148,7 +148,7 @@ async fn all_zones_queried_at_once_with_zone_query_all() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || lan.orders().len() == 1).await;
+    until(&lan, "order placed", || lan.orders().len() == 1).await;
     assert_eq!(far.queries(), 1, "every allowed zone is queried");
     assert!(
         far.orders().is_empty(),
@@ -177,7 +177,7 @@ async fn least_loaded_prefers_more_suitable_runners() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order placed", || b.orders().len() == 1).await;
+    until(&b, "order placed", || b.orders().len() == 1).await;
     assert!(a.orders().is_empty());
 }
 
@@ -200,7 +200,7 @@ async fn rejected_ordinary_order_tries_next_broker() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("tried the next broker", || b.orders().len() == 1).await;
+    until(&b, "tried the next broker", || b.orders().len() == 1).await;
     assert_eq!(a.orders().len(), 1);
     assert_eq!(
         b.orders()[0].seq,
@@ -268,6 +268,29 @@ async fn same_machine_rejection_does_not_search_replacement() {
 }
 
 #[tokio::test]
+async fn a_joined_runner_refusal_reaches_the_client_without_the_start_it_hint() {
+    let joined = "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента";
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Reject(
+        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),
+        joined.into(),
+    )));
+    rig.start();
+    wait_connected(&[&local]).await;
+    let cli = rig.cli().await;
+    let mut req = submit("unit", None);
+    req.wait = true;
+    cli.submit(req).await;
+    match cli.reply().await {
+        CliReply::Rejected { code, detail } => {
+            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine));
+            assert_eq!(detail, joined);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn returned_same_machine_order_ends_with_hint() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
@@ -277,7 +300,7 @@ async fn returned_same_machine_order_ends_with_hint() {
     let mut req = submit("unit", None);
     req.wait = true;
     let job = cli.submit(req).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local
         .returned(&job, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine))
@@ -307,11 +330,11 @@ async fn returned_ordinary_order_goes_to_another_broker_at_seq_one() {
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("accepted by a", || a.orders().len() == 1).await;
+    until(&a, "accepted by a", || a.orders().len() == 1).await;
     settle().await;
     rig.step(7).await;
     a.returned(&job, ReasonCode::RunnerRemoved).await;
-    eventually("replacement at b", || b.orders().len() == 1).await;
+    until(&b, "replacement at b", || b.orders().len() == 1).await;
     assert_eq!(b.orders()[0].seq, 1);
     assert_eq!(
         b.orders()[0].spec.enqueued_at.0,
@@ -419,7 +442,10 @@ async fn no_broker_answering_keeps_order_waiting_until_connection() {
     assert_eq!(rig.pending().await.len(), 1);
     rig.net.set_reachable("lan-a:7443", true);
     rig.step(40).await;
-    eventually("placed once the broker is back", || a.orders().len() == 1).await;
+    until(&a, "placed once the broker is back", || {
+        a.orders().len() == 1
+    })
+    .await;
 }
 
 #[tokio::test]

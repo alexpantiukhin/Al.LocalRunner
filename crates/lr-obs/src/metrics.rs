@@ -15,6 +15,8 @@ use lr_core::Timestamp;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+#[cfg(feature = "test-support")]
+use std::time::Duration;
 
 /// Kind of a metric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -289,6 +291,8 @@ pub struct Metrics {
     client_label: AtomicBool,
     series: Mutex<Vec<Series>>,
     rejected: AtomicU64,
+    #[cfg(feature = "test-support")]
+    updates: (Mutex<u64>, std::sync::Condvar),
 }
 
 enum Update {
@@ -309,7 +313,28 @@ impl Metrics {
             client_label: AtomicBool::new(client_label),
             series: Mutex::new(CATALOG.iter().map(|_| Series::new()).collect()),
             rejected: AtomicU64::new(0),
+            #[cfg(feature = "test-support")]
+            updates: (Mutex::new(0), std::sync::Condvar::new()),
         }
+    }
+
+    /// Updates applied so far (feature `test-support`).
+    #[cfg(feature = "test-support")]
+    pub fn updates(&self) -> u64 {
+        *self.updates.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Blocks until more than `seen` updates are applied, at most `limit`; returns the count
+    /// then (feature `test-support`).
+    #[cfg(feature = "test-support")]
+    pub fn wait_updates(&self, seen: u64, limit: Duration) -> u64 {
+        let count = self.updates.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (count, _) = self
+            .updates
+            .1
+            .wait_timeout_while(count, limit, |n| *n <= seen)
+            .unwrap_or_else(|e| e.into_inner());
+        *count
     }
 
     /// Turns the `client` label on or off (`[metrics] client_label`).
@@ -384,8 +409,14 @@ impl Metrics {
     }
 
     fn update(&self, name: &str, given: &[(&str, &str)], update: Update) {
-        if !self.apply(name, given, update) {
+        let applied = self.apply(name, given, update);
+        if !applied {
             self.rejected.fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(feature = "test-support")]
+        if applied {
+            *self.updates.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            self.updates.1.notify_all();
         }
     }
 

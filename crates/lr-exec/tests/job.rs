@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    clock, fresh_file, helper_command, job, real_sleep, step, workdir, Helper, Recorder, T0,
-};
+use common::{clock, helper_command, job, step, workdir, Helper, Links, Recorder, HANG, T0};
 use lr_abstractions::{
     stop_signal, Clock, JobEvent, JobOutcome, JobSpec, ProcessRunner, SecretValue, Stop,
 };
@@ -48,12 +46,9 @@ async fn run(spec: JobSpec) -> (JobOutcome, Vec<JobEvent>) {
     let runner = ExecRunner::new(Arc::new(SystemClock));
     let out = Recorder::new();
     let (_handle, stop) = stop_signal();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        runner.run_job(spec, out.as_ref(), stop),
-    )
-    .await
-    .expect("run_job did not return");
+    let outcome = tokio::time::timeout(HANG, runner.run_job(spec, out.as_ref(), stop))
+        .await
+        .expect("run_job did not return");
     (outcome, out.events())
 }
 
@@ -159,14 +154,16 @@ async fn step_deadline_is_min_of_step_and_remaining_job() {
     let cmd = helper_command(&Helper::new("ignore"));
     let (task, out) = start(job("j1", 10, vec![step("s", &cmd, 100)]), clock.clone());
     out.pid_of("child").await;
+    assert_eq!(manual.sleepers(), 1, "the step deadline waits");
     manual.advance(Duration::from_millis(9_900));
-    real_sleep(400).await;
+    assert_eq!(
+        manual.sleepers(),
+        1,
+        "the deadline came before the job timeout"
+    );
     assert!(!task.is_finished(), "killed before the job timeout");
     manual.advance(Duration::from_millis(100));
-    let outcome = tokio::time::timeout(Duration::from_secs(20), task)
-        .await
-        .unwrap()
-        .unwrap();
+    let outcome = tokio::time::timeout(HANG, task).await.unwrap().unwrap();
     assert_eq!(outcome.state, JobState::Timeout);
     assert_eq!(outcome.steps[0].state, StepState::Timeout);
 
@@ -178,14 +175,16 @@ async fn step_deadline_is_min_of_step_and_remaining_job() {
     );
     let (task, out) = start(spec, clock);
     out.pid_of("child").await;
+    assert_eq!(manual.sleepers(), 1, "the step deadline waits");
     manual.advance(Duration::from_millis(4_900));
-    real_sleep(400).await;
+    assert_eq!(
+        manual.sleepers(),
+        1,
+        "the deadline came before the step timeout"
+    );
     assert!(!task.is_finished(), "killed before the step timeout");
     manual.advance(Duration::from_millis(100));
-    let outcome = tokio::time::timeout(Duration::from_secs(20), task)
-        .await
-        .unwrap()
-        .unwrap();
+    let outcome = tokio::time::timeout(HANG, task).await.unwrap().unwrap();
     assert_eq!(
         states(&outcome),
         vec![StepState::Timeout, StepState::Skipped]
@@ -196,8 +195,8 @@ async fn step_deadline_is_min_of_step_and_remaining_job() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn later_step_gets_only_the_time_left_of_the_job() {
     let (manual, clock) = clock();
-    let gate = fresh_file("job", "remaining.gate");
-    let first = helper_command(&Helper::new("wait-file").gate(&gate));
+    let links = Links::new().await;
+    let first = helper_command(&Helper::new("wait-gate").link(&links));
     let second = helper_command(&Helper::new("ignore"));
     let spec = job(
         "r",
@@ -205,24 +204,23 @@ async fn later_step_gets_only_the_time_left_of_the_job() {
         vec![step("a", &first, 100), step("b", &second, 100)],
     );
     let (task, out) = start(spec, clock);
-    out.pid_of("child").await;
+    let mut gate = links.next().await;
     manual.advance(Duration::from_secs(4));
-    std::fs::write(&gate, b"go").unwrap();
-    while out.text().matches("child-pid-end").count() < 2 {
-        out.wait_for("child-pid-end").await;
-        real_sleep(20).await;
-    }
+    gate.open().await;
+    out.wait_count("child-pid-end", 2).await;
+    assert_eq!(manual.sleepers(), 1, "the second step deadline waits");
     manual.advance(Duration::from_millis(5_900));
-    real_sleep(400).await;
+    assert_eq!(
+        manual.sleepers(),
+        1,
+        "the deadline came before the job ran out"
+    );
     assert!(
         !task.is_finished(),
         "second step killed before the job ran out"
     );
     manual.advance(Duration::from_millis(100));
-    let outcome = tokio::time::timeout(Duration::from_secs(20), task)
-        .await
-        .unwrap()
-        .unwrap();
+    let outcome = tokio::time::timeout(HANG, task).await.unwrap().unwrap();
     assert_eq!(
         states(&outcome),
         vec![StepState::Passed, StepState::Timeout]

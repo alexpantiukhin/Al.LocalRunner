@@ -16,6 +16,7 @@ use lr_proto::{
     decode, CliReply, CliRequest, IpcChannel, IpcOpen, IpcOpenReply, SubmitRequest,
     PROTOCOL_VERSION,
 };
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -86,14 +87,50 @@ pub async fn settle() {
     }
 }
 
-pub async fn eventually(what: &str, mut f: impl FnMut() -> bool) {
-    for _ in 0..30000 {
-        if f() {
-            return;
+pub const HANG: Duration = Duration::from_secs(20);
+
+pub async fn wait_on(
+    mut changes: Vec<tokio::sync::watch::Receiver<u64>>,
+    what: &str,
+    mut cond: impl FnMut() -> bool,
+) {
+    let wait = async {
+        loop {
+            if cond() {
+                return;
+            }
+            let mut woken: Vec<_> = changes.iter_mut().map(|r| Box::pin(r.changed())).collect();
+            let res = std::future::poll_fn(|cx| {
+                for w in woken.iter_mut() {
+                    if let std::task::Poll::Ready(r) = w.as_mut().poll(cx) {
+                        return std::task::Poll::Ready(r);
+                    }
+                }
+                std::task::Poll::Pending
+            })
+            .await;
+            res.expect("the source of events is gone");
         }
-        tokio::task::yield_now().await;
+    };
+    if tokio::time::timeout(HANG, wait).await.is_err() {
+        panic!("never happened: {what}");
     }
-    panic!("never happened: {what}");
+}
+
+pub async fn until(b: &FakeBroker, what: &str, cond: impl FnMut() -> bool) {
+    wait_on(vec![b.changes()], what, cond).await;
+}
+
+pub async fn until_log(log: &MemoryLogSink, what: &str, cond: impl FnMut() -> bool) {
+    wait_on(vec![log.changes()], what, cond).await;
+}
+
+pub async fn until_meter(meter: &MemoryMeter, what: &str, cond: impl FnMut() -> bool) {
+    wait_on(vec![meter.changes()], what, cond).await;
+}
+
+pub async fn until_any(bs: &[&FakeBroker], what: &str, cond: impl FnMut() -> bool) {
+    wait_on(bs.iter().map(|b| b.changes()).collect(), what, cond).await;
 }
 
 async fn yields(n: usize) {

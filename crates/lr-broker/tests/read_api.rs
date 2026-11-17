@@ -395,7 +395,7 @@ async fn runners_lists_registered_runners_with_load() {
     alex.send(&order("j1", want)).await;
     alex.accepted().await;
     r.assign().await;
-    let ReadReply::Runners { runners } = alex.read(ReadRequest::Runners).await else {
+    let ReadReply::Runners { runners, .. } = alex.read(ReadRequest::Runners).await else {
         panic!("runners")
     };
     let r1 = runners.iter().find(|x| x.name == "r1").unwrap();
@@ -532,4 +532,436 @@ async fn unknown_read_request_gets_unknown_reply() {
         panic!("reply")
     };
     assert_eq!(a.reply, ReadReply::Unknown);
+}
+
+fn explain_text(reply: ReadReply) -> String {
+    match reply {
+        ReadReply::Explain { text, .. } => text,
+        other => panic!("expected explain, got {other:?}"),
+    }
+}
+
+fn explain_of(job: &str) -> ReadRequest {
+    ReadRequest::Explain {
+        job: JobId(job.into()),
+        client: None,
+    }
+}
+
+async fn pass_time_heard(h: &Harness, r: &mut Conn, alex: &mut Conn, steps: u64) {
+    for _ in 0..steps {
+        h.clock.advance(std::time::Duration::from_secs(20));
+        r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+        alex.sync().await;
+    }
+}
+
+#[tokio::test]
+async fn explain_of_a_granted_order_says_how_long_it_waits_and_when_the_runner_answered() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    pass_time_heard(&h, &mut r, &mut alex, 5).await;
+    h.clock.advance(std::time::Duration::from_secs(20));
+    let text = explain_text(alex.read(explain_of("j1")).await);
+    assert!(text.contains("выдан раннеру r1"), "{text}");
+    assert!(text.contains("ждёт старта уже 2 мин"), "{text}");
+    assert!(text.contains("раннер отвечал 20 с назад"), "{text}");
+    assert!(
+        !text.contains("stale") && !text.contains("offline"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn explain_names_the_job_that_holds_the_only_slot() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    assert_eq!(
+        alex.accepted().await.waiting.as_deref(),
+        Some("раннер занят")
+    );
+    pass_time_heard(&h, &mut r, &mut alex, 9).await;
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(text.contains("раннер занят заказом j1 (3 мин)"), "{text}");
+}
+
+#[tokio::test]
+async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
+    let h = Harness::start("[visibility]\nothers_orders = \"none\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.20").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    ci.send(&order("c1", req(512, 1, 60))).await;
+    ci.accepted().await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
+    assert!(seen_by_ci.contains("раннер занят"), "{seen_by_ci}");
+    assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
+    assert!(!seen_by_ci.contains("заказом"), "{seen_by_ci}");
+    assert!(
+        !seen_by_ci.contains('(') && !seen_by_ci.contains("мин"),
+        "the age of the hidden job leaks: {seen_by_ci}"
+    );
+    let seen_by_owner = explain_text(alex.read(explain_of("j2")).await);
+    assert!(
+        seen_by_owner.contains("раннер занят заказом j1 ("),
+        "{seen_by_owner}"
+    );
+}
+
+const ALEX: &str = "local:alex";
+const TEN_S: std::time::Duration = std::time::Duration::from_secs(10);
+const MIN: u64 = 60_000;
+
+fn bash_needed() -> lr_core::Requirements {
+    let mut want = req(512, 1, 60);
+    want.programs.push(lr_core::Program {
+        name: "bash".into(),
+        check: None,
+    });
+    want
+}
+
+fn sender_gone(job: &str, seq: u64) -> HubToBroker {
+    let HubToBroker::Cancel(mut c) = cancel(job, seq) else {
+        unreachable!()
+    };
+    c.code = ReasonCode::SenderGone;
+    c.reason = None;
+    HubToBroker::Cancel(c)
+}
+
+async fn cancel_acked(c: &mut Conn) {
+    loop {
+        if let BrokerToHub::CancelAck(_) = c.hub().await {
+            return;
+        }
+    }
+}
+
+fn recent_of(s: &StatusView) -> Vec<(&str, JobState, Option<ReasonCode>, Option<&str>)> {
+    s.recent
+        .iter()
+        .map(|j| {
+            (
+                j.job.0.as_str(),
+                j.state,
+                j.reason.clone(),
+                j.cancelled_by.as_deref(),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_reason() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&sender_gone("j3", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    alex.send(&order("j4", bash_needed())).await;
+    let refused = alex.rejected().await;
+    assert!(refused.detail.contains("bash"), "{}", refused.detail);
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let s = status(
+        alex.read(ReadRequest::Status(StatusFilter::default()))
+            .await,
+    );
+    assert_eq!(
+        recent_of(&s),
+        vec![
+            ("j1", JobState::Passed, None, None),
+            (
+                "j4",
+                JobState::Cancelled,
+                Some(ReasonCode::Rejected(RejectReason::NoMatchingRunner)),
+                Some("broker")
+            ),
+            (
+                "j2",
+                JobState::Cancelled,
+                Some(ReasonCode::CancelledByUser),
+                Some("agent-1")
+            ),
+            (
+                "j3",
+                JobState::Cancelled,
+                Some(ReasonCode::SenderGone),
+                Some("agent-1")
+            ),
+        ],
+        "newest end first, each with its reason and who ended it"
+    );
+    let mut bob = h.local_hub("bob").await;
+    let theirs = status(bob.read(ReadRequest::Status(StatusFilter::default())).await);
+    assert_eq!(theirs.recent.len(), 4);
+    assert!(
+        theirs.recent.iter().all(|j| j.cancelled_by.is_none()),
+        "the canceller is hidden at summary visibility"
+    );
+}
+
+#[tokio::test]
+async fn history_lists_the_most_recently_finished_first_and_a_limit_keeps_them() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let ids =
+        |jobs: Vec<JobSummary>| -> Vec<String> { jobs.into_iter().map(|j| j.job.0).collect() };
+    let ask = |limit: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            limit,
+            ..HistoryFilter::default()
+        })
+    };
+    assert_eq!(
+        ids(history(alex.read(ask(None)).await)),
+        ["j1", "j2", "j3"],
+        "the run that finished last comes first, an unfinished one last"
+    );
+    assert_eq!(ids(history(alex.read(ask(Some(1))).await)), ["j1"]);
+    assert_eq!(ids(history(alex.read(ask(Some(2))).await)), ["j1", "j2"]);
+    let details = alex
+        .read(ReadRequest::HistoryDetails(HistoryFilter {
+            limit: Some(2),
+            ..HistoryFilter::default()
+        }))
+        .await;
+    match details {
+        ReadReply::Details { jobs, .. } => {
+            let ids: Vec<&str> = jobs.iter().map(|d| d.summary.job.0.as_str()).collect();
+            assert_eq!(ids, ["j1", "j2"]);
+        }
+        other => panic!("expected details, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn recent_honours_a_count_and_a_duration() {
+    let h = Harness::start("");
+    for (i, job) in ["a1", "a2", "a3"].iter().enumerate() {
+        if i > 0 {
+            h.clock.advance(std::time::Duration::from_millis(10 * MIN));
+        }
+        let mut alex = h.local_hub("alex").await;
+        alex.send(&order(job, req(512, 1, 60))).await;
+        alex.rejected().await;
+    }
+    h.clock.advance(std::time::Duration::from_millis(5 * MIN));
+    let mut alex = h.local_hub("alex").await;
+    let ask = |count: Option<u64>, since: Option<u64>| {
+        ReadRequest::Status(StatusFilter {
+            recent: Some(RecentFilter {
+                count,
+                since: since.map(|m| lr_core::Timestamp(START + m * MIN)),
+            }),
+            ..StatusFilter::default()
+        })
+    };
+    let ids = |s: StatusView| -> Vec<String> { s.recent.into_iter().map(|j| j.job.0).collect() };
+    assert_eq!(
+        ids(status(alex.read(ask(Some(2), None)).await)),
+        ["a3", "a2"]
+    );
+    assert_eq!(ids(status(alex.read(ask(None, Some(15))).await)), ["a3"]);
+    assert_eq!(
+        ids(status(alex.read(ask(None, Some(5))).await)),
+        ["a3", "a2"]
+    );
+    assert_eq!(ids(status(alex.read(ask(Some(1), Some(0))).await)), ["a3"]);
+    assert_eq!(
+        ids(status(alex.read(ask(None, None)).await)),
+        ["a3", "a2", "a1"]
+    );
+}
+
+#[tokio::test]
+async fn explain_answers_for_a_rejected_order_and_names_the_unmet_requirement() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j9", bash_needed())).await;
+    alex.rejected().await;
+    let text = explain_text(alex.read(explain_of("j9")).await);
+    assert!(text.contains("отклонена при приёме"), "{text}");
+    assert!(text.contains("rejected_no_matching_runner"), "{text}");
+    assert!(text.contains("r1: bash не найден"), "{text}");
+    assert!(text.contains("кто: broker"), "{text}");
+    match alex.read(explain_of("never-sent")).await {
+        ReadReply::NotFound { what } => assert_eq!(what, "job never-sent"),
+        other => panic!("expected not found, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn explain_of_a_cancelled_order_names_who_cancelled_it_and_why() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(text.contains("отменена"), "{text}");
+    assert!(text.contains("cancelled_by_user"), "{text}");
+    assert!(text.contains("кто: agent-1"), "{text}");
+    assert!(text.contains("stop"), "{text}");
+}
+
+async fn runners_and_pools(c: &mut Conn) -> (Vec<RunnerInfo>, Vec<PoolInfo>) {
+    match c.read(ReadRequest::Runners).await {
+        ReadReply::Runners { runners, pools } => (runners, pools),
+        other => panic!("runners, got {other:?}"),
+    }
+}
+
+fn gpu_runner() -> WireCapabilities {
+    let mut c = linux();
+    c.tags.insert("gpu".into());
+    c
+}
+
+fn mac_runner() -> WireCapabilities {
+    caps(&["mac"], 16384, 8)
+}
+
+#[tokio::test]
+async fn two_runners_of_one_pool_are_grouped_with_one_shared_budget() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", gpu_runner()).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", mac_runner()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut want = req(1024, 2, 60);
+    want.tags.insert("gpu".into());
+    alex.send(&order("j1", want)).await;
+    alex.accepted().await;
+    r1.assign().await;
+    let (runners, pools) = runners_and_pools(&mut alex).await;
+    assert_eq!(pools.len(), 1, "{pools:?}");
+    let pool = &pools[0];
+    assert_eq!(pool.name, "default");
+    assert_eq!((pool.mem_total_mb, pool.mem_free_mb), (16384, 16384 - 1024));
+    assert_eq!((pool.cpu_total, pool.cpu_free), (8, 6));
+    assert_eq!(pool.runners, ["r1".to_string(), "r2".to_string()]);
+    assert_eq!(pool.held_tags.len(), 1);
+    assert_eq!(pool.held_tags[0].tag, "gpu");
+    assert_eq!(pool.held_tags[0].job, JobId("j1".into()));
+    assert!(runners.iter().all(|r| r.pool.as_deref() == Some("default")));
+    let (r1, r2) = (
+        runners.iter().find(|r| r.name == "r1").unwrap(),
+        runners.iter().find(|r| r.name == "r2").unwrap(),
+    );
+    assert_eq!((r1.busy, r2.busy), (Some(true), Some(false)));
+    assert_eq!(
+        (r1.can_start_now, r2.can_start_now),
+        (Some(false), Some(true))
+    );
+    assert_eq!(r1.free_mem_mb, pool.mem_free_mb);
+}
+
+#[tokio::test]
+async fn an_idle_runner_cannot_start_a_job_when_the_pool_is_full() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let _r2 = h.member_runner("r2", "10.0.0.8", mac_runner()).await;
+    let mut alex = h.local_hub("alex").await;
+    let (before, _) = runners_and_pools(&mut alex).await;
+    let idle = before.iter().find(|r| r.name == "r2").unwrap();
+    assert_eq!((idle.busy, idle.can_start_now), (Some(false), Some(true)));
+    alex.send(&order("j1", req(1024, 8, 60))).await;
+    alex.accepted().await;
+    r1.assign().await;
+    let (after, pools) = runners_and_pools(&mut alex).await;
+    let idle = after.iter().find(|r| r.name == "r2").unwrap();
+    assert_eq!(idle.busy, Some(false));
+    assert_eq!(idle.can_start_now, Some(false));
+    assert_eq!(pools[0].cpu_free, 0);
+}
+
+#[tokio::test]
+async fn foreign_jobs_are_summarised_for_a_viewer_with_summary_visibility() {
+    for (others, shown) in [("summary", false), ("none", false), ("full", true)] {
+        let h = Harness::start(&format!("[visibility]\nothers_orders = \"{others}\"\n"));
+        let mut r1 = h.member_runner("r1", "10.0.0.7", gpu_runner()).await;
+        let mut alex = h.local_hub("alex").await;
+        let mut bob = h.local_hub("bob").await;
+        let mut want = req(1024, 2, 60);
+        want.tags.insert("gpu".into());
+        alex.send(&order("j1", want)).await;
+        alex.accepted().await;
+        r1.assign().await;
+        let (bobs_runners, seen_by_bob) = runners_and_pools(&mut bob).await;
+        let on_runner = &bobs_runners[0].held_tags;
+        assert_eq!(on_runner.len(), 1, "{others}");
+        assert_eq!(on_runner[0].tag, "gpu", "{others}");
+        assert_eq!(!on_runner[0].job.0.is_empty(), shown, "{others}");
+        let pool = &seen_by_bob[0];
+        assert_eq!(
+            (pool.mem_free_mb, pool.cpu_free),
+            (16384 - 1024, 6),
+            "{others}"
+        );
+        assert_eq!(pool.held_tags.len(), 1, "{others}");
+        assert_eq!(pool.held_tags[0].tag, "gpu", "{others}");
+        let id = &pool.held_tags[0].job;
+        assert_eq!(!id.0.is_empty(), shown, "{others}: {id:?}");
+        let (alexs_runners, seen_by_alex) = runners_and_pools(&mut alex).await;
+        assert_eq!(seen_by_alex[0].held_tags[0].job, JobId("j1".into()));
+        assert_eq!(
+            alexs_runners[0].held_tags[0].job,
+            JobId("j1".into()),
+            "{others}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_canceller_is_absent_not_empty() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    let HubToBroker::Cancel(mut c) = cancel("j2", 2) else {
+        unreachable!()
+    };
+    c.by.label = String::new();
+    alex.send(&HubToBroker::Cancel(c)).await;
+    cancel_acked(&mut alex).await;
+    let row = h.until_state(ALEX, "j2", JobState::Cancelled).await;
+    assert_eq!(row.job.cancelled_by, None, "an empty actor was stored");
+    let runs = history(
+        alex.read(ReadRequest::History(HistoryFilter::default()))
+            .await,
+    );
+    let j2 = runs.iter().find(|s| s.job.0 == "j2").unwrap();
+    assert_eq!(j2.cancelled_by, None);
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(!text.contains("кто:"), "{text}");
 }

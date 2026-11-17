@@ -65,3 +65,28 @@ fn the_history_details_request_and_reply_round_trip() {
     let text = serde_json::to_string(&reply).unwrap();
     assert_eq!(serde_json::from_str::<ReadReply>(&text).unwrap(), reply);
 }
+
+#[test]
+fn the_limit_mode_travels_and_a_newer_mode_reads_as_unknown() {
+    let limits: WireLimits = serde_json::from_value(
+        json!({"mode": "limit", "mem_headroom_pct": 125, "disk_headroom_pct": 125}),
+    )
+    .unwrap();
+    assert_eq!(limits.mode, WireEnforce::Limit);
+    assert_eq!(serde_json::to_value(limits).unwrap()["mode"], "limit");
+    let newer: WireEnforce = serde_json::from_value(json!("squeeze")).unwrap();
+    assert_eq!(newer, WireEnforce::Unknown);
+}
+
+#[test]
+fn the_limit_capability_is_absent_from_older_runners_and_sent_only_when_set() {
+    let old = serde_json::to_value(caps()).unwrap();
+    assert!(!keys(&old).contains(&"enforce_limit".to_string()));
+    let parsed: WireCapabilities = serde_json::from_value(old).unwrap();
+    assert!(!parsed.enforce_limit);
+    let mut new = caps();
+    new.enforce_limit = true;
+    let v = serde_json::to_value(&new).unwrap();
+    assert_eq!(v["enforce_limit"], true);
+    assert_eq!(serde_json::from_value::<WireCapabilities>(v).unwrap(), new);
+}

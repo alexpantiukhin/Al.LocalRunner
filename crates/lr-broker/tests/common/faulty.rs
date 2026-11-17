@@ -9,7 +9,7 @@ use lr_abstractions::{
 use lr_core::{JobId, Timestamp};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::sync::Notify;
+use tokio::sync::{watch, Notify};
 
 pub struct FaultyStore {
     pub inner: Arc<MemoryBrokerStore>,
@@ -30,6 +30,8 @@ pub struct FaultyStore {
     pub pending: Mutex<Vec<OutboxEntry>>,
     pub whole_log_reads: AtomicUsize,
     pub filters: Mutex<Vec<JobFilter>>,
+    pub runner_states: AtomicUsize,
+    changed: watch::Sender<u64>,
 }
 
 impl FaultyStore {
@@ -53,7 +55,17 @@ impl FaultyStore {
             pending: Mutex::new(Vec::new()),
             whole_log_reads: AtomicUsize::new(0),
             filters: Mutex::new(Vec::new()),
+            runner_states: AtomicUsize::new(0),
+            changed: watch::channel(0).0,
         }
+    }
+
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn changed(&self) {
+        self.changed.send_modify(|n| *n += 1);
     }
 
     pub fn set(flag: &AtomicBool) {
@@ -164,13 +176,17 @@ impl BrokerStore for FaultyStore {
             panic!("injected prune panic");
         }
         self.prunes.lock().unwrap().push(limits);
+        self.changed();
         if self.hold_prune.load(Ordering::SeqCst) {
             self.prune_release.notified().await;
         }
         if self.fail_prune.load(Ordering::SeqCst) {
+            self.changed();
             return Err(io());
         }
-        self.inner.prune(limits).await
+        let report = self.inner.prune(limits).await;
+        self.changed();
+        report
     }
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {
         self.inner.issue_code(code).await
@@ -205,7 +221,10 @@ impl BrokerStore for FaultyStore {
         state: RunnerState,
         at: Timestamp,
     ) -> Result<(), StoreError> {
-        self.inner.set_runner_state(name, state, at).await
+        let done = self.inner.set_runner_state(name, state, at).await;
+        self.runner_states.fetch_add(1, Ordering::SeqCst);
+        self.changed();
+        done
     }
     async fn runners(&self) -> Result<Vec<RunnerRow>, StoreError> {
         self.inner.runners().await
@@ -238,7 +257,9 @@ impl BrokerStore for FaultyStore {
     }
     async fn expire_results(&self, before: Timestamp) -> Result<usize, StoreError> {
         self.expires.lock().unwrap().push(before);
-        self.inner.expire_results(before).await
+        let expired = self.inner.expire_results(before).await;
+        self.changed();
+        expired
     }
     async fn results_backlog(&self) -> Result<OutboxBacklog, StoreError> {
         self.inner.results_backlog().await

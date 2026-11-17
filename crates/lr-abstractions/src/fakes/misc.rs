@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lr_core::JobId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// A secret store in memory; can be locked to make every read `Unavailable`.
 #[derive(Default)]
@@ -55,11 +55,22 @@ impl SecretSource for MemorySecrets {
 
 /// A log sink in memory; when bounded it drops and counts what does not fit, like a real
 /// sink with a full buffer.
-#[derive(Default)]
 pub struct MemoryLogSink {
     records: Mutex<Vec<Record>>,
     capacity: Option<usize>,
     dropped: Mutex<u64>,
+    changed: watch::Sender<u64>,
+}
+
+impl Default for MemoryLogSink {
+    fn default() -> MemoryLogSink {
+        MemoryLogSink {
+            records: Mutex::default(),
+            capacity: None,
+            dropped: Mutex::default(),
+            changed: watch::channel(0).0,
+        }
+    }
 }
 
 impl MemoryLogSink {
@@ -80,6 +91,11 @@ impl MemoryLogSink {
     pub fn records(&self) -> Vec<Record> {
         self.records.lock().unwrap().clone()
     }
+
+    /// A receiver that is woken after every record written, kept or dropped.
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
 }
 
 impl LogSink for MemoryLogSink {
@@ -90,6 +106,8 @@ impl LogSink for MemoryLogSink {
         } else {
             records.push(record.clone());
         }
+        drop(records);
+        self.changed.send_modify(|n| *n += 1);
     }
 
     fn dropped(&self) -> u64 {
@@ -113,15 +131,34 @@ pub enum MeterUpdate {
 }
 
 /// A meter in memory: keeps every update in arrival order, accepts any name.
-#[derive(Default)]
 pub struct MemoryMeter {
     updates: Mutex<Vec<MeterUpdate>>,
+    changed: watch::Sender<u64>,
+}
+
+impl Default for MemoryMeter {
+    fn default() -> MemoryMeter {
+        MemoryMeter {
+            updates: Mutex::default(),
+            changed: watch::channel(0).0,
+        }
+    }
 }
 
 impl MemoryMeter {
     /// An empty meter.
     pub fn new() -> MemoryMeter {
         MemoryMeter::default()
+    }
+
+    /// A receiver that is woken after every update received.
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn record(&self, update: MeterUpdate) {
+        self.updates.lock().unwrap().push(update);
+        self.changed.send_modify(|n| *n += 1);
     }
 
     /// Updates received so far.
@@ -236,27 +273,27 @@ fn owned(labels: &[(&str, &str)]) -> Vec<(String, String)> {
 impl Meter for MemoryMeter {
     fn add(&self, name: &str, labels: &[(&str, &str)], delta: u64) {
         let update = MeterUpdate::Add(name.to_string(), owned(labels), delta);
-        self.updates.lock().unwrap().push(update);
+        self.record(update);
     }
 
     fn set(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         let update = MeterUpdate::Set(name.to_string(), owned(labels), value);
-        self.updates.lock().unwrap().push(update);
+        self.record(update);
     }
 
     fn observe(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         let update = MeterUpdate::Observe(name.to_string(), owned(labels), value);
-        self.updates.lock().unwrap().push(update);
+        self.record(update);
     }
 
     fn forget(&self, label: &str, value: &str) {
         let update = MeterUpdate::Forget(label.to_string(), value.to_string());
-        self.updates.lock().unwrap().push(update);
+        self.record(update);
     }
 
     fn forget_series(&self, labels: &[(&str, &str)]) {
         let update = MeterUpdate::ForgetSeries(owned(labels));
-        self.updates.lock().unwrap().push(update);
+        self.record(update);
     }
 }
 

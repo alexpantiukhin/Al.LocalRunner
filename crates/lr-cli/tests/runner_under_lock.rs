@@ -1,12 +1,12 @@
 mod common;
 
+use common::hub_events::HANG;
 use common::loopback::layout;
 use common::TempDir;
 use lr_cli::roles::{start_broker, start_runners};
 use lr_cli::upgrade_lock::{lock_path, UpgradeLock};
 use lr_runner::AgentExit;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
 
 fn long_lived() -> Child {
     let mut cmd = if cfg!(windows) {
@@ -42,7 +42,7 @@ async fn a_runner_assembled_under_a_live_upgrade_lock_starts_in_drain_and_leaves
     let runners = start_runners(&layout, Some("r1"), 1, None, false)
         .await
         .expect("runner starts");
-    let exits = tokio::time::timeout(Duration::from_secs(60), runners.wait())
+    let exits = tokio::time::timeout(HANG, runners.wait())
         .await
         .expect("a runner started under a live lock drains and leaves");
     assert_eq!(exits.len(), 1);

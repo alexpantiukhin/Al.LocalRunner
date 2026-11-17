@@ -1,13 +1,13 @@
 mod common;
 
+use common::hub_events::{until_online, HANG};
 use common::TempDir;
 use lr_cli::commands::down_cmd::down;
 use lr_cli::commands::history_cmd::fetch_history;
 use lr_cli::commands::jobs::{follow, hub};
 use lr_cli::commands::log_cmd::{cli_redactor, find_log, LogQuery};
-use lr_cli::commands::read_cmd::{explain, fetch_runners};
+use lr_cli::commands::read_cmd::explain;
 use lr_cli::commands::up_cmd::{running_roles, up_plan};
-use lr_cli::commands::view::known_brokers;
 use lr_cli::init::NodeRole;
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
@@ -43,20 +43,6 @@ fn layout(dir: &TempDir) -> Layout {
     Layout::new(root, config)
 }
 
-async fn eventually<T, F, Fut>(what: &str, mut probe: F) -> T
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Option<T>>,
-{
-    for _ in 0..150 {
-        if let Some(v) = probe().await {
-            return v;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("timed out waiting for {what}");
-}
-
 async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(repo.join(".localrunner")).unwrap();
@@ -87,7 +73,7 @@ async fn run_job(layout: &Layout, dir: &TempDir) -> JobId {
     };
     let mut output = String::new();
     let code = tokio::time::timeout(
-        Duration::from_secs(60),
+        HANG,
         follow(&client, &job, &cli_redactor(layout), &mut |t| {
             output.push_str(t)
         }),
@@ -113,18 +99,7 @@ async fn read_commands_and_full_down_on_loopback() {
     let runners = start_runners(&layout, Some("r1"), 1, None, false)
         .await
         .expect("runner starts");
-    eventually("runner r1 online", || async {
-        let client = hub(&layout).await.ok()?;
-        let brokers = known_brokers(&client).await.ok()?;
-        brokers.iter().find(|b| b.available)?;
-        let (per, _) = fetch_runners(&client, None).await.ok()?;
-        client.close().await;
-        per.iter()
-            .flat_map(|(_, r)| r)
-            .any(|r| r.online && r.name.ends_with("r1"))
-            .then_some(())
-    })
-    .await;
+    until_online(&layout, "r1").await;
     let job = run_job(&layout, &dir).await;
 
     let client = hub(&layout).await.expect("hub channel");

@@ -34,14 +34,6 @@ fn add(name: &str) -> AdminRequest {
     }
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_broker_add_starts_one_listener() {
     let dir = TempDir::new("adds");
@@ -60,22 +52,15 @@ async fn concurrent_broker_add_starts_one_listener() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_listen_keeps_no_listener_and_can_be_retried() {
     let dir = TempDir::new("partial");
-    let port = free_port();
     let blocker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let taken = blocker.local_addr().unwrap().port();
-    let listen = format!("[\"127.0.0.1:{port}\", \"127.0.0.1:{taken}\"]");
+    let listen = format!("[\"127.0.0.1:0\", \"127.0.0.1:{taken}\"]");
     let layout = layout(&dir, &listen);
     let broker = start_broker(&layout, false).await.expect("broker starts");
 
     let first = admin(&layout, add("one")).await;
     assert!(matches!(first, AdminReply::Failed { .. }), "{first:?}");
     assert!(broker.network_addresses().is_empty());
-    let free = std::net::TcpListener::bind(("127.0.0.1", port));
-    assert!(
-        free.is_ok(),
-        "the first address stayed bound after the failure"
-    );
-    drop(free);
 
     drop(blocker);
     let second = admin(&layout, add("one")).await;

@@ -1,4 +1,4 @@
-use crate::limits::kill_line;
+use crate::limits::{held_line, kill_line};
 use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
@@ -8,10 +8,12 @@ use lr_abstractions::{
 };
 use lr_core::{JobState, StepState};
 use std::time::Duration;
+use tokio::sync::watch;
 
 struct Job<'a> {
     spec: &'a JobSpec,
     clock: &'a dyn Clock,
+    waits: &'a watch::Sender<u64>,
     secrets: Vec<&'a SecretValue>,
     emitter: Emitter<'a>,
     usage: Usage,
@@ -63,7 +65,7 @@ impl<'a> Job<'a> {
         if stop.current().is_some() {
             return (StepState::Cancelled, None);
         }
-        let spawned = match spawn_step(&launch, &self.secrets) {
+        let spawned = match spawn_step(&launch, &self.secrets, self.waits) {
             Ok(spawned) => spawned,
             Err(err) => {
                 let text = format!(
@@ -97,7 +99,11 @@ impl<'a> Job<'a> {
         self.usage.peak_mem_mb = self.usage.peak_mem_mb.max(finished.usage.peak_mem_mb);
         self.usage.peak_disk_mb = self.usage.peak_disk_mb.max(finished.usage.peak_disk_mb);
         if let Some(ex) = finished.exceeded {
-            self.line(index, &kill_line(&ex), stop).await;
+            let line = match finished.ended {
+                Ended::Exceeded => kill_line(&ex),
+                _ => held_line(&ex),
+            };
+            self.line(index, &line, stop).await;
             self.exceeded.get_or_insert(ex);
         }
         match finished.ended {
@@ -113,12 +119,14 @@ impl<'a> Job<'a> {
 pub(crate) async fn run_job(
     spec: &JobSpec,
     clock: &dyn Clock,
+    waits: &watch::Sender<u64>,
     output: &dyn JobOutput,
     mut stop: StopSignal,
 ) -> JobOutcome {
     let mut job = Job {
         spec,
         clock,
+        waits,
         secrets: spec.secret_values(),
         emitter: Emitter::new(output),
         usage: Usage::default(),

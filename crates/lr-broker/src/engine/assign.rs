@@ -104,6 +104,10 @@ impl Engine {
         let spec = &job.spec;
         let cache_client = (self.policy.file().cache.share == CacheShare::Project)
             .then(|| SHARED_CACHE_CLIENT.to_string());
+        let enforce_limit = self
+            .runners
+            .get(&a.runner)
+            .is_some_and(|s| s.wire.enforce_limit);
         self.send(
             conn,
             &BrokerToRunner::Assign(Assign {
@@ -126,7 +130,12 @@ impl Engine {
                     broker_lost_kill_s: Some(self.lost_kill_s()),
                     named_commands: !job.entry.order.requirements.commands.is_empty(),
                     cache_client,
-                    limits: self.policy.file().resources.as_ref().map(|r| r.wire()),
+                    limits: self
+                        .policy
+                        .file()
+                        .resources
+                        .as_ref()
+                        .map(|r| r.wire_for(enforce_limit)),
                 }),
             }),
         );

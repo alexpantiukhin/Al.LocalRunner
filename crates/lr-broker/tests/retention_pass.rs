@@ -11,16 +11,6 @@ const HOUR_MS: u64 = 3_600_000;
 const DAY_MS: u64 = 24 * HOUR_MS;
 const GIB: u64 = 1024 * 1024 * 1024;
 
-async fn eventually<F: FnMut() -> bool>(what: &str, mut f: F) {
-    for _ in 0..2000 {
-        if f() {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("never happened: {what}");
-}
-
 async fn settle() {
     for _ in 0..2000 {
         tokio::task::yield_now().await;
@@ -45,7 +35,10 @@ fn messages(h: &Harness, message: &str) -> Vec<Record> {
 
 async fn passes_after_poke(h: &Harness, n: usize) {
     h.poke().await;
-    eventually(&format!("{n} retention passes"), || prunes(h).len() == n).await;
+    until_changed(h.faults.changes(), &format!("{n} retention passes"), || {
+        std::future::ready(prunes(h).len() == n)
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -78,7 +71,7 @@ async fn a_pass_still_running_is_not_joined_by_a_second_one() {
 
     FaultyStore::clear(&h.faults.hold_prune);
     h.faults.prune_release.notify_one();
-    eventually("the held pass is logged", || {
+    until_log(&h.log, "the held pass is logged", || {
         !messages(&h, "storage cleaned up").is_empty()
     })
     .await;
@@ -90,7 +83,7 @@ async fn a_store_error_is_a_warning_and_the_next_pass_retries() {
     let h = Harness::start("");
     FaultyStore::set(&h.faults.fail_prune);
     passes_after_poke(&h, 1).await;
-    eventually("the failure is logged", || {
+    until_log(&h.log, "the failure is logged", || {
         !messages(&h, "storage failed: history was not pruned").is_empty()
     })
     .await;
@@ -101,7 +94,7 @@ async fn a_store_error_is_a_warning_and_the_next_pass_retries() {
     FaultyStore::clear(&h.faults.fail_prune);
     h.clock.advance(Duration::from_secs(RETENTION_EVERY_S));
     passes_after_poke(&h, 2).await;
-    eventually("the retried pass is logged", || {
+    until_log(&h.log, "the retried pass is logged", || {
         messages(&h, "storage cleaned up").len() == 1
     })
     .await;

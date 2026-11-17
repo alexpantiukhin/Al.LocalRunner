@@ -199,6 +199,53 @@ fn a_changed_hash_restores_the_view_with_its_tab_and_filters() {
 }
 
 #[test]
+fn a_runner_is_shown_online_stale_or_offline_by_how_recently_it_was_heard() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    let base = v["runners"][0]["runners"][0].clone();
+    let named = |name: &str, online: bool, liveness: Option<&str>, silent: Option<u64>| {
+        let mut r = base.clone();
+        r["name"] = name.into();
+        r["online"] = online.into();
+        if let Some(l) = liveness {
+            r["liveness"] = l.into();
+        }
+        if let Some(s) = silent {
+            r["silent_for_s"] = s.into();
+        }
+        r
+    };
+    v["runners"][0]["runners"] = serde_json::json!([
+        named("fresh", true, Some("online"), Some(0)),
+        named("quiet", true, Some("stale"), Some(40)),
+        named("gone", false, Some("offline"), Some(90)),
+        named("legacy-up", true, None, None),
+        named("legacy-down", false, None, None),
+    ]);
+    let scenario = r##"
+  location.hash = "#tab=runners";
+  handlers.hashchange();
+  out.rows = $("tab-runners").text();
+"##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "a_runner_is_shown_online_stale_or_offline",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert_eq!(text.matches("stale (silent 40 s)").count(), 1, "{text}");
+    assert_eq!(text.matches("offline").count(), 2, "{text}");
+    assert_eq!(text.matches("online").count(), 2, "{text}");
+}
+
+#[test]
 fn a_step_that_never_ran_shows_a_full_skipped_bar_once_the_run_is_over() {
     let over = running(StepState::Failed, StepState::Queued, JobState::Cancelled);
     let scenario = format!(
@@ -263,4 +310,459 @@ fn a_refused_order_is_shown_as_rejected_not_as_cancelled() {
         return;
     };
     assert_eq!(out["states"][0], "state-rejected", "{out}");
+}
+
+#[test]
+fn the_history_grid_has_a_finished_column_sorted_by_finish_time_until_a_header_is_clicked() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    let mut done = |idx: usize, job: &str, queued: u64, finished: Option<u64>| {
+        let mut j = v["jobs"][0].clone();
+        j["list"] = serde_json::json!("history");
+        j["detail"]["summary"]["job"] = serde_json::json!(job);
+        j["detail"]["summary"]["queued_at"] = serde_json::json!(queued);
+        j["detail"]["summary"]["finished_at"] = serde_json::json!(finished);
+        j["detail"]["summary"]["state"] = serde_json::json!("passed");
+        v["jobs"].as_array_mut().unwrap().insert(idx, j);
+    };
+    done(0, "queued-first", 1_000, Some(9_000));
+    done(1, "queued-last", 5_000, Some(6_000));
+    done(2, "unfinished", 7_000, None);
+    done(3, "middle", 3_000, Some(8_000));
+    let scenario = r##"
+      sources[0].onopen(); await tick();
+      var ids = function () { return $("history-body").children.map(function (r) { return r.attrs["data-job"]; }); };
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.default = ids();
+      out.hash = location.hash;
+      out.cols = $("history-body").children[0].children.map(function (c) { return c.attrs["data-col"]; });
+      location.hash = "#tab=history&sort=-queued";
+      handlers.hashchange();
+      out.byQueued = ids();
+      location.hash = "#tab=history&sort=-finished";
+      handlers.hashchange();
+      out.explicit = ids();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "finished",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out["default"],
+        serde_json::json!(["queued-first", "middle", "queued-last", "unfinished"]),
+        "{out}"
+    );
+    assert_eq!(out["cols"][9], "finished", "{out}");
+    assert_eq!(
+        out["byQueued"][0], "unfinished",
+        "a header click overrides the default: {out}"
+    );
+    assert_eq!(out["explicit"][0], "queued-first", "{out}");
+}
+
+const FOLLOW_SETUP: &str = r#"
+  var logFetches = 0;
+  var plainFetch = globalThis.fetch;
+  globalThis.fetch = function (url) { if (String(url).indexOf("/api/log/") === 0) logFetches += 1; return plainFetch(url); };
+  var pre = $("log");
+  pre.scrollHeight = 1000; pre.clientHeight = 100;
+  var follow = $("log-follow");
+  follow.checked = true;
+  var tickLog = function () { intervals.filter(function (i) { return i.ms === 2000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await tick();
+  logText = LOG;
+  $("queue-body").children[0].fire("click"); await tick();
+  var state = function () { return { checked: follow.checked, disabled: !!follow.disabled, top: pre.scrollTop, loads: logFetches }; };
+"#;
+
+#[test]
+fn a_finished_job_opens_with_follow_off_and_a_scroll_up_survives_the_timer_and_a_refresh() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        r#"
+  out.opened = state();
+  pre.scrollTop = 120; pre.fire("scroll");
+  tickLog(); await tick();
+  sources[0].onopen(); await tick();
+  out.after = state();
+"#
+    );
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &done,
+        &scenario,
+        "finished_follow",
+    ) else {
+        return;
+    };
+    assert_eq!(out["opened"]["checked"], false, "{out}");
+    assert_eq!(out["opened"]["disabled"], true, "{out}");
+    assert_eq!(
+        out["after"]["top"], 120,
+        "the scroll position is kept: {out}"
+    );
+    assert_eq!(out["after"]["loads"], out["opened"]["loads"], "{out}");
+    assert_eq!(out["after"]["checked"], false, "{out}");
+}
+
+#[test]
+fn a_running_job_follows_the_end_until_scrolled_up_and_ticking_follow_returns_to_it() {
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        r#"
+  out.opened = state();
+  logText = LOG + "more\n";
+  tickLog(); await tick();
+  out.followed = state();
+  pre.scrollTop = 100; pre.fire("scroll");
+  out.scrolledUp = state();
+  tickLog(); await tick();
+  out.idle = state();
+  follow.checked = true; follow.fire("change");
+  out.back = state();
+"#
+    );
+    let Some(out) = run_with("{ live: true, logs: {} }", &scenario, "running_follow") else {
+        return;
+    };
+    assert_eq!(out["opened"]["checked"], true, "{out}");
+    assert_eq!(out["opened"]["disabled"], false, "{out}");
+    assert_eq!(out["followed"]["top"], 1000, "{out}");
+    assert_eq!(out["scrolledUp"]["checked"], false, "{out}");
+    assert_eq!(out["scrolledUp"]["top"], 100, "{out}");
+    assert_eq!(out["idle"]["top"], 100, "{out}");
+    assert_eq!(out["back"]["checked"], true, "{out}");
+    assert_eq!(out["back"]["top"], 1000, "{out}");
+}
+
+#[test]
+fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = FOLLOW_SETUP.to_string()
+        + &format!(
+            r#"
+  pre.scrollTop = 1000;
+  var before = state();
+  logText = LOG + "last\n";
+  nextData = {done}; sources[0].onopen(); await tick(); await tick();
+  out.atEnd = state();
+  out.atEndLog = pre.textContent;
+  tickLog(); await tick();
+  sources[0].onopen(); await tick();
+  out.atEndLater = state();
+  out.before = before;
+"#
+        );
+    let Some(out) = run_with("{ live: true, logs: {} }", &scenario, "finishing_follow") else {
+        return;
+    };
+    assert_eq!(out["atEnd"]["checked"], false, "{out}");
+    assert_eq!(out["atEnd"]["disabled"], true, "{out}");
+    assert_eq!(out["atEnd"]["top"], 1000, "{out}");
+    assert!(
+        out["atEndLog"].as_str().unwrap().ends_with(
+            "last
+"
+        ),
+        "{out}"
+    );
+    assert_eq!(out["atEndLater"]["loads"], out["atEnd"]["loads"], "{out}");
+}
+
+#[test]
+fn a_job_that_finishes_while_scrolled_up_keeps_the_scroll_position() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = FOLLOW_SETUP.to_string()
+        + &format!(
+            r#"
+  pre.scrollTop = 100; pre.fire("scroll");
+  logText = LOG + "last\n";
+  nextData = {done}; sources[0].onopen(); await tick(); await tick();
+  out.state = state();
+"#
+        );
+    let Some(out) = run_with(
+        "{ live: true, logs: {} }",
+        &scenario,
+        "finishing_scrolled_up",
+    ) else {
+        return;
+    };
+    assert_eq!(out["state"]["checked"], false, "{out}");
+    assert_eq!(out["state"]["disabled"], true, "{out}");
+    assert_eq!(out["state"]["top"], 100, "{out}");
+}
+
+#[test]
+fn the_own_runs_pin_does_not_override_the_history_order_and_a_zero_finish_is_kept() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    let mut add = |job: &str, label: &str, finished: Option<u64>| {
+        let mut j = v["jobs"][0].clone();
+        j["list"] = serde_json::json!("history");
+        j["detail"]["summary"]["job"] = serde_json::json!(job);
+        j["detail"]["summary"]["label"] = serde_json::json!(label);
+        j["detail"]["summary"]["finished_at"] = serde_json::json!(finished);
+        j["detail"]["summary"]["state"] = serde_json::json!("passed");
+        v["jobs"].as_array_mut().unwrap().push(j);
+    };
+    add("own-old", "me", Some(1_000));
+    add("other-new", "they", Some(9_000));
+    add("epoch", "they", Some(0));
+    add("open", "they", None);
+    let scenario = r##"
+      sources[0].onopen(); await tick();
+      var ids = function () { return $("history-body").children.map(function (r) { return r.attrs["data-job"]; }); };
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.default = ids();
+      out.epoch = $("history-body").children[2].children[9].textContent;
+      location.hash = "#tab=history&sort=finished";
+      handlers.hashchange();
+      out.clicked = ids();
+    "##;
+    let Some(out) = run_snapshot(
+        "(location.search = \"?as=me\", { live: true, logs: {} })",
+        &v.to_string(),
+        scenario,
+        "pin_history",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out["default"],
+        serde_json::json!(["other-new", "own-old", "epoch", "open"]),
+        "{out}"
+    );
+    assert_ne!(out["epoch"], "", "{out}");
+    assert_eq!(
+        out["clicked"],
+        serde_json::json!(["epoch", "own-old", "other-new", "open"]),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_runner_without_limit_support_is_marked_with_or_without_the_enforcement_field() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    let base = v["runners"][0]["runners"][0].clone();
+    let named = |name: &str, enforcement: Option<&str>, limit: bool| {
+        let mut r = base.clone();
+        r["name"] = name.into();
+        r["caps"]["enforce_limit"] = limit.into();
+        match enforcement {
+            Some(e) => r["caps"]["enforcement"] = e.into(),
+            None => {
+                r["caps"].as_object_mut().unwrap().remove("enforcement");
+            }
+        }
+        r
+    };
+    v["runners"][0]["runners"] = serde_json::json!([
+        named("current", Some("os"), true),
+        named("watching", Some("watcher"), false),
+        named("legacy", None, false),
+    ]);
+    let scenario = r##"
+      location.hash = "#tab=runners";
+      handlers.hashchange();
+      out.rows = $("tab-runners").text();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "legacy_enforcement",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert_eq!(text.matches("(limit runs as warn)").count(), 2, "{text}");
+    assert!(text.contains("unknown (limit runs as warn)"), "{text}");
+    assert!(text.contains("watcher (limit runs as warn)"), "{text}");
+}
+
+#[test]
+fn a_held_tag_without_a_visible_job_has_no_arrow() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    v["runners"][0]["runners"][0]["held_tags"] = serde_json::json!([
+        {"tag": "gpu", "job": "", "exclusive": true},
+        {"tag": "db", "job": "j7", "exclusive": false}
+    ]);
+    let scenario = r##"
+      location.hash = "#tab=runners";
+      handlers.hashchange();
+      out.rows = $("tab-runners").text();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "masked_held_tag",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert!(text.contains("gpu!, db←j7"), "{text}");
+    assert!(!text.contains("gpu!←"), "{text}");
+}
+
+const DEFERRED: &str = r#"
+  var pending = [];
+  var plainFetch = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    if (String(url).indexOf("/api/log/") !== 0) return plainFetch(url);
+    return new Promise(function (resolve) {
+      pending.push({ url: String(url), answer: function (text) { resolve({ ok: true, text: function () { return Promise.resolve(text); } }); } });
+    });
+  };
+  var flush = async function () { for (var i = 0; i < 30; i += 1) await Promise.resolve(); };
+  var pre = $("log");
+  pre.scrollHeight = 1000; pre.clientHeight = 100;
+  var follow = $("log-follow");
+  follow.checked = true;
+  var tickLog = function () { intervals.filter(function (i) { return i.ms === 2000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await flush();
+  $("queue-body").children[0].fire("click"); await flush();
+  pending[0].answer(LOG); await flush();
+  var settle = pending.length;
+"#;
+
+fn deferred(next: &str, body: &str) -> Option<Value> {
+    let scenario = format!("{DEFERRED}{body}");
+    let first = running(StepState::Running, StepState::Queued, JobState::Running);
+    let program_next = format!("var done = {next};\n{scenario}");
+    run_snapshot(
+        "{ live: true, logs: {} }",
+        &first,
+        &program_next,
+        "deferred_log",
+    )
+}
+
+#[test]
+fn a_slow_request_from_before_the_finish_never_overwrites_the_final_log() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  nextData = done; sources[0].onopen(); await flush();
+  out.started = pending.length - settle;
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  pending[settle].answer(LOG + "stale\n"); await flush();
+  out.text = pre.textContent;
+  out.checked = follow.checked;
+"#,
+    ) else {
+        return;
+    };
+    let text = out["text"].as_str().unwrap();
+    assert!(text.ends_with("final\n"), "{out}");
+    assert!(!text.contains("stale"), "{out}");
+    assert_eq!(out["checked"], false, "{out}");
+}
+
+#[test]
+fn a_scroll_up_while_the_final_load_is_pending_survives_its_response() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  pre.scrollTop = 1000;
+  nextData = done; sources[0].onopen(); await flush();
+  out.disabled = !!follow.disabled;
+  out.checkedAtFinish = follow.checked;
+  pre.scrollTop = 100; pre.fire("scroll");
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  out.top = pre.scrollTop;
+  out.text = pre.textContent;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["disabled"], true, "{out}");
+    assert_eq!(out["checkedAtFinish"], false, "{out}");
+    assert_eq!(out["top"], 100, "{out}");
+    assert!(out["text"].as_str().unwrap().ends_with("final\n"), "{out}");
+}
+
+#[test]
+fn a_followed_job_that_finishes_shows_the_end_of_its_final_log() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  pre.scrollTop = 1000;
+  nextData = done; sources[0].onopen(); await flush();
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  out.top = pre.scrollTop;
+  out.checked = follow.checked;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["top"], 1000, "{out}");
+    assert_eq!(out["checked"], false, "{out}");
+}
+
+#[test]
+fn a_response_for_a_job_closed_or_replaced_meanwhile_is_ignored() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  sources[0].onopen(); await flush();
+  var slow = pending[pending.length - 1];
+  var other = $("queue-body").children.filter(function (r) { return r.attrs["data-job"] === "j-queued"; })[0];
+  other.fire("click"); await flush();
+  pending[pending.length - 1].answer("other job\n"); await flush();
+  slow.answer("old job\n"); await flush();
+  out.text = pre.textContent;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["text"], "other job\n", "{out}");
+}
+
+#[test]
+fn no_load_is_started_by_the_timer_or_a_refresh_once_the_job_is_known_finished() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  nextData = done; sources[0].onopen(); await flush();
+  var atFinish = pending.length;
+  tickLog(); tickLog(); await flush();
+  sources[0].onopen(); await flush();
+  out.extra = pending.length - atFinish;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["extra"], 0, "{out}");
 }

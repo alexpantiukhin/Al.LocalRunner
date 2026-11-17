@@ -224,6 +224,42 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
 /// How `up` starts a role: the command line without the binary; the pid on success.
 pub type Spawn<'a> = &'a (dyn Fn(&[String]) -> std::io::Result<u32> + Sync);
 
+async fn runner_services(layout: &Layout, answering: &RunningRoles) -> Vec<(String, Option<bool>)> {
+    use crate::os_service::{runner_service, state::ask_manager, Os};
+    let os = Os::current();
+    let names: Vec<String> = layout
+        .runner_names()
+        .into_iter()
+        .filter(|n| !answering.runners.contains(n))
+        .collect();
+    ask_manager(Vec::new(), move || {
+        names
+            .into_iter()
+            .filter(|n| runner_service::installed(os, n))
+            .map(|n| {
+                let running = runner_service::running(os, &n);
+                (n, running)
+            })
+            .collect()
+    })
+    .await
+}
+
+/// The line `up` prints for runner `name` that it leaves to its OS service, which runs or not
+/// (`None`: unknown): a second copy as a user process would run the same runner twice.
+pub fn service_runner_line(os: crate::os_service::Os, name: &str, running: Option<bool>) -> String {
+    use crate::os_service::{runner_service, state::named_restart_command};
+    let service = runner_service::service_name(os, name);
+    match running {
+        Some(true) => format!("runner {name}: runs as the OS service {service}"),
+        _ => format!(
+            "runner {name}: installed as the OS service {service}, which does not run; up does \
+             not start a second copy, start the service as administrator: {}",
+            named_restart_command(os, &service)
+        ),
+    }
+}
+
 /// `up [role]`: [`up_with`] that starts the roles as background processes of this binary and
 /// waits for them at most 15 s.
 pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
@@ -258,6 +294,18 @@ pub async fn up_with(
     within: Duration,
     start: Spawn<'_>,
 ) -> Result<i32, String> {
+    up_with_services(layout, role, within, start, true).await
+}
+
+/// [`up_with`]; a runner whose OS service is installed but does not run makes the exit code 1
+/// only when `stopped_service_fails` (`upgrade` names it itself and does not fail for it).
+pub async fn up_with_services(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    within: Duration,
+    start: Spawn<'_>,
+    stopped_service_fails: bool,
+) -> Result<i32, String> {
     if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
         eprintln!(
             "{}: nothing is started; wait for it to finish (`localrunner status`) instead of running `up` again",
@@ -272,7 +320,20 @@ pub async fn up_with(
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
     let before = running_roles(layout).await;
+    let mut planned = before.clone();
     let mut code = 0;
+    if roles.contains(&NodeRole::Runner) {
+        for (name, running) in runner_services(layout, &before).await {
+            let line = service_runner_line(crate::os_service::Os::current(), &name, running);
+            if running == Some(true) {
+                println!("{line}");
+            } else if stopped_service_fails {
+                eprintln!("{line}");
+                code = 1;
+            }
+            planned.runners.insert(name);
+        }
+    }
     if service {
         match service_broker(before.broker) {
             Ok(line) => println!("{line}"),
@@ -297,7 +358,7 @@ pub async fn up_with(
             eprintln!("{line}");
         }
     }
-    let mut plan = up_plan(layout, &roles, &before);
+    let mut plan = up_plan(layout, &roles, &planned);
     if plan.is_empty() {
         return Ok(code);
     }

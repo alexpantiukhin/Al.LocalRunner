@@ -392,3 +392,17 @@ fn limits_cleanup_and_job_env_survive_the_assembly_parse() {
         ("c", 5)
     );
 }
+
+#[test]
+fn the_limit_mode_survives_the_assembly_parse_and_a_typo_is_refused() {
+    let cfg = parse("[limits]\nenforce = \"limit\"\n", Some("r"));
+    assert_eq!(cfg.settings.enforce, Some(lr_abstractions::Enforce::Limit));
+    let typo = RunnerConfig::parse(
+        &with_path("[limits]\nenforce = \"limits\"\n"),
+        Some("r"),
+        "host-pc",
+        PathBuf::from("/state/r"),
+        HOST,
+    );
+    assert!(typo.is_err(), "{typo:?}");
+}

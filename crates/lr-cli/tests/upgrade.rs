@@ -4,12 +4,13 @@ use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
 use lr_cli::commands::confirm::Console;
 use lr_cli::commands::up_cmd::RunningRoles;
+use lr_cli::commands::upgrade_cmd::RECONNECT_WITHIN;
 use lr_cli::commands::upgrade_cmd::{
     parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
     Verdict,
 };
-use lr_cli::commands::upgrade_jobs::Activity;
-use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner};
+use lr_cli::commands::upgrade_jobs::{pages, Activity, RunningJob};
+use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner, Reconnected};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
 use lr_proto::{DownMode, DrainReason};
@@ -130,6 +131,10 @@ struct Case {
     interrupted: bool,
     wait_timeout: Option<std::time::Duration>,
     copy_fails: bool,
+    pool: Vec<PoolRunner>,
+    after_restart: Vec<PoolRunner>,
+    service_runner: Option<Option<bool>>,
+    pool_hangs: bool,
 }
 
 struct Outcome {
@@ -143,14 +148,18 @@ struct Outcome {
     hub_stops: usize,
     broker_stops: usize,
     out: String,
+    said: Vec<String>,
 }
 
 async fn run(case: Case) -> Outcome {
     let dir = TempDir::new("upgrade");
     let layout = with_runner(&dir);
-    let roles = FakeRoles::new(false, case.answers);
+    let mut roles = FakeRoles::new(false, case.answers);
+    roles.service_runner = case.service_runner;
+    roles.pool_hangs = case.pool_hangs;
     let lock = lr_cli::upgrade_lock::lock_path(&layout);
     *roles.lock_file.lock().unwrap() = Some(lock.clone());
+    *roles.after_restart.lock().unwrap() = case.after_restart.clone();
     let system = Recorder {
         fail: case.copy_fails,
         ..Recorder::default()
@@ -169,7 +178,7 @@ async fn run(case: Case) -> Outcome {
         new: &new,
         running: &case.running,
         activity: &case.activity,
-        pool: &[],
+        pool: &case.pool,
         yes: case.yes,
         cancel: case.cancel,
         dry_run: case.dry_run,
@@ -210,6 +219,7 @@ async fn run(case: Case) -> Outcome {
         hub_stops,
         broker_stops,
         out,
+        said: roles.said(),
     }
 }
 
@@ -228,6 +238,10 @@ fn case(old: &'static str, new: &'static str) -> Case {
         interrupted: false,
         wait_timeout: None,
         copy_fails: false,
+        pool: Vec::new(),
+        after_restart: Vec::new(),
+        service_runner: None,
+        pool_hangs: false,
     }
 }
 
@@ -288,7 +302,11 @@ async fn an_idle_node_is_only_replaced() {
 fn busy() -> Activity {
     Activity {
         running: vec!["j1 on r1 (tests)".into()],
-        queued: 2,
+        running_jobs: vec![RunningJob {
+            job: "j1".into(),
+            runner: Some("local:r1".into()),
+        }],
+        queued: vec!["j2".into(), "j3".into()],
         note: None,
     }
 }
@@ -632,7 +650,7 @@ fn report_lines_name_runners_still_on_another_version() {
         peer("linux", "ci-1", Some("0.1.0"), true),
         peer("same", "ci-2", Some("0.1.1"), true),
     ];
-    let lines = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false);
+    let lines = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false);
     let all = lines.join("\n");
     assert!(
         all.contains("linux") && all.contains("0.1.0") && all.contains("ci-1"),
@@ -645,9 +663,9 @@ fn report_lines_name_runners_still_on_another_version() {
 #[test]
 fn report_lines_say_a_protocol_change_breaks_them() {
     let pool = [peer("linux", "ci-1", Some("0.1.0"), true)];
-    let all = report_lines(&pool, &v("0.2.0 (protocol 2.0)"), true).join("\n");
+    let all = report_lines(&pool, &[], &v("0.2.0 (protocol 2.0)"), true).join("\n");
     assert!(all.contains("protocol"), "{all}");
-    let quiet = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    let quiet = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false).join("\n");
     assert!(!quiet.contains("protocol"), "{quiet}");
 }
 
@@ -656,7 +674,7 @@ fn report_lines_mark_container_and_offline_runners_manual_step() {
     let mut boxed = peer("box", "172.17.0.2", Some("0.1.0"), true);
     boxed.kind = Kind::Container;
     let pool = [boxed, peer("away", "ci-3", Some("0.1.0"), false)];
-    let all = report_lines(&pool, &v("0.1.1 (protocol 1.0)"), false).join("\n");
+    let all = report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), false).join("\n");
     assert!(all.contains("box") && all.contains("manual step"), "{all}");
     assert!(
         all.contains("away") && all.contains("not updated: offline"),
@@ -667,8 +685,130 @@ fn report_lines_mark_container_and_offline_runners_manual_step() {
 #[test]
 fn no_lines_when_every_runner_is_on_the_new_version() {
     let pool = [peer("a", "m1", Some("0.1.1"), true)];
-    assert!(report_lines(&pool, &v("0.1.1 (protocol 1.0)"), true).is_empty());
-    assert!(report_lines(&[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+    assert!(report_lines(&pool, &[], &v("0.1.1 (protocol 1.0)"), true).is_empty());
+    assert!(report_lines(&[], &[], &v("0.1.1 (protocol 1.0)"), false).is_empty());
+}
+
+fn report_of(o: &Outcome) -> String {
+    let at = o
+        .said
+        .iter()
+        .position(|l| l.starts_with("upgraded to"))
+        .unwrap_or_else(|| panic!("no report in {:?}", o.said));
+    o.said[at..].join("\n")
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restarted_runner_of_this_installation_is_not_reported_as_still_on_the_old_version() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![
+        peer("local:r1", "local:alex", Some("0.1.0"), true),
+        peer("linux", "ci-1", Some("0.1.0"), true),
+    ];
+    c.after_restart = vec![
+        peer("local:r1", "local:alex", Some("0.1.1"), true),
+        peer("linux", "ci-1", Some("0.1.0"), true),
+    ];
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    let said = report_of(&o);
+    assert!(!said.contains("r1"), "{said}");
+    assert!(said.contains("linux on ci-1: still on 0.1.0"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_service_is_not_started_again_nor_waited_for_and_its_restart_is_named() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.service_runner = Some(Some(true));
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), false)];
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    assert_eq!(o.result, Ok(0), "the upgrade itself succeeded");
+    assert!(
+        started.elapsed() < RECONNECT_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(o.started.is_empty(), "no user copy: {:?}", o.started);
+    let said = o.said.join("\n");
+    assert!(
+        said.contains("runner r1 runs as the OS service")
+            && said.contains("restart it as administrator"),
+        "{said}"
+    );
+    assert!(!said.contains("did not reconnect"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_that_did_not_reconnect_is_named() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), false)];
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    assert!(
+        started.elapsed() >= RECONNECT_WITHIN,
+        "{:?}",
+        started.elapsed()
+    );
+    let said = report_of(&o);
+    assert!(said.contains("r1: did not reconnect within 20 s"), "{said}");
+    assert!(!said.contains("still on"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hub_that_does_not_answer_ends_the_reconnect_check_within_the_bound() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.1"), true)];
+    let mut silent = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    silent.pool = c.pool.clone();
+    let started = tokio::time::Instant::now();
+    run(silent).await;
+    let never_back = started.elapsed();
+    c.pool_hangs = true;
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    let took = started.elapsed();
+    assert!(took >= RECONNECT_WITHIN, "{took:?}");
+    assert!(
+        took <= never_back,
+        "a hub that does not answer ends the check like a runner that is not back: {took:?} against {never_back:?}"
+    );
+    let said = report_of(&o);
+    assert!(said.contains("r1: did not reconnect within 20 s"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_back_on_another_version_is_named_with_it() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    let o = run(c).await;
+    let said = report_of(&o);
+    assert!(
+        said.contains("r1: reconnected on version 0.1.0, not 0.1.1"),
+        "{said}"
+    );
+    assert!(!said.contains("did not reconnect"), "{said}");
+}
+
+#[test]
+fn report_lines_name_a_restarted_runner_that_did_not_reconnect() {
+    let new = v("0.1.1 (protocol 1.0)");
+    let lines = report_lines(
+        &[],
+        &[
+            ("r1".to_string(), Reconnected::No),
+            ("r2".to_string(), Reconnected::Yes),
+        ],
+        &new,
+        true,
+    );
+    let all = lines.join("\n");
+    assert!(all.contains("r1: did not reconnect within 20 s"), "{all}");
+    assert!(!all.contains("r2") && !all.contains("protocol"), "{all}");
 }
 
 #[test]
@@ -692,6 +832,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             commands: Default::default(),
             enforcement: None,
             version: Some(version.into()),
+            enforce_limit: false,
         };
         lr_proto::RunnerInfo {
             name: name.into(),
@@ -703,11 +844,18 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             held_tags: Vec::new(),
             services: Vec::new(),
             unmet: Vec::new(),
+            liveness: None,
+            silent_for_s: None,
+            kind: None,
+            pool: None,
+            can_start_now: None,
+            busy: None,
         }
     };
     let got = rows(
         vec![
             info("r1", "local:alex", "0.1.0"),
+            info("local:r1", "local:alex", "0.1.0"),
             info("r1", "ci-9", "0.1.0"),
             info("peer", "ci-1", "0.1.0"),
         ],
@@ -756,4 +904,100 @@ async fn a_busy_second_binary_does_not_make_the_first_one_replaced_again() {
     let applied = system.applied.lock().unwrap().clone();
     assert_eq!(applied.len(), 2, "{applied:?}");
     assert!(applied[0].contains("first") && applied[1].contains("second"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_cancel_lists_the_cancelled_and_the_queued_orders() {
+    let mut c = busy_case();
+    c.cancel = true;
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(o.said.iter().any(|l| l == "cancelling: j1"), "{:?}", o.said);
+    assert!(
+        o.said.iter().any(|l| l == "staying queued: j2, j3"),
+        "{:?}",
+        o.said
+    );
+    let waited = run(busy_case()).await;
+    assert!(
+        !waited.said.iter().any(|l| l.starts_with("cancelling:")),
+        "{:?}",
+        waited.said
+    );
+    let lines = busy().lines().join("\n");
+    assert!(lines.contains("waiting orders: 2"), "{lines}");
+    assert!(lines.contains("j2, j3"), "{lines}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn upgrade_cancel_names_only_the_jobs_of_the_runners_it_stops() {
+    let mut c = busy_case();
+    c.cancel = true;
+    c.activity.running.push("j9 on r7 (tests)".into());
+    c.activity.running_jobs.push(RunningJob {
+        job: "j9".into(),
+        runner: Some("r7".into()),
+    });
+    let o = run(c).await;
+    assert!(o.result.is_ok(), "{:?}", o.result);
+    assert!(o.said.iter().any(|l| l == "cancelling: j1"), "{:?}", o.said);
+    assert!(
+        o.said.iter().any(|l| l == "still running elsewhere: j9"),
+        "{:?}",
+        o.said
+    );
+    let local = run({
+        let mut c = busy_case();
+        c.cancel = true;
+        c
+    })
+    .await;
+    assert!(
+        !local
+            .said
+            .iter()
+            .any(|l| l.starts_with("still running elsewhere")),
+        "{:?}",
+        local.said
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_page_of_the_queue_is_read_and_listed() {
+    let ids: Vec<String> = (1..=120).map(|i| format!("q{i}")).collect();
+    let asked = Mutex::new(Vec::new());
+    let (all, asked_ref) = (&ids, &asked);
+    let read = pages(|cursor: Option<String>| async move {
+        asked_ref.lock().unwrap().push(cursor.clone());
+        let from: usize = cursor.map_or(0, |c| c.parse().unwrap());
+        let to = (from + 50).min(all.len());
+        let next = (to < all.len()).then(|| to.to_string());
+        Ok((all[from..to].to_vec(), next))
+    })
+    .await
+    .unwrap();
+    assert_eq!(read.concat(), ids);
+    assert_eq!(
+        asked.lock().unwrap().clone(),
+        vec![None, Some("50".to_string()), Some("100".to_string())]
+    );
+    let activity = Activity {
+        queued: read.concat(),
+        ..Activity::default()
+    };
+    let lines = activity.cancel_lines(&Default::default());
+    assert_eq!(
+        lines.last().unwrap(),
+        &format!("staying queued: {}", ids.join(", "))
+    );
+    let stuck = pages(|_cursor: Option<String>| async {
+        Ok((vec!["x".to_string()], Some("same".to_string())))
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        stuck.len(),
+        2,
+        "a token that comes back unchanged ends the reading"
+    );
 }

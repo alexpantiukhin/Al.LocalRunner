@@ -8,7 +8,6 @@ use lr_abstractions::{Level, ServiceState};
 use lr_core::{JobId, JobState, StepState};
 use lr_proto::{ReasonCode, RunnerToBroker, WireServiceStatus};
 use lr_runner::Lifetime;
-use std::time::Duration;
 
 fn skipped_steps(msgs: &[RunnerToBroker]) -> Vec<StepState> {
     msgs.iter()
@@ -171,7 +170,7 @@ async fn a_cancel_during_readiness_kills_the_starting_service() {
     let rig = rig_with(db(Lifetime::PerJob));
     rig.process.script(
         JobId("service:db:ready".into()),
-        JobScript::new(vec![StepScript::new(Duration::from_secs(60), 0)]),
+        JobScript::new(vec![StepScript::new(60 * SEC, 0)]),
     );
     let (_c, _h) = rig.start();
     let b = Broker::accept(&rig).await;
@@ -192,7 +191,7 @@ async fn a_starting_service_is_recorded_so_a_crash_leaves_no_orphan() {
     let rig = rig_with(db(Lifetime::PerJob));
     rig.process.script(
         JobId("service:db:ready".into()),
-        JobScript::new(vec![StepScript::new(Duration::from_secs(60), 0)]),
+        JobScript::new(vec![StepScript::new(60 * SEC, 0)]),
     );
     let (_c, _h) = rig.start();
     let b = Broker::accept(&rig).await;

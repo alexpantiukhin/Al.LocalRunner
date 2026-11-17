@@ -161,7 +161,7 @@ async fn slow_wait_watcher_is_disconnected() {
     });
     tokio::spawn(Hub::new(deps).run());
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     let watcher = rig.cli().await;
     watcher.send(CliRequest::Wait { job: job.clone() }).await;
     settle().await;
@@ -203,7 +203,7 @@ async fn broker_that_stops_reading_acks_is_dropped_after_1024_frames_and_rediale
     });
     tokio::spawn(Hub::new(deps).run());
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local.started(&job).await;
     settle().await;
@@ -218,7 +218,7 @@ async fn broker_that_stops_reading_acks_is_dropped_after_1024_frames_and_rediale
     gate.send_replace(true);
     settle().await;
     rig.step(1).await;
-    eventually("redialed", || local.hellos() == 2).await;
+    until(&local, "redialed", || local.hellos() == 2).await;
 }
 
 #[tokio::test]
@@ -237,12 +237,15 @@ async fn replay_beyond_1024_frames_waits_for_the_next_second() {
     for _ in 0..ORDERS {
         cli.submit(submit("unit", None)).await;
     }
-    eventually("every order sent", || local.orders().len() == ORDERS).await;
+    until(&local, "every order sent", || {
+        local.orders().len() == ORDERS
+    })
+    .await;
     gate.send_replace(false);
     local.disconnect().await;
     settle().await;
     rig.step(1).await;
-    eventually("redialed", || local.hellos() == 2).await;
+    until(&local, "redialed", || local.hellos() == 2).await;
     settle().await;
     let deferred = records(
         &rig,
@@ -256,7 +259,10 @@ async fn replay_beyond_1024_frames_waits_for_the_next_second() {
     let replayed = local.orders().len() - ORDERS;
     assert!(replayed < ORDERS, "the replay is held at 1024 frames");
     rig.step(1).await;
-    eventually("the rest replayed", || local.orders().len() == 2 * ORDERS).await;
+    until(&local, "the rest replayed", || {
+        local.orders().len() == 2 * ORDERS
+    })
+    .await;
     assert_eq!(local.hellos(), 2, "deferral does not reconnect");
     assert!(records(&rig, "send queue to broker full, reconnecting").is_empty());
 }
@@ -298,7 +304,7 @@ async fn wait_on_a_job_beyond_the_last_1024_results_is_an_error() {
         cli.send(CliRequest::Done { job: job.clone() }).await;
         jobs.push(job);
     }
-    eventually("all accepted", || local.orders().len() == 1025).await;
+    until(&local, "all accepted", || local.orders().len() == 1025).await;
     settle().await;
     for job in &jobs {
         local.result(job, JobState::Passed, Some(0)).await;
@@ -338,8 +344,8 @@ async fn a_successful_connection_to_a_broker_is_logged_with_its_name_only() {
         Script::linux(lr_core::Zone::Lan),
     );
     rig.start();
-    eventually("hub said hello", || a.hellos() == 1).await;
-    eventually("connection logged", || {
+    until(&a, "hub said hello", || a.hellos() == 1).await;
+    until_log(&rig.log, "connection logged", || {
         !records(&rig, "broker connected").is_empty()
     })
     .await;

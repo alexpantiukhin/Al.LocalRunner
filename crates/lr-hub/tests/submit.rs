@@ -20,7 +20,10 @@ async fn submit_returns_jobid_and_keeps_order_in_outbox_until_accepted() {
         rig.pending().await,
         vec![(job.clone(), 1, OutboxKind::Order)]
     );
-    eventually("order reaches the broker", || local.orders().len() == 1).await;
+    until(&local, "order reaches the broker", || {
+        local.orders().len() == 1
+    })
+    .await;
     let order = &local.orders()[0];
     assert_eq!((order.job.clone(), order.seq), (job.clone(), 1));
     settle().await;
@@ -45,7 +48,10 @@ async fn timeout_trimmed_by_the_broker_policy_is_told_in_the_log_copy() {
     let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Silent));
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("order reaches the broker", || local.orders().len() == 1).await;
+    until(&local, "order reaches the broker", || {
+        local.orders().len() == 1
+    })
+    .await;
     let accepted = BrokerToHub::Accepted(Accepted {
         job: job.clone(),
         order_seq: 1,
@@ -66,7 +72,7 @@ async fn work_tree_order_carries_cwd_profile_and_identity() {
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     let job = rig.cli().await.submit(submit("unit", None)).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
     assert_eq!(spec.profile, "unit");
     assert_eq!(
@@ -102,12 +108,12 @@ async fn platform_order_reads_profile_from_commit_with_repo_url_and_branch() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     rig.cli()
         .await
         .submit(submit("remote", Some("linux")))
         .await;
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     let spec = &lan.orders()[0].spec;
     assert_eq!(
         spec.code,
@@ -132,7 +138,7 @@ async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     let cli = rig.cli().await;
     cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
         .await;
@@ -144,7 +150,7 @@ async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
         "warning: uncommitted changes are ignored: the runner checks out the pushed commit {COMMIT}"
     );
     assert_eq!(warnings, vec![warning.clone()]);
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
     assert!(log.contains(&format!("=== {warning} ===\n")), "{log}");
     rig.repo.set_uncommitted(&repo_root(), false);
@@ -163,7 +169,7 @@ async fn a_failed_uncommitted_check_is_logged_and_does_not_block_the_order() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     let cli = rig.cli().await;
     cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
         .await;
@@ -171,7 +177,7 @@ async fn a_failed_uncommitted_check_is_logged_and_does_not_block_the_order() {
         CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
         other => panic!("{other:?}"),
     }
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     let logs = rig.log_text();
     assert!(
         logs.contains("uncommitted changes not checked") && logs.contains("broken index"),
@@ -185,9 +191,9 @@ async fn single_platform_of_profile_is_used_without_platform_flag() {
     rig.join("lan1").await;
     let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
-    eventually("connected", || lan.resumed()).await;
+    until(&lan, "connected", || lan.resumed()).await;
     rig.cli().await.submit(submit("remote", None)).await;
-    eventually("order sent", || lan.orders().len() == 1).await;
+    until(&lan, "order sent", || lan.orders().len() == 1).await;
     assert_eq!(
         lan.orders()[0].spec.requirements.platform.as_deref(),
         Some("linux")
@@ -227,7 +233,7 @@ async fn timeout_flag_only_lowers_the_profile_timeout() {
     let mut down = submit("unit", None);
     down.timeout_s = Some(30);
     cli.submit(down).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
     assert_eq!(spec.requirements.timeout_s, 30);
     assert_eq!(spec.steps[0].timeout_s, 30);
@@ -273,7 +279,7 @@ async fn handle_and_log_copy_written_in_submitter_directory() {
         a.handle_path.map(std::path::PathBuf::from),
         Some(handle_path(&job))
     );
-    eventually("accepted", || local.orders().len() == 1).await;
+    until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local.started(&job).await;
     local.chunk(&job, "hello from the job\n").await;
@@ -315,7 +321,7 @@ async fn os_user_comes_from_the_ipc_peer_not_the_message() {
     let mut req = submit("unit", None);
     req.identity.os_user = "mallory".into();
     let job = cli.submit(req).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     assert_eq!(local.orders()[0].spec.identity.os_user, "alex");
     assert_eq!(rig.active(&job).await.unwrap().os_user, "alex");
 }
@@ -429,7 +435,7 @@ async fn mem_and_cpu_flags_replace_profile_resources_for_one_run() {
     over.mem_mb = Some(6144);
     over.cpu = Some(4);
     cli.submit(over).await;
-    eventually("orders sent", || local.orders().len() == 2).await;
+    until(&local, "orders sent", || local.orders().len() == 2).await;
     let plain = &local.orders()[0].spec;
     assert_eq!(
         (plain.requirements.mem_mb, plain.requirements.cpu),
@@ -473,7 +479,7 @@ async fn mem_flag_may_lower_the_profile_value() {
     let mut low = submit("unit", None);
     low.mem_mb = Some(512);
     rig.cli().await.submit(low).await;
-    eventually("order sent", || local.orders().len() == 1).await;
+    until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
     assert_eq!(spec.requirements.mem_mb, 512);
     assert_eq!(spec.overrides.mem_mb, Some(512));

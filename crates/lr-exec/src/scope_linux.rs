@@ -1,4 +1,4 @@
-use lr_abstractions::{Enforce, ResourceLimits};
+use lr_abstractions::ResourceLimits;
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, Once, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::process::Command;
 
-use crate::limits::MemoryEvidence;
+use crate::limits::{MemoryEvidence, MemoryHold};
 
 const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 const UNIT_PREFIX: &str = "lr-";
@@ -154,30 +154,6 @@ pub(crate) fn memory_delegated() -> bool {
     systemd_blocking().is_some_and(|s| s.controllers.iter().any(|c| c == "memory"))
 }
 
-/// The `systemd-run -p` properties for `limits` given the controllers available: the hard
-/// memory limit sits above the ceiling the watcher enforces, so the watcher ends the job with
-/// the proper reason first.
-pub(crate) fn properties(limits: &ResourceLimits, controllers: &[String]) -> Vec<String> {
-    let has = |name: &str| controllers.iter().any(|c| c == name);
-    let mut out = Vec::new();
-    if limits.mode == Enforce::Off {
-        return out;
-    }
-    if let (Enforce::Kill, Some(mem), true) = (limits.mode, limits.mem_mb, has("memory")) {
-        let bytes = crate::limits::bytes_of(crate::limits::backstop_mb(mem));
-        out.push(format!("MemoryMax={bytes}"));
-        out.push("MemorySwapMax=0".to_string());
-        out.push("OOMPolicy=continue".to_string());
-    }
-    if let (Some(millis), true) = (limits.cpu_millis, has("cpu")) {
-        out.push(format!("CPUQuota={}%", (millis / 10).max(1)));
-    }
-    if let (Some(procs), true) = (limits.procs, has("pids")) {
-        out.push(format!("TasksMax={}", procs.max(1)));
-    }
-    out
-}
-
 fn procs(dir: &Path) -> io::Result<Vec<u32>> {
     let text = std::fs::read_to_string(dir.join("cgroup.procs"))?;
     Ok(text.lines().filter_map(|l| l.trim().parse().ok()).collect())
@@ -197,6 +173,7 @@ pub(crate) fn job_owns_bus(job_vars: &[&str]) -> bool {
 pub(crate) struct Scope {
     dir: PathBuf,
     cpu_capped: bool,
+    hold: MemoryHold,
     evidence: Arc<Mutex<MemoryEvidence>>,
     stop: Arc<AtomicBool>,
 }
@@ -207,23 +184,24 @@ impl Drop for Scope {
     }
 }
 
-/// The `(oom_kill, max)` counters of a `memory.events` text.
-pub(crate) fn event_counters(text: &str) -> (u64, u64) {
+/// The `(oom_kill, max, high)` counters of a `memory.events` text.
+pub(crate) fn event_counters(text: &str) -> (u64, u64, u64) {
     let get = |key: &str| {
         text.lines()
             .find_map(|l| l.strip_prefix(key)?.strip_prefix(' '))
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(0)
     };
-    (get("oom_kill"), get("max"))
+    (get("oom_kill"), get("max"), get("high"))
 }
 
 fn remember(seen: &Mutex<MemoryEvidence>, dir: &Path, events: Option<&str>) {
     let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(text) = events {
-        let (kills, max) = event_counters(text);
+        let (kills, max, high) = event_counters(text);
         seen.oom_kills = seen.oom_kills.max(kills);
         seen.max_events = seen.max_events.max(max);
+        seen.high_events = seen.high_events.max(high);
     }
     if let Ok(text) = std::fs::read_to_string(dir.join("memory.peak")) {
         if let Ok(bytes) = text.trim().parse::<u64>() {
@@ -297,7 +275,7 @@ impl Scope {
         let mut cmd = Command::new(&systemd.exe);
         cmd.args(["--user", "--scope", "--quiet", "--collect"])
             .arg(format!("--unit={unit}"));
-        let props = properties(limits, &systemd.controllers);
+        let props = crate::limits::scope_properties(limits, &systemd.controllers);
         for prop in &props {
             cmd.arg("-p").arg(prop);
         }
@@ -314,6 +292,7 @@ impl Scope {
         let cpu_capped = props.iter().any(|p| p.starts_with("CPUQuota="));
         let mut scope = Scope::bare(dir);
         scope.cpu_capped = cpu_capped;
+        scope.hold = crate::limits::scope_hold(&props);
         Some((cmd, extra, scope))
     }
 
@@ -333,6 +312,7 @@ impl Scope {
         Scope {
             dir,
             cpu_capped: false,
+            hold: MemoryHold::Unheld,
             evidence: Arc::default(),
             stop: Arc::default(),
         }
@@ -365,6 +345,10 @@ impl Scope {
     /// Whether a CPU quota was requested for the scope.
     pub(crate) fn cpu_capped(&self) -> bool {
         self.cpu_capped
+    }
+
+    pub(crate) fn memory_hold(&self) -> MemoryHold {
+        self.hold
     }
 
     /// Sends `sig` to every process of the scope; `SIGKILL` goes through `cgroup.kill` where
@@ -423,10 +407,10 @@ mod tests {
 
     #[test]
     fn the_counters_are_read_from_memory_events() {
-        let text = "low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\noom_group_kill 0\n";
-        assert_eq!(event_counters(text), (2, 3));
-        assert_eq!(event_counters("max 3\n"), (0, 3));
-        assert_eq!(event_counters("oom_kill x\nmaxx 4\n"), (0, 0));
+        let text = "low 0\nhigh 5\nmax 3\noom 1\noom_kill 2\noom_group_kill 0\n";
+        assert_eq!(event_counters(text), (2, 3, 5));
+        assert_eq!(event_counters("max 3\n"), (0, 3, 0));
+        assert_eq!(event_counters("oom_kill x\nmaxx 4\nhighx 1\n"), (0, 0, 0));
     }
 
     #[test]
@@ -448,32 +432,5 @@ mod tests {
     fn a_scope_that_never_came_up_is_empty() {
         let scope = Scope::bare(PathBuf::from("/sys/fs/cgroup/no-such-lr-scope.scope"));
         assert_eq!(scope.is_empty(), Some(true));
-    }
-
-    #[test]
-    fn properties_follow_the_mode_and_the_controllers() {
-        let all: Vec<String> = ["memory", "cpu", "pids"].map(String::from).to_vec();
-        let mut limits = ResourceLimits {
-            mem_mb: Some(1000),
-            cpu_millis: Some(4000),
-            procs: Some(64),
-            mode: Enforce::Kill,
-            ..ResourceLimits::default()
-        };
-        assert_eq!(
-            properties(&limits, &all),
-            [
-                "MemoryMax=1153433600",
-                "MemorySwapMax=0",
-                "OOMPolicy=continue",
-                "CPUQuota=400%",
-                "TasksMax=64"
-            ]
-        );
-        assert_eq!(properties(&limits, &["pids".to_string()]), ["TasksMax=64"]);
-        limits.mode = Enforce::Warn;
-        assert_eq!(properties(&limits, &all), ["CPUQuota=400%", "TasksMax=64"]);
-        limits.mode = Enforce::Off;
-        assert!(properties(&limits, &all).is_empty());
     }
 }

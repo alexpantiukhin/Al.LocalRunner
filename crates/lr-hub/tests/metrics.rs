@@ -11,7 +11,7 @@ async fn outbox_is_sampled_at_start_and_every_period_with_role_only() {
     rig.local = true;
     rig.start();
     let meter = rig.meter.clone();
-    eventually("first sample", || {
+    until_meter(&meter, "first sample", || {
         meter.gauge(OUTBOX_PENDING, HUB) == Some(0.0)
     })
     .await;
@@ -26,7 +26,7 @@ async fn outbox_is_sampled_at_start_and_every_period_with_role_only() {
         "not sampled yet"
     );
     rig.step(1).await;
-    eventually("backlog sampled", || {
+    until_meter(&meter, "backlog sampled", || {
         meter.gauge(OUTBOX_PENDING, HUB) == Some(1.0)
     })
     .await;

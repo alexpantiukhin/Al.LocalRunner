@@ -1,6 +1,7 @@
 use super::{Engine, Role};
 use crate::api::{access, mask_event, topic_of, Access, Viewer};
 use lr_proto::{BrokerToHub, EventMsg, QueueEvent};
+use tokio::sync::broadcast;
 
 /// A change on the broker's bus: the event and the client key of the run it is about (`None`
 /// for runner events). Subscribers filter it by the visibility policy.
@@ -10,6 +11,19 @@ pub struct BusEvent {
     pub client: Option<String>,
     /// What happened.
     pub event: QueueEvent,
+}
+
+/// Where the broker's bus can be subscribed to, also while [`crate::Broker::run`] runs: it
+/// holds no subscription itself, each [`BusEvents::subscribe`] receives changes from that
+/// moment on.
+#[derive(Clone)]
+pub struct BusEvents(pub(crate) broadcast::Sender<BusEvent>);
+
+impl BusEvents {
+    /// Receives every change of jobs and runners from now on.
+    pub fn subscribe(&self) -> broadcast::Receiver<BusEvent> {
+        self.0.subscribe()
+    }
 }
 
 impl Engine {

@@ -56,8 +56,25 @@ fn limits_keys_are_parsed() {
 }
 
 #[test]
+fn the_limit_mode_is_parsed() {
+    let s = parse("[limits]\nenforce = \"limit\"\n").unwrap();
+    assert_eq!(s.enforce, Some(Enforce::Limit));
+}
+
+#[test]
+fn the_runner_announces_that_it_understands_limit() {
+    let s = parse("").unwrap();
+    assert!(s.capabilities(None).enforce_limit);
+}
+
+#[test]
 fn bad_limits_keys_are_refused() {
     assert!(refused("[limits]\nenforce = \"stop\"\n").contains("enforce"));
+    let hold = refused("[limits]\nenforce = \"hold\"\n");
+    assert!(
+        hold.contains("\"off\", \"warn\", \"limit\" or \"kill\""),
+        "{hold}"
+    );
     assert!(refused("[limits]\nmem_headroom = 0.5\n").contains("mem_headroom"));
     assert!(refused("[limits]\ndisk_headroom = 1000.0\n").contains("disk_headroom"));
 }

@@ -6,8 +6,8 @@ use lr_abstractions::fakes::{
     MemorySecrets,
 };
 use lr_abstractions::{
-    BrokerStore, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
-    PeerAccess, Transport,
+    BrokerStore, Clock, Dialer, Frame, Join, JoinCodeRow, Listener, MachineKind, MachineRow, Peer,
+    PeerAccess, RunnerState, Transport,
 };
 use lr_broker::policy::{ActivePolicy, HostResources};
 use lr_broker::{Broker, BrokerDeps, BrokerHandle, BusEvent, ExactLocalUsers};
@@ -18,7 +18,7 @@ use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 pub const START: u64 = 1_700_000_000_000;
 pub const ADDR: &str = "broker";
@@ -30,6 +30,36 @@ const HOST_RES: HostResources = HostResources {
     cpu: 32,
 };
 const WAIT: Duration = Duration::from_secs(5);
+const HANG: Duration = Duration::from_secs(20);
+
+pub async fn until_changed<Fut: std::future::Future<Output = bool>>(
+    mut changes: watch::Receiver<u64>,
+    what: &str,
+    mut cond: impl FnMut() -> Fut,
+) {
+    let wait = async {
+        loop {
+            if cond().await {
+                return;
+            }
+            changes
+                .changed()
+                .await
+                .expect("the source of changes is gone");
+        }
+    };
+    if tokio::time::timeout(HANG, wait).await.is_err() {
+        panic!("never happened: {what}");
+    }
+}
+
+pub async fn until_meter(meter: &MemoryMeter, what: &str, mut cond: impl FnMut() -> bool) {
+    until_changed(meter.changes(), what, || std::future::ready(cond())).await;
+}
+
+pub async fn until_log(log: &MemoryLogSink, what: &str, mut cond: impl FnMut() -> bool) {
+    until_changed(log.changes(), what, || std::future::ready(cond())).await;
+}
 
 pub fn policy(extra: &str) -> String {
     format!("{POOL}{USERS}{extra}")
@@ -252,6 +282,24 @@ impl Harness {
         c.welcome().await;
     }
 
+    pub async fn heartbeat(&self, runner: &Conn, name: &str) {
+        let at = self.clock.now();
+        runner.send(&RunnerToBroker::Heartbeat { load: None }).await;
+        until_changed(
+            self.faults.changes(),
+            "the heartbeat is recorded",
+            || async {
+                self.faults.runners().await.is_ok_and(|rows| {
+                    rows.iter().any(|r| {
+                        r.name == name && r.last_seen == Some(at) && r.state == RunnerState::Online
+                    })
+                })
+            },
+        )
+        .await;
+        self.poke().await;
+    }
+
     pub async fn until_state(
         &self,
         client: &str,
@@ -383,7 +431,7 @@ impl Conn {
 
     pub async fn until_runner(&mut self, name: &str, online: bool) {
         for _ in 0..200 {
-            if let ReadReply::Runners { runners } = self.read(ReadRequest::Runners).await {
+            if let ReadReply::Runners { runners, .. } = self.read(ReadRequest::Runners).await {
                 if runners.iter().any(|r| r.name == name && r.online == online) {
                     return;
                 }

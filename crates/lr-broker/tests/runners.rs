@@ -290,3 +290,147 @@ async fn unknown_message_type_of_a_newer_minor_version_is_skipped() {
     let before = hub.sync().await;
     assert!(before.is_empty(), "{before:?}");
 }
+
+async fn until_liveness(hub: &mut Conn, name: &str, want: RunnerLiveness) -> RunnerInfo {
+    for _ in 0..200 {
+        if let ReadReply::Runners { runners, .. } = hub.read(ReadRequest::Runners).await {
+            if let Some(r) = runners
+                .into_iter()
+                .find(|r| r.name == name && r.liveness == Some(want))
+            {
+                return r;
+            }
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("runner {name} never became {want:?}");
+}
+
+async fn reconnect_with_replay(h: &Harness, name: &str, addr: &str) -> Conn {
+    let mut c = h.dial(member_peer(&format!("pk-{name}"), addr)).await;
+    c.send(&hello(name, Some(linux()))).await;
+    c.welcome().await;
+    c.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
+        .await;
+    c
+}
+
+#[tokio::test]
+async fn a_runner_that_only_reconnects_without_heartbeats_turns_stale_then_offline() {
+    let h = Harness::start("");
+    let mut conn = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Online).await;
+    assert_eq!(info.silent_for_s, Some(0));
+    for _ in 0..3 {
+        h.clock.advance(Duration::from_secs(10));
+        hub.send(&HubToBroker::Heartbeat).await;
+        conn = reconnect_with_replay(&h, "r1", "10.0.0.7").await;
+    }
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    assert_eq!(info.silent_for_s, Some(30));
+    assert!(info.online);
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    conn.quiet().await;
+    for _ in 0..2 {
+        h.clock.advance(Duration::from_secs(10));
+        hub.send(&HubToBroker::Heartbeat).await;
+        conn = reconnect_with_replay(&h, "r1", "10.0.0.7").await;
+    }
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Offline).await;
+    assert_eq!(info.silent_for_s, Some(50));
+    assert!(!info.online);
+    conn.quiet().await;
+}
+
+#[tokio::test]
+async fn a_heartbeat_counts_as_being_heard() {
+    let h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    h.clock.advance(Duration::from_secs(25));
+    hub.send(&HubToBroker::Heartbeat).await;
+    until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    let info = until_liveness(&mut hub, "r1", RunnerLiveness::Online).await;
+    assert_eq!(info.silent_for_s, Some(0));
+}
+
+#[tokio::test]
+async fn a_stale_runner_is_not_given_an_order() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    h.clock.advance(Duration::from_secs(25));
+    hub.send(&HubToBroker::Heartbeat).await;
+    until_liveness(&mut hub, "r1", RunnerLiveness::Stale).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    r.quiet().await;
+    r.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    assert_eq!(r.assign().await.job, lr_core::JobId("j1".into()));
+}
+
+fn declares_service(service_mb: u64) -> WireCapabilities {
+    let mut c = linux();
+    c.mem_mb = 65536;
+    c.services
+        .insert("build-daemon".into(), WireServiceStatus::Available);
+    c.service_mem_mb.insert("build-daemon".into(), service_mb);
+    c
+}
+
+#[tokio::test]
+async fn a_warm_service_on_a_stale_runner_does_not_make_an_order_look_cheaper() {
+    let h = Harness::start("[[rule]]\nname = \"small\"\nquota = { max_mem_mb = 6000 }\n");
+    let mut r1 = h
+        .member_runner("r1", "10.0.0.7", declares_service(4096))
+        .await;
+    let warm = h
+        .member_runner("r2", "10.0.0.8", declares_service(4096))
+        .await;
+    warm.send(&RunnerToBroker::ServicesReport(ServicesReport {
+        services: vec![ServiceReport {
+            name: "build-daemon".into(),
+            state: ServiceState::Idle,
+            mem_mb: 4096,
+            remaining_s: Some(600),
+        }],
+    }))
+    .await;
+    let mut r3 = h
+        .member_runner("r3", "10.0.0.9", declares_service(4096))
+        .await;
+    let mut hub = h.local_hub("alex").await;
+    h.clock.advance(Duration::from_secs(25));
+    r1.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    r3.send(&RunnerToBroker::Heartbeat { load: None }).await;
+    hub.send(&HubToBroker::Heartbeat).await;
+    until_liveness(&mut hub, "r2", RunnerLiveness::Stale).await;
+    until_liveness(&mut hub, "r1", RunnerLiveness::Online).await;
+    until_liveness(&mut hub, "r3", RunnerLiveness::Online).await;
+
+    hub.send(&order("j0", req(1000, 1, 600))).await;
+    assert_eq!(hub.accepted().await.waiting, None);
+    let first = tokio::select! {
+        a = r1.assign() => (a, 1),
+        a = r3.assign() => (a, 3),
+    };
+    assert_eq!(first.0.job, lr_core::JobId("j0".into()));
+
+    let mut j1 = req(1500, 1, 600);
+    j1.services = vec!["build-daemon".into()];
+    hub.send(&order("j1", j1)).await;
+    let waiting = hub
+        .accepted()
+        .await
+        .waiting
+        .expect("j1 with its cold service exceeds the quota");
+    assert!(waiting.contains("small"), "{waiting}");
+    if first.1 == 1 {
+        r3.quiet().await;
+    } else {
+        r1.quiet().await;
+    }
+}

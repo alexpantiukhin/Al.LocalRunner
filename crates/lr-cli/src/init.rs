@@ -104,8 +104,9 @@ pub fn runner_template(path: Option<&str>, home: Option<&str>) -> String {
             .to_string(),
     };
     format!(
-        "# Runner settings (spec 3.10). Each runner copies this template into\n\
-         # runner/<name>/runner.toml when it joins; the file there wins.\n\
+        "# Runner settings (spec 3.10). `runner join` copies this template into\n\
+         # `runner/<name>/runner.toml`, and that copy wins; a runner that never joined\n\
+         # reads this file.\n\
          \n\
          # name = \"linux-heavy\"          # default: --name, else the host name\n\
          # platforms = [\"linux\"]\n\

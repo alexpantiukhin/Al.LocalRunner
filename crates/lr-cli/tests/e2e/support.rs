@@ -1,4 +1,5 @@
 use crate::common::{self, TempDir};
+use lr_broker::BusEvent;
 use lr_cli::commands::history_cmd::fetch_history;
 use lr_cli::commands::jobs::hub;
 use lr_cli::commands::read_cmd::fetch_runners;
@@ -7,12 +8,13 @@ use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_core::{Identity, JobId, JobState};
 use lr_proto::{
-    CliReply, CliRequest, HistoryFilter, JobSummary, ReadReply, ReadRequest, ReasonCode,
-    RunnerInfo, StatusFilter, StatusView, SubmitRequest,
+    CliReply, CliRequest, HistoryFilter, JobSummary, QueueEvent, ReadReply, ReadRequest,
+    ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
 };
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::sync::broadcast::{error::RecvError, Receiver};
 
 pub const LABEL: &str = "e2e";
 pub const SECRET_NAME: &str = "e2e_token";
@@ -80,13 +82,40 @@ pub fn toml_str(text: &str) -> String {
     toml::Value::String(text.to_string()).to_string()
 }
 
-/// Polls `probe` until it gives a value; panics after `limit`.
+pub use crate::common::hub_events::{until_hub, HANG};
+
+/// Waits for the first broker event that `pick` turns into a value.
+pub async fn broker_event<T>(
+    events: &mut Receiver<BusEvent>,
+    what: &str,
+    mut pick: impl FnMut(&QueueEvent) -> Option<T>,
+) -> T {
+    let seen = async {
+        loop {
+            match events.recv().await {
+                Ok(e) => {
+                    if let Some(v) = pick(&e.event) {
+                        return v;
+                    }
+                }
+                Err(RecvError::Lagged(n)) => panic!("{n} broker events lost waiting for {what}"),
+                Err(RecvError::Closed) => panic!("the broker stopped before {what}"),
+            }
+        }
+    };
+    tokio::time::timeout(HANG, seen)
+        .await
+        .unwrap_or_else(|_| panic!("no broker event for {what}"))
+}
+
+/// Polls `probe` until it gives a value; panics after `limit`. Only for what no role signals:
+/// the files and the port a stopped role's detached tasks let go of.
 pub async fn eventually<T, F, Fut>(what: &str, limit: Duration, mut probe: F) -> T
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
 {
-    let started = Instant::now();
+    let started = std::time::Instant::now();
     loop {
         if let Some(v) = probe().await {
             return v;
@@ -94,6 +123,35 @@ where
         assert!(started.elapsed() < limit, "timed out waiting for {what}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+/// Reads the output of `job` on `client` until it holds `text`; the broker stores a chunk,
+/// and the hub writes it to its copy of the log, before passing it on.
+pub async fn until_output(client: &IpcClient, job: &JobId, text: &str) -> String {
+    let mut output = String::new();
+    let seen = async {
+        while !output.contains(text) {
+            match client.recv::<CliReply>().await.expect("hub answer") {
+                CliReply::Output { job: j, text } if &j == job => output.push_str(&text),
+                CliReply::Exit { .. } => panic!("job {job} ended before printing {text}"),
+                _ => {}
+            }
+        }
+    };
+    if tokio::time::timeout(HANG, seen).await.is_err() {
+        panic!("job {job} did not print {text}");
+    }
+    output
+}
+
+/// A channel of the hub of `layout` that follows `job` to its end.
+pub async fn follow(layout: &Layout, job: &JobId) -> IpcClient {
+    let client = hub(layout).await.expect("hub channel");
+    client
+        .send(&CliRequest::Wait { job: job.clone() })
+        .await
+        .expect("wait");
+    client
 }
 
 /// Submits `profile` from `repo` through the hub of `layout`; the channel stays open to follow
@@ -221,19 +279,16 @@ pub async fn runners(layout: &Layout) -> Option<Vec<RunnerInfo>> {
     Some(fetched?.0.into_iter().flat_map(|(_, r)| r).collect())
 }
 
-/// Waits until a runner whose name ends with `name` is online.
+/// Waits until the hub of `layout` reaches a broker and a runner whose name ends with `name`
+/// is online there.
 pub async fn runner_online(layout: &Layout, name: &str) -> RunnerInfo {
-    eventually(
-        &format!("runner {name} online"),
-        Duration::from_secs(60),
-        || async {
-            broker_available(layout).await?;
-            runners(layout)
-                .await?
-                .into_iter()
-                .find(|r| r.online && r.name.ends_with(name))
-        },
-    )
+    until_hub(layout, &format!("runner {name} online"), || async {
+        broker_available(layout).await?;
+        runners(layout)
+            .await?
+            .into_iter()
+            .find(|r| r.online && r.name.ends_with(name))
+    })
     .await
 }
 
@@ -286,32 +341,18 @@ pub async fn try_history(layout: &Layout, mine: bool) -> Result<Vec<JobSummary>,
     Ok(per.into_iter().flat_map(|(_, jobs)| jobs).collect())
 }
 
-/// Waits until the helper of `role` has written its pid under `pids`.
-pub async fn helper_pid(pids: &Path, role: &str) -> u32 {
-    eventually(
-        &format!("the {role} helper to start"),
-        Duration::from_secs(30),
-        || async { crate::helper::recorded_pid(pids, role) },
-    )
-    .await
-}
-
-/// Removes the test directory once the stopped roles and job processes let go of it: their
-/// tasks end after the abort, so files can stay open for a moment (Windows refuses to delete
-/// open files).
+/// Removes the test directory once the stopped roles let go of it. The helpers are released
+/// before, but a stopped hub's detached tasks (its broker links) keep its database open until
+/// they notice and give no signal when they end (Windows refuses to delete open files).
 pub async fn remove(dir: TempDir) {
     let root = dir.path().parent().unwrap().to_path_buf();
-    eventually(
-        "the test directory to be removed",
-        Duration::from_secs(20),
-        || {
-            let gone = match std::fs::remove_dir_all(&root) {
-                Ok(()) => true,
-                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-            };
-            async move { gone.then_some(()) }
-        },
-    )
+    eventually("the test directory to be removed", HANG, || {
+        let gone = match std::fs::remove_dir_all(&root) {
+            Ok(()) => true,
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        };
+        async move { gone.then_some(()) }
+    })
     .await;
     drop(dir);
 }

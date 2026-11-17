@@ -10,6 +10,10 @@ pub fn read_requests() -> Vec<ReadRequest> {
             label: Some("l".into()),
             limit: Some(10),
             cursor: Some("c1".into()),
+            recent: Some(RecentFilter {
+                count: Some(10),
+                since: Some(Timestamp(7)),
+            }),
         }),
         ReadRequest::History(HistoryFilter {
             client: Some("k".into()),
@@ -70,7 +74,11 @@ pub fn read_replies() -> Vec<ReadReply> {
                 wait_reason: Some("runner busy".into()),
                 wait_code: None,
             }],
-            recent: vec![summary()],
+            recent: vec![JobSummary {
+                state: JobState::Cancelled,
+                cancelled_by: Some("upgrade".into()),
+                ..summary()
+            }],
             pool: PoolLoad {
                 used_mem_mb: 1,
                 total_mem_mb: 2,
@@ -104,6 +112,7 @@ pub fn read_replies() -> Vec<ReadReply> {
         ReadReply::Stats(stats()),
         ReadReply::Runners {
             runners: vec![runner_info()],
+            pools: vec![],
         },
         ReadReply::Subscribed { sub: 4 },
         ReadReply::Unsubscribed { sub: 4 },

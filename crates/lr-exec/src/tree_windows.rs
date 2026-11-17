@@ -1,4 +1,4 @@
-use crate::limits::MemoryEvidence;
+use crate::limits::{job_object_hold, MemoryEvidence, MemoryHold};
 use crate::limits_windows::{apply, peak_job_mb};
 use crate::os_windows::handle_start;
 use lr_abstractions::ResourceLimits;
@@ -28,6 +28,7 @@ pub(crate) struct Tree {
     job: HANDLE,
     pid: u32,
     start: Option<u64>,
+    hold: MemoryHold,
 }
 
 unsafe impl Send for Tree {}
@@ -79,6 +80,7 @@ impl Tree {
                 job,
                 pid,
                 start: handle_start(process),
+                hold: job_object_hold(limits),
             };
             if apply(job, limits).is_err() || AssignProcessToJobObject(job, process) == 0 {
                 return Err(io::Error::last_os_error());
@@ -95,6 +97,10 @@ impl Tree {
     pub(crate) fn observe(&self) {}
 
     pub(crate) fn refresh_memory_evidence(&self) {}
+
+    pub(crate) fn memory_hold(&self) -> MemoryHold {
+        self.hold
+    }
 
     pub(crate) fn memory_evidence(&self) -> MemoryEvidence {
         MemoryEvidence::default()

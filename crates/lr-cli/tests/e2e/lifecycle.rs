@@ -1,5 +1,4 @@
 use crate::common::TempDir;
-use crate::helper::{helper_command, Mode};
 use crate::kit::*;
 use crate::support::*;
 use lr_cli::commands::down_cmd::down;
@@ -12,9 +11,6 @@ use lr_proto::{ReasonCode, RejectReason};
 use lr_runner::AgentExit;
 use std::path::Path;
 use std::sync::Mutex;
-use std::time::Duration;
-
-const ENDS: Duration = Duration::from_secs(90);
 
 fn file_exists_check(path: &Path) -> String {
     if cfg!(windows) {
@@ -24,34 +20,29 @@ fn file_exists_check(path: &Path) -> String {
     }
 }
 
-fn warm_service_toml(dir: &Path, gate: &Path) -> String {
-    let pids = pid_file(dir, "svc");
-    let child = dir.join("svc.pid.child");
+fn warm_service_toml(dir: &Path, gate: &Gate) -> String {
+    let ready = dir.join("svc.ready");
     format!(
         "{}\n[service.svc]\nstart = {}\nready_check = {}\nstop = \"exit 0\"\n\
          ready_timeout_s = 60\nstop_timeout_s = 1\nmemory_mb = 64\nlifetime = \"keep\"\n\
          max_lifetime_s = 600\n",
         runner_toml(),
-        toml_str(&helper_command(Mode::Tree, &pids, gate)),
-        toml_str(&file_exists_check(&child)),
+        toml_str(&gate.command_with(Mode::Tree, "svc", Some(&ready))),
+        toml_str(&file_exists_check(&ready)),
     )
 }
 
 async fn exits(runner: Running) -> Vec<AgentExit> {
-    tokio::time::timeout(ENDS, runner.wait())
+    tokio::time::timeout(HANG, runner.wait())
         .await
         .expect("the runner ends")
 }
 
 async fn offline(layout: &Layout, name: &str) {
-    eventually(
-        &format!("{name} offline"),
-        Duration::from_secs(60),
-        || async {
-            let all = runners(layout).await?;
-            (!all.iter().any(|r| r.online && r.name.ends_with(name))).then_some(())
-        },
-    )
+    until_hub(layout, &format!("{name} offline"), || async {
+        let all = runners(layout).await?;
+        (!all.iter().any(|r| r.online && r.name.ends_with(name))).then_some(())
+    })
     .await;
 }
 
@@ -59,78 +50,69 @@ async fn offline(layout: &Layout, name: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn drain_finishes_the_job_stops_services_then_says_bye() {
     let dir = TempDir::new("e2e-drain");
-    let gate = dir.path().join("gate");
-    let svc_gate = dir.path().join("svc-gate");
-    let mut release = Release::new(&[&gate, &svc_gate]);
+    let gate = Gate::new().await;
+    let svc_gate = Gate::new().await;
+    let release = Release::new(&[&gate, &svc_gate]);
     let toml = warm_service_toml(dir.path(), &svc_gate);
     let (main, mut roles) = machine(&dir, "main", "", &["r1"], &toml).await;
     let profiles = format!(
         "{}\n{}\n{}",
-        held_profile(
-            "work",
-            dir.path(),
-            &gate,
-            120,
-            "mem_mb = 64\nservices = [\"svc\"]\n"
-        ),
+        held_profile("work", &gate, 120, "mem_mb = 64\nservices = [\"svc\"]\n"),
         echo_profile("late", "never-runs", 60, "mem_mb = 64\n"),
-        held_profile("hold", dir.path(), &gate, 120, "mem_mb = 64\n"),
+        held_profile("hold", &gate, 120, "mem_mb = 64\n"),
     );
     let repo = repo(&dir, &profiles);
 
     let (work_client, work) = submit(&main, &repo, "work", None).await;
     let service = [
-        started(dir.path(), "svc", "child").await,
-        started(dir.path(), "svc", "grandchild").await,
+        svc_gate.started("svc", "child").await,
+        svc_gate.started("svc", "grandchild").await,
     ];
-    for p in service {
-        release.watch(p);
-    }
-    let step = started(dir.path(), "work", "child").await;
-    release.watch(step);
+    let processes = [service[0].process(), service[1].process()];
+    gate.started("work", "child").await;
 
     assert_eq!(down(&main, vec!["r1".into()], false).await, Ok(0));
     let (late_client, late) = submit(&main, &repo, "late", None).await;
-    let (code, detail) = until_rejected(late_client, &late, ENDS).await;
+    let (code, detail) = until_rejected(late_client, &late, HANG).await;
     assert_eq!(
         code,
         ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),
         "a draining runner takes no new order: {detail}"
     );
     assert!(
-        service.iter().all(|&(p, s)| alive(p, s)),
+        processes.iter().all(|&p| alive(p)),
         "the service lives while the job runs"
     );
 
-    open(&gate);
-    let ended = until_exit(work_client, &work, ENDS).await;
+    gate.open();
+    let ended = until_exit(work_client, &work, HANG).await;
     assert_eq!(
         ended.state,
         JobState::Passed,
         "the job is finished: {ended:?}"
     );
-    gone("the warm service to be stopped", &service).await;
+    for p in &service {
+        p.gone("the warm service to be stopped").await;
+    }
     let bye = exits(roles.take_last()).await;
     assert!(matches!(bye.as_slice(), [AgentExit::Stopped]), "{bye:?}");
     offline(&main, "r1").await;
 
-    std::fs::remove_file(&gate).unwrap();
     let again = start_runners(&main, Some("r1"), 1, None, false)
         .await
         .expect("r1 starts again");
     runner_online(&main, "r1").await;
     let (hold_client, hold) = submit(&main, &repo, "hold", None).await;
-    let held = started(dir.path(), "hold", "child").await;
-    release.watch(held);
+    let held = gate.started("hold", "child").await;
     assert_eq!(down(&main, vec!["r1".into()], true).await, Ok(0));
-    let cancelled = until_exit(hold_client, &hold, ENDS).await;
+    let cancelled = until_exit(hold_client, &hold, HANG).await;
     assert_eq!(cancelled.state, JobState::Cancelled, "{cancelled:?}");
     assert_eq!(
         cancelled.reason,
         Some(ReasonCode::RunnerStopped),
         "{cancelled:?}"
     );
-    gone("the cancelled job tree", &[held]).await;
+    held.gone("the cancelled job tree").await;
     let bye = exits(again).await;
     assert!(matches!(bye.as_slice(), [AgentExit::Stopped]), "{bye:?}");
     offline(&main, "r1").await;
@@ -161,8 +143,8 @@ fn remove_when_closed(dir: &Path) -> Result<(), String> {
     loop {
         match std::fs::remove_dir_all(dir) {
             Ok(()) => return Ok(()),
-            Err(e) if started.elapsed() > Duration::from_secs(20) => return Err(e.to_string()),
-            Err(_) => std::thread::sleep(Duration::from_millis(100)),
+            Err(e) if started.elapsed() > HANG => return Err(e.to_string()),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
         }
     }
 }
@@ -174,18 +156,10 @@ fn schema_version(db: &Path) -> u32 {
         .unwrap()
 }
 
-async fn sql(db: &Path, batch: &str) {
-    eventually(
-        &format!("{} to be free", db.display()),
-        Duration::from_secs(30),
-        || {
-            let done = rusqlite::Connection::open(db)
-                .and_then(|c| c.execute_batch(batch))
-                .is_ok();
-            async move { done.then_some(()) }
-        },
-    )
-    .await;
+fn sql(db: &Path, batch: &str) {
+    rusqlite::Connection::open(db)
+        .and_then(|c| c.execute_batch(batch))
+        .unwrap_or_else(|e| panic!("{}: {e}", db.display()));
 }
 
 async fn start_all(layout: &Layout) -> [Running; 3] {
@@ -200,7 +174,7 @@ async fn start_all(layout: &Layout) -> [Running; 3] {
 
 async fn passes(layout: &Layout, repo: &Path, profile: &str) {
     let (client, job) = submit(layout, repo, profile, None).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
 }
 
@@ -216,9 +190,9 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     );
     let [broker, hub, runner] = start_all(&main).await;
     passes(&main, &repo, "quick").await;
-    runner.stop();
-    hub.stop();
-    broker.stop();
+    runner.stopped().await;
+    hub.stopped().await;
+    broker.stopped().await;
 
     let hub_db = main.root.join("hub.db");
     let broker_db = main.root.join("broker.db");
@@ -226,9 +200,8 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
         &hub_db,
         "ALTER TABLE active_order DROP COLUMN spec_json; DROP TABLE hub_meta; \
          PRAGMA user_version = 1;",
-    )
-    .await;
-    sql(&broker_db, "PRAGMA user_version = 99;").await;
+    );
+    sql(&broker_db, "PRAGMA user_version = 99;");
     let refused = start_broker(&main, false)
         .await
         .err()
@@ -238,8 +211,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     sql(
         &broker_db,
         "ALTER TABLE job DROP COLUMN peak_mem_mb; ALTER TABLE job DROP COLUMN peak_disk_mb;          ALTER TABLE runner DROP COLUMN enforcement; ALTER TABLE runner DROP COLUMN version; PRAGMA user_version = 1;",
-    )
-    .await;
+    );
 
     let [broker, hub, runner] = start_all(&main).await;
     let backup = main.root.join("hub.db.bak-1");
@@ -247,7 +219,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     assert_eq!(schema_version(&backup), 1);
     assert_eq!(schema_version(&hub_db), 2);
     assert!(main.root.join("broker.db.bak-1").is_file());
-    assert_eq!(schema_version(&broker_db), 3);
+    assert_eq!(schema_version(&broker_db), 4);
     passes(&main, &repo, "quick").await;
     assert_eq!(
         history(&main).await.len(),
@@ -279,7 +251,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     )
     .await;
     assert_eq!(code, Ok(0));
-    tokio::time::timeout(ENDS, roles)
+    tokio::time::timeout(HANG, roles)
         .await
         .expect("every role stops")
         .unwrap();
@@ -349,7 +321,7 @@ async fn up_all_without_init_starts_the_hub_once_the_broker_answers() {
         .kill_on_drop(true)
         .spawn()
         .expect("the binary runs");
-    let up = tokio::time::timeout(ENDS, up.wait_with_output())
+    let up = tokio::time::timeout(HANG, up.wait_with_output())
         .await
         .expect("up returns")
         .expect("up output");
@@ -372,7 +344,7 @@ async fn up_all_without_init_starts_the_hub_once_the_broker_answers() {
         &echo_profile("here", "on-this-machine", 60, "mem_mb = 256\n"),
     );
     let (client, job) = submit(&fresh, &repo, "here", None).await;
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-this-machine"), "{}", ended.output);
 

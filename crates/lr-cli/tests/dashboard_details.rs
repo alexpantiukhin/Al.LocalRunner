@@ -83,6 +83,7 @@ fn summary(job: &str, state: JobState, mine: bool) -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 
@@ -148,7 +149,10 @@ async fn snapshot(details: bool) -> DashboardSnapshot {
             jobs: vec![finished_detail().summary],
             next: None,
         }),
-        ReadRequest::Runners => Some(ReadReply::Runners { runners: vec![] }),
+        ReadRequest::Runners => Some(ReadReply::Runners {
+            runners: vec![],
+            pools: vec![],
+        }),
         ReadRequest::Stats(_) => Some(ReadReply::Stats(StatsView {
             profiles: Vec::new(),
             clients: Vec::new(),

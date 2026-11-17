@@ -48,6 +48,9 @@ pub struct Capabilities {
     pub commands: BTreeSet<String>,
 }
 
+/// The words that mark a refusal naming a runner joined by key.
+pub const JOINED_BY_KEY: &str = "подключён по ключу";
+
 /// One reason a runner does not suit an order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MismatchReason {
@@ -57,7 +60,12 @@ pub enum MismatchReason {
         needed: String,
     },
     /// The order must run on the client's machine.
-    NotSameMachine,
+    NotSameMachine {
+        /// Name of the runner; empty until the router fills it in.
+        runner: String,
+        /// The runner is connected by key, so it takes only commit orders.
+        joined: bool,
+    },
     /// Not enough memory.
     Memory {
         /// Needed MB.
@@ -131,7 +139,20 @@ impl fmt::Display for MismatchReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Platform { needed } => write!(f, "платформа {needed} не заявлена"),
-            Self::NotSameMachine => write!(f, "раннер не на машине клиента"),
+            Self::NotSameMachine { runner, .. } if runner.is_empty() => {
+                write!(f, "раннер не на машине клиента")
+            }
+            Self::NotSameMachine {
+                runner,
+                joined: true,
+            } => write!(
+                f,
+                "раннер {runner} {JOINED_BY_KEY}: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+            ),
+            Self::NotSameMachine {
+                runner,
+                joined: false,
+            } => write!(f, "раннер {runner} не на машине клиента"),
             Self::Memory { needed, available } => {
                 write!(f, "нужно {needed} МБ, у раннера {available}")
             }
@@ -190,7 +211,10 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
     }
     if let Some(machine) = &req.same_machine {
         if caps.machine.as_ref() != Some(machine) {
-            reasons.push(MismatchReason::NotSameMachine);
+            reasons.push(MismatchReason::NotSameMachine {
+                runner: String::new(),
+                joined: false,
+            });
         }
     }
     if req.mem_mb > caps.mem_mb {

@@ -92,6 +92,7 @@ pub fn caps() -> WireCapabilities {
         commands: Default::default(),
         enforcement: None,
         version: None,
+        enforce_limit: false,
     }
 }
 
@@ -164,6 +165,7 @@ pub fn summary() -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 
@@ -194,6 +196,12 @@ pub fn runner_info() -> RunnerInfo {
         }],
         services: vec![service_report()],
         unmet: vec!["adb not found".into()],
+        liveness: None,
+        silent_for_s: None,
+        kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     }
 }
 

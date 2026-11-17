@@ -151,8 +151,13 @@ pub enum WireEnforce {
     Off,
     /// A warning goes to the job log.
     Warn,
+    /// The job's memory is held at the ceiling by the OS where it can, without a kill.
+    Limit,
     /// The job is killed.
     Kill,
+    /// A mode of a newer minor version; the runner treats it as `warn`.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The `[resources]` part of the broker policy that travels with an assignment: the ceiling of

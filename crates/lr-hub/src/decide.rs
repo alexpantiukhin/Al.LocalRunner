@@ -4,7 +4,7 @@ use crate::orders::order_payload;
 use crate::select::{allowed_zones, broker_zone, Candidate, Choice, Decision};
 use crate::track::{Finished, Stage};
 use lr_abstractions::{Level, OutboxKind};
-use lr_core::{JobId, JobState};
+use lr_core::{JobId, JobState, JOINED_BY_KEY};
 use lr_proto::{CliReply, ProtocolErrorCode, ReasonCode, RejectReason};
 
 pub(crate) const UP_HINT: &str = "нет раннера на вашей установке, запустите его: localrunner up";
@@ -138,7 +138,7 @@ impl Engine {
                 .await;
         }
         let Some(spec) = track.spec.clone().filter(|_| !track.same_machine()) else {
-            let detail = if track.same_machine() {
+            let detail = if track.same_machine() && !detail.contains(JOINED_BY_KEY) {
                 format!("{detail}; {UP_HINT}")
             } else {
                 detail

@@ -63,18 +63,49 @@ fn roles_take_the_flags_the_os_starts_them_with() {
             "--state-dir",
             "/var/lib/al-localrunner",
         ],
+        &[
+            "localrunner",
+            "runner",
+            "run",
+            "--name",
+            "box",
+            "--service",
+            "--owner",
+            r"PC\alex",
+            "--state-dir",
+            "/home/alex/state",
+        ],
+        &[
+            "localrunner",
+            "autostart",
+            "on",
+            "runner",
+            "box",
+            "--service",
+            "--dry-run",
+        ],
     ] {
         assert!(Cli::try_parse_from(args).is_ok(), "{args:?} refused");
     }
+    let e = Cli::try_parse_from(["localrunner", "hub", "run", "--service"]).unwrap_err();
+    assert_eq!(e.kind(), clap::error::ErrorKind::UnknownArgument);
     for args in [
-        &["localrunner", "hub", "run", "--service"][..],
-        &["localrunner", "runner", "run", "--service"],
+        &["localrunner", "runner", "run", "--service"][..],
+        &[
+            "localrunner",
+            "runner",
+            "run",
+            "--name",
+            "box",
+            "--owner",
+            "alex",
+        ],
     ] {
         let e = Cli::try_parse_from(args).unwrap_err();
         assert_eq!(
             e.kind(),
-            clap::error::ErrorKind::UnknownArgument,
-            "{args:?}"
+            clap::error::ErrorKind::MissingRequiredArgument,
+            "{args:?}: a runner service is one named runner, --owner only goes with it"
         );
     }
 }

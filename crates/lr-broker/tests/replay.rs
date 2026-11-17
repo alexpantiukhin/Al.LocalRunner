@@ -5,7 +5,6 @@ use lr_abstractions::{BrokerStore, OutboxKind};
 use lr_core::{JobId, Timestamp};
 use lr_proto::*;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 const ALEX: &str = "local:alex";
 const PENDING: u64 = 5000;
@@ -100,12 +99,11 @@ async fn hub_that_never_reads_is_still_disconnected() {
         }))
         .await;
     }
-    for _ in 0..500 {
-        if stall.closes() >= 1 {
-            stall.on.store(false, Ordering::SeqCst);
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("a hub that never reads was not disconnected");
+    until_changed(
+        stall.changes(),
+        "a hub that never reads is disconnected",
+        || std::future::ready(stall.closes() >= 1),
+    )
+    .await;
+    stall.on.store(false, Ordering::SeqCst);
 }

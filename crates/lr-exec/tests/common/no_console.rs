@@ -29,7 +29,7 @@ pub fn run(hosted: bool) -> ! {
         let task = tokio::spawn(async move { runner.run_job(spec, o.as_ref(), stop).await });
         out.pid_of("child").await;
         handle.stop(Stop::Cancel);
-        let outcome = tokio::time::timeout(Duration::from_secs(20), task)
+        let outcome = tokio::time::timeout(super::HANG, task)
             .await
             .unwrap()
             .unwrap();

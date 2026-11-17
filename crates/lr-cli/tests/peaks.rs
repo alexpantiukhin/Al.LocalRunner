@@ -33,6 +33,7 @@ fn summary(peaks: Option<(u64, u64)>) -> JobSummary {
         peak_mem_mb: peaks.map(|p| p.0),
         peak_disk_mb: peaks.map(|p| p.1),
         labels: Vec::new(),
+        cancelled_by: None,
     }
 }
 
@@ -60,9 +61,9 @@ fn history_has_peak_columns_with_dashes_for_unknown_values() {
         ("local".to_string(), summary(None)),
     ];
     let lines = history_lines(&rows);
-    assert!(lines[0].contains("RUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER"));
-    assert!(lines[1].ends_with("r1\t900\t40\tlocal"), "{}", lines[1]);
-    assert!(lines[2].ends_with("r1\t-\t-\tlocal"), "{}", lines[2]);
+    assert!(lines[0].contains("RUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"));
+    assert!(lines[1].contains("r1\t900\t40\tlocal\t"), "{}", lines[1]);
+    assert!(lines[2].contains("r1\t-\t-\tlocal\t"), "{}", lines[2]);
 }
 
 #[test]
@@ -123,6 +124,7 @@ fn runners_list_shows_enforcement() {
         commands: Default::default(),
         enforcement: enforcement.map(str::to_string),
         version: None,
+        enforce_limit: false,
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
         name: name.into(),
@@ -134,12 +136,35 @@ fn runners_list_shows_enforcement() {
         held_tags: Vec::new(),
         services: Vec::new(),
         unmet: Vec::new(),
+        liveness: None,
+        silent_for_s: None,
+        kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
     };
+    let mut current = runner("r3", Some("os"));
+    current.caps.enforce_limit = true;
     let text = runner_lines(&[(
         "office".into(),
-        vec![runner("r1", Some("watcher")), runner("r2", None)],
+        vec![runner("r1", Some("watcher")), runner("r2", None), current],
     )])
     .join("\n");
-    assert_eq!(text.matches("enforcement").count(), 1, "{text}");
-    assert!(text.contains("    enforcement watcher"), "{text}");
+    assert_eq!(text.matches("enforcement").count(), 3, "{text}");
+    assert!(
+        text.contains("    enforcement watcher (limit mode not supported: runs as warn)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "    enforcement unknown (limit mode not supported: runs as warn)
+"
+        ),
+        "{text}"
+    );
+    let plain = text
+        .lines()
+        .filter(|l| l.starts_with("    enforcement os"))
+        .collect::<Vec<_>>();
+    assert_eq!(plain, ["    enforcement os"], "{text}");
 }

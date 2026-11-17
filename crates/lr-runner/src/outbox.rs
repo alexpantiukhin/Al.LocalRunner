@@ -56,7 +56,7 @@ impl Drop for Unsure<'_> {
 }
 
 impl Outbox {
-    fn forget_tail(&self) {
+    pub(crate) fn forget_tail(&self) {
         let mut tail = self.tail.lock().unwrap_or_else(|p| p.into_inner());
         tail.entries.clear();
         tail.overflow = true;

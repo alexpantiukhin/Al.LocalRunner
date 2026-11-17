@@ -8,6 +8,7 @@ use lr_proto::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
 
 #[derive(Clone)]
 pub enum OnOrder {
@@ -42,6 +43,7 @@ pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
         commands: Default::default(),
         enforcement: None,
         version: None,
+        enforce_limit: false,
     }
 }
 
@@ -93,6 +95,7 @@ struct State {
 #[derive(Clone)]
 pub struct FakeBroker {
     state: Arc<Mutex<State>>,
+    changed: Arc<watch::Sender<u64>>,
 }
 
 fn listener_peer(address: &str) -> Peer {
@@ -122,6 +125,7 @@ impl FakeBroker {
                 zone: Some(zone),
                 ..State::default()
             })),
+            changed: Arc::new(watch::channel(0).0),
         };
         let b = broker.clone();
         tokio::spawn(async move {
@@ -132,6 +136,14 @@ impl FakeBroker {
             }
         });
         broker
+    }
+
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn touch(&self) {
+        self.changed.send_modify(|n| *n += 1);
     }
 
     pub fn report_zone(&self, zone: Option<Zone>) {
@@ -177,11 +189,13 @@ impl FakeBroker {
             s.hellos += 1;
             s.conn = Some(t.clone());
         }
+        self.touch();
         while let Ok(frame) = t.recv().await {
             let Ok(msg) = decode::<HubToBroker>(frame.as_bytes()) else {
                 continue;
             };
             self.state.lock().unwrap().received.push(msg.clone());
+            self.touch();
             let script = self.script();
             match msg {
                 HubToBroker::CapabilitiesQuery(q) if script.answer_queries => {

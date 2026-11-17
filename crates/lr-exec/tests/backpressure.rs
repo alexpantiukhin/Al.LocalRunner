@@ -1,7 +1,7 @@
 mod common;
 
-use common::{helper_command, job, step, Helper, Recorder};
-use lr_abstractions::{stop_signal, JobOutcome, JobSpec, ProcessRunner, Stop};
+use common::{helper_command, job, step, Helper, Recorder, HANG};
+use lr_abstractions::{stop_signal, Clock, JobOutcome, JobSpec, ProcessRunner, Stop, StopHandle};
 use lr_core::{JobState, StepState};
 use lr_exec::{ExecRunner, SystemClock};
 use std::sync::Arc;
@@ -13,25 +13,41 @@ fn flood(n: u64) -> String {
     helper_command(&Helper::new("flood").count(n))
 }
 
-async fn run(spec: JobSpec, out: Arc<Recorder>, cancel_after: Option<Duration>) -> JobOutcome {
-    let runner = ExecRunner::new(Arc::new(SystemClock));
+async fn run_blocked(
+    spec: JobSpec,
+    out: Arc<Recorder>,
+    clock: Arc<dyn Clock>,
+    when_blocked: impl FnOnce(&StopHandle),
+) -> JobOutcome {
+    let runner = ExecRunner::new(clock);
     let (handle, stop) = stop_signal();
-    let canceller = async move {
-        if let Some(after) = cancel_after {
-            tokio::time::sleep(after).await;
-            handle.stop(Stop::Cancel);
-        }
-        handle
+    let react = async {
+        out.until_blocked().await;
+        when_blocked(&handle);
     };
-    let (outcome, _handle) = tokio::join!(runner.run_job(spec, out.as_ref(), stop), canceller);
+    let both = async { tokio::join!(runner.run_job(spec, out.as_ref(), stop), react) };
+    let (outcome, ()) = tokio::time::timeout(HANG, both)
+        .await
+        .expect("run_job waited for a blocked consumer");
     outcome
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_consumer_loses_nothing_and_keeps_order() {
-    let out = Recorder::new().slow_first(20);
+    let out = Recorder::new().hold_at(PAD);
     let spec = job("bp", 120, vec![step("flood", &flood(20_000), 100)]);
-    let outcome = run(spec, out.clone(), None).await;
+    let runner = ExecRunner::new(Arc::new(SystemClock));
+    let mut waits = runner.output_waits();
+    let (_handle, stop) = stop_signal();
+    let pace = async {
+        out.until_blocked().await;
+        waits.wait_for(|&n| n > 0).await.unwrap();
+        out.release();
+    };
+    let both = async { tokio::join!(runner.run_job(spec, out.as_ref(), stop), pace) };
+    let (outcome, ()) = tokio::time::timeout(HANG, both)
+        .await
+        .expect("run_job did not return");
     assert_eq!(outcome.state, JobState::Passed);
     let numbers: Vec<u64> = out
         .text()
@@ -44,6 +60,7 @@ async fn slow_consumer_loses_nothing_and_keeps_order() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn timeout_is_prompt_even_if_the_consumer_is_blocked() {
+    let (manual, clock) = common::clock();
     let out = Recorder::new().block_after(3);
     let spec = job(
         "bt",
@@ -54,9 +71,10 @@ async fn timeout_is_prompt_even_if_the_consumer_is_blocked() {
         ],
     );
     let started = Instant::now();
-    let outcome = tokio::time::timeout(Duration::from_secs(60), run(spec, out, None))
-        .await
-        .expect("run_job waited for a blocked consumer");
+    let outcome = run_blocked(spec, out, clock, |_| {
+        manual.advance(Duration::from_secs(1));
+    })
+    .await;
     assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Timeout);
     assert_eq!(outcome.steps[0].state, StepState::Timeout);
@@ -76,12 +94,10 @@ async fn cancel_is_prompt_even_if_the_consumer_is_blocked() {
     );
     spec.cancel_grace = Duration::from_millis(500);
     let started = Instant::now();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        run(spec, out, Some(Duration::from_secs(1))),
-    )
-    .await
-    .expect("run_job waited for a blocked consumer");
+    let outcome = run_blocked(spec, out, Arc::new(SystemClock), |stop| {
+        stop.stop(Stop::Cancel);
+    })
+    .await;
     assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Cancelled);
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);
@@ -100,12 +116,10 @@ async fn cancel_is_prompt_when_the_consumer_blocks_before_the_step_starts() {
         ],
     );
     let started = Instant::now();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        run(spec, out, Some(Duration::from_millis(500))),
-    )
-    .await
-    .expect("run_job waited for a blocked consumer");
+    let outcome = run_blocked(spec, out, Arc::new(SystemClock), |stop| {
+        stop.stop(Stop::Cancel);
+    })
+    .await;
     assert!(started.elapsed() < Duration::from_secs(30));
     assert_eq!(outcome.state, JobState::Cancelled);
     assert_eq!(outcome.steps[0].state, StepState::Cancelled);

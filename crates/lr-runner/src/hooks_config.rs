@@ -168,9 +168,10 @@ pub(crate) fn enforce_mode(text: &str) -> Result<Enforce, SettingsError> {
     match text {
         "off" => Ok(Enforce::Off),
         "warn" => Ok(Enforce::Warn),
+        "limit" => Ok(Enforce::Limit),
         "kill" => Ok(Enforce::Kill),
         other => Err(SettingsError(format!(
-            "[limits] enforce = \"{other}\" is unknown, use \"off\", \"warn\" or \"kill\""
+            "[limits] enforce = \"{other}\" is unknown, use \"off\", \"warn\", \"limit\" or \"kill\""
         ))),
     }
 }

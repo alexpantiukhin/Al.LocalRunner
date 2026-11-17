@@ -31,6 +31,7 @@ impl Engine {
             since: f.since,
             active_only: f.active_only,
             limit: Some(SCAN_LIMIT),
+            by_finish: true,
         };
         let Ok(rows) = self.store.jobs(&filter).await else {
             return Err(ReadReply::Failed {

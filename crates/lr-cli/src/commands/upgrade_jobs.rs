@@ -3,9 +3,12 @@
 
 use super::confirm::{proceed, Console};
 use super::timefmt::{format_ms, now};
+use super::upgrade_pool::is_own_name;
 use super::view::{known_brokers, read};
 use crate::paths::Layout;
-use lr_proto::{ReadReply, ReadRequest, StatusFilter};
+use lr_proto::{ReadReply, ReadRequest, StatusFilter, StatusView, STATUS_LIMIT_MAX};
+use std::collections::BTreeSet;
+use std::future::Future;
 
 /// How the runners are stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,8 +24,10 @@ pub enum Mode {
 pub struct Activity {
     /// A line per running job.
     pub running: Vec<String>,
-    /// Queued orders (the first part of each queue).
-    pub queued: usize,
+    /// The running jobs and the runners they run on, in the order of `running`.
+    pub running_jobs: Vec<RunningJob>,
+    /// The ids of all the queued orders.
+    pub queued: Vec<String>,
     /// Why the jobs are not known, when they are not.
     pub note: Option<String>,
 }
@@ -31,6 +36,70 @@ impl Activity {
     /// Whether a job runs now.
     pub fn busy(&self) -> bool {
         !self.running.is_empty()
+    }
+
+    /// What `upgrade --cancel` does to the jobs, each as a full list: the running jobs of the
+    /// runners it stops (`local`, by name) are cancelled, the jobs of other runners keep running
+    /// (listed only when there are any), and the queued orders stay. A runner the broker lists
+    /// by its bare name (it joined over the network) is taken for this installation's by that
+    /// name alone, so a runner of another machine with the same name is counted as well: a
+    /// note names those jobs.
+    pub fn cancel_lines(&self, local: &BTreeSet<String>) -> Vec<String> {
+        let list = |ids: Vec<String>| match ids.is_empty() {
+            true => "none".to_string(),
+            false => ids.join(", "),
+        };
+        let (cancelled, elsewhere) = self.split(local);
+        let by_name: Vec<String> = cancelled
+            .iter()
+            .filter(|j| j.runner.as_deref().is_some_and(|r| local.contains(r)))
+            .map(|j| j.job.clone())
+            .collect();
+        let ids = |jobs: Vec<&RunningJob>| jobs.iter().map(|j| j.job.clone()).collect::<Vec<_>>();
+        let mut out = vec![format!("cancelling: {}", list(ids(cancelled)))];
+        if !by_name.is_empty() {
+            out.push(format!(
+                "note: {} run on a runner matched to this installation by name only; a same-named runner of another machine is not told apart and its job keeps running",
+                by_name.join(", ")
+            ));
+        }
+        if !elsewhere.is_empty() {
+            out.push(format!("still running elsewhere: {}", list(ids(elsewhere))));
+        }
+        out.push(format!("staying queued: {}", list(self.queued.clone())));
+        out
+    }
+
+    /// The running jobs split into those on the runners of this installation (`local`, by name)
+    /// and the others.
+    pub fn split(&self, local: &BTreeSet<String>) -> (Vec<&RunningJob>, Vec<&RunningJob>) {
+        self.running_jobs.iter().partition(|j| {
+            j.runner
+                .as_deref()
+                .is_some_and(|r| local.iter().any(|name| is_own_name(r, name)))
+        })
+    }
+
+    /// Adds the jobs of one broker's whole `status` (every page of its queue).
+    pub fn add(&mut self, v: &StatusView) {
+        self.queued
+            .extend(v.queue.iter().map(|q| q.summary.job.0.clone()));
+        for r in &v.running {
+            let s = &r.summary;
+            let running = s.started_at.map_or(String::new(), |t| {
+                format!(", running {}", format_ms(now().0.saturating_sub(t.0)))
+            });
+            self.running.push(format!(
+                "{} on {} ({}){running}",
+                s.job.0,
+                s.runner.as_deref().unwrap_or("?"),
+                s.profile.as_deref().unwrap_or(&s.client_label)
+            ));
+            self.running_jobs.push(RunningJob {
+                job: s.job.0.clone(),
+                runner: s.runner.clone(),
+            });
+        }
     }
 
     /// The lines shown while `upgrade` waits: a line per running job, then the time waited.
@@ -51,10 +120,11 @@ impl Activity {
             out.push(format!("running jobs: {}", self.running.len()));
             out.extend(self.running.iter().map(|l| format!("  {l}")));
         }
-        if self.queued > 0 {
+        if !self.queued.is_empty() {
             out.push(format!(
-                "waiting orders: {} (they stay queued; a stopping runner takes none)",
-                self.queued
+                "waiting orders: {} (they stay queued; a stopping runner takes none): {}",
+                self.queued.len(),
+                self.queued.join(", ")
             ));
         }
         if out.is_empty() {
@@ -84,29 +154,29 @@ pub async fn activity(layout: &Layout) -> Activity {
                     ));
                     continue;
                 }
-                match read(
-                    &client,
-                    &b.name,
-                    ReadRequest::Status(StatusFilter::default()),
-                )
-                .await
-                {
-                    Ok(ReadReply::Status(v)) => {
-                        out.queued += v.queue.len();
-                        out.running.extend(v.running.iter().map(|r| {
-                            let s = &r.summary;
-                            let running = s.started_at.map_or(String::new(), |t| {
-                                format!(", running {}", format_ms(now().0.saturating_sub(t.0)))
-                            });
-                            format!(
-                                "{} on {} ({}){running}",
-                                s.job.0,
-                                s.runner.as_deref().unwrap_or("?"),
-                                s.profile.as_deref().unwrap_or(&s.client_label)
-                            )
-                        }));
+                let (client, name) = (&client, &b.name);
+                let read_page = |cursor: Option<String>| async move {
+                    let filter = StatusFilter {
+                        limit: Some(STATUS_LIMIT_MAX),
+                        cursor,
+                        ..StatusFilter::default()
+                    };
+                    match read(client, name, ReadRequest::Status(filter)).await? {
+                        ReadReply::Status(v) => {
+                            let next = v.next.clone();
+                            Ok((v, next))
+                        }
+                        other => Err(format!("broker {name}: {other:?}")),
                     }
-                    Ok(other) => out.note = Some(format!("broker {}: {other:?}", b.name)),
+                };
+                match pages(read_page).await {
+                    Ok(views) => {
+                        let mut whole = views.into_iter();
+                        if let Some(mut first) = whole.next() {
+                            first.queue.extend(whole.flat_map(|v| v.queue));
+                            out.add(&first);
+                        }
+                    }
                     Err(e) => out.note = Some(e),
                 }
             }
@@ -116,12 +186,43 @@ pub async fn activity(layout: &Layout) -> Activity {
     out
 }
 
+/// A running job and the runner it runs on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunningJob {
+    /// The job.
+    pub job: String,
+    /// The runner, as the broker names it.
+    pub runner: Option<String>,
+}
+
+/// Every page of a paged answer: `ask` gets the token of the previous page (`None` first) and
+/// returns a page and the token of the next one; reading stops at the end (no token) or when a
+/// token comes back unchanged.
+pub async fn pages<T, F, Fut>(mut ask: F) -> Result<Vec<T>, String>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: Future<Output = Result<(T, Option<String>), String>>,
+{
+    let mut out = Vec::new();
+    let mut cursor = None;
+    loop {
+        let (page, next) = ask(cursor.clone()).await?;
+        out.push(page);
+        match next {
+            Some(n) if Some(&n) != cursor.as_ref() => cursor = Some(n),
+            _ => return Ok(out),
+        }
+    }
+}
+
 /// What the user decides about the jobs: the mode, or `None` when they give up (`aborted` is
 /// printed). Without running jobs it is the plain question `question`. With them, `yes` waits
 /// (or cancels with `cancel`); at a terminal the user picks; without a terminal nothing
-/// goes on.
+/// goes on. The cancel question counts only the jobs on the runners of this installation
+/// (`local`), the ones a cancel stops.
 pub fn choose(
     activity: &Activity,
+    local: &BTreeSet<String>,
     yes: bool,
     cancel: bool,
     question: &str,
@@ -142,7 +243,12 @@ pub fn choose(
         ));
     }
     if cancel {
-        let q = format!("cancel {n} running job(s) and upgrade?");
+        let (here, elsewhere) = activity.split(local);
+        let others = match elsewhere.len() {
+            0 => String::new(),
+            k => format!(" ({k} on other runners keep running)"),
+        };
+        let q = format!("cancel {} running job(s){others} and upgrade?", here.len());
         return Ok(
             proceed("upgrade cancels the running jobs", &q, false, console)?
                 .then_some(Mode::Cancel),

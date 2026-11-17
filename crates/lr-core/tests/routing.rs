@@ -63,11 +63,49 @@ fn same_machine_needs_local_ipc_not_an_equal_machine_ref() {
     net.caps.machine = Some(MachineRef("alex".into()));
     let e = same_machine_entry("wt", "alex");
     let err = suitable(&e, &net, &site()).unwrap_err();
-    assert!(err.reasons.contains(&MismatchReason::NotSameMachine));
+    assert!(err.reasons.contains(&MismatchReason::NotSameMachine {
+        runner: "net".into(),
+        joined: true
+    }));
     assert_eq!(
         check_runners(&e, &[net], &site()),
-        Err(Reject::NoRunnerOnMachine)
+        Err(Reject::NoRunnerOnMachine {
+            joined: vec!["net".into()]
+        })
     );
+}
+
+#[test]
+fn a_joined_runner_is_refused_a_work_tree_order_with_a_reason_naming_it() {
+    let mut net = runner("office");
+    net.caps.machine = Some(MachineRef("alex".into()));
+    let e = same_machine_entry("wt", "alex");
+    let err = suitable(&e, &net, &site()).unwrap_err();
+    assert_eq!(
+        err.reasons,
+        [MismatchReason::NotSameMachine {
+            runner: "office".into(),
+            joined: true
+        }]
+    );
+    assert_eq!(
+        err.to_string(),
+        "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+    );
+}
+
+#[test]
+fn a_local_runner_of_another_user_is_refused_with_the_old_meaning() {
+    let e = same_machine_entry("wt", "alex");
+    let err = suitable(&e, &ipc_runner("bob-runner", "bob"), &site()).unwrap_err();
+    assert_eq!(
+        err.reasons,
+        [MismatchReason::NotSameMachine {
+            runner: "bob-runner".into(),
+            joined: false
+        }]
+    );
+    assert_eq!(err.to_string(), "раннер bob-runner не на машине клиента");
 }
 
 #[test]
@@ -75,15 +113,37 @@ fn same_machine_rejected_when_installation_runners_absent_or_offline() {
     let e = same_machine_entry("wt", "alex");
     assert_eq!(
         check_runners(&e, &[runner("lan")], &site()),
-        Err(Reject::NoRunnerOnMachine)
+        Err(Reject::NoRunnerOnMachine {
+            joined: vec!["lan".into()]
+        })
     );
     let mut off = ipc_runner("alex-runner", "alex");
     off.online = false;
     assert_eq!(
         check_runners(&e, &[off], &site()),
-        Err(Reject::NoRunnerOnMachine)
+        Err(Reject::NoRunnerOnMachine { joined: Vec::new() })
     );
-    assert!(Reject::NoRunnerOnMachine.to_string().contains("up"));
+    assert!(Reject::NoRunnerOnMachine { joined: Vec::new() }
+        .to_string()
+        .contains("up"));
+}
+
+#[test]
+fn a_work_tree_order_with_only_joined_runners_is_refused_naming_them() {
+    let e = same_machine_entry("wt", "alex");
+    let mut off = runner("off");
+    off.online = false;
+    let err = check_runners(&e, &[runner("office"), runner("lab"), off], &site()).unwrap_err();
+    assert_eq!(
+        err,
+        Reject::NoRunnerOnMachine {
+            joined: vec!["office".into(), "lab".into()]
+        }
+    );
+    let text = err.to_string();
+    assert!(text.contains("раннер office подключён по ключу: он берёт только заказы по коммиту"));
+    assert!(text.contains("раннер lab подключён по ключу"));
+    assert!(!text.contains("запустите"));
 }
 
 #[test]

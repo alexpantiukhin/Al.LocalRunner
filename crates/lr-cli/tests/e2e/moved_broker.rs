@@ -70,8 +70,8 @@ async fn a_broker_moved_with_its_state_keeps_its_joined_runner_without_a_new_joi
     runner_online(&first, "box").await;
     let old_id = machine_id(&first.root).unwrap();
 
-    hub_role.stop();
-    broker.stop();
+    hub_role.stopped().await;
+    broker.stopped().await;
     eventually(
         "the old broker to free its port",
         Duration::from_secs(20),

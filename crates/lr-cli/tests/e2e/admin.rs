@@ -6,16 +6,13 @@ use lr_cli::roles::start_runners;
 use lr_core::JobState;
 use lr_proto::{AdminReply, AdminRequest, ReasonCode};
 use lr_runner::AgentExit;
-use std::time::Duration;
-
-const ENDS: Duration = Duration::from_secs(90);
 
 // scenario: 16.4
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     let dir = TempDir::new("e2e-rrm");
-    let gate = dir.path().join("gate");
-    let mut release = Release::new(&[&gate]);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let (main, roles) = machine(&dir, "main", "", &[], "").await;
     let node = layout(&dir, "node", "");
     std::fs::write(node.config_file("runner.toml"), runner_toml()).unwrap();
@@ -36,11 +33,10 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     runner_online(&main, "box").await;
 
     let extra = format!("mem_mb = 256\nplatforms = [\"{PLATFORM}\"]\n");
-    let repo = repo(&dir, &held_profile("held", dir.path(), &gate, 120, &extra));
+    let repo = repo(&dir, &held_profile("held", &gate, 120, &extra));
     push_origin(&dir, &repo);
     let (client, job) = submit(&main, &repo, "held", Some(PLATFORM)).await;
-    let child = started(dir.path(), "held", "child").await;
-    release.watch(child);
+    let child = gate.started("held", "child").await;
     let view = status(&main).await.expect("status");
     assert_eq!(view.pool.used_mem_mb, 256, "{view:?}");
 
@@ -59,20 +55,20 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
             warnings: Vec::new()
         }
     );
-    let ended = until_exit(client, &job, ENDS).await;
+    let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Lost, "{ended:?}");
     assert_eq!(ended.reason, Some(ReasonCode::RunnerRemoved), "{ended:?}");
     let view = status(&main).await.expect("status");
     assert_eq!(view.pool.used_mem_mb, 0, "resources are back: {view:?}");
 
-    let exits = tokio::time::timeout(ENDS, remote.wait())
+    let exits = tokio::time::timeout(HANG, remote.wait())
         .await
         .expect("the removed runner ends");
     assert!(
         matches!(exits.as_slice(), [AgentExit::Refused(_)]),
         "its key is refused on reconnect: {exits:?}"
     );
-    gone("the removed runner's job tree", &[child]).await;
+    child.gone("the removed runner's job tree").await;
     assert!(names(&main, AdminRequest::RunnerList).await.is_empty());
     let left = runners(&main).await.expect("runners");
     assert!(left.is_empty(), "{left:?}");
@@ -86,8 +82,8 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn removed_client_waiting_orders_end_client_removed() {
     let dir = TempDir::new("e2e-crm");
-    let gate = dir.path().join("gate");
-    let mut release = Release::new(&[&gate]);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let (main, roles) = machine(
         &dir,
         "main",
@@ -100,17 +96,17 @@ async fn removed_client_waiting_orders_end_client_removed() {
     let remote = format!("mem_mb = 256\nplatforms = [\"{PLATFORM}\"]\n");
     let profiles = format!(
         "{}\n{}\n{}",
-        held_profile("own", dir.path(), &gate, 120, "mem_mb = 256\n"),
-        held_profile("theirs", dir.path(), &gate, 120, &remote),
+        held_profile("own", &gate, 120, "mem_mb = 256\n"),
+        held_profile("theirs", &gate, 120, &remote),
         echo_profile("waiting", "never-runs", 60, &remote),
     );
     let repo = repo(&dir, &profiles);
     push_origin(&dir, &repo);
 
     let (own_client, own) = submit(&main, &repo, "own", None).await;
-    release.watch(started(dir.path(), "own", "child").await);
+    gate.started("own", "child").await;
     let (theirs_client, theirs) = submit(&guest, &repo, "theirs", Some(PLATFORM)).await;
-    release.watch(started(dir.path(), "theirs", "child").await);
+    gate.started("theirs", "child").await;
     let (waiting_client, waiting) = submit(&guest, &repo, "waiting", Some(PLATFORM)).await;
     queued(&main, &waiting).await;
 
@@ -133,16 +129,12 @@ async fn removed_client_waiting_orders_end_client_removed() {
     assert_eq!(cancelled.state, JobState::Cancelled, "{cancelled:?}");
     assert_eq!(cancelled.reason, Some(ReasonCode::ClientRemoved));
     assert!(cancelled.started_at.is_none(), "{cancelled:?}");
-    eventually(
-        "the removed hub to lose the broker",
-        Duration::from_secs(60),
-        || async {
-            let client = lr_cli::commands::jobs::hub(&guest).await.ok()?;
-            let brokers = lr_cli::commands::view::known_brokers(&client).await.ok();
-            client.close().await;
-            brokers?.iter().all(|b| !b.available).then_some(())
-        },
-    )
+    until_hub(&guest, "the removed hub to lose the broker", || async {
+        let client = lr_cli::commands::jobs::hub(&guest).await.ok()?;
+        let brokers = lr_cli::commands::view::known_brokers(&client).await.ok();
+        client.close().await;
+        brokers?.iter().all(|b| !b.available).then_some(())
+    })
     .await;
     assert!(names(&main, AdminRequest::ClientList).await.is_empty());
     let still = status(&main).await.expect("status");
@@ -151,8 +143,8 @@ async fn removed_client_waiting_orders_end_client_removed() {
         "a running job of the removed client lives by [orphans] running: {still:?}"
     );
 
-    open(&gate);
-    let own_end = until_exit(own_client, &own, ENDS).await;
+    gate.open();
+    let own_end = until_exit(own_client, &own, HANG).await;
     assert_eq!(own_end.state, JobState::Passed, "{own_end:?}");
     let finished = row(&main, &theirs).await;
     assert_eq!(finished.state, JobState::Passed, "{finished:?}");
@@ -169,17 +161,17 @@ async fn removed_client_waiting_orders_end_client_removed() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
     let dir = TempDir::new("e2e-pol");
-    let gate = dir.path().join("gate");
-    let mut release = Release::new(&[&gate]);
+    let gate = Gate::new().await;
+    let release = Release::new(&[&gate]);
     let (main, roles) = machine(&dir, "main", "", &["r1", "r2"], &runner_toml()).await;
     let profiles = format!(
         "{}\n{}",
-        held_profile("first", dir.path(), &gate, 120, "mem_mb = 256\n"),
+        held_profile("first", &gate, 120, "mem_mb = 256\n"),
         echo_profile("next", "held-by-the-rule", 60, "mem_mb = 256\n"),
     );
     let repo = repo(&dir, &profiles);
     let (first_client, first) = submit(&main, &repo, "first", None).await;
-    release.watch(started(dir.path(), "first", "child").await);
+    gate.started("first", "child").await;
 
     let file = main.config_file("policy.toml");
     let old = std::fs::read_to_string(&file).unwrap();
@@ -216,10 +208,10 @@ async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
         "the old policy stays: {kept:?}"
     );
 
-    open(&gate);
-    let a = until_exit(first_client, &first, ENDS).await;
+    gate.open();
+    let a = until_exit(first_client, &first, HANG).await;
     assert_eq!(a.state, JobState::Passed, "{a:?}");
-    let b = until_exit(next_client, &next, ENDS).await;
+    let b = until_exit(next_client, &next, HANG).await;
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("held-by-the-rule"), "{}", b.output);
 

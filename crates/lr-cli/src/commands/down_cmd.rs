@@ -7,6 +7,8 @@
 
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
+use crate::os_service::state::{ask_manager, restart_command, service_running, status_command};
+use crate::os_service::{service_installed, Os};
 use crate::paths::Layout;
 use async_trait::async_trait;
 use lr_proto::{
@@ -119,9 +121,9 @@ async fn runner(
     {
         ControlReply::Ok => Ok(true),
         ControlReply::Failed { message } => Err(message),
-        ControlReply::Link { .. } | ControlReply::Reloaded { .. } => {
-            Err("unexpected answer to down".into())
-        }
+        ControlReply::Link { .. }
+        | ControlReply::Reloaded { .. }
+        | ControlReply::Dropped { .. } => Err("unexpected answer to down".into()),
     }
 }
 
@@ -228,9 +230,22 @@ async fn ctrl_c() {
     }
 }
 
+fn still_running(name: &str, has_job: Option<bool>) -> String {
+    match has_job {
+        Some(false) => format!(
+            "{name}: still running with no job: it is delivering its outbox or stopping its services; it leaves on its own within {} s of the stop, or once its services have stopped (what it could not deliver is sent on its next start)",
+            lr_runner::STOP_BOUND.as_secs()
+        ),
+        _ => format!(
+            "{name}: still running, it stops when its job ends (`localrunner status` shows the job)"
+        ),
+    }
+}
+
 /// Waits up to [`STOPPED_WITHIN`] for the runners `names` to stop answering and reports each:
 /// `stopped`, or `still running` (it is stopping: it finishes or cancels its job first, so
-/// this is not an error).
+/// this is not an error). A runner known to run no job is told apart: it is delivering its
+/// outbox or stopping its services and leaves on its own.
 async fn report_stopped(roles: &dyn Roles, names: &[String]) {
     let start = tokio::time::Instant::now();
     let mut left: Vec<&String> = names.iter().collect();
@@ -240,7 +255,7 @@ async fn report_stopped(roles: &dyn Roles, names: &[String]) {
             if roles.runner_answers(n).await {
                 still.push(n);
             } else {
-                println!("{n}: stopped");
+                roles.say(&format!("{n}: stopped"));
             }
         }
         left = still;
@@ -249,9 +264,8 @@ async fn report_stopped(roles: &dyn Roles, names: &[String]) {
         }
         if start.elapsed() >= STOPPED_WITHIN {
             for n in left {
-                println!(
-                    "{n}: still running, it stops when its job ends (`localrunner status` shows the job)"
-                );
+                let has_job = roles.runner_has_job(n).await;
+                roles.say(&still_running(n, has_job));
             }
             return;
         }
@@ -284,6 +298,17 @@ pub trait Roles: Send + Sync {
     async fn running_jobs(&self) -> Option<Vec<String>> {
         None
     }
+    /// Whether runner `name` runs a job, from [`Roles::running_jobs`]; `None` when not known.
+    async fn runner_has_job(&self, name: &str) -> Option<bool> {
+        let on = format!(" on {name} (");
+        self.running_jobs()
+            .await
+            .map(|lines| lines.iter().any(|l| l.contains(&on)))
+    }
+    /// Prints a line of the report of `down`.
+    fn say(&self, line: &str) {
+        println!("{line}");
+    }
     /// Whether runner `name` still answers on its control channel.
     async fn runner_answers(&self, name: &str) -> bool;
     /// Stops the hub; `false` when it does not run.
@@ -292,6 +317,69 @@ pub trait Roles: Send + Sync {
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String>;
     /// Whether the broker runs under the OS service manager.
     fn broker_is_service(&self) -> bool;
+    /// Prints an error line of the report of `down`.
+    fn say_err(&self, line: &str) {
+        eprintln!("{line}");
+    }
+    /// What is known of the broker service when its admin channel could not be reached.
+    async fn broker_service_state(&self) -> ServiceState {
+        ServiceState::NotInstalled
+    }
+    /// Every runner the brokers list now, this installation's included; empty when that is not
+    /// known (the hub may still be starting).
+    async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
+        Vec::new()
+    }
+    /// The OS service of runner `name` when one is installed: whether it runs (`None`: the
+    /// service manager did not say); `None` without a service.
+    async fn runner_service(&self, _name: &str) -> Option<Option<bool>> {
+        None
+    }
+}
+
+/// The broker service as seen without administrator rights.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceState {
+    /// It runs: it answers on the normal IPC or the service manager says so.
+    Answers,
+    /// It is installed and does not run.
+    InstalledNotAnswering,
+    /// It is installed and neither its IPC nor the service manager told whether it runs.
+    InstalledStateUnknown,
+    /// No service is installed.
+    NotInstalled,
+}
+
+/// The state of the broker service from what could be learned without administrator rights:
+/// whether its normal IPC answered, what the service manager said (`None`: it could not be
+/// asked) and whether the service is installed.
+pub fn service_state(ipc_answers: bool, manager: Option<bool>, installed: bool) -> ServiceState {
+    match (ipc_answers, manager, installed) {
+        (true, _, _) | (_, Some(true), _) => ServiceState::Answers,
+        (_, _, false) => ServiceState::NotInstalled,
+        (_, Some(false), true) => ServiceState::InstalledNotAnswering,
+        (_, None, true) => ServiceState::InstalledStateUnknown,
+    }
+}
+
+/// What `down broker` says of a broker it could not reach on the admin channel; `None` when
+/// nothing is installed and the plain "not running" applies.
+pub fn unreachable_broker(state: ServiceState, os: Os) -> Option<String> {
+    match state {
+        ServiceState::Answers => Some(format!(
+            "broker: running as an OS service; its admin channel is open only to an administrator, so down cannot stop it from here. Restart it from an elevated shell: {}",
+            restart_command(os)
+        )),
+        ServiceState::InstalledNotAnswering => Some(
+            "broker: installed as an OS service and not running; `down` has nothing to stop"
+                .into(),
+        ),
+        ServiceState::InstalledStateUnknown => Some(format!(
+            "broker: installed as an OS service; down cannot tell whether it runs (the service manager did not answer an unprivileged query) and its admin channel is open only to an administrator. Check it from an elevated shell: {}",
+            status_command(os)
+        )),
+        ServiceState::NotInstalled => None,
+    }
 }
 
 /// The roles of `layout` of OS principal `principal`, over their local channels.
@@ -333,6 +421,33 @@ impl Roles for IpcRoles<'_> {
 
     fn broker_is_service(&self) -> bool {
         self.layout.broker_is_service()
+    }
+
+    async fn pool_after_restart(&self) -> Vec<super::upgrade_pool::PoolRunner> {
+        super::upgrade_pool::all_runners(self.layout).await
+    }
+
+    async fn runner_service(&self, name: &str) -> Option<Option<bool>> {
+        let os = Os::current();
+        let name = name.to_string();
+        ask_manager(Some(None), move || {
+            crate::os_service::runner_service::installed(os, &name)
+                .then(|| crate::os_service::runner_service::running(os, &name))
+        })
+        .await
+    }
+
+    async fn broker_service_state(&self) -> ServiceState {
+        if !self.layout.broker_is_service() {
+            return ServiceState::NotInstalled;
+        }
+        let os = Os::current();
+        let ipc = super::admin_cmd::service_running(self.layout).await;
+        let (running, installed) = ask_manager((None, true), move || {
+            (service_running(os), service_installed(os))
+        })
+        .await;
+        service_state(ipc, running, installed)
     }
 }
 
@@ -416,14 +531,15 @@ pub async fn down_for(
     let service = targets.contains(&Target::Broker) && roles.broker_is_service();
     let mut interrupt = Some(interrupt);
     let mut code = 0;
-    let not_running = |what: &str, code: &mut i32| {
+    let report = |line: &str, code: &mut i32| {
         if explicit {
-            eprintln!("{what}: not running");
+            roles.say_err(line);
             *code = 1;
         } else {
-            println!("{what}: not running");
+            roles.say(line);
         }
     };
+    let not_running = |what: &str, code: &mut i32| report(&format!("{what}: not running"), code);
     let mut stopping = Vec::new();
     let mut waited_for_runners = false;
     for t in &targets {
@@ -433,7 +549,23 @@ pub async fn down_for(
                     println!("{name}: stopping ({mode:?})");
                     stopping.push(name.clone());
                 }
-                Ok(false) => not_running(name, &mut code),
+                Ok(false) => match roles.runner_service(name).await {
+                    Some(running) => {
+                        let line = crate::os_service::runner_service::unreachable_line(
+                            Os::current(),
+                            name,
+                            running,
+                            "down",
+                        );
+                        if running == Some(false) {
+                            report(&line, &mut code);
+                        } else {
+                            roles.say_err(&line);
+                            code = 1;
+                        }
+                    }
+                    None => not_running(name, &mut code),
+                },
                 Err(e) => {
                     eprintln!("{name}: {e}");
                     code = 1;
@@ -495,7 +627,13 @@ pub async fn down_for(
                             println!("broker: {w}");
                         }
                     }
-                    Ok(None) => not_running("broker", &mut code),
+                    Ok(None) => {
+                        let state = roles.broker_service_state().await;
+                        match unreachable_broker(state, Os::current()) {
+                            Some(line) => report(&line, &mut code),
+                            None => not_running("broker", &mut code),
+                        }
+                    }
                     Err(e) => {
                         eprintln!("broker: {e}");
                         code = 1;

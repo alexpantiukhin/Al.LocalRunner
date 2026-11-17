@@ -204,3 +204,40 @@ async fn sender_gone_cancel_keeps_its_reason_code() {
     assert_eq!(row.job.state, JobState::Cancelled);
     assert_eq!(row.job.cancel_reason.as_deref(), Some("sender_gone"));
 }
+
+#[tokio::test]
+async fn an_order_cancelled_by_upgrade_is_stored_with_actor_upgrade() {
+    let h = Harness::start("");
+    let (r, mut hub) = busy_pool(&h).await;
+    r.send(&started("j1", 1)).await;
+    hub.started_notice().await;
+    r.send(&RunnerToBroker::JobResult(JobResult {
+        job: JobId("j1".into()),
+        seq: 2,
+        state: JobState::Cancelled,
+        exit_code: None,
+        reason: Some(ReasonCode::RunnerStopped),
+        detail: Some("stopped by upgrade".into()),
+        peak_disk_mb: None,
+        peak_mem_mb: None,
+    }))
+    .await;
+    let row = h.until_state(ALEX, "j1", JobState::Cancelled).await.job;
+    assert_eq!(row.cancelled_by.as_deref(), Some("upgrade"));
+    assert_eq!(
+        row.cancel_reason.as_deref(),
+        Some("runner_stopped: stopped by upgrade")
+    );
+    let ReadReply::History { jobs, .. } = hub
+        .read(ReadRequest::History(HistoryFilter::default()))
+        .await
+    else {
+        panic!("history")
+    };
+    let j1 = jobs
+        .iter()
+        .find(|j| j.job.0 == "j1")
+        .expect("j1 in history");
+    assert_eq!(j1.cancelled_by.as_deref(), Some("upgrade"));
+    assert_eq!(j1.reason, Some(ReasonCode::RunnerStopped));
+}
