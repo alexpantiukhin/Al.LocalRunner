@@ -368,3 +368,143 @@ fn the_history_grid_has_a_finished_column_sorted_by_finish_time_until_a_header_i
     );
     assert_eq!(out["explicit"][0], "queued-first", "{out}");
 }
+
+const FOLLOW_SETUP: &str = r#"
+  var logFetches = 0;
+  var plainFetch = globalThis.fetch;
+  globalThis.fetch = function (url) { if (String(url).indexOf("/api/log/") === 0) logFetches += 1; return plainFetch(url); };
+  var pre = $("log");
+  pre.scrollHeight = 1000; pre.clientHeight = 100;
+  var follow = $("log-follow");
+  follow.checked = true;
+  var tickLog = function () { intervals.filter(function (i) { return i.ms === 2000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await tick();
+  logText = LOG;
+  $("queue-body").children[0].fire("click"); await tick();
+  var state = function () { return { checked: follow.checked, disabled: !!follow.disabled, top: pre.scrollTop, loads: logFetches }; };
+"#;
+
+#[test]
+fn a_finished_job_opens_with_follow_off_and_a_scroll_up_survives_the_timer_and_a_refresh() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        r#"
+  out.opened = state();
+  pre.scrollTop = 120; pre.fire("scroll");
+  tickLog(); await tick();
+  sources[0].onopen(); await tick();
+  out.after = state();
+"#
+    );
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &done,
+        &scenario,
+        "finished_follow",
+    ) else {
+        return;
+    };
+    assert_eq!(out["opened"]["checked"], false, "{out}");
+    assert_eq!(out["opened"]["disabled"], true, "{out}");
+    assert_eq!(
+        out["after"]["top"], 120,
+        "the scroll position is kept: {out}"
+    );
+    assert_eq!(out["after"]["loads"], out["opened"]["loads"], "{out}");
+    assert_eq!(out["after"]["checked"], false, "{out}");
+}
+
+#[test]
+fn a_running_job_follows_the_end_until_scrolled_up_and_ticking_follow_returns_to_it() {
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        r#"
+  out.opened = state();
+  logText = LOG + "more\n";
+  tickLog(); await tick();
+  out.followed = state();
+  pre.scrollTop = 100; pre.fire("scroll");
+  out.scrolledUp = state();
+  tickLog(); await tick();
+  out.idle = state();
+  follow.checked = true; follow.fire("change");
+  out.back = state();
+"#
+    );
+    let Some(out) = run_with("{ live: true, logs: {} }", &scenario, "running_follow") else {
+        return;
+    };
+    assert_eq!(out["opened"]["checked"], true, "{out}");
+    assert_eq!(out["opened"]["disabled"], false, "{out}");
+    assert_eq!(out["followed"]["top"], 1000, "{out}");
+    assert_eq!(out["scrolledUp"]["checked"], false, "{out}");
+    assert_eq!(out["scrolledUp"]["top"], 100, "{out}");
+    assert_eq!(out["idle"]["top"], 100, "{out}");
+    assert_eq!(out["back"]["checked"], true, "{out}");
+    assert_eq!(out["back"]["top"], 1000, "{out}");
+}
+
+#[test]
+fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        format!(
+            r#"
+  pre.scrollTop = 1000;
+  var before = state();
+  logText = LOG + "last\n";
+  nextData = {done}; sources[0].onopen(); await tick(); await tick();
+  out.atEnd = state();
+  out.atEndLog = pre.textContent;
+  tickLog(); await tick();
+  sources[0].onopen(); await tick();
+  out.atEndLater = state();
+  out.before = before;
+"#
+        )
+    );
+    let Some(out) = run_with("{ live: true, logs: {} }", &scenario, "finishing_follow") else {
+        return;
+    };
+    assert_eq!(out["atEnd"]["checked"], false, "{out}");
+    assert_eq!(out["atEnd"]["disabled"], true, "{out}");
+    assert_eq!(out["atEnd"]["top"], 1000, "{out}");
+    assert!(
+        out["atEndLog"].as_str().unwrap().ends_with("last\n"),
+        "{out}"
+    );
+    assert_eq!(
+        out["atEnd"]["loads"].as_i64().unwrap() - out["before"]["loads"].as_i64().unwrap(),
+        2,
+        "{out}"
+    );
+    assert_eq!(out["atEndLater"]["loads"], out["atEnd"]["loads"], "{out}");
+}
+
+#[test]
+fn a_job_that_finishes_while_scrolled_up_keeps_the_scroll_position() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let scenario = format!(
+        "{FOLLOW_SETUP}{}",
+        format!(
+            r#"
+  pre.scrollTop = 100; pre.fire("scroll");
+  logText = LOG + "last\n";
+  nextData = {done}; sources[0].onopen(); await tick(); await tick();
+  out.state = state();
+"#
+        )
+    );
+    let Some(out) = run_with(
+        "{ live: true, logs: {} }",
+        &scenario,
+        "finishing_scrolled_up",
+    ) else {
+        return;
+    };
+    assert_eq!(out["state"]["checked"], false, "{out}");
+    assert_eq!(out["state"]["disabled"], true, "{out}");
+    assert_eq!(out["state"]["top"], 100, "{out}");
+}

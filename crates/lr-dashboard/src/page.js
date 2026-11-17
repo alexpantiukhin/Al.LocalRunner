@@ -250,9 +250,20 @@
     }));
     $("card-cancel").hidden = !config.live || FINAL.indexOf(s.state) >= 0;
     $("card").hidden = false;
+    if (FINAL.indexOf(s.state) >= 0 && !$("log-follow").disabled) finishFollow();
     if (S.step !== was && S.log) showLog();
   }
+  function finishFollow() {
+    var f = $("log-follow"), id = S.open.detail.summary.job;
+    var was = f.checked;
+    f.disabled = true;
+    if (!was) { loadLog(); return; }
+    loadLog(function () { if (S.open && S.open.detail.summary.job === id) f.checked = false; });
+  }
   function openCard(j) {
+    var over = FINAL.indexOf(j.detail.summary.state) >= 0;
+    $("log-follow").checked = !over;
+    $("log-follow").disabled = over;
     S.stepAuto = true;
     S.log = "";
     S.noLog = false;
@@ -281,20 +292,22 @@
     $("log-copy").disabled = $("log-download").disabled = !!S.noLog;
     var text = q ? all.split("\n").filter(function (l) { return l.toLowerCase().indexOf(q) >= 0; }).join("\n") : all;
     var pre = $("log");
+    var top = pre.scrollTop;
     pre.textContent = text;
-    if ($("log-follow").checked && !q) pre.scrollTop = pre.scrollHeight;
+    if ($("log-follow").checked && !q) { pre.scrollTop = pre.scrollHeight; } else { pre.scrollTop = top; }
   }
-  function loadLog() {
+  function loadLog(after) {
     if (!S.open) return;
     var id = S.open.detail.summary.job;
     if (!config.live) {
       S.noLog = config.logs[id] == null;
       S.log = !S.noLog ? config.logs[id] : config.with_logs ? "(no log)" : "(logs are not included in this snapshot)";
       showLog();
+      if (after) after();
       return;
     }
     fetch("/api/log/" + encodeURIComponent(id), { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : ""; })
-      .then(function (t) { if (S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); } }).catch(function () { return; });
+      .then(function (t) { if (S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); } if (after) after(); }).catch(function () { if (after) after(); });
   }
   function closeCard() { $("card").hidden = true; S.open = null; }
 
@@ -405,6 +418,11 @@
   $("help").addEventListener("click", function () { $("help-dialog").showModal(); });
   $("help-close").addEventListener("click", function () { $("help-dialog").close(); });
   $("log-search").addEventListener("input", showLog);
+  $("log-follow").addEventListener("change", showLog);
+  $("log").addEventListener("scroll", function () {
+    var f = $("log-follow"), pre = $("log");
+    if (f.checked && !f.disabled && pre.scrollHeight - pre.scrollTop - pre.clientHeight > 8) f.checked = false;
+  });
   $("log-copy").addEventListener("click", function () { if (navigator.clipboard) navigator.clipboard.writeText($("log").textContent); });
   $("log-download").addEventListener("click", function () { if (S.open) download(S.open.detail.summary.job + ".log", S.log, "text/plain"); });
   $("export-csv").addEventListener("click", function () { exportRows("csv"); });
