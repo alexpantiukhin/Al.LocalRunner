@@ -150,9 +150,16 @@ fn runners_list_shows_enforcement() {
         vec![runner("r1", Some("watcher")), runner("r2", None), current],
     )])
     .join("\n");
-    assert_eq!(text.matches("enforcement").count(), 2, "{text}");
+    assert_eq!(text.matches("enforcement").count(), 3, "{text}");
     assert!(
         text.contains("    enforcement watcher (limit mode not supported: runs as warn)\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "    enforcement unknown (limit mode not supported: runs as warn)
+"
+        ),
         "{text}"
     );
     let plain = text

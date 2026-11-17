@@ -29,7 +29,7 @@
     if (s < 3600) return Math.floor(s / 60) + "m" + (s % 60) + "s";
     return Math.floor(s / 3600) + "h" + Math.floor(s % 3600 / 60) + "m";
   }
-  function when(ms) { return ms ? new Date(ms).toLocaleString() : ""; }
+  function when(ms) { return ms != null ? new Date(ms).toLocaleString() : ""; }
   function store(key, value) { try { localStorage.setItem("lr." + key, value); } catch (e) { return; } }
   function load(key) { try { return localStorage.getItem("lr." + key); } catch (e) { return null; } }
 
@@ -44,7 +44,7 @@
       j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
       source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
-      queued: s.queued_at, finished: s.finished_at || null, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
+      queued: s.queued_at, finished: s.finished_at == null ? null : s.finished_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
   }
   function matches(r) {
@@ -63,7 +63,7 @@
   function sorted(rows) {
     var c = S.sort.col, d = S.sort.dir;
     rows.sort(function (a, b) {
-      var pa = S.as && a.label === S.as ? 0 : 1, pb = S.as && b.label === S.as ? 0 : 1;
+      var pin = S.tab === "queue" && S.as, pa = pin && a.label === S.as ? 0 : 1, pb = pin && b.label === S.as ? 0 : 1;
       if (pa !== pb) return pa - pb;
       if (!c) return 0;
       var x = a[c], y = b[c];
@@ -160,7 +160,7 @@
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
           el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
-          el("td", { text: (r.caps.enforcement || "") + (r.caps.enforcement && !r.caps.enforce_limit ? " (limit runs as warn)" : "") }),
+          el("td", { text: (r.caps.enforcement || "unknown") + (r.caps.enforce_limit ? "" : " (limit runs as warn)") }),
           el("td", { text: r.caps.version || "" }),
           el("td", { text: r.unmet.join(", ") })
         ]));

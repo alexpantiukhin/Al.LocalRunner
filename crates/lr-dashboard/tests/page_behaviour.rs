@@ -508,3 +508,101 @@ fn a_job_that_finishes_while_scrolled_up_keeps_the_scroll_position() {
     assert_eq!(out["state"]["disabled"], true, "{out}");
     assert_eq!(out["state"]["top"], 100, "{out}");
 }
+
+#[test]
+fn the_own_runs_pin_does_not_override_the_history_order_and_a_zero_finish_is_kept() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    let mut add = |job: &str, label: &str, finished: Option<u64>| {
+        let mut j = v["jobs"][0].clone();
+        j["list"] = serde_json::json!("history");
+        j["detail"]["summary"]["job"] = serde_json::json!(job);
+        j["detail"]["summary"]["label"] = serde_json::json!(label);
+        j["detail"]["summary"]["finished_at"] = serde_json::json!(finished);
+        j["detail"]["summary"]["state"] = serde_json::json!("passed");
+        v["jobs"].as_array_mut().unwrap().push(j);
+    };
+    add("own-old", "me", Some(1_000));
+    add("other-new", "they", Some(9_000));
+    add("epoch", "they", Some(0));
+    add("open", "they", None);
+    let scenario = r##"
+      sources[0].onopen(); await tick();
+      var ids = function () { return $("history-body").children.map(function (r) { return r.attrs["data-job"]; }); };
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.default = ids();
+      out.epoch = $("history-body").children[2].children[9].textContent;
+      location.hash = "#tab=history&sort=finished";
+      handlers.hashchange();
+      out.clicked = ids();
+    "##;
+    let Some(out) = run_snapshot(
+        "(location.search = \"?as=me\", { live: true, logs: {} })",
+        &v.to_string(),
+        scenario,
+        "pin_history",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out["default"],
+        serde_json::json!(["other-new", "own-old", "epoch", "open"]),
+        "{out}"
+    );
+    assert_ne!(out["epoch"], "", "{out}");
+    assert_eq!(
+        out["clicked"],
+        serde_json::json!(["epoch", "own-old", "other-new", "open"]),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_runner_without_limit_support_is_marked_with_or_without_the_enforcement_field() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    let base = v["runners"][0]["runners"][0].clone();
+    let named = |name: &str, enforcement: Option<&str>, limit: bool| {
+        let mut r = base.clone();
+        r["name"] = name.into();
+        r["caps"]["enforce_limit"] = limit.into();
+        match enforcement {
+            Some(e) => r["caps"]["enforcement"] = e.into(),
+            None => {
+                r["caps"].as_object_mut().unwrap().remove("enforcement");
+            }
+        }
+        r
+    };
+    v["runners"][0]["runners"] = serde_json::json!([
+        named("current", Some("os"), true),
+        named("watching", Some("watcher"), false),
+        named("legacy", None, false),
+    ]);
+    let scenario = r##"
+      location.hash = "#tab=runners";
+      handlers.hashchange();
+      out.rows = $("tab-runners").text();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "legacy_enforcement",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert_eq!(text.matches("(limit runs as warn)").count(), 2, "{text}");
+    assert!(text.contains("unknown (limit runs as warn)"), "{text}");
+    assert!(text.contains("watcher (limit runs as warn)"), "{text}");
+}

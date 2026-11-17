@@ -219,14 +219,15 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         Some(v) => out.push(format!("    version {v} (this binary: {mine})")),
         None => out.push(format!("    version unknown (this binary: {mine})")),
     }
-    if let Some(e) = &c.enforcement {
-        let older = if c.enforce_limit {
-            ""
-        } else {
-            " (limit mode not supported: runs as warn)"
-        };
-        out.push(format!("    enforcement {e}{older}"));
-    }
+    let older = if c.enforce_limit {
+        ""
+    } else {
+        " (limit mode not supported: runs as warn)"
+    };
+    out.push(format!(
+        "    enforcement {}{older}",
+        c.enforcement.as_deref().unwrap_or("unknown")
+    ));
     for t in &r.held_tags {
         let kind = if t.exclusive { ", exclusive" } else { "" };
         out.push(format!("    tag {} held by {}{kind}", t.tag, t.job));
