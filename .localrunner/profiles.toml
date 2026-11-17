@@ -23,6 +23,28 @@ steps = [
   { name = "test",   command = "cargo test --workspace --locked --no-fail-fast",          timeout_s = 1800 },
 ]
 
+[profile.rust-fmt]
+command   = "cargo fmt --check"
+timeout_s = 120
+mem_mb    = 1024
+cpu       = 1
+tags      = ["cargo"]
+
+[profile.ci-docs]
+command   = "python .github/scripts/docs_pair.py"
+timeout_s = 60
+mem_mb    = 256
+cpu       = 1
+
+[profile.ci-workflows]
+timeout_s = 300
+mem_mb    = 512
+cpu       = 1
+steps = [
+  { name = "control-chars", command = "python .github/scripts/workflow_control_chars.py", timeout_s = 60 },
+  { name = "actionlint",    command = "docker run --rm -v \".:/repo\" --workdir /repo rhysd/actionlint:1.7.7 -color", timeout_s = 240 },
+]
+
 [profile.rust-test]
 command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --features {features}} {? --test {test}} {? {filter}}"
 timeout_s = 1800
