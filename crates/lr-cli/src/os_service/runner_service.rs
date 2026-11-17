@@ -1111,8 +1111,8 @@ fn linux(i: &RunnerServiceInputs) -> Vec<Action> {
     let unit = format!(
         "[Unit]\nDescription=Al.LocalRunner runner {}\nAfter=network-online.target\n\
          Wants=network-online.target\n\n[Service]\nType=simple\nUser={}\nExecStart={}\n\
-         Restart=on-failure\nRestartSec=5\nNoNewPrivileges=true\n\n[Install]\n\
-         WantedBy=multi-user.target\n",
+         Restart=on-failure\nRestartSec=5\nNoNewPrivileges=true\nDelegate=yes\n\n\
+         [Install]\nWantedBy=multi-user.target\n",
         i.name,
         i.user,
         systemd_command_line(&run_args(i))
@@ -1172,7 +1172,9 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 }
 
 /// `autostart on runner <name> --service`: registers the runner with the service manager under
-/// [`account`], started at boot and restarted after a failure, and starts it now. On Windows
+/// [`account`], started at boot and restarted after a failure, and starts it now. On Linux the
+/// unit delegates its cgroup subtree (`Delegate=yes`): a system service has no user manager,
+/// so the runner makes the job cgroups of the `limit` mode itself. On Windows
 /// the service account also gets the rights of [`windows_grants`] (its own runner directory,
 /// never the whole state directory), and becomes the only user of the runner's key
 /// ([`key_path`]): the

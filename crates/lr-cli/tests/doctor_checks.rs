@@ -381,6 +381,25 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
 }
 
 #[test]
+fn doctor_says_whether_a_linux_service_unit_delegates_its_cgroup() {
+    use lr_cli::doctor::delegation_check;
+    let unit = "[Service]\nUser=alex\nNoNewPrivileges=true\nDelegate=yes\n\n[Install]\n";
+    let c = delegation_check("box", unit);
+    assert_eq!(c.name, "runner box memory limit");
+    assert_eq!(c.status, Status::Ok, "{c:?}");
+    assert!(c.detail.contains("Delegate=yes"), "{c:?}");
+    let old = unit.replace("Delegate=yes\n", "");
+    let c = delegation_check("box", &old);
+    assert_eq!(c.status, Status::Warn, "{c:?}");
+    assert!(c.detail.contains("runs as `warn`"), "{c:?}");
+    assert!(
+        c.detail.contains("autostart off runner box --service")
+            && c.detail.contains("autostart on runner box --service"),
+        "an installed unit is rewritten by a reinstall: {c:?}"
+    );
+}
+
+#[test]
 fn runners_on_another_version_are_named_per_broker() {
     use lr_cli::doctor::{runner_version_checks, Status};
     use lr_core::Timestamp;

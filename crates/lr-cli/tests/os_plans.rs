@@ -572,6 +572,10 @@ fn runner_service_runs_under_a_non_root_account_on_every_os() {
                 );
                 assert!(unit.contains("\nUser=alex\n"), "{unit}");
                 assert!(unit.contains("\nNoNewPrivileges=true\n"), "{unit}");
+                assert!(
+                    unit.contains("\nDelegate=yes\n\n[Install]\n"),
+                    "jobs of `limit` need a cgroup subtree of their own: {unit}"
+                );
                 assert!(unit.contains("\nRestart=on-failure\n"), "{unit}");
                 assert!(unit.contains("WantedBy=multi-user.target"), "{unit}");
                 assert_eq!(
