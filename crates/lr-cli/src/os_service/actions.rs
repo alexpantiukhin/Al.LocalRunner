@@ -47,6 +47,28 @@ fn io(path: &Path, e: std::io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
+fn refuse_link(path: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| io(path, e))?;
+    #[cfg(windows)]
+    let reparse = {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    if meta.file_type().is_symlink() || reparse {
+        return Err(format!(
+            "{} is a link or junction, not a directory made by this installation; remove it as \
+             administrator and run the command again",
+            path.display()
+        ));
+    }
+    if !meta.is_dir() {
+        return Err(format!("{} is not a directory", path.display()));
+    }
+    Ok(())
+}
+
 fn run(program: &str, args: &[String], tolerate: &Tolerate) -> Result<(), String> {
     let exe = match (program_path(program), tolerate) {
         (Ok(p), _) => p,
@@ -256,6 +278,7 @@ impl System for OsSystem {
                 tolerate,
             } => run(program, args, tolerate),
             Action::CreateDir(p) => std::fs::create_dir_all(p).map_err(|e| io(p, e)),
+            Action::RefuseLink(p) => refuse_link(p),
             Action::WriteFile { path, contents } => {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;

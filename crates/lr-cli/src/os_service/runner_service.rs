@@ -124,6 +124,11 @@ const ADMINISTRATORS: &str = "S-1-5-32-544";
 const SYSTEM: &str = "S-1-5-18";
 const USERS: &str = "S-1-5-32-545";
 
+/// The exit codes `icacls` gives for a path that is not there (`ERROR_FILE_NOT_FOUND`,
+/// `ERROR_PATH_NOT_FOUND`): all `autostart off` tolerates when it takes the job root's right
+/// back from a service installed before job roots existed.
+pub const MISSING_PATH_CODES: [i32; 2] = [2, 3];
+
 /// The ownership of `path` as this process sees it.
 pub fn key_state(path: &Path) -> KeyState {
     match std::fs::symlink_metadata(path) {
@@ -1116,6 +1121,7 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
     if let Some(root) = job_root(i) {
         let parent = crate::paths::jobs_parent();
         out.push(Action::CreateDir(parent.clone()));
+        out.push(Action::RefuseLink(parent.clone()));
         out.push(Action::run(
             "icacls",
             &[&s(&parent), "/setowner", &format!("*{ADMINISTRATORS}")],
@@ -1132,6 +1138,7 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             ],
         ));
         out.push(Action::CreateDir(root.clone()));
+        out.push(Action::RefuseLink(root.clone()));
         out.push(Action::run(
             "icacls",
             &[&s(&root), "/setowner", &format!("*{ADMINISTRATORS}")],
@@ -1295,10 +1302,13 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
             }
             let jobs = job_root(i);
             for g in windows_grants(i) {
-                let missing_ok = g.optional || jobs.as_ref() == Some(&g.path);
+                let tolerate = if jobs.as_ref() == Some(&g.path) {
+                    Tolerate::Codes(MISSING_PATH_CODES.to_vec())
+                } else {
+                    tolerated(g.optional)
+                };
                 out.push(
-                    Action::run("icacls", &[&s(&g.path), "/remove", &account])
-                        .tolerating(tolerated(missing_ok)),
+                    Action::run("icacls", &[&s(&g.path), "/remove", &account]).tolerating(tolerate),
                 );
             }
             out.push(

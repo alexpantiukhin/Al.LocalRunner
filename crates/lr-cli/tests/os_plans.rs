@@ -757,8 +757,13 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
         if let Action::Run { args, tolerate, .. } = a {
             let optional = args
                 .first()
-                .is_some_and(|p| p.ends_with("runner.toml") || p.ends_with("logging.toml"))
-                || (args.iter().any(|w| w == "/remove") && args[0].contains("Al.LocalRunner.Jobs"));
+                .is_some_and(|p| p.ends_with("runner.toml") || p.ends_with("logging.toml"));
+            let jobs =
+                args.iter().any(|w| w == "/remove") && args[0].contains("Al.LocalRunner.Jobs");
+            if jobs {
+                assert_eq!(tolerate, &Tolerate::Codes(vec![2, 3]), "{a}");
+                continue;
+            }
             if args.iter().any(|w| w == "/grant" || w == "/remove")
                 && !args[0].ends_with("participant.key")
             {
@@ -1939,11 +1944,13 @@ fn a_windows_runner_service_works_in_a_job_root_only_it_and_the_administrators_w
     let admins = "*S-1-5-32-544";
     let order = [
         at(&format!("mkdir {parent}")),
+        at(&format!("check that {parent} is no link")),
         at(&format!("icacls {parent} /setowner {admins}")),
         at(&format!(
             "icacls {parent} /inheritance:r /grant:r {admins}:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(RX)"
         )),
         at(&format!("mkdir {dir}")),
+        at(&format!("check that {dir} is no link")),
         at(&format!("icacls {dir} /setowner {admins}")),
         at(&format!(
             "icacls {dir} /inheritance:r /grant:r {admins}:(OI)(CI)F *S-1-5-18:(OI)(CI)F alex:(OI)(CI)F"
@@ -1995,8 +2002,8 @@ fn off_for_a_service_installed_before_the_job_root_still_deletes_the_service() {
         .find(|a| matches!(a, Action::Run { args, .. } if args.first() == Some(&root)))
         .expect("the job root grant is taken back");
     assert!(
-        matches!(revoke, Action::Run { tolerate, .. } if *tolerate == Tolerate::Anything),
-        "a missing job root is fine: {revoke}"
+        matches!(revoke, Action::Run { tolerate, .. } if *tolerate == Tolerate::Codes(vec![2, 3])),
+        "only a missing job root is fine, not access denied (5): {revoke}"
     );
     let revoked = position(&plan, |a| a == revoke)[0];
     let deleted = position(&plan, |a| {
