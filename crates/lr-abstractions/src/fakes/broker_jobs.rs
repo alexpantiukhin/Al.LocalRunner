@@ -286,7 +286,11 @@ impl BrokerState {
                     }
                     (Some(_), None) => std::cmp::Ordering::Less,
                     (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, None) => (y.queued_at, &y.key.job, &y.key.client).cmp(&(
+                        x.queued_at,
+                        &x.key.job,
+                        &x.key.client,
+                    )),
                 }
             });
         }

@@ -101,11 +101,11 @@ pub async fn history_by_finish_time_keeps_a_late_finish_under_the_limit(store: &
     finished(store, "c1", "c", "check", (30, 31, 40), JobState::Passed).await;
     finished(store, "c2", "d", "check", (50, 51, 40), JobState::Passed).await;
     store
-        .accept(intake("c1", "e", "lint", at(60)))
+        .accept(intake("c1", "z", "lint", at(60)))
         .await
         .unwrap();
     store
-        .accept(intake("c1", "f", "lint", at(70)))
+        .accept(intake("c1", "a", "lint", at(70)))
         .await
         .unwrap();
     let by_finish = JobFilter {
@@ -114,13 +114,20 @@ pub async fn history_by_finish_time_keeps_a_late_finish_under_the_limit(store: &
     };
     let all = store.jobs(&by_finish).await.unwrap();
     let ids: Vec<&str> = all.iter().map(|r| r.job.key.job.0.as_str()).collect();
-    assert_eq!(ids, vec!["old", "d", "c", "b", "f", "e"]);
-    let first = JobFilter {
-        limit: Some(1),
-        ..by_finish
-    };
-    let kept = store.jobs(&first).await.unwrap();
-    assert_eq!(kept[0].job.key.job.0, "old");
+    assert_eq!(ids, vec!["old", "d", "c", "b", "a", "z"]);
+    for (limit, want) in [
+        (1, vec!["old"]),
+        (4, vec!["old", "d", "c", "b"]),
+        (5, vec!["old", "d", "c", "b", "a"]),
+    ] {
+        let page = JobFilter {
+            limit: Some(limit),
+            ..by_finish.clone()
+        };
+        let kept = store.jobs(&page).await.unwrap();
+        let ids: Vec<&str> = kept.iter().map(|r| r.job.key.job.0.as_str()).collect();
+        assert_eq!(ids, want, "limit {limit}");
+    }
 }
 
 /// Statistics count final runs per profile and client with median and p95 of wait and

@@ -29,7 +29,7 @@ pub struct JobFilter {
     pub limit: Option<usize>,
     /// Orders by finish time instead of queue time: the newest finished run first, ties by job
     /// id then client key, both descending; runs not finished come after them, newest queued
-    /// first.
+    /// first, ties again by job id then client key, both descending.
     pub by_finish: bool,
 }
 

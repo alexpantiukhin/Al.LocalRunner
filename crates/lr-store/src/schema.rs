@@ -32,9 +32,9 @@ pub struct Schema {
 pub static BROKER: Schema = Schema {
     name: "broker.db",
     application_id: 0x4c52_4231,
-    version: 3,
+    version: 4,
     create: include_str!("sql/broker.sql"),
-    migrations: &[broker_v2, broker_v3],
+    migrations: &[broker_v2, broker_v3, broker_v4],
 };
 
 fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -47,6 +47,10 @@ fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 fn broker_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch("ALTER TABLE runner ADD COLUMN version TEXT;")
+}
+
+fn broker_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch("CREATE INDEX IF NOT EXISTS job_finished_at ON job (finished_at);")
 }
 
 /// Schema of `hub.db`.

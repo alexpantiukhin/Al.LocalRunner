@@ -399,8 +399,6 @@ fn peer_kind(t: &dyn Transport) -> PeerKind {
     }
 }
 
-/// Runs `work` while taking stop requests; `None` once a stop is due ([`stop_due`]), so a dial
-/// or a hello that hangs keeps the runner no longer than [`STOP_BOUND`] after it was told to stop.
 pub(crate) async fn or_stop<F: std::future::Future>(
     s: &Shared,
     control: &mut mpsc::Receiver<Control>,

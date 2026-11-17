@@ -474,3 +474,31 @@ async fn a_version_one_broker_database_gets_the_peak_and_enforcement_columns() {
     assert_eq!(record.job.project, "owner/repo");
     assert!(path.with_file_name("broker.db.bak-1").is_file());
 }
+
+#[test]
+fn a_version_three_broker_database_gets_the_finish_time_index() {
+    let d = common::dir();
+    let path = d.path().join("broker.db");
+    drop(SqliteBrokerStore::open(&path).unwrap());
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("DROP INDEX job_finished_at; PRAGMA user_version = 3;")
+        .unwrap();
+    drop(conn);
+    drop(SqliteBrokerStore::open(&path).unwrap());
+    assert_eq!(version_of(&path), schema::BROKER.version);
+    let conn = Connection::open(&path).unwrap();
+    let plan: Vec<String> = conn
+        .prepare(
+            "EXPLAIN QUERY PLAN SELECT id FROM job WHERE finished_at IS NOT NULL              ORDER BY finished_at DESC LIMIT 10",
+        )
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        plan.iter().any(|p| p.contains("job_finished_at")),
+        "{plan:?}"
+    );
+    assert!(!plan.iter().any(|p| p.contains("TEMP B-TREE")), "{plan:?}");
+}
