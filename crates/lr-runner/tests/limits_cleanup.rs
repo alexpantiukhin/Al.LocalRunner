@@ -62,9 +62,13 @@ fn the_limit_mode_is_parsed() {
 }
 
 #[test]
-fn the_runner_announces_that_it_understands_limit() {
-    let s = parse("").unwrap();
+fn the_runner_announces_limit_only_where_the_os_can_hold_memory() {
+    let mut s = parse("").unwrap();
     assert!(s.capabilities(None).enforce_limit);
+    s.enforcement = Some("os".into());
+    assert!(s.capabilities(None).enforce_limit);
+    s.enforcement = Some("watcher".into());
+    assert!(!s.capabilities(None).enforce_limit);
 }
 
 #[test]

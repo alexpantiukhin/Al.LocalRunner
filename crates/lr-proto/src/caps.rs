@@ -82,8 +82,9 @@ pub struct WireCapabilities {
     /// version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Whether the runner understands the `limit` enforcement mode; absent (false) from runners
-    /// of an earlier minor version, to which the broker sends `warn` instead.
+    /// Whether the runner understands the `limit` enforcement mode and can hold memory through
+    /// the OS (`enforcement` is not `watcher`); absent (false) from runners of an earlier minor
+    /// version and from `watcher` runners, to which the broker sends `warn` instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub enforce_limit: bool,
 }
