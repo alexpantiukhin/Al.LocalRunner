@@ -158,7 +158,7 @@ impl Engine {
         self.active[i].cancel = Some(cancel.clone());
         let written = if self.active[i].started_at.is_some() && !self.active[i].start_unsaved {
             let mut t = Transition::to(JobState::Cancelling, self.now());
-            t.cancelled_by = Some(cancel.by);
+            t.cancelled_by = cancel.actor();
             t.cancel_reason = Some(cancel.reason);
             self.store.transition(&key, t).await
         } else {
@@ -204,7 +204,7 @@ impl Engine {
 
     pub(crate) async fn cancel_waiting(&mut self, job: Job, cancel: Cancel) {
         let mut t = Transition::to(JobState::Cancelled, self.now());
-        t.cancelled_by = Some(cancel.by.clone());
+        t.cancelled_by = cancel.actor();
         t.cancel_reason = Some(cancel.reason.clone());
         match self.store.transition(&job.key, t).await {
             Ok(applied) => {

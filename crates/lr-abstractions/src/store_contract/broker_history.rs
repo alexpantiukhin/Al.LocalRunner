@@ -93,6 +93,36 @@ pub async fn history_is_newest_first_filtered_and_limited(store: &dyn BrokerStor
     assert_eq!(store.jobs(&limited).await.unwrap().len(), 1);
 }
 
+/// Ordered by finish time, the newest finished run comes first even when it was queued long
+/// before the others, so a `limit` keeps it; runs not finished come after, newest queued first.
+pub async fn history_by_finish_time_keeps_a_late_finish_under_the_limit(store: &dyn BrokerStore) {
+    finished(store, "c1", "old", "check", (1, 2, 90), JobState::Passed).await;
+    finished(store, "c2", "b", "check", (10, 11, 20), JobState::Failed).await;
+    finished(store, "c1", "c", "check", (30, 31, 40), JobState::Passed).await;
+    finished(store, "c2", "d", "check", (50, 51, 40), JobState::Passed).await;
+    store
+        .accept(intake("c1", "e", "lint", at(60)))
+        .await
+        .unwrap();
+    store
+        .accept(intake("c1", "f", "lint", at(70)))
+        .await
+        .unwrap();
+    let by_finish = JobFilter {
+        by_finish: true,
+        ..JobFilter::default()
+    };
+    let all = store.jobs(&by_finish).await.unwrap();
+    let ids: Vec<&str> = all.iter().map(|r| r.job.key.job.0.as_str()).collect();
+    assert_eq!(ids, vec!["old", "d", "c", "b", "f", "e"]);
+    let first = JobFilter {
+        limit: Some(1),
+        ..by_finish
+    };
+    let kept = store.jobs(&first).await.unwrap();
+    assert_eq!(kept[0].job.key.job.0, "old");
+}
+
 /// Statistics count final runs per profile and client with median and p95 of wait and
 /// duration; runs still active are not counted.
 pub async fn stats_count_final_runs_with_median_and_p95(store: &dyn BrokerStore) {

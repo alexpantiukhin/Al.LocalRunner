@@ -31,23 +31,13 @@ impl Engine {
             since: f.since,
             active_only: f.active_only,
             limit: Some(SCAN_LIMIT),
+            by_finish: true,
         };
-        let Ok(mut rows) = self.store.jobs(&filter).await else {
+        let Ok(rows) = self.store.jobs(&filter).await else {
             return Err(ReadReply::Failed {
                 message: "history is unavailable".into(),
             });
         };
-        rows.sort_by(|a, b| {
-            let (x, y) = (&a.job, &b.job);
-            match (x.finished_at, y.finished_at) {
-                (Some(fx), Some(fy)) => {
-                    (fy, &y.key.job, &y.key.client).cmp(&(fx, &x.key.job, &x.key.client))
-                }
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-        });
         Ok(rows
             .into_iter()
             .filter_map(|rec| {

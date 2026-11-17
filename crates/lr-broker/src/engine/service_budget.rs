@@ -150,9 +150,9 @@ impl Engine {
     }
 
     /// The queue as the planner sees it: an order that needs services asks for their memory
-    /// as well, on the cheapest runner that takes work (see [`cheapest_service_mb`]).
-    pub(crate) fn planned_queue(&self) -> Vec<QueueEntry> {
-        let taking: Vec<&RunnerSlot> = self.runners.values().filter(|s| s.takes_work()).collect();
+    /// as well, on the cheapest runner that serves at `now` (see [`cheapest_service_mb`]).
+    pub(crate) fn planned_queue(&self, now: Timestamp) -> Vec<QueueEntry> {
+        let taking: Vec<&RunnerSlot> = self.runners.values().filter(|s| s.serves(now)).collect();
         self.queue
             .iter()
             .map(|j| {
@@ -191,7 +191,7 @@ impl Engine {
     }
 
     pub(crate) fn plan_holding(&self, now: Timestamp, held_mb: u64) -> Plan {
-        let entries = self.planned_queue();
+        let entries = self.planned_queue(now);
         let running = self.planned_running();
         let inner = self.policy.policy();
         let mut pool = inner.pool().clone();

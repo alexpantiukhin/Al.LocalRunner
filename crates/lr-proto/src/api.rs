@@ -275,8 +275,9 @@ pub struct JobSummary {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
     /// Who ended the order early: the `--as` label of `cancel`, the sender label of a withdrawn
-    /// order, `upgrade` or `down` for a runner stopped by them, `broker` for a refusal or a
-    /// return; hidden at `summary`, absent from older peers.
+    /// order, `upgrade` or `down` for a runner stopped by them, `lock` for a runner that
+    /// stopped while an upgrade lock held it in drain, `broker` for a refusal or a return;
+    /// absent when not known (never empty), hidden at `summary`, absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancelled_by: Option<String>,
 }
@@ -323,7 +324,7 @@ pub struct JobDetail {
     pub steps: Vec<StepView>,
     /// Names of the secrets requested, never values.
     pub secrets: Vec<String>,
-    /// Who cancelled it.
+    /// Who cancelled it, as in [`JobSummary::cancelled_by`]; absent when not known.
     pub cancelled_by: Option<String>,
     /// Why it waits, for a queued job.
     pub wait_reason: Option<String>,
@@ -398,7 +399,7 @@ pub struct HeldTag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunnerLiveness {
-    /// Heard within the last heartbeat interval.
+    /// Heard within the last one and a half heartbeat intervals (22.5 s at the default 15 s).
     Online,
     /// Connected, but a heartbeat is overdue; it is not given work.
     Stale,

@@ -22,7 +22,7 @@ fn stopped_by(r: &JobResult) -> Option<String> {
 fn cancelling(cancel: Option<&Cancel>, at: Timestamp) -> Transition {
     let mut t = Transition::to(JobState::Cancelling, at);
     if let Some(c) = cancel {
-        t.cancelled_by = Some(c.by.clone());
+        t.cancelled_by = c.actor();
         t.cancel_reason = Some(c.reason.clone());
     }
     t
@@ -156,7 +156,7 @@ impl Engine {
         t.peak_disk_mb = r.peak_disk_mb;
         match &cancel {
             Some(c) => {
-                t.cancelled_by = Some(c.by.clone());
+                t.cancelled_by = c.actor();
                 t.cancel_reason = Some(c.reason.clone());
             }
             None => {

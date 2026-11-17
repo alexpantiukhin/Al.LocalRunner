@@ -293,6 +293,12 @@ pub(crate) struct Cancel {
     pub(crate) sent: bool,
 }
 
+impl Cancel {
+    pub(crate) fn actor(&self) -> Option<String> {
+        Some(self.by.clone()).filter(|b| !b.is_empty())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Job {
     pub(crate) key: JobKey,

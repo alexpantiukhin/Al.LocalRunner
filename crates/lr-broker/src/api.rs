@@ -190,7 +190,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         peak_mem_mb: row.peak_mem_mb,
         peak_disk_mb: row.peak_disk_mb,
         labels: Vec::new(),
-        cancelled_by: row.cancelled_by.clone(),
+        cancelled_by: row.cancelled_by.clone().filter(|b| !b.is_empty()),
     }
 }
 
@@ -280,7 +280,7 @@ pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
             row.started_at,
         ),
         secrets: row.secrets.clone(),
-        cancelled_by: row.cancelled_by.clone(),
+        cancelled_by: row.cancelled_by.clone().filter(|b| !b.is_empty()),
         wait_reason,
     }
 }
@@ -320,7 +320,7 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         peak_mem_mb: None,
         peak_disk_mb: None,
         labels: job.spec.labels.clone(),
-        cancelled_by: job.cancel.as_ref().map(|c| c.by.clone()),
+        cancelled_by: job.cancel.as_ref().and_then(|c| c.actor()),
     }
 }
 

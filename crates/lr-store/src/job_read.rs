@@ -44,7 +44,7 @@ fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
         finished_at: col_opt_time(r, 19)?,
         state: col_enum(r, 20)?,
         exit_code: r.get(21)?,
-        cancelled_by: r.get(22)?,
+        cancelled_by: r.get::<_, Option<String>>(22)?.filter(|b| !b.is_empty()),
         cancel_reason: r.get(23)?,
         peak_mem_mb: col_opt_u64(r, 24)?,
         peak_disk_mb: col_opt_u64(r, 25)?,
@@ -165,7 +165,13 @@ pub(crate) fn jobs(conn: &Connection, filter: &JobFilter) -> R<Vec<JobRecord>> {
     if filter.active_only {
         sql.push_str(&format!(" AND state NOT IN {}", final_list()));
     }
-    sql.push_str(" ORDER BY queued_at DESC, client_key DESC, id DESC");
+    if filter.by_finish {
+        sql.push_str(
+            " ORDER BY finished_at IS NULL, finished_at DESC, id DESC, client_key DESC,              queued_at DESC",
+        );
+    } else {
+        sql.push_str(" ORDER BY queued_at DESC, client_key DESC, id DESC");
+    }
     if let Some(limit) = filter.limit {
         sql.push_str(&format!(" LIMIT {limit}"));
     }

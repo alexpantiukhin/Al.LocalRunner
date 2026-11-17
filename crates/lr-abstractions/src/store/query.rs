@@ -25,8 +25,12 @@ pub struct JobFilter {
     pub since: Option<Timestamp>,
     /// Only runs that are not final.
     pub active_only: bool,
-    /// Maximum number of runs.
+    /// Maximum number of runs, taken in the order of the result.
     pub limit: Option<usize>,
+    /// Orders by finish time instead of queue time: the newest finished run first, ties by job
+    /// id then client key, both descending; runs not finished come after them, newest queued
+    /// first.
+    pub by_finish: bool,
 }
 
 impl JobFilter {

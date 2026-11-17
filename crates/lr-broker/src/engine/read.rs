@@ -391,12 +391,10 @@ impl Engine {
             .active
             .iter()
             .filter(|h| h.runner.is_some())
+            .filter(|h| self.access_to(viewer, &h.key.client) != Access::Hidden)
             .map(|h| {
                 let since = h.started_at.unwrap_or(h.assigned_at);
-                let mut text = match self.access_to(viewer, &h.key.client) {
-                    Access::Hidden => "чужим заказом".to_string(),
-                    _ => format!("заказом {}", h.key.job),
-                };
+                let mut text = format!("заказом {}", h.key.job);
                 let age = age_text(now.millis_since(since));
                 if h.started_at.is_some() {
                     text.push_str(&format!(" ({age})"));
@@ -556,7 +554,7 @@ fn finished_text(row: &JobRow, full: bool) -> String {
     if !full {
         return text;
     }
-    if let Some(by) = &row.cancelled_by {
+    if let Some(by) = row.cancelled_by.as_deref().filter(|b| !b.is_empty()) {
         text.push_str(&format!("; кто: {by}"));
     }
     let detail = row.cancel_reason.as_deref().and_then(|r| match reason {

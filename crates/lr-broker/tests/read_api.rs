@@ -596,7 +596,7 @@ async fn explain_names_the_job_that_holds_the_only_slot() {
 }
 
 #[tokio::test]
-async fn explain_hides_the_id_of_a_foreign_holder_from_a_client_that_may_not_see_it() {
+async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
     let h = Harness::start("[visibility]\nothers_orders = \"none\"\n");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut alex = h.local_hub("alex").await;
@@ -610,11 +610,13 @@ async fn explain_hides_the_id_of_a_foreign_holder_from_a_client_that_may_not_see
     alex.send(&order("j2", req(512, 1, 60))).await;
     alex.accepted().await;
     let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
-    assert!(
-        seen_by_ci.contains("раннер занят чужим заказом ("),
-        "{seen_by_ci}"
-    );
+    assert!(seen_by_ci.contains("раннер занят"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
+    assert!(!seen_by_ci.contains("заказом"), "{seen_by_ci}");
+    assert!(
+        !seen_by_ci.contains('(') && !seen_by_ci.contains("мин"),
+        "the age of the hidden job leaks: {seen_by_ci}"
+    );
     let seen_by_owner = explain_text(alex.read(explain_of("j2")).await);
     assert!(
         seen_by_owner.contains("раннер занят заказом j1 ("),
@@ -940,4 +942,26 @@ async fn foreign_jobs_are_summarised_for_a_viewer_with_summary_visibility() {
             "{others}"
         );
     }
+}
+
+#[tokio::test]
+async fn an_unknown_canceller_is_absent_not_empty() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    let HubToBroker::Cancel(mut c) = cancel("j2", 2) else {
+        unreachable!()
+    };
+    c.by.label = String::new();
+    alex.send(&HubToBroker::Cancel(c)).await;
+    cancel_acked(&mut alex).await;
+    let row = h.until_state(ALEX, "j2", JobState::Cancelled).await;
+    assert_eq!(row.job.cancelled_by, None, "an empty actor was stored");
+    let runs = history(
+        alex.read(ReadRequest::History(HistoryFilter::default()))
+            .await,
+    );
+    let j2 = runs.iter().find(|s| s.job.0 == "j2").unwrap();
+    assert_eq!(j2.cancelled_by, None);
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(!text.contains("кто:"), "{text}");
 }
