@@ -224,18 +224,17 @@ fn systemd_scope_works() -> bool {
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_containment_is_a_cgroup_scope_exactly_when_systemd_run_works() {
-    let expected = if systemd_scope_works() {
-        lr_exec::Containment::CgroupScope
-    } else {
-        lr_exec::Containment::ProcessGroup
-    };
-    assert_eq!(lr_exec::containment(), expected);
+    let scope = lr_exec::containment() == lr_exec::Containment::CgroupScope;
+    assert_eq!(scope, systemd_scope_works());
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn linux_detached_leftover_descendant_dies_with_the_cgroup_scope() {
-    if lr_exec::containment() != lr_exec::Containment::CgroupScope {
+    if !matches!(
+        lr_exec::containment(),
+        lr_exec::Containment::CgroupScope | lr_exec::Containment::DelegatedCgroup
+    ) {
         eprintln!("no systemd user scope here: the process-group fallback is covered elsewhere");
         return;
     }
