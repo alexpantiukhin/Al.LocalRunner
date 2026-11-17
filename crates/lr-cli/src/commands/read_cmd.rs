@@ -230,7 +230,12 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
     ));
     for t in &r.held_tags {
         let kind = if t.exclusive { ", exclusive" } else { "" };
-        out.push(format!("    tag {} held by {}{kind}", t.tag, t.job));
+        let holder = if t.job.0.is_empty() {
+            String::new()
+        } else {
+            format!(" by {}", t.job)
+        };
+        out.push(format!("    tag {} held{holder}{kind}", t.tag));
     }
     for s in &r.services {
         let state = format!("{:?}", s.state).to_lowercase();

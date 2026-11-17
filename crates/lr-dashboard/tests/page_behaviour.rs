@@ -448,9 +448,8 @@ fn a_running_job_follows_the_end_until_scrolled_up_and_ticking_follow_returns_to
 #[test]
 fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
     let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
-    let scenario = format!(
-        "{FOLLOW_SETUP}{}",
-        format!(
+    let scenario = FOLLOW_SETUP.to_string()
+        + &format!(
             r#"
   pre.scrollTop = 1000;
   var before = state();
@@ -463,8 +462,7 @@ fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
   out.atEndLater = state();
   out.before = before;
 "#
-        )
-    );
+        );
     let Some(out) = run_with("{ live: true, logs: {} }", &scenario, "finishing_follow") else {
         return;
     };
@@ -484,17 +482,15 @@ fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
 #[test]
 fn a_job_that_finishes_while_scrolled_up_keeps_the_scroll_position() {
     let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
-    let scenario = format!(
-        "{FOLLOW_SETUP}{}",
-        format!(
+    let scenario = FOLLOW_SETUP.to_string()
+        + &format!(
             r#"
   pre.scrollTop = 100; pre.fire("scroll");
   logText = LOG + "last\n";
   nextData = {done}; sources[0].onopen(); await tick(); await tick();
   out.state = state();
 "#
-        )
-    );
+        );
     let Some(out) = run_with(
         "{ live: true, logs: {} }",
         &scenario,
@@ -603,6 +599,36 @@ fn a_runner_without_limit_support_is_marked_with_or_without_the_enforcement_fiel
     assert_eq!(text.matches("(limit runs as warn)").count(), 2, "{text}");
     assert!(text.contains("unknown (limit runs as warn)"), "{text}");
     assert!(text.contains("watcher (limit runs as warn)"), "{text}");
+}
+
+#[test]
+fn a_held_tag_without_a_visible_job_has_no_arrow() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Running,
+        StepState::Queued,
+        JobState::Running,
+    ))
+    .unwrap();
+    v["runners"][0]["runners"][0]["held_tags"] = serde_json::json!([
+        {"tag": "gpu", "job": "", "exclusive": true},
+        {"tag": "db", "job": "j7", "exclusive": false}
+    ]);
+    let scenario = r##"
+      location.hash = "#tab=runners";
+      handlers.hashchange();
+      out.rows = $("tab-runners").text();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "masked_held_tag",
+    ) else {
+        return;
+    };
+    let text = out["rows"].as_str().unwrap();
+    assert!(text.contains("gpu!, db←j7"), "{text}");
+    assert!(!text.contains("gpu!←"), "{text}");
 }
 
 const DEFERRED: &str = r#"

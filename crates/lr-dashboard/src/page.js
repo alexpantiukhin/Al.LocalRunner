@@ -158,7 +158,7 @@
           el("td", { text: String(queued.filter(function (j) { var p = j.detail.summary.platform; return !p || (r.caps.platforms || []).indexOf(p) >= 0; }).length) }),
           el("td", {}, [meter(r.free_mem_mb, r.caps.mem_mb, "MB")]),
           el("td", {}, [meter(r.free_cpu, r.caps.cpu, "")]),
-          el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + "←" + h.job; }).join(", ") }),
+          el("td", { text: r.held_tags.map(function (h) { return h.tag + (h.exclusive ? "!" : "") + (h.job ? "←" + h.job : ""); }).join(", ") }),
           el("td", { text: r.services.map(function (s) { return s.name + ":" + s.state; }).join(", ") }),
           el("td", { text: (r.caps.enforcement || "unknown") + (r.caps.enforce_limit ? "" : " (limit runs as warn)") }),
           el("td", { text: r.caps.version || "" }),

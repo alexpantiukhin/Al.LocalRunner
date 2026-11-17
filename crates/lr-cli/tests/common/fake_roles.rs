@@ -35,6 +35,7 @@ pub struct FakeRoles {
     pub after_restart: Mutex<Vec<PoolRunner>>,
     pub service_runner: Option<Option<bool>>,
     pub service_unreachable: bool,
+    pub pool_hangs: bool,
 }
 
 impl FakeRoles {
@@ -56,6 +57,7 @@ impl FakeRoles {
             after_restart: Mutex::new(Vec::new()),
             service_runner: None,
             service_unreachable: false,
+            pool_hangs: false,
         }
     }
 
@@ -150,6 +152,10 @@ impl Roles for FakeRoles {
     }
 
     async fn pool_after_restart(&self) -> Vec<PoolRunner> {
+        if self.pool_hangs {
+            let far = tokio::time::Instant::now() + std::time::Duration::from_secs(3600);
+            tokio::time::sleep_until(far).await;
+        }
         self.after_restart.lock().unwrap().clone()
     }
 }

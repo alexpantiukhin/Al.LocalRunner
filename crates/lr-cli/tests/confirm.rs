@@ -40,6 +40,43 @@ fn run<T>(typed: &Typed, f: impl FnOnce(&mut Console<'_>) -> T) -> (T, String) {
 }
 
 #[test]
+fn the_upgrade_cancel_prompt_counts_only_the_jobs_of_this_installation() {
+    use lr_cli::commands::upgrade_jobs::{choose, Activity, RunningJob};
+    let job = |job: &str, runner: &str| RunningJob {
+        job: job.into(),
+        runner: Some(runner.into()),
+    };
+    let activity = Activity {
+        running: vec!["j1".into(), "j2".into(), "j3".into()],
+        running_jobs: vec![
+            job("j1", "local:r1"),
+            job("j2", "remote-box"),
+            job("j3", "other"),
+        ],
+        ..Activity::default()
+    };
+    let local = std::collections::BTreeSet::from(["r1".to_string()]);
+    let (_, out) = run(&NO, |c| {
+        choose(&activity, &local, false, true, "upgrade?", c)
+    });
+    assert!(out.contains("cancel 1 running job(s)"), "{out}");
+    assert!(out.contains("2 on other runners keep running"), "{out}");
+    let lines = activity.cancel_lines(&local).join("\n");
+    assert!(!lines.contains("note:"), "{lines}");
+    let bare = Activity {
+        running: vec!["j4".into()],
+        running_jobs: vec![job("j4", "r1")],
+        ..Activity::default()
+    };
+    let lines = bare.cancel_lines(&local).join("\n");
+    assert!(lines.contains("cancelling: j4"), "{lines}");
+    assert!(
+        lines.contains("note: j4 run on a runner matched"),
+        "{lines}"
+    );
+}
+
+#[test]
 fn yes_flag_confirms_without_a_prompt() {
     let (answer, out) = run(&NO_TERMINAL, |c| {
         confirm("x deletes y", "delete y?", true, c)

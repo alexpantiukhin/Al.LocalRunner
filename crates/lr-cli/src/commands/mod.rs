@@ -162,14 +162,14 @@ pub enum Command {
         /// The client key whose run to show, when several clients use the same job id.
         #[arg(long, requires = "job")]
         client: Option<String>,
-        /// Only this project.
-        #[arg(long)]
+        /// Only this project; not with `JOB`.
+        #[arg(long, conflicts_with = "job")]
         project: Option<String>,
-        /// Only this source.
-        #[arg(long, value_enum)]
+        /// Only this source; not with `JOB`.
+        #[arg(long, value_enum, conflicts_with = "job")]
         source: Option<SourceArg>,
-        /// Only this label.
-        #[arg(long = "as", value_name = "LABEL")]
+        /// Only this label; not with `JOB`.
+        #[arg(long = "as", value_name = "LABEL", conflicts_with = "job")]
         label: Option<String>,
         /// Only this broker.
         #[arg(long)]

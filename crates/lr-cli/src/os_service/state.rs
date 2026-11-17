@@ -2,6 +2,23 @@
 
 use super::{programs, service_name, Os};
 use std::process::Command;
+use std::time::Duration;
+
+/// How long a question to the OS service manager may take before its answer counts as unknown.
+pub const MANAGER_WITHIN: Duration = Duration::from_secs(10);
+
+/// Runs the blocking question `ask` to the service manager (`sc.exe`, `systemctl`, `launchctl`)
+/// off the async workers, for at most [`MANAGER_WITHIN`]; `unknown` when it takes longer or
+/// cannot be run.
+pub async fn ask_manager<T: Send + 'static>(
+    unknown: T,
+    ask: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    match tokio::time::timeout(MANAGER_WITHIN, tokio::task::spawn_blocking(ask)).await {
+        Ok(Ok(answer)) => answer,
+        _ => unknown,
+    }
+}
 
 /// The state from `sc.exe query` output: `Some(true)` for `RUNNING`, `Some(false)` for another
 /// state, `None` when the output has no `STATE` line.

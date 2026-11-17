@@ -224,21 +224,25 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
 /// How `up` starts a role: the command line without the binary; the pid on success.
 pub type Spawn<'a> = &'a (dyn Fn(&[String]) -> std::io::Result<u32> + Sync);
 
-/// Runners of `layout` that do not answer on the IPC of this user but run as an OS service
-/// (on Windows the service account has its own IPC names): `up` must not start them twice.
-fn runner_services(layout: &Layout, answering: &RunningRoles) -> Vec<(String, Option<bool>)> {
-    use crate::os_service::{runner_service, Os};
+async fn runner_services(layout: &Layout, answering: &RunningRoles) -> Vec<(String, Option<bool>)> {
+    use crate::os_service::{runner_service, state::ask_manager, Os};
     let os = Os::current();
-    layout
+    let names: Vec<String> = layout
         .runner_names()
         .into_iter()
         .filter(|n| !answering.runners.contains(n))
-        .filter(|n| runner_service::installed(os, n))
-        .map(|n| {
-            let running = runner_service::running(os, &n);
-            (n, running)
-        })
-        .collect()
+        .collect();
+    ask_manager(Vec::new(), move || {
+        names
+            .into_iter()
+            .filter(|n| runner_service::installed(os, n))
+            .map(|n| {
+                let running = runner_service::running(os, &n);
+                (n, running)
+            })
+            .collect()
+    })
+    .await
 }
 
 /// The line `up` prints for runner `name` that it leaves to its OS service, which runs or not
@@ -319,7 +323,7 @@ pub async fn up_with_services(
     let mut planned = before.clone();
     let mut code = 0;
     if roles.contains(&NodeRole::Runner) {
-        for (name, running) in runner_services(layout, &before) {
+        for (name, running) in runner_services(layout, &before).await {
             let line = service_runner_line(crate::os_service::Os::current(), &name, running);
             if running == Some(true) {
                 println!("{line}");

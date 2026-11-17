@@ -40,25 +40,44 @@ impl Activity {
 
     /// What `upgrade --cancel` does to the jobs, each as a full list: the running jobs of the
     /// runners it stops (`local`, by name) are cancelled, the jobs of other runners keep running
-    /// (listed only when there are any), and the queued orders stay.
+    /// (listed only when there are any), and the queued orders stay. A runner the broker lists
+    /// by its bare name (it joined over the network) is taken for this installation's by that
+    /// name alone, so a runner of another machine with the same name is counted as well: a
+    /// note names those jobs.
     pub fn cancel_lines(&self, local: &BTreeSet<String>) -> Vec<String> {
         let list = |ids: Vec<String>| match ids.is_empty() {
             true => "none".to_string(),
             false => ids.join(", "),
         };
-        let (cancelled, elsewhere): (Vec<&RunningJob>, Vec<&RunningJob>) =
-            self.running_jobs.iter().partition(|j| {
-                j.runner
-                    .as_deref()
-                    .is_some_and(|r| local.iter().any(|name| is_own_name(r, name)))
-            });
+        let (cancelled, elsewhere) = self.split(local);
+        let by_name: Vec<String> = cancelled
+            .iter()
+            .filter(|j| j.runner.as_deref().is_some_and(|r| local.contains(r)))
+            .map(|j| j.job.clone())
+            .collect();
         let ids = |jobs: Vec<&RunningJob>| jobs.iter().map(|j| j.job.clone()).collect::<Vec<_>>();
         let mut out = vec![format!("cancelling: {}", list(ids(cancelled)))];
+        if !by_name.is_empty() {
+            out.push(format!(
+                "note: {} run on a runner matched to this installation by name only; a same-named runner of another machine is not told apart and its job keeps running",
+                by_name.join(", ")
+            ));
+        }
         if !elsewhere.is_empty() {
             out.push(format!("still running elsewhere: {}", list(ids(elsewhere))));
         }
         out.push(format!("staying queued: {}", list(self.queued.clone())));
         out
+    }
+
+    /// The running jobs split into those on the runners of this installation (`local`, by name)
+    /// and the others.
+    pub fn split(&self, local: &BTreeSet<String>) -> (Vec<&RunningJob>, Vec<&RunningJob>) {
+        self.running_jobs.iter().partition(|j| {
+            j.runner
+                .as_deref()
+                .is_some_and(|r| local.iter().any(|name| is_own_name(r, name)))
+        })
     }
 
     /// Adds the jobs of one broker's whole `status` (every page of its queue).
@@ -199,9 +218,11 @@ where
 /// What the user decides about the jobs: the mode, or `None` when they give up (`aborted` is
 /// printed). Without running jobs it is the plain question `question`. With them, `yes` waits
 /// (or cancels with `cancel`); at a terminal the user picks; without a terminal nothing
-/// goes on.
+/// goes on. The cancel question counts only the jobs on the runners of this installation
+/// (`local`), the ones a cancel stops.
 pub fn choose(
     activity: &Activity,
+    local: &BTreeSet<String>,
     yes: bool,
     cancel: bool,
     question: &str,
@@ -222,7 +243,12 @@ pub fn choose(
         ));
     }
     if cancel {
-        let q = format!("cancel {n} running job(s) and upgrade?");
+        let (here, elsewhere) = activity.split(local);
+        let others = match elsewhere.len() {
+            0 => String::new(),
+            k => format!(" ({k} on other runners keep running)"),
+        };
+        let q = format!("cancel {} running job(s){others} and upgrade?", here.len());
         return Ok(
             proceed("upgrade cancels the running jobs", &q, false, console)?
                 .then_some(Mode::Cancel),

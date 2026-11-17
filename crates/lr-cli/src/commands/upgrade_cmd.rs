@@ -371,7 +371,15 @@ impl Job<'_> {
             return Ok(0);
         }
         let question = format!("upgrade {old_text} to {}?", self.new.text);
-        let Some(mode) = choose(self.activity, self.yes, self.cancel, &question, console)? else {
+        let Some(mode) = choose(
+            self.activity,
+            &self.running.runners,
+            self.yes,
+            self.cancel,
+            &question,
+            console,
+        )?
+        else {
             return Ok(1);
         };
         if mode == Mode::Cancel {
@@ -412,7 +420,8 @@ impl Job<'_> {
 
     /// Waits up to [`RECONNECT_WITHIN`] for the runners started again to be online on the new
     /// version, asking every [`RECONNECT_POLL`]; a failed answer while the hub restarts counts as
-    /// not back yet.
+    /// not back yet, and a question still unanswered at the deadline ends the wait with what
+    /// the last answer said.
     async fn reconnects(
         &self,
         roles: &dyn Roles,
@@ -429,13 +438,19 @@ impl Job<'_> {
             return Vec::new();
         }
         let until = tokio::time::Instant::now() + RECONNECT_WITHIN;
+        let mut now = Vec::new();
         loop {
-            let now = roles.pool_after_restart().await;
+            let answer = tokio::time::timeout_at(until, roles.pool_after_restart()).await;
+            let late = answer.is_err();
+            if let Ok(listed) = answer {
+                now = listed;
+            }
             let seen: Vec<(String, Reconnected)> = names
                 .iter()
                 .map(|n| (n.clone(), reconnected(&now, n, &self.new.text)))
                 .collect();
-            if seen.iter().all(|(_, back)| *back == Reconnected::Yes)
+            if late
+                || seen.iter().all(|(_, back)| *back == Reconnected::Yes)
                 || tokio::time::Instant::now() >= until
             {
                 return seen;

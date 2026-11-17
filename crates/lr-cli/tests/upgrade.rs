@@ -134,6 +134,7 @@ struct Case {
     pool: Vec<PoolRunner>,
     after_restart: Vec<PoolRunner>,
     service_runner: Option<Option<bool>>,
+    pool_hangs: bool,
 }
 
 struct Outcome {
@@ -155,6 +156,7 @@ async fn run(case: Case) -> Outcome {
     let layout = with_runner(&dir);
     let mut roles = FakeRoles::new(false, case.answers);
     roles.service_runner = case.service_runner;
+    roles.pool_hangs = case.pool_hangs;
     let lock = lr_cli::upgrade_lock::lock_path(&layout);
     *roles.lock_file.lock().unwrap() = Some(lock.clone());
     *roles.after_restart.lock().unwrap() = case.after_restart.clone();
@@ -239,6 +241,7 @@ fn case(old: &'static str, new: &'static str) -> Case {
         pool: Vec::new(),
         after_restart: Vec::new(),
         service_runner: None,
+        pool_hangs: false,
     }
 }
 
@@ -752,6 +755,43 @@ async fn a_runner_that_did_not_reconnect_is_named() {
     let said = report_of(&o);
     assert!(said.contains("r1: did not reconnect within 20 s"), "{said}");
     assert!(!said.contains("still on"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_hub_that_does_not_answer_ends_the_reconnect_check_within_the_bound() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.1"), true)];
+    let mut silent = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    silent.pool = c.pool.clone();
+    let started = tokio::time::Instant::now();
+    run(silent).await;
+    let never_back = started.elapsed();
+    c.pool_hangs = true;
+    let started = tokio::time::Instant::now();
+    let o = run(c).await;
+    let took = started.elapsed();
+    assert!(took >= RECONNECT_WITHIN, "{took:?}");
+    assert!(
+        took <= never_back,
+        "a hub that does not answer ends the check like a runner that is not back: {took:?} against {never_back:?}"
+    );
+    let said = report_of(&o);
+    assert!(said.contains("r1: did not reconnect within 20 s"), "{said}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_runner_back_on_another_version_is_named_with_it() {
+    let mut c = case("0.1.0 (protocol 1.0)", "0.1.1 (protocol 1.0)");
+    c.pool = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    c.after_restart = vec![peer("local:r1", "local:alex", Some("0.1.0"), true)];
+    let o = run(c).await;
+    let said = report_of(&o);
+    assert!(
+        said.contains("r1: reconnected on version 0.1.0, not 0.1.1"),
+        "{said}"
+    );
+    assert!(!said.contains("did not reconnect"), "{said}");
 }
 
 #[test]

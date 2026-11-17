@@ -54,7 +54,8 @@ pub fn shown_state(s: &JobSummary) -> String {
 /// for a cancelled run whose canceller is known, the reason code otherwise (a refusal is
 /// already `rejected` in the state), `-` without one.
 pub fn reason_text(s: &JobSummary) -> String {
-    match (&s.reason, &s.cancelled_by) {
+    let by = s.cancelled_by.as_ref().filter(|b| !b.is_empty());
+    match (&s.reason, by) {
         (Some(code), Some(by)) if s.state == JobState::Cancelled && !is_rejected(s) => {
             format!("cancelled by {by}: {code}")
         }
@@ -179,7 +180,10 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
     }
     let optional = [
         ("github    ", &d.github_run_url),
-        ("cancelled ", &d.cancelled_by),
+        (
+            "cancelled ",
+            &d.cancelled_by.clone().filter(|b| !b.is_empty()),
+        ),
         ("waits     ", &d.wait_reason),
     ];
     for (name, value) in optional {

@@ -7,7 +7,7 @@
 
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
-use crate::os_service::state::{restart_command, service_running, status_command};
+use crate::os_service::state::{ask_manager, restart_command, service_running, status_command};
 use crate::os_service::{service_installed, Os};
 use crate::paths::Layout;
 use async_trait::async_trait;
@@ -430,13 +430,11 @@ impl Roles for IpcRoles<'_> {
     async fn runner_service(&self, name: &str) -> Option<Option<bool>> {
         let os = Os::current();
         let name = name.to_string();
-        tokio::task::spawn_blocking(move || {
+        ask_manager(Some(None), move || {
             crate::os_service::runner_service::installed(os, &name)
                 .then(|| crate::os_service::runner_service::running(os, &name))
         })
         .await
-        .ok()
-        .flatten()
     }
 
     async fn broker_service_state(&self) -> ServiceState {
@@ -444,11 +442,12 @@ impl Roles for IpcRoles<'_> {
             return ServiceState::NotInstalled;
         }
         let os = Os::current();
-        service_state(
-            super::admin_cmd::service_running(self.layout).await,
-            service_running(os),
-            service_installed(os),
-        )
+        let ipc = super::admin_cmd::service_running(self.layout).await;
+        let (running, installed) = ask_manager((None, true), move || {
+            (service_running(os), service_installed(os))
+        })
+        .await;
+        service_state(ipc, running, installed)
     }
 }
 

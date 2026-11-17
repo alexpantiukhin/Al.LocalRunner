@@ -88,14 +88,16 @@ pub async fn pool(layout: &Layout) -> Vec<PoolRunner> {
     all
 }
 
-/// Whether restarted runner `name` is back: listed in `now` online on version `new`.
+/// Whether restarted runner `name` is back: listed in `now` online on version `new`, or online
+/// on another version it reports.
 pub fn reconnected(now: &[PoolRunner], name: &str, new: &str) -> Reconnected {
-    let back = now
-        .iter()
-        .any(|r| is_own(r, name) && r.online && r.version.as_deref() == Some(new));
-    match back {
-        true => Reconnected::Yes,
-        false => Reconnected::No,
+    let online: Vec<&PoolRunner> = now.iter().filter(|r| is_own(r, name) && r.online).collect();
+    if online.iter().any(|r| r.version.as_deref() == Some(new)) {
+        return Reconnected::Yes;
+    }
+    match online.iter().find_map(|r| r.version.clone()) {
+        Some(v) => Reconnected::OtherVersion(v),
+        None => Reconnected::No,
     }
 }
 
@@ -120,12 +122,14 @@ pub fn plan_lines(pool: &[PoolRunner], new: &str) -> Vec<String> {
 }
 
 /// Whether a runner that `upgrade` restarted came back to its broker on the new version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reconnected {
     /// It is online on the new version.
     Yes,
     /// It did not come back within the wait.
     No,
+    /// It is online, but on this other version.
+    OtherVersion(String),
 }
 
 /// The report's lines after the replacement: the runners of this installation that `upgrade`
@@ -140,12 +144,16 @@ pub fn report_lines(
 ) -> Vec<String> {
     let mut lost: Vec<String> = restarted
         .iter()
-        .filter(|(_, back)| *back == Reconnected::No)
-        .map(|(name, _)| {
-            format!(
+        .filter_map(|(name, back)| match back {
+            Reconnected::Yes => None,
+            Reconnected::No => Some(format!(
                 "{name}: did not reconnect within {} s after the restart; check it: localrunner doctor",
                 RECONNECT_WITHIN.as_secs()
-            )
+            )),
+            Reconnected::OtherVersion(v) => Some(format!(
+                "{name}: reconnected on version {v}, not {}; check which binary it runs: localrunner doctor",
+                new.text
+            )),
         })
         .collect();
     let mut out = Vec::new();

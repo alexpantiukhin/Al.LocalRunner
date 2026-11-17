@@ -519,6 +519,26 @@ fn read_commands_parse_their_flags() {
 }
 
 #[test]
+fn status_of_one_job_refuses_the_list_filters_it_would_ignore() {
+    for filter in [
+        &["--project", "owner/repo"][..],
+        &["--source", "session"][..],
+        &["--as", "ci"][..],
+    ] {
+        let mut argv = vec!["localrunner", "status", "j1"];
+        argv.extend_from_slice(filter);
+        assert!(Cli::try_parse_from(&argv).is_err(), "{argv:?}");
+    }
+    let Command::Status { job, broker, .. } = parse(&["status", "j1", "--broker", "office"]) else {
+        panic!("status");
+    };
+    assert_eq!(
+        (job.as_deref(), broker.as_deref()),
+        (Some("j1"), Some("office"))
+    );
+}
+
+#[test]
 fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
     use lr_cli::commands::snapshot_cmd::{default_path, log_targets};
     use lr_cli::dashboard::detail_of;
@@ -890,6 +910,65 @@ fn status_recent_lines_name_the_end_the_reason_and_who() {
 }
 
 #[test]
+fn recent_rows_of_a_broker_that_ignores_the_filter_are_cut_on_this_side() {
+    use lr_cli::commands::view::clip_recent;
+    use lr_proto::{PoolLoad, RecentFilter, StatusView};
+    let at = |job: &str, end: Option<u64>| JobSummary {
+        finished_at: end.map(Timestamp),
+        ..summary(job, 0)
+    };
+    let view = StatusView {
+        running: Vec::new(),
+        queue: Vec::new(),
+        recent: vec![
+            at("j4", Some(4 * H)),
+            at("j3", Some(3 * H)),
+            at("j2", None),
+            at("j1", Some(H)),
+        ],
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 0,
+            used_cpu: 0,
+            total_cpu: 0,
+        },
+        next: None,
+    };
+    let ids = |v: &StatusView| v.recent.iter().map(|s| s.job.0.clone()).collect::<Vec<_>>();
+    let mut counted = view.clone();
+    clip_recent(
+        &mut counted,
+        &RecentFilter {
+            count: Some(1),
+            since: None,
+        },
+    );
+    assert_eq!(ids(&counted), vec!["j4"]);
+    let mut since = view.clone();
+    clip_recent(
+        &mut since,
+        &RecentFilter {
+            count: None,
+            since: Some(Timestamp(3 * H)),
+        },
+    );
+    assert_eq!(ids(&since), vec!["j4", "j3"]);
+    let mut plain = view.clone();
+    clip_recent(&mut plain, &RecentFilter::default());
+    assert_eq!(ids(&plain), ids(&view));
+}
+
+#[test]
+fn an_empty_actor_is_not_printed() {
+    use lr_cli::commands::history_cmd::reason_text;
+    use lr_proto::ReasonCode;
+    let s = ended("j1", Some(ReasonCode::CancelledByUser), Some(""));
+    assert_eq!(reason_text(&s), "cancelled_by_user");
+    let bare = ended("j2", None, Some(""));
+    assert_eq!(reason_text(&bare), "-");
+}
+
+#[test]
 fn history_shows_actor_and_reason() {
     use lr_proto::{ReasonCode, RejectReason};
     let rows = vec![
@@ -1005,6 +1084,28 @@ fn runners_are_grouped_by_pool_under_one_header_with_idle_and_can_start() {
     let text = pool_runner_lines(&view).join("\n");
     assert!(text.contains("tags held: none"), "{text}");
     assert!(text.contains("idle; can start a job now: yes"), "{text}");
+}
+
+#[test]
+fn a_held_tag_whose_job_is_hidden_names_no_holder() {
+    let mut r = runner_info("r1", RunnerLiveness::Online, 0);
+    r.held_tags = vec![
+        lr_proto::HeldTag {
+            tag: "gradle".into(),
+            job: lr_core::JobId(String::new()),
+            exclusive: true,
+        },
+        lr_proto::HeldTag {
+            tag: "db".into(),
+            job: lr_core::JobId("j7".into()),
+            exclusive: false,
+        },
+    ];
+    let text = runner_lines(&[("office".into(), vec![r])]).join("\n");
+    assert!(text.contains("\n    tag gradle held, exclusive"), "{text}");
+    assert!(text.contains("\n    tag db held by j7"), "{text}");
+    assert!(!text.contains("held by ,"), "{text}");
+    assert!(!text.contains("held by \n"), "{text}");
 }
 
 #[test]

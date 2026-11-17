@@ -8,7 +8,8 @@ use lr_cli::net::NetAdmission;
 use lr_cli::os_service::programs::{unix_program, windows_program};
 use lr_cli::os_service::quote::{systemd_command_line, windows_arg};
 use lr_cli::os_service::state::{
-    parse_launchctl_state, parse_sc_state, parse_systemctl_active, restart_command,
+    ask_manager, parse_launchctl_state, parse_sc_state, parse_systemctl_active, restart_command,
+    MANAGER_WITHIN,
 };
 use lr_cli::os_service::trust::{check_children, facts, judge, trusted_principals, Facts};
 use lr_cli::os_service::{choose_user, path_script, profile_line, profile_without, Os};
@@ -339,4 +340,21 @@ fn the_restart_command_names_the_service_of_each_os() {
         restart_command(Os::MacOs),
         "sudo launchctl kickstart -k system/com.al-localrunner.broker"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_service_manager_that_does_not_answer_is_unknown_within_the_bound() {
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let started = tokio::time::Instant::now();
+    let (answer, ()) = tokio::join!(
+        ask_manager(None, move || {
+            let _ = held.recv();
+            Some(true)
+        }),
+        tokio::time::advance(MANAGER_WITHIN)
+    );
+    assert_eq!(answer, None);
+    assert_eq!(started.elapsed(), MANAGER_WITHIN);
+    release.send(()).unwrap();
+    assert_eq!(ask_manager(None, || Some(true)).await, Some(true));
 }

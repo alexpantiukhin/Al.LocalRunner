@@ -12,7 +12,7 @@ use lr_core::{JobId, Timestamp};
 use lr_obs::Redactor;
 use lr_proto::{
     BrokerStatus, CliRead, CliReply, CliRequest, JobDetail, JobSummary, ReadReply, ReadRequest,
-    RunnerInfo, RunnerLiveness, StatusFilter, StatusView, WireSource,
+    RecentFilter, RunnerInfo, RunnerLiveness, StatusFilter, StatusView, WireSource,
 };
 use serde_json::{json, Map, Value};
 
@@ -415,6 +415,20 @@ pub async fn read(
     }
 }
 
+/// Applies `recent` to the orders that left the queue on this side too: a broker older than
+/// the filter ignores it and sends its latest ones, which are cut here to those that ended at
+/// or after `since` and to at most `count`, newest first as they came.
+pub fn clip_recent(view: &mut StatusView, recent: &RecentFilter) {
+    if let Some(since) = recent.since {
+        view.recent
+            .retain(|s| s.finished_at.is_some_and(|end| end >= since));
+    }
+    if let Some(count) = recent.count {
+        view.recent
+            .truncate(usize::try_from(count).unwrap_or(usize::MAX));
+    }
+}
+
 /// What `status` asks for.
 #[derive(Debug, Clone, Default)]
 pub struct StatusArgs {
@@ -461,7 +475,12 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
             continue;
         }
         match read(&client, &b.name, ReadRequest::Status(filter.clone())).await {
-            Ok(ReadReply::Status(v)) => views.push((b.name, v)),
+            Ok(ReadReply::Status(mut v)) => {
+                if let Some(r) = &filter.recent {
+                    clip_recent(&mut v, r);
+                }
+                views.push((b.name, v))
+            }
             Ok(other) => problems.push(format!("broker {}: {other:?}", b.name)),
             Err(e) => problems.push(e),
         }
