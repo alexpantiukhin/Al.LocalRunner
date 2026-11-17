@@ -372,6 +372,16 @@ pub async fn uninstall_with(
             Some(t) => println!("uninstalled; deleted {}", t.display()),
             None => println!("uninstalled"),
         }
+        if cfg!(windows) {
+            for root in
+                crate::os_service::runner_service::leftover_job_roots(&crate::paths::jobs_parent())
+            {
+                println!(
+                    "the job directory {} stays; delete it by hand when it is no longer needed",
+                    root.display()
+                );
+            }
+        }
     }
     Ok(code)
 }

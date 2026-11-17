@@ -122,6 +122,7 @@ pub enum KeyState {
 
 const ADMINISTRATORS: &str = "S-1-5-32-544";
 const SYSTEM: &str = "S-1-5-18";
+const USERS: &str = "S-1-5-32-545";
 
 /// The ownership of `path` as this process sees it.
 pub fn key_state(path: &Path) -> KeyState {
@@ -956,6 +957,39 @@ pub fn job_root(i: &RunnerServiceInputs) -> Option<PathBuf> {
     (i.os == Os::Windows).then(|| crate::paths::jobs_parent().join(&i.name))
 }
 
+/// Why `runner run --job-root` is refused: it is for the Windows service (`--service`) only.
+/// `None` when it may go ahead.
+pub fn job_root_refusal(given: bool, service: bool, windows: bool) -> Option<String> {
+    if !given {
+        return None;
+    }
+    if !windows {
+        return Some(
+            "--job-root is for the Windows runner service only: on this OS jobs work in the \
+             runner's state directory"
+                .into(),
+        );
+    }
+    (!service).then(|| {
+        "--job-root needs --service: it is set by `autostart on runner <name> --service`, and a \
+         runner started by hand works in its state directory"
+            .into()
+    })
+}
+
+/// The job roots left under `parent` (one directory per runner); empty when there are none.
+pub fn leftover_job_roots(parent: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    found.sort();
+    found
+}
+
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
 /// `--owner <user>` (the service account is not the installing user) and `--job-root`, and the
 /// directories.
@@ -1080,7 +1114,28 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
         i.state_dir.join(crate::build::DISK_LEDGER),
     ));
     if let Some(root) = job_root(i) {
+        let parent = crate::paths::jobs_parent();
+        out.push(Action::CreateDir(parent.clone()));
+        out.push(Action::run(
+            "icacls",
+            &[&s(&parent), "/setowner", &format!("*{ADMINISTRATORS}")],
+        ));
+        out.push(Action::run(
+            "icacls",
+            &[
+                &s(&parent),
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{ADMINISTRATORS}:(OI)(CI)F"),
+                &format!("*{SYSTEM}:(OI)(CI)F"),
+                &format!("*{USERS}:(RX)"),
+            ],
+        ));
         out.push(Action::CreateDir(root.clone()));
+        out.push(Action::run(
+            "icacls",
+            &[&s(&root), "/setowner", &format!("*{ADMINISTRATORS}")],
+        ));
         out.push(Action::run(
             "icacls",
             &[
@@ -1238,10 +1293,12 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
             if restore_key {
                 out.extend(key_to(i, &i.user, &account));
             }
+            let jobs = job_root(i);
             for g in windows_grants(i) {
+                let missing_ok = g.optional || jobs.as_ref() == Some(&g.path);
                 out.push(
                     Action::run("icacls", &[&s(&g.path), "/remove", &account])
-                        .tolerating(tolerated(g.optional)),
+                        .tolerating(tolerated(missing_ok)),
                 );
             }
             out.push(

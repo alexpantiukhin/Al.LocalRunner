@@ -486,9 +486,18 @@ pub async fn run(cli: Cli) -> i32 {
                     service,
                     owner,
                 };
-                let mut layout = layout;
-                layout.job_root = job_root;
-                roles_cmd::runner_run(&layout, name, count, config, how).await
+                match crate::os_service::runner_service::job_root_refusal(
+                    job_root.is_some(),
+                    service,
+                    cfg!(windows),
+                ) {
+                    Some(why) => Err(why),
+                    None => {
+                        let mut layout = layout;
+                        layout.job_root = job_root;
+                        roles_cmd::runner_run(&layout, name, count, config, how).await
+                    }
+                }
             }
             RunnerAction::Join {
                 address,
