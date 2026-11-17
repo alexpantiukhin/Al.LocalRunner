@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", step: "", stepAuto: true, as: params.get("as") || ""
+    sel: -1, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -254,16 +254,18 @@
     if (S.step !== was && S.log) showLog();
   }
   function finishFollow() {
-    var f = $("log-follow"), id = S.open.detail.summary.job;
-    var was = f.checked;
+    var f = $("log-follow");
+    S.stick = f.checked;
+    f.checked = false;
     f.disabled = true;
-    if (!was) { loadLog(); return; }
-    loadLog(function () { if (S.open && S.open.detail.summary.job === id) f.checked = false; });
+    loadLog();
   }
   function openCard(j) {
     var over = FINAL.indexOf(j.detail.summary.state) >= 0;
     $("log-follow").checked = !over;
     $("log-follow").disabled = over;
+    S.stick = false;
+    S.logGen += 1;
     S.stepAuto = true;
     S.log = "";
     S.noLog = false;
@@ -294,22 +296,22 @@
     var pre = $("log");
     var top = pre.scrollTop;
     pre.textContent = text;
-    if ($("log-follow").checked && !q) { pre.scrollTop = pre.scrollHeight; } else { pre.scrollTop = top; }
+    if (($("log-follow").checked || S.stick) && !q) { pre.scrollTop = pre.scrollHeight; } else { pre.scrollTop = top; }
   }
-  function loadLog(after) {
+  function loadLog() {
     if (!S.open) return;
     var id = S.open.detail.summary.job;
     if (!config.live) {
       S.noLog = config.logs[id] == null;
       S.log = !S.noLog ? config.logs[id] : config.with_logs ? "(no log)" : "(logs are not included in this snapshot)";
       showLog();
-      if (after) after();
       return;
     }
+    var gen = ++S.logGen;
     fetch("/api/log/" + encodeURIComponent(id), { credentials: "same-origin" }).then(function (r) { return r.ok ? r.text() : ""; })
-      .then(function (t) { if (S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); } if (after) after(); }).catch(function () { if (after) after(); });
+      .then(function (t) { if (gen === S.logGen && S.open && S.open.detail.summary.job === id && t) { S.log = t; showLog(); S.stick = false; } }).catch(function () { return; });
   }
-  function closeCard() { $("card").hidden = true; S.open = null; }
+  function closeCard() { $("card").hidden = true; S.open = null; S.logGen += 1; }
 
   function askCancel(jobs) {
     if (!jobs.length) return;
@@ -421,7 +423,7 @@
   $("log-follow").addEventListener("change", showLog);
   $("log").addEventListener("scroll", function () {
     var f = $("log-follow"), pre = $("log");
-    if (f.checked && !f.disabled && pre.scrollHeight - pre.scrollTop - pre.clientHeight > 8) f.checked = false;
+    if ((f.checked || S.stick) && pre.scrollHeight - pre.scrollTop - pre.clientHeight > 8) { f.checked = false; S.stick = false; }
   });
   $("log-copy").addEventListener("click", function () { if (navigator.clipboard) navigator.clipboard.writeText($("log").textContent); });
   $("log-download").addEventListener("click", function () { if (S.open) download(S.open.detail.summary.job + ".log", S.log, "text/plain"); });

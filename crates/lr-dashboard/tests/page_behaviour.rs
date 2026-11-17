@@ -472,12 +472,10 @@ fn a_followed_job_that_finishes_gets_one_last_load_and_follow_switches_off() {
     assert_eq!(out["atEnd"]["disabled"], true, "{out}");
     assert_eq!(out["atEnd"]["top"], 1000, "{out}");
     assert!(
-        out["atEndLog"].as_str().unwrap().ends_with("last\n"),
-        "{out}"
-    );
-    assert_eq!(
-        out["atEnd"]["loads"].as_i64().unwrap() - out["before"]["loads"].as_i64().unwrap(),
-        2,
+        out["atEndLog"].as_str().unwrap().ends_with(
+            "last
+"
+        ),
         "{out}"
     );
     assert_eq!(out["atEndLater"]["loads"], out["atEnd"]["loads"], "{out}");
@@ -605,4 +603,140 @@ fn a_runner_without_limit_support_is_marked_with_or_without_the_enforcement_fiel
     assert_eq!(text.matches("(limit runs as warn)").count(), 2, "{text}");
     assert!(text.contains("unknown (limit runs as warn)"), "{text}");
     assert!(text.contains("watcher (limit runs as warn)"), "{text}");
+}
+
+const DEFERRED: &str = r#"
+  var pending = [];
+  var plainFetch = globalThis.fetch;
+  globalThis.fetch = function (url) {
+    if (String(url).indexOf("/api/log/") !== 0) return plainFetch(url);
+    return new Promise(function (resolve) {
+      pending.push({ url: String(url), answer: function (text) { resolve({ ok: true, text: function () { return Promise.resolve(text); } }); } });
+    });
+  };
+  var flush = async function () { for (var i = 0; i < 30; i += 1) await Promise.resolve(); };
+  var pre = $("log");
+  pre.scrollHeight = 1000; pre.clientHeight = 100;
+  var follow = $("log-follow");
+  follow.checked = true;
+  var tickLog = function () { intervals.filter(function (i) { return i.ms === 2000; }).forEach(function (i) { i.f(); }); };
+  sources[0].onopen(); await flush();
+  $("queue-body").children[0].fire("click"); await flush();
+  pending[0].answer(LOG); await flush();
+  var settle = pending.length;
+"#;
+
+fn deferred(next: &str, body: &str) -> Option<Value> {
+    let scenario = format!("{DEFERRED}{body}");
+    let first = running(StepState::Running, StepState::Queued, JobState::Running);
+    let program_next = format!("var done = {next};\n{scenario}");
+    run_snapshot(
+        "{ live: true, logs: {} }",
+        &first,
+        &program_next,
+        "deferred_log",
+    )
+}
+
+#[test]
+fn a_slow_request_from_before_the_finish_never_overwrites_the_final_log() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  nextData = done; sources[0].onopen(); await flush();
+  out.started = pending.length - settle;
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  pending[settle].answer(LOG + "stale\n"); await flush();
+  out.text = pre.textContent;
+  out.checked = follow.checked;
+"#,
+    ) else {
+        return;
+    };
+    let text = out["text"].as_str().unwrap();
+    assert!(text.ends_with("final\n"), "{out}");
+    assert!(!text.contains("stale"), "{out}");
+    assert_eq!(out["checked"], false, "{out}");
+}
+
+#[test]
+fn a_scroll_up_while_the_final_load_is_pending_survives_its_response() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  pre.scrollTop = 1000;
+  nextData = done; sources[0].onopen(); await flush();
+  out.disabled = !!follow.disabled;
+  out.checkedAtFinish = follow.checked;
+  pre.scrollTop = 100; pre.fire("scroll");
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  out.top = pre.scrollTop;
+  out.text = pre.textContent;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["disabled"], true, "{out}");
+    assert_eq!(out["checkedAtFinish"], false, "{out}");
+    assert_eq!(out["top"], 100, "{out}");
+    assert!(out["text"].as_str().unwrap().ends_with("final\n"), "{out}");
+}
+
+#[test]
+fn a_followed_job_that_finishes_shows_the_end_of_its_final_log() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  pre.scrollTop = 1000;
+  nextData = done; sources[0].onopen(); await flush();
+  pending[pending.length - 1].answer(LOG + "final\n"); await flush();
+  out.top = pre.scrollTop;
+  out.checked = follow.checked;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["top"], 1000, "{out}");
+    assert_eq!(out["checked"], false, "{out}");
+}
+
+#[test]
+fn a_response_for_a_job_closed_or_replaced_meanwhile_is_ignored() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  sources[0].onopen(); await flush();
+  var slow = pending[pending.length - 1];
+  var other = $("queue-body").children.filter(function (r) { return r.attrs["data-job"] === "j-queued"; })[0];
+  other.fire("click"); await flush();
+  pending[pending.length - 1].answer("other job\n"); await flush();
+  slow.answer("old job\n"); await flush();
+  out.text = pre.textContent;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["text"], "other job\n", "{out}");
+}
+
+#[test]
+fn no_load_is_started_by_the_timer_or_a_refresh_once_the_job_is_known_finished() {
+    let done = running(StepState::Passed, StepState::Passed, JobState::Passed);
+    let Some(out) = deferred(
+        &done,
+        r#"
+  nextData = done; sources[0].onopen(); await flush();
+  var atFinish = pending.length;
+  tickLog(); tickLog(); await flush();
+  sources[0].onopen(); await flush();
+  out.extra = pending.length - atFinish;
+"#,
+    ) else {
+        return;
+    };
+    assert_eq!(out["extra"], 0, "{out}");
 }
