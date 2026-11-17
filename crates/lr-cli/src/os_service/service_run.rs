@@ -1,6 +1,7 @@
 //! The broker or a runner inside an OS service (spec 10): a broker that did not start or ended on its own
 //! is a failure for the service manager, which restarts the service after 5 seconds, and the
-//! reason goes to `logs/service.log` of the service's state directory.
+//! reason goes to `logs/service.log` of the service's state directory (of the runner's own
+//! directory for a runner, the only part of the state directory its service account may write).
 
 use crate::paths::Layout;
 use std::future::Future;
@@ -19,13 +20,23 @@ pub enum ServiceEnd {
 /// Appends a line `<unix seconds> <text>` to `logs/service.log` of `layout`; a text of several
 /// lines is joined into one with `; `.
 pub fn service_log(layout: &Layout, text: &str) {
+    service_log_in(&layout.root, text);
+}
+
+/// Where the service of runner `name` of `layout` notes why it did not start or stopped.
+pub fn runner_service_log(layout: &Layout, name: &str) -> std::path::PathBuf {
+    layout.runner_dir(name).join("logs").join("service.log")
+}
+
+/// [`service_log`] into `logs/service.log` under `dir`.
+pub fn service_log_in(dir: &std::path::Path, text: &str) {
     let text = text
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
         .join("; ");
-    let dir = layout.root.join("logs");
+    let dir = dir.join("logs");
     let _ = std::fs::create_dir_all(&dir);
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -43,8 +54,8 @@ pub fn service_log(layout: &Layout, text: &str) {
 
 /// Runs runner `name` of `layout` as an OS service until `stop` completes; `started` is called
 /// once it runs. A runner stopped by `down` ends as [`ServiceEnd::Stopped`], so the service
-/// manager leaves it stopped; a runner the broker refused is noted in `logs/service.log` and
-/// stopped too, since a restart would be refused again.
+/// manager leaves it stopped; a runner the broker refused is noted in its
+/// [`runner_service_log`] and stopped too, since a restart would be refused again.
 pub async fn serve_runner(
     layout: &Layout,
     name: &str,
@@ -54,7 +65,10 @@ pub async fn serve_runner(
     let running = match crate::roles::start_runners(layout, Some(name), 1, None, false).await {
         Ok(r) => r,
         Err(e) => {
-            service_log(layout, &format!("runner {name} did not start: {e}"));
+            service_log_in(
+                &layout.runner_dir(name),
+                &format!("runner {name} did not start: {e}"),
+            );
             return ServiceEnd::NotStarted;
         }
     };
@@ -64,7 +78,10 @@ pub async fn serve_runner(
         exits = running.wait() => {
             for e in exits {
                 if let lr_runner::AgentExit::Refused(p) = e {
-                    service_log(layout, &format!("the broker refused runner {name}: {}", p.message));
+                    service_log_in(
+                        &layout.runner_dir(name),
+                        &format!("the broker refused runner {name}: {}", p.message),
+                    );
                 }
             }
             ServiceEnd::Stopped

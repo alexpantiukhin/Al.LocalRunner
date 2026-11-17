@@ -647,17 +647,31 @@ fn runner_service_plan_names_the_runner_and_state_dir() {
                     ),
                     "{create}"
                 );
-                for (dir, rights) in [
-                    ("/home/alex/state & more", "M"),
-                    ("/home/alex/config", "RX"),
-                    ("/home/alex/.local/bin", "RX"),
+                let state = Path::new("/home/alex/state & more");
+                for (path, rights) in [
+                    (state.join("runner").join("box"), "(OI)(CI)M"),
+                    (state.join("disk-reservations"), "(OI)(CI)M"),
+                    (state.join("machine-id"), "(R)"),
+                    (PathBuf::from("/home/alex/config"), "(OI)(CI)RX"),
+                    (PathBuf::from("/home/alex/.local/bin"), "(OI)(CI)RX"),
                 ] {
                     let grant = format!(
-                        r"icacls {} /grant NT SERVICE\AlLocalRunner-box:(OI)(CI){rights}",
-                        Path::new(dir).display()
+                        r"icacls {} /grant NT SERVICE\AlLocalRunner-box:{rights}",
+                        path.display()
                     );
                     assert!(runs.contains(&grant), "{grant} missing in {runs:?}");
                 }
+                let on_root = format!("icacls {} /grant", state.display());
+                assert!(
+                    !runs.iter().any(|r| r.starts_with(&format!("{on_root} "))),
+                    "no right on the whole state directory: {runs:?}"
+                );
+                assert!(
+                    !runs
+                        .iter()
+                        .any(|r| r.contains("runner.toml") || r.contains("logging.toml")),
+                    "a separate configuration directory is read as a whole: {runs:?}"
+                );
             }
             Os::Linux => {
                 let (_, unit) = written(&plan).pop().unwrap();
@@ -681,6 +695,77 @@ fn runner_service_plan_names_the_runner_and_state_dir() {
 }
 
 #[test]
+fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others() {
+    let i = runner_service(Os::Windows, "box");
+    let state = i.state_dir.clone();
+    let install = runner_service::install(&i);
+    let uninstall = runner_service::uninstall(&i, false);
+    let grants: Vec<String> = runs(&install)
+        .into_iter()
+        .filter(|r| r.starts_with("icacls") && r.contains(" /grant "))
+        .collect();
+    for (path, rights) in [
+        (state.join("runner").join("box"), "(OI)(CI)M"),
+        (state.join("disk-reservations"), "(OI)(CI)M"),
+        (state.join("machine-id"), "(R)"),
+        (state.join("runner.toml"), "(R)"),
+        (state.join("logging.toml"), "(R)"),
+        (PathBuf::from("/home/alex/.local/bin"), "(OI)(CI)RX"),
+    ] {
+        let grant = format!(
+            r"icacls {} /grant NT SERVICE\AlLocalRunner-box:{rights}",
+            path.display()
+        );
+        assert!(grants.contains(&grant), "{grant} missing in {grants:?}");
+        let revoke = format!(
+            r"icacls {} /remove NT SERVICE\AlLocalRunner-box",
+            path.display()
+        );
+        assert!(runs(&uninstall).contains(&revoke), "{revoke} missing");
+    }
+    assert_eq!(grants.len(), 6, "{grants:?}");
+    for kept in [
+        "broker.db",
+        "hub.db",
+        "policy.toml",
+        "participant.key",
+        "logs",
+    ] {
+        assert!(
+            !grants
+                .iter()
+                .any(|g| g.contains(kept) && !g.contains("box")),
+            "{kept}: {grants:?}"
+        );
+    }
+    assert!(
+        install.contains(&Action::CreateDir(state.join("disk-reservations"))),
+        "{install:?}"
+    );
+    let note = runner_service::network_identity_note(&i);
+    assert!(
+        note.contains(r"NT SERVICE\AlLocalRunner-box") && note.contains(r"DOMAIN\HOST$"),
+        "{note}"
+    );
+    for a in install.iter().chain(uninstall.iter()) {
+        if let Action::Run { args, tolerate, .. } = a {
+            let optional = args
+                .first()
+                .is_some_and(|p| p.ends_with("runner.toml") || p.ends_with("logging.toml"));
+            if args.iter().any(|w| w == "/grant" || w == "/remove")
+                && !args[0].ends_with("participant.key")
+            {
+                assert_eq!(
+                    tolerate == &Tolerate::Anything,
+                    optional,
+                    "only a configuration file may be missing: {a}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn runner_service_off_removes_only_that_runner() {
     for os in ALL {
         let plan = runner_service::uninstall(&runner_service(os, "box"), false);
@@ -696,9 +781,11 @@ fn runner_service_off_removes_only_that_runner() {
                 tolerate, program, ..
             } = a
             {
+                let optional =
+                    a.to_string().contains("runner.toml") || a.to_string().contains("logging.toml");
                 assert_eq!(
                     tolerate == &Tolerate::Nothing,
-                    program == "icacls",
+                    program == "icacls" && !optional,
                     "{os:?}: a right that is not taken back is reported, the rest is tolerated: {a}"
                 );
             }
@@ -1292,7 +1379,11 @@ fn off_reports_rights_it_could_not_take_back_and_still_removes_the_service() {
         applied.contains("sc.exe delete AlLocalRunner-box"),
         "{applied}"
     );
-    let state = Path::new("/home/alex/state & more").display().to_string();
+    let state = Path::new("/home/alex/state & more")
+        .join("runner")
+        .join("box")
+        .display()
+        .to_string();
     assert!(
         e.contains("not taken back")
             && e.contains(&format!(
@@ -1737,7 +1828,11 @@ fn rights_not_taken_back_are_named_even_when_the_delete_fails() {
     let i = runner_service(Os::Windows, "box");
     let system = fail_on(&[r"/remove NT SERVICE\AlLocalRunner-box", "sc.exe delete"]);
     let e = runner_service::apply_uninstall(&system, &i, false, &mut || true).unwrap_err();
-    let state = Path::new("/home/alex/state & more").display().to_string();
+    let state = Path::new("/home/alex/state & more")
+        .join("runner")
+        .join("box")
+        .display()
+        .to_string();
     assert!(
         e.contains("sc.exe")
             && e.contains("delete")
@@ -1766,14 +1861,30 @@ fn the_program_of_a_service_is_compared_by_its_full_path() {
             "{exe}"
         );
     }
-    let unquoted = ServiceConfig {
-        command: format!(
-            r#""C:\Tools\LocalRunner\localrunner.exe" {}"#,
-            ours.command.split_once(' ').unwrap().1
-        ),
+    let (program, rest) = ours.command.split_once(' ').unwrap();
+    assert!(!program.starts_with('"'), "{program}");
+    let quoted = ServiceConfig {
+        command: format!(r#""{program}" {rest}"#),
         ..ours.clone()
     };
+    assert_eq!(not_ours("box", &quoted, &i), None, "{}", quoted.command);
+    let unquoted = ServiceConfig {
+        command: format!(r"C:\Tools\LocalRunner\localrunner.exe {rest}"),
+        ..ours.clone()
+    };
+    assert!(!unquoted.command.starts_with('"'), "{}", unquoted.command);
     assert_eq!(not_ours("box", &unquoted, &i), None, "{}", unquoted.command);
+    let state = i.state_dir.display().to_string();
+    for encoded in ["/", r"\\"] {
+        let with = ServiceConfig {
+            command: ours
+                .command
+                .replace(&format!("{state}\""), &format!("{state}{encoded}\"")),
+            ..ours.clone()
+        };
+        assert_ne!(with.command, ours.command, "{}", with.command);
+        assert_eq!(not_ours("box", &with, &i), None, "{}", with.command);
+    }
     let mut moved = i.clone();
     moved.exe = PathBuf::from(r"D:\other\localrunner.exe");
     let e = not_ours("box", &service_config_for(&moved), &i).expect("another directory");

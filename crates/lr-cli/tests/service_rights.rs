@@ -113,7 +113,16 @@ fn runner_service_without_administrator_rights_is_refused_with_the_exact_command
     let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
     joined_runner(&layout, "box");
     let exe = std::env::current_exe().unwrap();
+    let absent = !lr_cli::os_service::runner_service::installed(Os::current(), "box");
     for (switch, word) in [(Switch::On, "on"), (Switch::Off, "off")] {
+        if switch == Switch::Off && cfg!(windows) && absent {
+            assert_eq!(
+                runner_service_with(&layout, switch, "box", false, false),
+                Ok(0),
+                "off of a service that is not there is a no-op without rights"
+            );
+            continue;
+        }
         let refused = runner_service_with(&layout, switch, "box", false, false).unwrap_err();
         let command = runner_service_command(Os::current(), &exe, switch, "box", &layout);
         assert!(
@@ -160,6 +169,35 @@ fn runner_service_without_administrator_rights_is_refused_with_the_exact_command
         windows,
         r"& 'C:\Users\Alex\bin\localrunner.exe' autostart off runner box --service --state-dir 'C:\Users\Alex\state' --config-dir 'C:\Users\Alex\cfg'"
     );
+}
+
+#[test]
+fn off_of_a_missing_windows_service_needs_no_administrator_rights() {
+    let dir = TempDir::new("runner-service-off-absent");
+    let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
+    joined_runner(&layout, "box");
+    let plain = Fake {
+        elevated: false,
+        ..fake()
+    };
+    let off = service_for(&layout, &plain, &installing_user(), |ctx| {
+        runner_service_for(&layout, Switch::Off, "box", false, ctx)
+    });
+    if cfg!(windows) {
+        assert_eq!(off, Ok(0));
+    } else {
+        assert!(off.unwrap_err().contains("needs administrator rights"));
+    }
+    let installed = Fake {
+        elevated: false,
+        service: Some(Some(installing_user())),
+        ..fake()
+    };
+    let e = service_for(&layout, &installed, &installing_user(), |ctx| {
+        runner_service_for(&layout, Switch::Off, "box", false, ctx)
+    })
+    .unwrap_err();
+    assert!(e.contains("needs administrator rights"), "{e}");
 }
 
 #[test]
@@ -238,6 +276,7 @@ struct Fake {
     login: bool,
     service: Option<Option<String>>,
     foreign: bool,
+    elevated: bool,
 }
 
 fn owned_by(sid: &str) -> KeyState {
@@ -259,6 +298,7 @@ fn fake() -> Fake {
         login: false,
         service: None,
         foreign: false,
+        elevated: true,
     }
 }
 
@@ -314,7 +354,7 @@ fn service_for<R>(
     let stopped = |_: &str| true;
     let ctx = ServiceContext {
         user: user.to_string(),
-        elevated: true,
+        elevated: f.elevated,
         principal: &principal,
         access: &access,
         login_entry: &login,

@@ -724,7 +724,7 @@ pub fn apply_uninstall(
             super::state::named_stop_command(i.os, &service)
         ));
     }
-    let dirs: Vec<String> = windows_dirs(i).iter().map(|(d, _)| s(d)).collect();
+    let dirs: Vec<String> = windows_grants(i).iter().map(|g| s(&g.path)).collect();
     let key = s(&key_path(i));
     let mut missed = Vec::new();
     for a in rest {
@@ -964,15 +964,71 @@ pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
     args
 }
 
-fn windows_dirs(i: &RunnerServiceInputs) -> Vec<(PathBuf, &'static str)> {
-    let mut dirs = vec![(i.state_dir.clone(), "M")];
-    if let Some(c) = &i.config_dir {
-        dirs.push((c.clone(), "RX"));
+/// What a job of the Windows service of `i.name` can reach beyond this machine: its virtual
+/// account authenticates on the network as the computer account (`DOMAIN\HOST$` on a machine
+/// joined to a domain), so it gets what the network grants to this computer.
+pub fn network_identity_note(i: &RunnerServiceInputs) -> String {
+    format!(
+        "{} reaches the network as this computer's account (DOMAIN\\HOST$ on a machine joined to \
+         a domain): a job of runner {} can use what network shares and services grant to this \
+         computer; keep the login autostart instead where that is not acceptable",
+        account(i),
+        i.name
+    )
+}
+
+/// A right the Windows service account gets on one path for as long as the service exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grant {
+    /// The directory or file.
+    pub path: PathBuf,
+    /// The `icacls` rights, with the inheritance flags of a directory.
+    pub rights: &'static str,
+    /// Whether the path may be missing (a configuration file the user has not written): a
+    /// missing one is skipped when the right is given and taken back.
+    pub optional: bool,
+}
+
+/// What the Windows service account of runner `i.name` may touch, and nothing more of the state
+/// directory: its own directory `runner/<name>` (modify: database, logs, workspace, key), the
+/// shared disk reservations (modify), `machine-id` (read), the configuration it reads
+/// (`runner.toml` and `logging.toml`; the whole configuration directory when it is a separate
+/// one) and the binary's directory (read). The broker's and the hub's databases, keys, policy
+/// and logs and the other runners' directories stay out of its reach.
+pub fn windows_grants(i: &RunnerServiceInputs) -> Vec<Grant> {
+    let grant = |path: PathBuf, rights: &'static str, optional: bool| Grant {
+        path,
+        rights,
+        optional,
+    };
+    let mut out = vec![
+        grant(i.state_dir.join("runner").join(&i.name), "(OI)(CI)M", false),
+        grant(
+            i.state_dir.join(crate::build::DISK_LEDGER),
+            "(OI)(CI)M",
+            false,
+        ),
+        grant(i.state_dir.join(crate::host::MACHINE_ID_FILE), "(R)", false),
+    ];
+    match &i.config_dir {
+        Some(c) => out.push(grant(c.clone(), "(OI)(CI)RX", false)),
+        None => {
+            for file in ["runner.toml", "logging.toml"] {
+                out.push(grant(i.state_dir.join(file), "(R)", true));
+            }
+        }
     }
     if let Some(bin) = i.exe.parent() {
-        dirs.push((bin.to_path_buf(), "RX"));
+        out.push(grant(bin.to_path_buf(), "(OI)(CI)RX", false));
     }
-    dirs
+    out
+}
+
+fn tolerated(optional: bool) -> Tolerate {
+    match optional {
+        true => Tolerate::Anything,
+        false => Tolerate::Nothing,
+    }
 }
 
 fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
@@ -1001,11 +1057,17 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
         args: params("create", "demand"),
         tolerate: Tolerate::Codes(vec![1073]),
     }];
-    for (dir, rights) in windows_dirs(i) {
-        out.push(Action::run(
-            "icacls",
-            &[&s(&dir), "/grant", &format!("{account}:(OI)(CI){rights}")],
-        ));
+    out.push(Action::CreateDir(
+        i.state_dir.join(crate::build::DISK_LEDGER),
+    ));
+    for g in windows_grants(i) {
+        out.push(
+            Action::run(
+                "icacls",
+                &[&s(&g.path), "/grant", &format!("{account}:{}", g.rights)],
+            )
+            .tolerating(tolerated(g.optional)),
+        );
     }
     out.extend(key_to(i, &account, &i.user));
     out.extend([
@@ -1111,8 +1173,9 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 
 /// `autostart on runner <name> --service`: registers the runner with the service manager under
 /// [`account`], started at boot and restarted after a failure, and starts it now. On Windows
-/// the service account also gets the state directory (modify) and the configuration and binary
-/// directories (read), and becomes the only user of the runner's key ([`key_path`]): the
+/// the service account also gets the rights of [`windows_grants`] (its own runner directory,
+/// never the whole state directory), and becomes the only user of the runner's key
+/// ([`key_path`]): the
 /// Administrators group takes the key (so a re-run over a service that already holds it works
 /// too) and stays its owner, which the key's owner check accepts. `uninstall` gives the key
 /// back to the user.
@@ -1139,8 +1202,11 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
             if restore_key {
                 out.extend(key_to(i, &i.user, &account));
             }
-            for (dir, _) in windows_dirs(i) {
-                out.push(Action::run("icacls", &[&s(&dir), "/remove", &account]));
+            for g in windows_grants(i) {
+                out.push(
+                    Action::run("icacls", &[&s(&g.path), "/remove", &account])
+                        .tolerating(tolerated(g.optional)),
+                );
             }
             out.push(
                 Action::run("sc.exe", &["delete", &name]).tolerating(Tolerate::Codes(vec![1060])),

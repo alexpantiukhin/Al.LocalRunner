@@ -696,18 +696,6 @@ pub fn runner_service_for(
             restore_key = true;
         }
     }
-    if !dry_run && !elevated {
-        let how = if os == Os::Windows {
-            "run it in a terminal started as administrator"
-        } else {
-            "run"
-        };
-        return Err(format!(
-            "autostart {verb} runner {name} --service needs administrator rights; {how}: {}",
-            runner_service_command(os, &exe, switch, name, layout)
-        ));
-    }
-    admin_marker(dry_run, elevated);
     if !on && os == Os::Windows && installed.is_none() {
         let service = runner_service::service_name(os, name);
         let left = runner_service::restore_verdict(
@@ -727,6 +715,18 @@ pub fn runner_service_for(
         println!("autostart off: runner {name} has no OS service {service}; nothing to stop");
         return Ok(0);
     }
+    if !dry_run && !elevated {
+        let how = if os == Os::Windows {
+            "run it in a terminal started as administrator"
+        } else {
+            "run"
+        };
+        return Err(format!(
+            "autostart {verb} runner {name} --service needs administrator rights; {how}: {}",
+            runner_service_command(os, &exe, switch, name, layout)
+        ));
+    }
+    admin_marker(dry_run, elevated);
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     if on {
         runner_service::apply_install(
@@ -752,7 +752,7 @@ pub fn runner_service_for(
                     os,
                     name,
                     state,
-                    &layout.root.join("logs").join("service.log"),
+                    &crate::os_service::service_run::runner_service_log(layout, name),
                 )
             })?;
         }
@@ -799,6 +799,7 @@ pub fn runner_service_for(
                 "the service account does not have your PATH or the tools installed for your \
                  user only: jobs see only tools installed for all users"
             );
+            println!("{}", runner_service::network_identity_note(&inputs));
         }
         println!(
             "stopping the service ends running jobs at once, without a drain; use `localrunner \
