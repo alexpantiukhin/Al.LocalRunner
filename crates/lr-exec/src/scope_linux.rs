@@ -181,10 +181,11 @@ fn below(root: &Path, dir: &Path) -> bool {
 /// the cgroup root `root`: its own cgroup when it is not the root, holds the memory controller
 /// and no other process, and the process can enable the controller for children after moving
 /// itself into the `runner` leaf ([`setup_steps`]); a process already in such a leaf keeps it.
-/// `None`, with nothing changed, when any of this does not hold.
+/// The kernel must have `cgroup.kill` (Linux 5.14+), so a job tree is killed whole even while
+/// it forks. `None`, with nothing changed, when any of this does not hold.
 pub(crate) fn delegate(root: &Path, self_cgroup: &str, pid: u32) -> Option<Delegated> {
     let own = cgroup_dir_in(root, self_cgroup)?;
-    if !below(root, &own) {
+    if !below(root, &own) || !own.join("cgroup.kill").is_file() {
         return None;
     }
     if let Some(parent) = own.parent().filter(|p| below(root, p)) {
@@ -275,6 +276,9 @@ pub(crate) fn sweep_orphans() {
         Backend::UserManager(s) => (s.slice.as_path(), None),
         Backend::Delegated(d) => (d.base.as_path(), Some(remove_cgroup as Cleanup)),
     };
+    if let Some(cleanup) = cleanup {
+        retry_removal(&mut leftovers(), cleanup);
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -373,14 +377,31 @@ pub(crate) fn job_cgroup(
 ) -> Option<(PathBuf, Vec<String>)> {
     let dir = base.join(name);
     std::fs::create_dir(&dir).ok()?;
-    let written = crate::limits::scope_properties(limits, controllers)
-        .into_iter()
-        .filter(|p| {
-            cgroup_file(p)
-                .is_some_and(|(file, value)| std::fs::write(dir.join(file), value).is_ok())
-        })
-        .collect();
-    Some((dir, written))
+    match fill(&dir, crate::limits::scope_properties(limits, controllers)) {
+        Some(written) => Some((dir, written)),
+        None => {
+            let _ = remove_cgroup(&dir);
+            None
+        }
+    }
+}
+
+/// Writes the interface files of `props` into the job cgroup `dir`; returns the properties
+/// written, or `None` when a memory limit (`memory.high`, `memory.max`) could not be written:
+/// the job must not start with a ceiling it was promised and does not have.
+pub(crate) fn fill(dir: &Path, props: Vec<String>) -> Option<Vec<String>> {
+    let mut written = Vec::new();
+    for prop in props {
+        let Some((file, value)) = cgroup_file(&prop) else {
+            continue;
+        };
+        if std::fs::write(dir.join(file), value).is_ok() {
+            written.push(prop);
+        } else if matches!(file, "memory.high" | "memory.max") {
+            return None;
+        }
+    }
+    Some(written)
 }
 
 fn decimal(mut n: u32, buf: &mut [u8; 10]) -> &[u8] {
@@ -418,6 +439,7 @@ fn join(path: &CStr) -> io::Result<()> {
 
 impl Delegated {
     fn job(&self, command: &str, limits: &ResourceLimits) -> Option<Wrapped> {
+        retry_removal(&mut leftovers(), remove_cgroup);
         let (dir, props) = job_cgroup(&self.base, &self.controllers, &unit_name(), limits)?;
         let Ok(procs) = CString::new(dir.join("cgroup.procs").as_os_str().as_bytes()) else {
             let _ = std::fs::remove_dir(&dir);
@@ -462,11 +484,24 @@ impl Drop for Scope {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(cleanup) = self.cleanup {
             if self.dir.is_dir() && cleanup(&self.dir).is_err() {
+                leftovers().push(self.dir.clone());
                 let dir = self.dir.clone();
                 std::thread::spawn(move || remove_when_unpopulated(&dir, cleanup));
             }
         }
     }
+}
+
+static LEFTOVERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn leftovers() -> std::sync::MutexGuard<'static, Vec<PathBuf>> {
+    LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Removes the job cgroups of `list` that are gone or can be removed now, and keeps the
+/// others for the next try.
+pub(crate) fn retry_removal(list: &mut Vec<PathBuf>, cleanup: Cleanup) {
+    list.retain(|dir| dir.is_dir() && cleanup(dir).is_err());
 }
 
 /// The `(oom_kill, max, high)` counters of a `memory.events` text.
@@ -737,6 +772,7 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("cgroup.controllers"), controllers).unwrap();
             std::fs::write(dir.join("cgroup.procs"), procs).unwrap();
+            std::fs::write(dir.join("cgroup.kill"), "").unwrap();
             std::fs::write(dir.join("cgroup.subtree_control"), "").unwrap();
             dir
         }
@@ -875,6 +911,58 @@ mod tests {
         std::fs::write(fake.0.join("cgroup.procs"), "42\n").unwrap();
         assert_eq!(delegate(&fake.0, "0::/\n", 42), None);
         assert!(!fake.0.join("runner").exists());
+    }
+
+    #[test]
+    fn no_subtree_on_a_kernel_without_cgroup_kill() {
+        let fake = Fake::new("nokill");
+        let base = fake.group(
+            "system.slice/al-localrunner-runner-box.service",
+            "memory\n",
+            "42\n",
+        );
+        std::fs::remove_file(base.join("cgroup.kill")).unwrap();
+        assert_eq!(delegate(&fake.0, SERVICE, 42), None);
+        assert!(!base.join("runner").exists());
+    }
+
+    #[test]
+    fn a_job_cgroup_without_its_memory_ceiling_is_refused() {
+        let fake = Fake::new("fill");
+        let props = scope_properties_of(&limit(1000));
+        assert!(fill(&fake.0, props.clone()).is_some());
+        let dir = fake.0.join("lr-1-9");
+        std::fs::create_dir_all(dir.join("memory.high")).unwrap();
+        assert_eq!(fill(&dir, props), None);
+        let dir = fake.0.join("lr-1-10");
+        std::fs::create_dir_all(dir.join("cpu.max")).unwrap();
+        let capped = ResourceLimits {
+            cpu_millis: Some(1000),
+            ..limit(1000)
+        };
+        let written = fill(&dir, scope_properties_of(&capped)).unwrap();
+        assert!(!written.iter().any(|p| p.starts_with("CPUQuota=")));
+        assert_eq!(crate::limits::scope_hold(&written), MemoryHold::Scope);
+    }
+
+    fn scope_properties_of(limits: &ResourceLimits) -> Vec<String> {
+        crate::limits::scope_properties(limits, &["memory".to_string(), "cpu".to_string()])
+    }
+
+    #[test]
+    fn leftover_job_cgroups_are_retried_until_removed() {
+        let fake = Fake::new("leftover");
+        let busy = fake.group("lr-1-11", "memory\n", "9\n");
+        let gone = fake.0.join("lr-1-12");
+        let mut list = vec![busy.clone(), gone];
+        fn refuse(_: &Path) -> io::Result<()> {
+            Err(io::Error::other("busy"))
+        }
+        retry_removal(&mut list, refuse);
+        assert_eq!(list, vec![busy.clone()]);
+        retry_removal(&mut list, remove_all);
+        assert!(list.is_empty());
+        assert!(!busy.exists());
     }
 
     #[test]

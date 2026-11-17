@@ -323,7 +323,7 @@ impl RunnerSettings {
             commands: self.commands.keys().cloned().collect(),
             enforcement: self.enforcement.clone(),
             version: self.version.clone(),
-            enforce_limit: self.enforcement.as_deref() != Some("watcher"),
+            enforce_limit: self.enforcement.as_deref() == Some("os"),
         }
     }
 }

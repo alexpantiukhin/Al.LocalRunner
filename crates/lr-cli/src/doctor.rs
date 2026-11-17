@@ -417,17 +417,20 @@ pub fn autostart_check(name: &str, found: &AutostartFound) -> Option<Check> {
 }
 
 /// The `limit` check of runner `name` installed as a Linux system service whose unit reads
-/// `unit`: `ok` when the unit delegates its cgroup subtree (`Delegate=yes`), so the runner
-/// holds the memory of `limit` jobs in cgroups it makes itself; `warn` otherwise, because a
-/// system service has no user manager and `limit` then runs as `warn`.
+/// `unit`: `ok` when the unit delegates its cgroup subtree (`Delegate=yes`); whether the
+/// runner can use it (the memory controller, `cgroup.kill`, a writable subtree) is decided when
+/// it starts and shown as its `enforcement`. `warn` otherwise, because a system service has no
+/// user manager and `limit` then runs as `warn`.
 pub fn delegation_check(name: &str, unit: &str) -> Check {
     let label = format!("runner {name} memory limit");
     if unit.lines().any(|l| l.trim() == "Delegate=yes") {
         return check(
             label,
             Status::Ok,
-            "the service unit delegates its cgroup subtree (Delegate=yes): `limit` holds job \
-             memory in cgroups the runner makes (enforcement os)",
+            "the service unit has Delegate=yes; whether the runner holds job memory in it is \
+             checked when the runner starts: `enforcement os` in `localrunner runners` means \
+             yes, `watcher` means `limit` runs as `warn` (needs the memory controller and Linux \
+             5.14+ for cgroup.kill)",
         );
     }
     check(
