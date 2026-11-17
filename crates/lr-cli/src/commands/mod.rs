@@ -479,12 +479,15 @@ pub async fn run(cli: Cli) -> i32 {
                 background,
                 service,
                 owner,
+                job_root,
             } => {
                 let how = roles_cmd::RunnerStart {
                     background,
                     service,
                     owner,
                 };
+                let mut layout = layout;
+                layout.job_root = job_root;
                 roles_cmd::runner_run(&layout, name, count, config, how).await
             }
             RunnerAction::Join {

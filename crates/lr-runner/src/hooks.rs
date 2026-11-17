@@ -27,7 +27,7 @@ fn hook_spec(
         job: JobId(format!("{}.cleanup.{}", job.0, hook.name)),
         steps: vec![JobStep::from(step)],
         timeout_s: hook.timeout_s,
-        cwd: shared.fixed.state_dir.clone(),
+        cwd: shared.fixed.job_root.clone(),
         env: vars.to_vec(),
         cancel_grace: DEFAULT_CANCEL_GRACE,
         limits: Default::default(),

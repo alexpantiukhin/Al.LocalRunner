@@ -154,7 +154,7 @@ pub(crate) fn job_env(shared: &Shared, job: &JobId) -> Vec<(String, String)> {
 /// Directory of the runner's state that holds the private temporary directories of jobs; what
 /// a crash leaves in it is removed when the runner starts.
 pub(crate) fn jobs_temp(shared: &Shared) -> PathBuf {
-    shared.fixed.state_dir.join("tmp")
+    shared.fixed.job_root.join("tmp")
 }
 
 /// The private temporary directory of a job: what the job writes there is measured against its

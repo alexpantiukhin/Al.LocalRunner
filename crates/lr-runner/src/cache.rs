@@ -13,7 +13,7 @@ const MB: u64 = 1024 * 1024;
 /// key always names its client.
 pub const WORKSPACE_CLIENT: &str = "";
 
-/// Where named caches live: `<state>/cache/<client>/<project>/<name>`, each part a safe
+/// Where named caches live: `<job root>/cache/<client>/<project>/<name>`, each part a safe
 /// directory name made unique by a hash, so two clients never share a directory unless the
 /// broker sends them the same cache client (`[cache] share = "project"`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,10 +22,10 @@ pub struct CacheLayout {
 }
 
 impl CacheLayout {
-    /// The layout inside the runner's state directory.
-    pub fn new(state_dir: PathBuf) -> CacheLayout {
+    /// The layout inside the runner's job root.
+    pub fn new(job_root: PathBuf) -> CacheLayout {
         CacheLayout {
-            root: state_dir.join("cache"),
+            root: job_root.join("cache"),
         }
     }
 

@@ -645,10 +645,11 @@ fn runner_service_plan_names_the_runner_and_state_dir() {
                     .iter()
                     .find(|r| r.starts_with("sc.exe create"))
                     .unwrap();
+                let job_root = runner_service::job_root(&i).unwrap();
                 assert!(
-                    create.contains(
-                        r#"runner run --name box --service --owner alex --state-dir "/home/alex/state & more""#
-                    ),
+                    create.contains(r#"runner run --name box --service --owner alex --job-root"#)
+                        && create.contains(&job_root.display().to_string())
+                        && create.contains(r#"--state-dir "/home/alex/state & more""#),
                     "{create}"
                 );
                 let state = Path::new("/home/alex/state & more");
@@ -710,6 +711,7 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
         .collect();
     for (path, rights) in [
         (state.join("runner").join("box"), "(OI)(CI)M"),
+        (runner_service::job_root(&i).unwrap(), "(OI)(CI)M"),
         (state.join("disk-reservations"), "(OI)(CI)M"),
         (state.join("machine-id"), "(R)"),
         (state.join("runner.toml"), "(R)"),
@@ -727,7 +729,7 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
         );
         assert!(runs(&uninstall).contains(&revoke), "{revoke} missing");
     }
-    assert_eq!(grants.len(), 6, "{grants:?}");
+    assert_eq!(grants.len(), 7, "{grants:?}");
     for kept in [
         "broker.db",
         "hub.db",
@@ -1898,4 +1900,65 @@ fn the_program_of_a_service_is_compared_by_its_full_path() {
             && e.contains("not one this installation registered"),
         "{e}"
     );
+}
+
+#[test]
+fn a_windows_runner_service_works_in_a_job_root_only_it_and_the_administrators_write() {
+    let i = runner_service(Os::Windows, "box");
+    let root = runner_service::job_root(&i).unwrap();
+    assert!(
+        root.ends_with(Path::new("jobs").join("box")),
+        "{}",
+        root.display()
+    );
+    assert!(
+        !root.starts_with(&i.state_dir),
+        "the job root is outside the closed state directory"
+    );
+    let dir = root.display().to_string();
+    let install = runner_service::install(&i);
+    let runs = runs(&install);
+    let on_dir = |a: &Action, word: &str| match a {
+        Action::Run { args, .. } => args.first() == Some(&dir) && args.iter().any(|w| w == word),
+        _ => false,
+    };
+    let created = position(&install, |a| *a == Action::CreateDir(root.clone()));
+    let closed = position(&install, |a| on_dir(a, "/inheritance:r"));
+    let service = position(&install, |a| on_dir(a, "/grant"));
+    let start = position(&install, |a| {
+        matches!(a, Action::Run { program, args, .. }
+            if program == "sc.exe" && args.first().is_some_and(|w| w == "start"))
+    });
+    assert_eq!((created.len(), closed.len(), service.len()), (1, 1, 1));
+    assert!(created[0] < closed[0] && closed[0] < service[0] && service[0] < start[0]);
+    let rights = format!(
+        "icacls {dir} /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F alex:(OI)(CI)F"
+    );
+    assert!(runs.contains(&rights), "{rights} missing in {runs:?}");
+    assert!(
+        runs.contains(&format!(
+            r"icacls {dir} /grant NT SERVICE\AlLocalRunner-box:(OI)(CI)M"
+        )),
+        "{runs:?}"
+    );
+    assert!(
+        !runs.iter().any(|r| r.contains(&dir) && r.contains("Users")),
+        "no right for Users on the job root: {runs:?}"
+    );
+    let off = runs_of(&runner_service::uninstall(&i, false));
+    let revoke = format!(r"icacls {dir} /remove NT SERVICE\AlLocalRunner-box");
+    assert!(off.contains(&revoke), "{off:?}");
+    assert!(
+        !off.iter()
+            .any(|r| r.contains("rmdir") || r.contains("del ")),
+        "off keeps what jobs left: {off:?}"
+    );
+    for os in [Os::Linux, Os::MacOs] {
+        let other = runner_service(os, "box");
+        assert_eq!(runner_service::job_root(&other), None, "{os:?}");
+        assert!(
+            !runner_service::run_args(&other).contains(&"--job-root".to_string()),
+            "{os:?}"
+        );
+    }
 }

@@ -20,6 +20,9 @@ pub struct Layout {
     /// Configuration directory: `policy.toml`, `hub-policy.toml`, `logging.toml`,
     /// `runner.toml` templates; the state directory unless given.
     pub config: PathBuf,
+    /// Where the jobs of a runner started with `runner run --job-root` work; `None`: inside the
+    /// runner's own state directory.
+    pub job_root: Option<PathBuf>,
     suffix: String,
     ipc_dir: PathBuf,
 }
@@ -80,6 +83,7 @@ impl Layout {
         Layout {
             root,
             config,
+            job_root: None,
             suffix,
             ipc_dir,
         }

@@ -146,6 +146,11 @@ pub enum RunnerAction {
         /// The OS user the installation belongs to, when the service account is another one.
         #[arg(long, hide = true, requires = "service")]
         owner: Option<String>,
+        /// Directory where the jobs of this runner work (`workspace/`, `cache/`, `tmp/`,
+        /// `services/`); the key, the database and the logs stay in the state directory. Use it
+        /// when the jobs' account cannot reach the state directory's parents. Needs one runner.
+        #[arg(long)]
+        job_root: Option<PathBuf>,
     },
     /// Join a broker's pool with a one-time code: one key, directory and record per runner.
     Join {

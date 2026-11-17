@@ -807,6 +807,13 @@ pub fn runner_service_for(
         );
     } else {
         println!("autostart off: runner {name} is no longer an OS service");
+        if let Some(root) = runner_service::job_root(&inputs) {
+            println!(
+                "the job directory {} and what jobs left in it stay; delete it by hand when it is \
+                 no longer needed",
+                root.display()
+            );
+        }
     }
     Ok(0)
 }

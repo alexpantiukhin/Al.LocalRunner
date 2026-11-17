@@ -121,6 +121,7 @@ pub enum KeyState {
 }
 
 const ADMINISTRATORS: &str = "S-1-5-32-544";
+const SYSTEM: &str = "S-1-5-18";
 
 /// The ownership of `path` as this process sees it.
 pub fn key_state(path: &Path) -> KeyState {
@@ -945,8 +946,19 @@ fn home_of(_user: &str) -> Option<PathBuf> {
     None
 }
 
+/// Where the jobs of the Windows service of `i.name` work: `jobs\<name>` in the service
+/// directory under `%ProgramData%`, whose parents every account can read and only the service
+/// account, the Administrators group, `SYSTEM` and the installing user may write. A program of
+/// a job that walks its path upwards (Git does) cannot do that through the state directory,
+/// which is closed to everyone else. `None` elsewhere: the jobs work in the runner's own state
+/// directory.
+pub fn job_root(i: &RunnerServiceInputs) -> Option<PathBuf> {
+    (i.os == Os::Windows).then(|| crate::paths::service_root().join("jobs").join(&i.name))
+}
+
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
-/// `--owner <user>` (the service account is not the installing user), and the directories.
+/// `--owner <user>` (the service account is not the installing user) and `--job-root`, and the
+/// directories.
 pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
     let mut args = vec![s(&i.exe)];
     args.extend(
@@ -956,6 +968,9 @@ pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
     );
     if i.os == Os::Windows {
         args.extend(["--owner".to_string(), i.user.clone()]);
+    }
+    if let Some(root) = job_root(i) {
+        args.extend(["--job-root".to_string(), s(&root)]);
     }
     args.extend(["--state-dir".to_string(), s(&i.state_dir)]);
     if let Some(c) = &i.config_dir {
@@ -990,7 +1005,8 @@ pub struct Grant {
 }
 
 /// What the Windows service account of runner `i.name` may touch, and nothing more of the state
-/// directory: its own directory `runner/<name>` (modify: database, logs, workspace, key), the
+/// directory: its own directory `runner/<name>` (modify: database, logs, key), its job root
+/// ([`job_root`], modify: workspace, caches, temporary files), the
 /// shared disk reservations (modify), `machine-id` (read), the configuration it reads
 /// (`runner.toml` and `logging.toml`; the whole configuration directory when it is a separate
 /// one) and the binary's directory (read). The broker's and the hub's databases, keys, policy
@@ -1010,6 +1026,9 @@ pub fn windows_grants(i: &RunnerServiceInputs) -> Vec<Grant> {
         ),
         grant(i.state_dir.join(crate::host::MACHINE_ID_FILE), "(R)", false),
     ];
+    if let Some(root) = job_root(i) {
+        out.insert(1, grant(root, "(OI)(CI)M", false));
+    }
     match &i.config_dir {
         Some(c) => out.push(grant(c.clone(), "(OI)(CI)RX", false)),
         None => {
@@ -1060,6 +1079,20 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
     out.push(Action::CreateDir(
         i.state_dir.join(crate::build::DISK_LEDGER),
     ));
+    if let Some(root) = job_root(i) {
+        out.push(Action::CreateDir(root.clone()));
+        out.push(Action::run(
+            "icacls",
+            &[
+                &s(&root),
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{ADMINISTRATORS}:(OI)(CI)F"),
+                &format!("*{SYSTEM}:(OI)(CI)F"),
+                &format!("{}:(OI)(CI)F", i.user),
+            ],
+        ));
+    }
     for g in windows_grants(i) {
         out.push(
             Action::run(
@@ -1175,8 +1208,9 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 /// [`account`], started at boot and restarted after a failure, and starts it now. On Linux the
 /// unit delegates its cgroup subtree (`Delegate=yes`): a system service has no user manager,
 /// so the runner makes the job cgroups of the `limit` mode itself. On Windows
-/// the service account also gets the rights of [`windows_grants`] (its own runner directory,
-/// never the whole state directory), and becomes the only user of the runner's key
+/// the service account also gets the rights of [`windows_grants`] (its own runner directory and
+/// its job root, never the whole state directory; the job root is created closed to everyone
+/// but the service account, the Administrators group, `SYSTEM` and the installing user), and becomes the only user of the runner's key
 /// ([`key_path`]): the
 /// Administrators group takes the key (so a re-run over a service that already holds it works
 /// too) and stays its owner, which the key's owner check accepts. `uninstall` gives the key
@@ -1190,7 +1224,7 @@ pub fn install(i: &RunnerServiceInputs) -> Vec<Action> {
 }
 
 /// `autostart off runner <name> --service`: stops and removes that runner's service and nothing
-/// else; its state stays. A service that is not there is fine. On Windows with `restore_key`
+/// else; its state and its job root stay. A service that is not there is fine. On Windows with `restore_key`
 /// the key goes back to [`RunnerServiceInputs::user`] first, while the service account still
 /// exists: the Administrators group takes it and grants it to the user alone.
 /// A failed step stops the plan before the service is deleted.

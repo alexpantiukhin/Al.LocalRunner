@@ -48,6 +48,9 @@ pub struct RunnerSettings {
     pub name: String,
     /// State directory: workspace mirrors, caches and small state files live inside.
     pub state_dir: PathBuf,
+    /// Where jobs work: `workspace/`, `cache/`, `tmp/` and `services/` live inside. The state
+    /// directory unless the runner was started with `--job-root`.
+    pub job_root: PathBuf,
     /// Opaque platform labels.
     pub platforms: BTreeSet<String>,
     /// Declared tags.
@@ -196,6 +199,7 @@ impl RunnerSettings {
     pub fn new(name: &str, state_dir: PathBuf) -> RunnerSettings {
         RunnerSettings {
             name: name.to_string(),
+            job_root: state_dir.clone(),
             state_dir,
             platforms: BTreeSet::new(),
             tags: BTreeSet::new(),
