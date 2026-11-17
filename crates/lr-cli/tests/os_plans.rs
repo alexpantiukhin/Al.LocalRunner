@@ -1907,7 +1907,7 @@ fn a_windows_runner_service_works_in_a_job_root_only_it_and_the_administrators_w
     let i = runner_service(Os::Windows, "box");
     let root = runner_service::job_root(&i).unwrap();
     assert!(
-        root.ends_with(Path::new("jobs").join("box")),
+        root.ends_with(Path::new("Al.LocalRunner.Jobs").join("box")),
         "{}",
         root.display()
     );

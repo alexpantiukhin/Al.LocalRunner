@@ -54,6 +54,13 @@ pub fn service_root() -> PathBuf {
     }
 }
 
+/// The parent of the job roots of Windows runner services: `%ProgramData%\Al.LocalRunner.Jobs`, a
+/// sibling of [`service_root`], which the broker service closes to every other account.
+pub fn jobs_parent() -> PathBuf {
+    let data = std::env::var_os("ProgramData").unwrap_or_else(|| r"C:\ProgramData".into());
+    PathBuf::from(data).join("Al.LocalRunner.Jobs")
+}
+
 /// Where the broker service keeps its Unix sockets (spec 10, table "IPC"): `/run/al-localrunner`
 /// on Linux (created by systemd for the service), `ipc/` of the service state directory on
 /// macOS; unused on Windows, whose pipe names are global.

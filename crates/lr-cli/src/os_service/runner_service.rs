@@ -946,14 +946,14 @@ fn home_of(_user: &str) -> Option<PathBuf> {
     None
 }
 
-/// Where the jobs of the Windows service of `i.name` work: `jobs\<name>` in the service
-/// directory under `%ProgramData%`, whose parents every account can read and only the service
+/// Where the jobs of the Windows service of `i.name` work: `<name>` in
+/// `%ProgramData%\Al.LocalRunner.Jobs`, whose parents every account can read and only the service
 /// account, the Administrators group, `SYSTEM` and the installing user may write. A program of
 /// a job that walks its path upwards (Git does) cannot do that through the state directory,
 /// which is closed to everyone else. `None` elsewhere: the jobs work in the runner's own state
 /// directory.
 pub fn job_root(i: &RunnerServiceInputs) -> Option<PathBuf> {
-    (i.os == Os::Windows).then(|| crate::paths::service_root().join("jobs").join(&i.name))
+    (i.os == Os::Windows).then(|| crate::paths::jobs_parent().join(&i.name))
 }
 
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
