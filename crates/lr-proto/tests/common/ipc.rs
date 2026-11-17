@@ -71,7 +71,10 @@ pub fn cli_replies() -> Vec<CliReply> {
         },
         CliReply::Read {
             broker: "local".into(),
-            reply: ReadReply::Runners { runners: vec![], pools: vec![] },
+            reply: ReadReply::Runners {
+                runners: vec![],
+                pools: vec![],
+            },
         },
         CliReply::Brokers {
             brokers: vec![BrokerStatus {

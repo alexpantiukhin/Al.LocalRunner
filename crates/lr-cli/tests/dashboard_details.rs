@@ -149,7 +149,10 @@ async fn snapshot(details: bool) -> DashboardSnapshot {
             jobs: vec![finished_detail().summary],
             next: None,
         }),
-        ReadRequest::Runners => Some(ReadReply::Runners { runners: vec![], pools: vec![] }),
+        ReadRequest::Runners => Some(ReadReply::Runners {
+            runners: vec![],
+            pools: vec![],
+        }),
         ReadRequest::Stats(_) => Some(ReadReply::Stats(StatsView {
             profiles: Vec::new(),
             clients: Vec::new(),
