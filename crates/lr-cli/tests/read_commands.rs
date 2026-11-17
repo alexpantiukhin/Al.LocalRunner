@@ -228,6 +228,70 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     );
 }
 
+fn ended_at(job: &str, queued: u64, finished: Option<u64>) -> JobSummary {
+    JobSummary {
+        finished_at: finished.map(Timestamp),
+        ..summary(job, queued)
+    }
+}
+
+#[test]
+fn history_sorts_by_finish_time_with_ties_by_job_and_unfinished_last() {
+    let per = || {
+        vec![
+            (
+                "local".to_string(),
+                vec![
+                    ended_at("first-queued", H, Some(9 * H)),
+                    ended_at("late-queued", 5 * H, Some(6 * H)),
+                    ended_at("tie-a", 2 * H, Some(7 * H)),
+                    ended_at("waiting-1", 8 * H, None),
+                ],
+            ),
+            (
+                "office".to_string(),
+                vec![
+                    ended_at("tie-b", 3 * H, Some(7 * H)),
+                    ended_at("waiting-2", 9 * H, None),
+                ],
+            ),
+        ]
+    };
+    let rows = newest_first(per(), 10);
+    let ids: Vec<&str> = rows.iter().map(|(_, s)| s.job.0.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "first-queued",
+            "tie-b",
+            "tie-a",
+            "late-queued",
+            "waiting-1",
+            "waiting-2"
+        ]
+    );
+    let kept = newest_first(per(), 2);
+    let ids: Vec<&str> = kept.iter().map(|(_, s)| s.job.0.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["first-queued", "tie-b"],
+        "a limit keeps the latest finished"
+    );
+    let lines = history_lines(&rows);
+    let header: Vec<&str> = lines[0].split('\t').collect();
+    let col = header
+        .iter()
+        .position(|c| *c == "FINISHED")
+        .expect("a FINISHED column");
+    assert_eq!(header[col - 1], "QUEUED");
+    let cells: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(cells[col], format_time(Timestamp(9 * H)));
+    let waiting: Vec<&str> = lines[5].split('\t').collect();
+    assert_eq!(waiting[col], "-");
+    let json = serde_json::to_value(&rows[0].1).unwrap();
+    assert_eq!(json["finished_at"], 9 * H);
+}
+
 #[test]
 fn history_show_prints_the_card_with_steps_and_no_secret_values() {
     let detail = JobDetail {
@@ -504,7 +568,7 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     )];
     let lines = history_lines(&rows);
     let cols: Vec<&str> = lines[1].split('\t').collect();
-    assert_eq!(cols[8], "-", "{}", lines[1]);
+    assert_eq!(cols[9], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
 }
 

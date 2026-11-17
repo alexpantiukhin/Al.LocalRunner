@@ -123,7 +123,7 @@ codex plugin add localrunner@al-localrunner
 
    ```
    localrunner run hello --as me:test   # поставить, показать вывод, вернуть код выхода
-   localrunner history                  # запись о запуске
+   localrunner history                  # запуски, сначала недавно завершённые
    localrunner dashboard                # живая страница на 127.0.0.1, Ctrl+C останавливает
    localrunner down                     # раннер доделывает текущую джобу, затем всё останавливается
    ```

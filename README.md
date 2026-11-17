@@ -123,7 +123,7 @@ The skills never raise rights on their own and never print join codes or tokens.
 
    ```
    localrunner run hello --as me:test   # submit, show the output, return the exit code
-   localrunner history                  # the record of the run
+   localrunner history                  # the runs, most recently finished first
    localrunner dashboard                # live page on 127.0.0.1, Ctrl+C stops it
    localrunner down                     # the runner finishes the current job, then everything stops
    ```

@@ -724,6 +724,48 @@ async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_rea
 }
 
 #[tokio::test]
+async fn history_lists_the_most_recently_finished_first_and_a_limit_keeps_them() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let ids =
+        |jobs: Vec<JobSummary>| -> Vec<String> { jobs.into_iter().map(|j| j.job.0).collect() };
+    let ask = |limit: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            limit,
+            ..HistoryFilter::default()
+        })
+    };
+    assert_eq!(
+        ids(history(alex.read(ask(None)).await)),
+        ["j1", "j2", "j3"],
+        "the run that finished last comes first, an unfinished one last"
+    );
+    assert_eq!(ids(history(alex.read(ask(Some(1))).await)), ["j1"]);
+    assert_eq!(ids(history(alex.read(ask(Some(2))).await)), ["j1", "j2"]);
+    let details = alex
+        .read(ReadRequest::HistoryDetails(HistoryFilter {
+            limit: Some(2),
+            ..HistoryFilter::default()
+        }))
+        .await;
+    match details {
+        ReadReply::Details { jobs, .. } => {
+            let ids: Vec<&str> = jobs.iter().map(|d| d.summary.job.0.as_str()).collect();
+            assert_eq!(ids, ["j1", "j2"]);
+        }
+        other => panic!("expected details, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn recent_honours_a_count_and_a_duration() {
     let h = Harness::start("");
     for (i, job) in ["a1", "a2", "a3"].iter().enumerate() {

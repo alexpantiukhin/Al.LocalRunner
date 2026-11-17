@@ -311,3 +311,60 @@ fn a_refused_order_is_shown_as_rejected_not_as_cancelled() {
     };
     assert_eq!(out["states"][0], "state-rejected", "{out}");
 }
+
+#[test]
+fn the_history_grid_has_a_finished_column_sorted_by_finish_time_until_a_header_is_clicked() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    let mut done = |idx: usize, job: &str, queued: u64, finished: Option<u64>| {
+        let mut j = v["jobs"][0].clone();
+        j["list"] = serde_json::json!("history");
+        j["detail"]["summary"]["job"] = serde_json::json!(job);
+        j["detail"]["summary"]["queued_at"] = serde_json::json!(queued);
+        j["detail"]["summary"]["finished_at"] = serde_json::json!(finished);
+        j["detail"]["summary"]["state"] = serde_json::json!("passed");
+        v["jobs"].as_array_mut().unwrap().insert(idx, j);
+    };
+    done(0, "queued-first", 1_000, Some(9_000));
+    done(1, "queued-last", 5_000, Some(6_000));
+    done(2, "unfinished", 7_000, None);
+    done(3, "middle", 3_000, Some(8_000));
+    let scenario = r##"
+      sources[0].onopen(); await tick();
+      var ids = function () { return $("history-body").children.map(function (r) { return r.attrs["data-job"]; }); };
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.default = ids();
+      out.hash = location.hash;
+      out.cols = $("history-body").children[0].children.map(function (c) { return c.attrs["data-col"]; });
+      location.hash = "#tab=history&sort=-queued";
+      handlers.hashchange();
+      out.byQueued = ids();
+      location.hash = "#tab=history&sort=-finished";
+      handlers.hashchange();
+      out.explicit = ids();
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "finished",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out["default"],
+        serde_json::json!(["queued-first", "middle", "queued-last", "unfinished"]),
+        "{out}"
+    );
+    assert_eq!(out["cols"][9], "finished", "{out}");
+    assert_eq!(
+        out["byQueued"][0], "unfinished",
+        "a header click overrides the default: {out}"
+    );
+    assert_eq!(out["explicit"][0], "queued-first", "{out}");
+}

@@ -44,7 +44,7 @@
       j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
       source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
-      queued: s.queued_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
+      queued: s.queued_at, finished: s.finished_at || null, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
   }
   function matches(r) {
@@ -67,6 +67,7 @@
       if (pa !== pb) return pa - pb;
       if (!c) return 0;
       var x = a[c], y = b[c];
+      if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1;
       if (typeof x === "number" && typeof y === "number") return (x - y) * d;
       return String(x).localeCompare(String(y), undefined, { numeric: true }) * d;
     });
@@ -78,6 +79,9 @@
     if (S.tab === "queue" && !S.sort.col) {
       rows.sort(function (a, b) { return lists.indexOf(a.list) - lists.indexOf(b.list) || (a.position || 0) - (b.position || 0); });
     }
+    if (S.tab === "history" && !S.sort.col) {
+      rows.sort(function (a, b) { return a.finished == null || b.finished == null ? (a.finished == null) - (b.finished == null) : b.finished - a.finished || (a.job < b.job ? 1 : a.job > b.job ? -1 : 0); });
+    }
     return sorted(rows);
   }
 
@@ -87,7 +91,7 @@
     S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
-        var v = c === "queued" ? when(r.queued) : c === "duration" ? dur(r.duration) : String(r[c]);
+        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
         if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
@@ -104,7 +108,7 @@
     }));
   }
   var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "duration"];
+  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "finished", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
