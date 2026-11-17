@@ -399,6 +399,35 @@ fn peer_kind(t: &dyn Transport) -> PeerKind {
     }
 }
 
+/// Runs `work` while taking stop requests; `None` once a stop is due ([`stop_due`]), so a dial
+/// or a hello that hangs keeps the runner no longer than [`STOP_BOUND`] after it was told to stop.
+pub(crate) async fn or_stop<F: std::future::Future>(
+    s: &Shared,
+    control: &mut mpsc::Receiver<Control>,
+    work: F,
+) -> Option<F::Output> {
+    tokio::pin!(work);
+    let mut open = true;
+    loop {
+        tokio::select! {
+            biased;
+            out = &mut work => return Some(out),
+            () = stop_due(s) => {
+                s.diag.event(
+                    Level::Warn,
+                    "told to stop and the broker does not answer the connection, leaving; the outbox is kept",
+                    &[],
+                );
+                return None;
+            }
+            cmd = control.recv(), if open => match cmd {
+                Some(cmd) => apply_control(s, cmd),
+                None => open = false,
+            },
+        }
+    }
+}
+
 async fn hello(s: &Shared, t: &dyn Transport) -> Result<Duration, End> {
     let lost = End::Lost { welcomed: false };
     let capabilities = s.capabilities().await;
@@ -493,7 +522,11 @@ pub(crate) async fn session(
     control: &mut mpsc::Receiver<Control>,
 ) -> End {
     let t = transport.as_ref();
-    let heartbeat = match hello(shared, t).await {
+    let Some(greeted) = or_stop(shared, control, hello(shared, t)).await else {
+        t.close().await;
+        return End::Stopped;
+    };
+    let heartbeat = match greeted {
         Ok(h) => h,
         Err(End::Refused(e)) => {
             let mut s = Session {

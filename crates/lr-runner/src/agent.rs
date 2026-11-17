@@ -1,6 +1,6 @@
 use crate::background::{background, recover};
 use crate::cache::{CacheLayout, Caches};
-use crate::connect::{give_up, session, stop_due, End, STOP_BOUND};
+use crate::connect::{give_up, or_stop, session, stop_due, End, STOP_BOUND};
 use crate::diag::Diag;
 use crate::outbox::Outbox;
 use crate::service_book::Book;
@@ -530,12 +530,14 @@ async fn connect_once(
     control: &mut mpsc::Receiver<Control>,
 ) -> Option<End> {
     let b = &shared.deps.broker;
-    match shared
+    let dial = shared
         .deps
         .dialer
-        .dial(&b.address, b.fingerprint.as_deref())
-        .await
-    {
+        .dial(&b.address, b.fingerprint.as_deref());
+    let Some(dialed) = or_stop(shared, control, dial).await else {
+        return Some(End::Stopped);
+    };
+    match dialed {
         Ok(t) => Some(session(shared, Arc::from(t), slot, control).await),
         Err(e) => {
             if let Some(refusal) = handshake_refusal(&e) {

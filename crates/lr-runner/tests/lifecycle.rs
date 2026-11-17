@@ -669,3 +669,42 @@ async fn idle_runner_told_to_stop_exits_even_when_the_broker_is_unreachable() {
     );
     assert!(matches!(h.await.unwrap(), AgentExit::Stopped));
 }
+
+#[tokio::test]
+async fn a_stop_during_a_hanging_dial_ends_within_the_bound() {
+    let rig = Rig::new();
+    rig.gate.hang_dials(true);
+    let (c, h) = rig.start();
+    rig.settle().await;
+    c.drain(lr_proto::DrainReason::Down).await;
+    rig.advance(SEC).await;
+    assert!(!h.is_finished(), "the runner gives its dial time first");
+    rig.advance(STOP_BOUND).await;
+    assert!(h.is_finished(), "a hanging dial kept the runner");
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+}
+
+#[tokio::test]
+async fn a_stop_while_the_welcome_never_comes_ends_within_the_bound() {
+    let rig = Rig::new();
+    fill_outbox(&rig, 5).await;
+    let (c, h) = rig.start();
+    let t = lr_abstractions::Listener::accept(&rig.listener)
+        .await
+        .unwrap();
+    let first = t.recv().await.unwrap();
+    assert!(
+        matches!(
+            lr_proto::decode::<RunnerToBroker>(first.as_bytes()).unwrap(),
+            RunnerToBroker::Hello(_)
+        ),
+        "the runner says hello first"
+    );
+    c.drain(lr_proto::DrainReason::Down).await;
+    rig.advance(SEC).await;
+    assert!(!h.is_finished(), "the runner gives its broker time first");
+    rig.advance(STOP_BOUND).await;
+    assert!(h.is_finished(), "a missing welcome kept the runner");
+    assert_eq!(h.await.unwrap(), AgentExit::Stopped);
+    assert_eq!(rig.pending().await.len(), 5, "the outbox is kept");
+}
