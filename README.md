@@ -375,6 +375,7 @@ Consequences:
 
 - A joined runner on the same computer as the client takes no work-tree orders, because the broker cannot prove that it sees the client's directory.
 - To make a runner take work-tree orders, run it as a local runner: start it with no `broker.toml` and no key on the client's computer.
+- A work-tree order that no runner can take is rejected at once, not queued. Find it with `localrunner jobs` (`--json` shows the state `rejected_no_matching_runner`); `status <job>` and `history show <job>` do not know a rejected order.
 - A runner in a container cannot be local: it has no local channel to the broker, so it is always joined.
 - An older broker does not report the kind; the column is then empty.
 
