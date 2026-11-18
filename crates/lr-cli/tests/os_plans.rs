@@ -572,6 +572,10 @@ fn runner_service_runs_under_a_non_root_account_on_every_os() {
                 );
                 assert!(unit.contains("\nUser=alex\n"), "{unit}");
                 assert!(unit.contains("\nNoNewPrivileges=true\n"), "{unit}");
+                assert!(
+                    unit.contains("\nDelegate=yes\n\n[Install]\n"),
+                    "jobs of `limit` need a cgroup subtree of their own: {unit}"
+                );
                 assert!(unit.contains("\nRestart=on-failure\n"), "{unit}");
                 assert!(unit.contains("WantedBy=multi-user.target"), "{unit}");
                 assert_eq!(
@@ -641,10 +645,11 @@ fn runner_service_plan_names_the_runner_and_state_dir() {
                     .iter()
                     .find(|r| r.starts_with("sc.exe create"))
                     .unwrap();
+                let job_root = runner_service::job_root(&i).unwrap();
                 assert!(
-                    create.contains(
-                        r#"runner run --name box --service --owner alex --state-dir "/home/alex/state & more""#
-                    ),
+                    create.contains(r#"runner run --name box --service --owner alex --job-root"#)
+                        && create.contains(&job_root.display().to_string())
+                        && create.contains(r#"--state-dir "/home/alex/state & more""#),
                     "{create}"
                 );
                 let state = Path::new("/home/alex/state & more");
@@ -706,6 +711,7 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
         .collect();
     for (path, rights) in [
         (state.join("runner").join("box"), "(OI)(CI)M"),
+        (runner_service::job_root(&i).unwrap(), "(OI)(CI)M"),
         (state.join("disk-reservations"), "(OI)(CI)M"),
         (state.join("machine-id"), "(R)"),
         (state.join("runner.toml"), "(R)"),
@@ -723,7 +729,7 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
         );
         assert!(runs(&uninstall).contains(&revoke), "{revoke} missing");
     }
-    assert_eq!(grants.len(), 6, "{grants:?}");
+    assert_eq!(grants.len(), 7, "{grants:?}");
     for kept in [
         "broker.db",
         "hub.db",
@@ -752,6 +758,12 @@ fn a_windows_runner_service_gets_its_own_directory_and_not_the_state_of_others()
             let optional = args
                 .first()
                 .is_some_and(|p| p.ends_with("runner.toml") || p.ends_with("logging.toml"));
+            let jobs =
+                args.iter().any(|w| w == "/remove") && args[0].contains("Al.LocalRunner.Jobs");
+            if jobs {
+                assert_eq!(tolerate, &Tolerate::Codes(vec![2, 3]), "{a}");
+                continue;
+            }
             if args.iter().any(|w| w == "/grant" || w == "/remove")
                 && !args[0].ends_with("participant.key")
             {
@@ -781,8 +793,9 @@ fn runner_service_off_removes_only_that_runner() {
                 tolerate, program, ..
             } = a
             {
-                let optional =
-                    a.to_string().contains("runner.toml") || a.to_string().contains("logging.toml");
+                let optional = a.to_string().contains("runner.toml")
+                    || a.to_string().contains("logging.toml")
+                    || a.to_string().contains("Al.LocalRunner.Jobs");
                 assert_eq!(
                     tolerate == &Tolerate::Nothing,
                     program == "icacls" && !optional,
@@ -911,7 +924,9 @@ fn windows_runner_service_hands_the_runner_key_to_the_service_account_before_it_
          it works; the key is the account's alone before the start: {runs:#?}"
     );
     assert!(
-        !runs.iter().any(|r| r.contains("/setowner")),
+        !runs
+            .iter()
+            .any(|r| r.contains("/setowner") && r.contains(&key)),
         "the administrators stay the owner, which the key check accepts; no step needs the \
          restore privilege: {runs:#?}"
     );
@@ -1894,4 +1909,131 @@ fn the_program_of_a_service_is_compared_by_its_full_path() {
             && e.contains("not one this installation registered"),
         "{e}"
     );
+}
+
+#[test]
+fn a_windows_runner_service_works_in_a_job_root_only_it_and_the_administrators_write() {
+    let i = runner_service(Os::Windows, "box");
+    let root = runner_service::job_root(&i).unwrap();
+    assert!(
+        root.ends_with(Path::new("Al.LocalRunner.Jobs").join("box")),
+        "{}",
+        root.display()
+    );
+    assert!(
+        !root.starts_with(&i.state_dir),
+        "the job root is outside the closed state directory"
+    );
+    let dir = root.display().to_string();
+    let install = runner_service::install(&i);
+    let runs = runs(&install);
+    let parent = lr_cli::paths::jobs_parent().display().to_string();
+    let lines: Vec<String> = install
+        .iter()
+        .map(|a| match a {
+            Action::CreateDir(p) => format!("mkdir {}", p.display()),
+            Action::Run { program, args, .. } => format!("{program} {}", args.join(" ")),
+            other => other.to_string(),
+        })
+        .collect();
+    let at = |line: &str| {
+        let found: Vec<usize> = (0..lines.len()).filter(|n| lines[*n] == line).collect();
+        assert_eq!(found.len(), 1, "{line} in {lines:#?}");
+        found[0]
+    };
+    let admins = "*S-1-5-32-544";
+    let order = [
+        at(&format!("mkdir {parent}")),
+        at(&format!("check that {parent} is no link")),
+        at(&format!("icacls {parent} /setowner {admins}")),
+        at(&format!(
+            "icacls {parent} /inheritance:r /grant:r {admins}:(OI)(CI)F *S-1-5-18:(OI)(CI)F *S-1-5-32-545:(RX)"
+        )),
+        at(&format!("mkdir {dir}")),
+        at(&format!("check that {dir} is no link")),
+        at(&format!("icacls {dir} /setowner {admins}")),
+        at(&format!(
+            "icacls {dir} /inheritance:r /grant:r {admins}:(OI)(CI)F *S-1-5-18:(OI)(CI)F alex:(OI)(CI)F"
+        )),
+        at(&format!(
+            r"icacls {dir} /grant NT SERVICE\AlLocalRunner-box:(OI)(CI)M"
+        )),
+        lines.iter().position(|l| l.starts_with("sc.exe start")).unwrap(),
+    ];
+    assert!(
+        order.windows(2).all(|w| w[0] < w[1]),
+        "{order:?} {lines:#?}"
+    );
+    assert!(
+        !runs
+            .iter()
+            .any(|r| r.contains("-545:(OI)") || r.contains("-545:(CI)")),
+        "Users get no inherited right below the parent: {runs:?}"
+    );
+    assert!(
+        !runs.iter().any(|r| r.contains(&dir) && r.contains("Users")),
+        "no right for Users on the job root: {runs:?}"
+    );
+    let off = runs_of(&runner_service::uninstall(&i, false));
+    let revoke = format!(r"icacls {dir} /remove NT SERVICE\AlLocalRunner-box");
+    assert!(off.contains(&revoke), "{off:?}");
+    assert!(
+        !off.iter()
+            .any(|r| r.contains("rmdir") || r.contains("del ")),
+        "off keeps what jobs left: {off:?}"
+    );
+    for os in [Os::Linux, Os::MacOs] {
+        let other = runner_service(os, "box");
+        assert_eq!(runner_service::job_root(&other), None, "{os:?}");
+        assert!(
+            !runner_service::run_args(&other).contains(&"--job-root".to_string()),
+            "{os:?}"
+        );
+    }
+}
+
+#[test]
+fn off_for_a_service_installed_before_the_job_root_still_deletes_the_service() {
+    let i = runner_service(Os::Windows, "box");
+    let root = runner_service::job_root(&i).unwrap().display().to_string();
+    let plan = runner_service::uninstall(&i, false);
+    let revoke = plan
+        .iter()
+        .find(|a| matches!(a, Action::Run { args, .. } if args.first() == Some(&root)))
+        .expect("the job root grant is taken back");
+    assert!(
+        matches!(revoke, Action::Run { tolerate, .. } if *tolerate == Tolerate::Codes(vec![2, 3])),
+        "only a missing job root is fine, not access denied (5): {revoke}"
+    );
+    let revoked = position(&plan, |a| a == revoke)[0];
+    let deleted = position(&plan, |a| {
+        matches!(a, Action::Run { program, args, .. }
+            if program == "sc.exe" && args.first().is_some_and(|w| w == "delete"))
+    });
+    assert_eq!(deleted.len(), 1);
+    assert!(revoked < deleted[0]);
+}
+
+#[test]
+fn job_root_is_refused_without_service_and_on_other_systems() {
+    let refusal = runner_service::job_root_refusal;
+    assert_eq!(refusal(false, false, false), None);
+    assert_eq!(refusal(true, true, true), None);
+    let by_hand = refusal(true, false, true).unwrap();
+    assert!(by_hand.contains("--job-root needs --service"), "{by_hand}");
+    let other = refusal(true, true, false).unwrap();
+    assert!(other.contains("Windows runner service only"), "{other}");
+}
+
+#[test]
+fn leftover_job_roots_are_the_directories_under_the_parent() {
+    let dir = std::env::temp_dir().join(format!("lr-job-roots-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("box")).unwrap();
+    std::fs::write(dir.join("stray.txt"), "x").unwrap();
+    assert!(runner_service::leftover_job_roots(&dir.join("none")).is_empty());
+    assert_eq!(
+        runner_service::leftover_job_roots(&dir),
+        vec![dir.join("box")]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }

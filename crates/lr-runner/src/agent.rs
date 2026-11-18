@@ -146,6 +146,7 @@ impl AgentControl {
         let old = self.shared.deps.settings.get();
         next.name = old.name.clone();
         next.state_dir = old.state_dir.clone();
+        next.job_root = old.job_root.clone();
         next.process = old.process.clone();
         next.disk_ledger = old.disk_ledger.clone();
         next.services = old.services.clone();
@@ -286,7 +287,7 @@ impl Shared {
     }
 
     pub(crate) fn workspace(&self) -> WorkspaceLayout {
-        WorkspaceLayout::new(self.fixed.state_dir.clone())
+        WorkspaceLayout::new(self.fixed.job_root.clone())
     }
 
     pub(crate) fn caches(&self) -> Caches<'_> {
@@ -297,7 +298,7 @@ impl Shared {
             diag: &self.diag,
             meter: self.deps.meter.as_ref(),
             runner: &self.fixed.name,
-            layout: CacheLayout::new(self.fixed.state_dir.clone()),
+            layout: CacheLayout::new(self.fixed.job_root.clone()),
             cache: live.cache,
             workspace: live.workspace,
         }

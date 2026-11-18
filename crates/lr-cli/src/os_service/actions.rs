@@ -47,6 +47,28 @@ fn io(path: &Path, e: std::io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
+fn refuse_link(path: &Path) -> Result<(), String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| io(path, e))?;
+    #[cfg(windows)]
+    let reparse = {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    };
+    #[cfg(not(windows))]
+    let reparse = false;
+    if meta.file_type().is_symlink() || reparse {
+        return Err(format!(
+            "{} is a link or junction, not a directory made by this installation; remove it as \
+             administrator and run the command again",
+            path.display()
+        ));
+    }
+    if !meta.is_dir() {
+        return Err(format!("{} is not a directory", path.display()));
+    }
+    Ok(())
+}
+
 fn run(program: &str, args: &[String], tolerate: &Tolerate) -> Result<(), String> {
     let exe = match (program_path(program), tolerate) {
         (Ok(p), _) => p,
@@ -256,6 +278,7 @@ impl System for OsSystem {
                 tolerate,
             } => run(program, args, tolerate),
             Action::CreateDir(p) => std::fs::create_dir_all(p).map_err(|e| io(p, e)),
+            Action::RefuseLink(p) => refuse_link(p),
             Action::WriteFile { path, contents } => {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).map_err(|e| io(parent, e))?;
@@ -331,5 +354,57 @@ fn replace_binary(from: &Path, to: &Path) -> Result<(), String> {
             }
             Err(io(from, e))
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod link_tests {
+    use super::refuse_link;
+    use std::process::Command;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("lr-link-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_plain_directory_passes() {
+        let d = scratch("plain");
+        assert!(refuse_link(&d).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_junction_is_refused() {
+        let d = scratch("junction");
+        let target = d.join("target");
+        std::fs::create_dir(&target).unwrap();
+        let link = d.join("link");
+        let made = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "mklink /J failed");
+        let err = refuse_link(&link).unwrap_err();
+        assert!(err.contains("link or junction"), "{err}");
+        let _ = Command::new("cmd")
+            .args(["/C", "rmdir"])
+            .arg(&link)
+            .output();
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_file_and_a_missing_path_are_refused() {
+        let d = scratch("file");
+        let f = d.join("f");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(refuse_link(&f).unwrap_err().contains("not a directory"));
+        assert!(refuse_link(&d.join("none")).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -134,7 +134,7 @@ impl RunnerReloader {
             crate::host::resources(),
         )
         .map_err(|e| e.to_string())?;
-        let problems = finish_settings(&self.layout, &dir, &mut new);
+        let problems = finish_settings(&self.layout, &mut new);
         if !problems.is_empty() {
             return Err(problems.join("; "));
         }

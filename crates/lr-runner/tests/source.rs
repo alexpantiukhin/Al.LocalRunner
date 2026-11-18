@@ -338,3 +338,66 @@ async fn checkouts_left_by_a_crash_are_removed_at_start_and_the_mirror_stays() {
     assert!(!rig.files.is_dir(&left));
     assert!(rig.files.is_dir(&mirror));
 }
+
+fn job_root() -> PathBuf {
+    PathBuf::from("/jobs/runner-a")
+}
+
+#[tokio::test]
+async fn a_job_root_holds_workspace_cache_and_temp_while_the_state_directory_stays_empty() {
+    let mut rig = Rig::new();
+    rig.settings.job_root = job_root();
+    rig.disk.set(Path::new("/"), 100_000);
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    let mut spec = commit_spec(vec![step("b", "make", 600)], 600);
+    spec.requirements.cache = vec!["deps".into()];
+    spec.requirements.disk_mb = 1000;
+    b.assign("job-1", 1, spec).await;
+    assert_eq!(result_of(&b.until_result().await).state, JobState::Passed);
+    let runs = rig.process.runs();
+    let ws = WorkspaceLayout::new(job_root());
+    let job_dir = ws.job_dir("acme/app", URL, "client-1", &JobId("job-1".into()));
+    assert!(job_dir.starts_with(job_root().join("workspace")));
+    assert_eq!(runs[1].cwd, job_dir);
+    let temp = job_root().join("tmp").join("lr-job-1");
+    assert!(runs[1].limits.disk_dirs.contains(&temp));
+    let dir = temp.to_string_lossy().into_owned();
+    assert!(runs[1].env.contains(&("TEMP".into(), dir)));
+    let cache = runs[1]
+        .env
+        .iter()
+        .find(|(n, _)| *n == lr_core::cache_env_var("deps"))
+        .map(|(_, v)| PathBuf::from(v))
+        .expect("cache variable");
+    assert!(cache.starts_with(job_root().join("cache")), "{cache:?}");
+    assert!(!rig.files.is_dir(&state_dir().join("workspace")));
+    assert!(!rig.files.is_dir(&state_dir().join("cache")));
+    assert!(!rig.files.is_dir(&state_dir().join("tmp")));
+}
+
+#[tokio::test]
+async fn the_active_job_marker_stays_in_the_state_directory_with_a_job_root() {
+    let mut rig = Rig::new();
+    rig.settings.job_root = job_root();
+    rig.files.mkdir(Path::new("/w/tree"));
+    rig.script(
+        "job-1",
+        lr_abstractions::fakes::JobScript::new(vec![lr_abstractions::fakes::StepScript::new(
+            std::time::Duration::from_secs(600),
+            0,
+        )]),
+    );
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 600)], 600),
+    )
+    .await;
+    b.next_job_msg().await.unwrap();
+    rig.settle().await;
+    assert!(rig.files.file(&state_dir().join("active-job")).is_some());
+    assert!(rig.files.file(&job_root().join("active-job")).is_none());
+}

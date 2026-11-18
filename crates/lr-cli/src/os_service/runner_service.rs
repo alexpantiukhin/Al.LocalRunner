@@ -121,6 +121,13 @@ pub enum KeyState {
 }
 
 const ADMINISTRATORS: &str = "S-1-5-32-544";
+const SYSTEM: &str = "S-1-5-18";
+const USERS: &str = "S-1-5-32-545";
+
+/// The exit codes `icacls` gives for a path that is not there (`ERROR_FILE_NOT_FOUND`,
+/// `ERROR_PATH_NOT_FOUND`): all `autostart off` tolerates when it takes the job root's right
+/// back from a service installed before job roots existed.
+pub const MISSING_PATH_CODES: [i32; 2] = [2, 3];
 
 /// The ownership of `path` as this process sees it.
 pub fn key_state(path: &Path) -> KeyState {
@@ -945,8 +952,52 @@ fn home_of(_user: &str) -> Option<PathBuf> {
     None
 }
 
+/// Where the jobs of the Windows service of `i.name` work: `<name>` in
+/// `%ProgramData%\Al.LocalRunner.Jobs`, whose parents every account can read and only the service
+/// account, the Administrators group, `SYSTEM` and the installing user may write. A program of
+/// a job that walks its path upwards (Git does) cannot do that through the state directory,
+/// which is closed to everyone else. `None` elsewhere: the jobs work in the runner's own state
+/// directory.
+pub fn job_root(i: &RunnerServiceInputs) -> Option<PathBuf> {
+    (i.os == Os::Windows).then(|| crate::paths::jobs_parent().join(&i.name))
+}
+
+/// Why `runner run --job-root` is refused: it is for the Windows service (`--service`) only.
+/// `None` when it may go ahead.
+pub fn job_root_refusal(given: bool, service: bool, windows: bool) -> Option<String> {
+    if !given {
+        return None;
+    }
+    if !windows {
+        return Some(
+            "--job-root is for the Windows runner service only: on this OS jobs work in the \
+             runner's state directory"
+                .into(),
+        );
+    }
+    (!service).then(|| {
+        "--job-root needs --service: it is set by `autostart on runner <name> --service`, and a \
+         runner started by hand works in its state directory"
+            .into()
+    })
+}
+
+/// The job roots left under `parent` (one directory per runner); empty when there are none.
+pub fn leftover_job_roots(parent: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = std::fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    found.sort();
+    found
+}
+
 /// The command line the service starts: `runner run --name <name> --service`, on Windows with
-/// `--owner <user>` (the service account is not the installing user), and the directories.
+/// `--owner <user>` (the service account is not the installing user) and `--job-root`, and the
+/// directories.
 pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
     let mut args = vec![s(&i.exe)];
     args.extend(
@@ -956,6 +1007,9 @@ pub fn run_args(i: &RunnerServiceInputs) -> Vec<String> {
     );
     if i.os == Os::Windows {
         args.extend(["--owner".to_string(), i.user.clone()]);
+    }
+    if let Some(root) = job_root(i) {
+        args.extend(["--job-root".to_string(), s(&root)]);
     }
     args.extend(["--state-dir".to_string(), s(&i.state_dir)]);
     if let Some(c) = &i.config_dir {
@@ -990,7 +1044,8 @@ pub struct Grant {
 }
 
 /// What the Windows service account of runner `i.name` may touch, and nothing more of the state
-/// directory: its own directory `runner/<name>` (modify: database, logs, workspace, key), the
+/// directory: its own directory `runner/<name>` (modify: database, logs, key), its job root
+/// ([`job_root`], modify: workspace, caches, temporary files), the
 /// shared disk reservations (modify), `machine-id` (read), the configuration it reads
 /// (`runner.toml` and `logging.toml`; the whole configuration directory when it is a separate
 /// one) and the binary's directory (read). The broker's and the hub's databases, keys, policy
@@ -1010,6 +1065,9 @@ pub fn windows_grants(i: &RunnerServiceInputs) -> Vec<Grant> {
         ),
         grant(i.state_dir.join(crate::host::MACHINE_ID_FILE), "(R)", false),
     ];
+    if let Some(root) = job_root(i) {
+        out.insert(1, grant(root, "(OI)(CI)M", false));
+    }
     match &i.config_dir {
         Some(c) => out.push(grant(c.clone(), "(OI)(CI)RX", false)),
         None => {
@@ -1060,6 +1118,43 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
     out.push(Action::CreateDir(
         i.state_dir.join(crate::build::DISK_LEDGER),
     ));
+    if let Some(root) = job_root(i) {
+        let parent = crate::paths::jobs_parent();
+        out.push(Action::CreateDir(parent.clone()));
+        out.push(Action::RefuseLink(parent.clone()));
+        out.push(Action::run(
+            "icacls",
+            &[&s(&parent), "/setowner", &format!("*{ADMINISTRATORS}")],
+        ));
+        out.push(Action::run(
+            "icacls",
+            &[
+                &s(&parent),
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{ADMINISTRATORS}:(OI)(CI)F"),
+                &format!("*{SYSTEM}:(OI)(CI)F"),
+                &format!("*{USERS}:(RX)"),
+            ],
+        ));
+        out.push(Action::CreateDir(root.clone()));
+        out.push(Action::RefuseLink(root.clone()));
+        out.push(Action::run(
+            "icacls",
+            &[&s(&root), "/setowner", &format!("*{ADMINISTRATORS}")],
+        ));
+        out.push(Action::run(
+            "icacls",
+            &[
+                &s(&root),
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{ADMINISTRATORS}:(OI)(CI)F"),
+                &format!("*{SYSTEM}:(OI)(CI)F"),
+                &format!("{}:(OI)(CI)F", i.user),
+            ],
+        ));
+    }
     for g in windows_grants(i) {
         out.push(
             Action::run(
@@ -1111,8 +1206,8 @@ fn linux(i: &RunnerServiceInputs) -> Vec<Action> {
     let unit = format!(
         "[Unit]\nDescription=Al.LocalRunner runner {}\nAfter=network-online.target\n\
          Wants=network-online.target\n\n[Service]\nType=simple\nUser={}\nExecStart={}\n\
-         Restart=on-failure\nRestartSec=5\nNoNewPrivileges=true\n\n[Install]\n\
-         WantedBy=multi-user.target\n",
+         Restart=on-failure\nRestartSec=5\nNoNewPrivileges=true\nDelegate=yes\n\n\
+         [Install]\nWantedBy=multi-user.target\n",
         i.name,
         i.user,
         systemd_command_line(&run_args(i))
@@ -1172,9 +1267,12 @@ pub fn running(os: Os, name: &str) -> Option<bool> {
 }
 
 /// `autostart on runner <name> --service`: registers the runner with the service manager under
-/// [`account`], started at boot and restarted after a failure, and starts it now. On Windows
-/// the service account also gets the rights of [`windows_grants`] (its own runner directory,
-/// never the whole state directory), and becomes the only user of the runner's key
+/// [`account`], started at boot and restarted after a failure, and starts it now. On Linux the
+/// unit delegates its cgroup subtree (`Delegate=yes`): a system service has no user manager,
+/// so the runner makes the job cgroups of the `limit` mode itself. On Windows
+/// the service account also gets the rights of [`windows_grants`] (its own runner directory and
+/// its job root, never the whole state directory; the job root is created closed to everyone
+/// but the service account, the Administrators group, `SYSTEM` and the installing user), and becomes the only user of the runner's key
 /// ([`key_path`]): the
 /// Administrators group takes the key (so a re-run over a service that already holds it works
 /// too) and stays its owner, which the key's owner check accepts. `uninstall` gives the key
@@ -1188,7 +1286,7 @@ pub fn install(i: &RunnerServiceInputs) -> Vec<Action> {
 }
 
 /// `autostart off runner <name> --service`: stops and removes that runner's service and nothing
-/// else; its state stays. A service that is not there is fine. On Windows with `restore_key`
+/// else; its state and its job root stay. A service that is not there is fine. On Windows with `restore_key`
 /// the key goes back to [`RunnerServiceInputs::user`] first, while the service account still
 /// exists: the Administrators group takes it and grants it to the user alone.
 /// A failed step stops the plan before the service is deleted.
@@ -1202,10 +1300,15 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
             if restore_key {
                 out.extend(key_to(i, &i.user, &account));
             }
+            let jobs = job_root(i);
             for g in windows_grants(i) {
+                let tolerate = if jobs.as_ref() == Some(&g.path) {
+                    Tolerate::Codes(MISSING_PATH_CODES.to_vec())
+                } else {
+                    tolerated(g.optional)
+                };
                 out.push(
-                    Action::run("icacls", &[&s(&g.path), "/remove", &account])
-                        .tolerating(tolerated(g.optional)),
+                    Action::run("icacls", &[&s(&g.path), "/remove", &account]).tolerating(tolerate),
                 );
             }
             out.push(

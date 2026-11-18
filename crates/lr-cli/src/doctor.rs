@@ -87,10 +87,16 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
             Status::Ok,
             "cgroup v2 scope (systemd-run --user --scope)",
         ),
+        Containment::DelegatedCgroup => check(
+            "process tree",
+            Status::Ok,
+            "cgroup v2 subtree delegated to this process (Delegate=yes)",
+        ),
         Containment::ProcessGroup => check(
             "process tree",
             Status::Warn,
-            "process group only: detached descendants may survive (Linux: no cgroup v2 user scope)",
+            "process group only: detached descendants may survive and `limit` runs as `warn` \
+             (Linux: no cgroup v2 user scope and no delegated subtree with the memory controller)",
         ),
     });
 }
@@ -410,6 +416,35 @@ pub fn autostart_check(name: &str, found: &AutostartFound) -> Option<Check> {
     Some(check(label, detail.0, detail.1))
 }
 
+/// The `limit` check of runner `name` installed as a Linux system service whose unit reads
+/// `unit`: `ok` when the unit delegates its cgroup subtree (`Delegate=yes`); whether the
+/// runner can use it (the memory controller, `cgroup.kill`, a writable subtree) is decided when
+/// it starts and shown as its `enforcement`. `warn` otherwise, because a system service has no
+/// user manager and `limit` then runs as `warn`.
+pub fn delegation_check(name: &str, unit: &str) -> Check {
+    let label = format!("runner {name} memory limit");
+    if unit.lines().any(|l| l.trim() == "Delegate=yes") {
+        return check(
+            label,
+            Status::Ok,
+            "the service unit has Delegate=yes; whether the runner holds job memory in it is \
+             checked when the runner starts: `enforcement os` in `localrunner runners` means \
+             yes, `watcher` means `limit` runs as `warn` (needs the memory controller and Linux \
+             5.14+ for cgroup.kill)",
+        );
+    }
+    check(
+        label,
+        Status::Warn,
+        format!(
+            "the service unit has no Delegate=yes and a system service has no user manager, so \
+             `limit` runs as `warn` (enforcement watcher); reinstall the unit: `sudo localrunner \
+             autostart off runner {name} --service`, then `sudo localrunner autostart on runner \
+             {name} --service`"
+        ),
+    )
+}
+
 fn output_of(program: &str, args: &[&str]) -> Option<std::process::Output> {
     let path = crate::os_service::programs::program_path(program).ok()?;
     std::process::Command::new(path).args(args).output().ok()
@@ -442,6 +477,11 @@ fn autostart(layout: &Layout, out: &mut Vec<Check>) {
             linger: if login { linger(os) } else { None },
         };
         out.extend(autostart_check(&name, &found));
+        if os == Os::Linux && found.service.is_some() {
+            let unit = runner_service::definition_path(os, &name)
+                .and_then(|p| std::fs::read_to_string(p).ok());
+            out.extend(unit.map(|u| delegation_check(&name, &u)));
+        }
     }
 }
 

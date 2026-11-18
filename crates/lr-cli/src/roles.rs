@@ -214,6 +214,9 @@ pub async fn start_runners(
     config: Option<&Path>,
     foreground: bool,
 ) -> Result<Running, String> {
+    if layout.job_root.is_some() && count != 1 {
+        return Err("--job-root serves one runner: use --count 1".into());
+    }
     let base = runner_base_name(layout, name, config);
     let mut running = Running {
         tasks: Vec::new(),

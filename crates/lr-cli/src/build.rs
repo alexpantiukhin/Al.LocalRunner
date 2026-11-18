@@ -359,13 +359,17 @@ pub fn broker_address(dir: &Path, layout: &Layout) -> Result<BrokerAddress, Stri
 /// The facts the assembly adds to a parsed `runner.toml` (home, temp, free disk, the disk
 /// ledger, the process, version and enforcement) and the `[programs]` checks; returns the
 /// problems the checks found.
-pub fn finish_settings(layout: &Layout, dir: &Path, cfg: &mut RunnerConfig) -> Vec<String> {
+pub fn finish_settings(layout: &Layout, cfg: &mut RunnerConfig) -> Vec<String> {
     cfg.settings.home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .ok();
     cfg.settings.temp = Some(std::env::temp_dir().to_string_lossy().into_owned());
     let problems = cfg.check_programs();
-    cfg.settings.disk_mb = host::free_disk_mb(dir).unwrap_or(0);
+    cfg.settings.job_root = layout
+        .job_root
+        .clone()
+        .unwrap_or_else(|| cfg.settings.state_dir.clone());
+    cfg.settings.disk_mb = host::free_disk_mb(&cfg.settings.job_root).unwrap_or(0);
     cfg.settings.disk_ledger = Some(layout.root.join(DISK_LEDGER));
     let pid = std::process::id();
     cfg.settings.process = Some(lr_abstractions::ProcessRef {
@@ -396,6 +400,9 @@ pub async fn runner(
     check_runner_name(name)?;
     let dir = layout.runner_dir(name);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if let Some(root) = &layout.job_root {
+        std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    }
     layout.prepare_ipc().map_err(|e| e.to_string())?;
     let text = match runner_config_path(layout, name, config) {
         Some(p) => read_optional(&p)?.ok_or_else(|| format!("{} does not exist", p.display()))?,
@@ -414,7 +421,7 @@ pub async fn runner(
     {
         eprintln!("runner {name}: warning: {risk}");
     }
-    let problems = finish_settings(layout, &dir, &mut cfg);
+    let problems = finish_settings(layout, &mut cfg);
     let clock = clock();
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =

@@ -66,7 +66,7 @@ impl Shared {
     }
 
     pub(crate) fn service_dir(&self, name: &str) -> PathBuf {
-        self.fixed.state_dir.join("services").join(name)
+        self.fixed.job_root.join("services").join(name)
     }
 
     pub(crate) fn service_labels<'a>(&'a self, name: &'a str) -> [(&'a str, &'a str); 2] {

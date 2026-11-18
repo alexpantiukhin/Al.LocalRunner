@@ -4,7 +4,10 @@ use std::collections::HashMap;
 
 #[cfg(target_os = "linux")]
 fn in_scope() -> bool {
-    crate::containment() == crate::Containment::CgroupScope
+    matches!(
+        crate::containment(),
+        crate::Containment::CgroupScope | crate::Containment::DelegatedCgroup
+    )
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -56,13 +56,17 @@ pub enum Containment {
     JobObject,
     /// Linux cgroup v2 scope through `systemd-run --user --scope`: the whole tree.
     CgroupScope,
+    /// Linux cgroup v2 child of the subtree delegated to the runner process (a system service
+    /// with `Delegate=yes`, no user manager): the whole tree.
+    DelegatedCgroup,
     /// Process group and the walk over descendants by parent: best effort.
     ProcessGroup,
 }
 
 /// The containment used for job trees here; on Linux the first call checks once whether
-/// `systemd-run --user --scope` works (cgroup v2 and a user manager), else it falls back to the
-/// process group.
+/// `systemd-run --user --scope` works (cgroup v2 and a user manager), else whether the process
+/// owns a delegated cgroup v2 subtree with the memory controller (it then moves itself into its
+/// `runner` leaf), else it falls back to the process group.
 pub fn containment() -> Containment {
     #[cfg(windows)]
     {
@@ -70,10 +74,10 @@ pub fn containment() -> Containment {
     }
     #[cfg(target_os = "linux")]
     {
-        if scope_linux::available() {
-            Containment::CgroupScope
-        } else {
-            Containment::ProcessGroup
+        match scope_linux::kind() {
+            Some(scope_linux::Kind::UserScope) => Containment::CgroupScope,
+            Some(scope_linux::Kind::Delegated) => Containment::DelegatedCgroup,
+            None => Containment::ProcessGroup,
         }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
@@ -85,17 +89,18 @@ pub fn containment() -> Containment {
 /// Which mechanism limits the memory of a job here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Enforcement {
-    /// The OS limits the tree (Windows Job Object, delegated cgroup v2 controllers), with the
-    /// user-space watcher on top for the exceeded reason; in `limit` mode the OS holds the tree
-    /// at the ceiling.
+    /// The OS limits the tree (Windows Job Object, cgroup v2 memory controller of a user scope
+    /// or of the runner's delegated subtree), with the user-space watcher on top for the
+    /// exceeded reason; in `limit` mode the OS holds the tree at the ceiling.
     Os,
-    /// Only the user-space watcher measures the tree and kills it (macOS, Linux without
-    /// delegated controllers); approximate, and `limit` mode acts as `warn`.
+    /// Only the user-space watcher measures the tree and kills it (macOS, Linux without a user
+    /// manager or a delegated subtree with the memory controller); approximate, and `limit`
+    /// mode acts as `warn`.
     Watcher,
 }
 
 /// The mechanism this build and host use for the memory of a job; the first call on Linux
-/// probes `systemd-run --user --scope` once.
+/// probes once as [`containment`] does.
 pub fn enforcement() -> Enforcement {
     #[cfg(windows)]
     {

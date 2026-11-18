@@ -94,7 +94,7 @@ impl Shared {
     /// cannot be read.
     pub(crate) async fn free_disk_mb(&self) -> u64 {
         let s = self.deps.settings.get();
-        let free = self.deps.disk.free_mb(&s.state_dir).unwrap_or(s.disk_mb);
+        let free = self.deps.disk.free_mb(&s.job_root).unwrap_or(s.disk_mb);
         let others = self.reserved_by_others().await;
         if others.unreadable.is_empty() {
             free.saturating_sub(others.mb)
@@ -121,7 +121,7 @@ impl Shared {
             };
         let volume = match &spec.code {
             WireCode::WorkTree { cwd } => PathBuf::from(cwd),
-            _ => self.fixed.state_dir.clone(),
+            _ => self.fixed.job_root.clone(),
         };
         let Some(free) = self.deps.disk.free_mb(&volume) else {
             self.diag.event(

@@ -48,7 +48,10 @@ async fn kill_tree_of_a_root_gone_after_a_crash_kills_the_group_it_left() {
         start: Some(g.start),
     };
     runner.kill_tree(&gone).await.unwrap();
-    if containment() == Containment::CgroupScope {
+    if matches!(
+        containment(),
+        Containment::CgroupScope | Containment::DelegatedCgroup
+    ) {
         assert!(
             g.left.ping().await,
             "in a cgroup scope the leftovers are the scope sweep's"

@@ -267,6 +267,9 @@ pub enum Action {
     },
     /// Creates a directory and its parents.
     CreateDir(PathBuf),
+    /// Fails when the path is missing, is not a directory, or is a symbolic link, junction or
+    /// other reparse point: nothing is followed.
+    RefuseLink(PathBuf),
     /// Writes a file, replacing it.
     WriteFile {
         /// The file.
@@ -381,6 +384,7 @@ impl fmt::Display for Action {
                 Ok(())
             }
             Action::CreateDir(p) => write!(f, "create directory {}", p.display()),
+            Action::RefuseLink(p) => write!(f, "check that {} is no link", p.display()),
             Action::WriteFile { path, .. } => write!(f, "write {}", path.display()),
             Action::CopyIfMissing { from, to } => {
                 write!(f, "copy {} to {} if missing", from.display(), to.display())
