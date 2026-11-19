@@ -13,7 +13,7 @@ use std::time::Duration;
 #[cfg(windows)]
 fn allocate(chunks: u32, then_sleep_s: u32) -> String {
     format!(
-        "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"$a=@(); for($i=0;$i -lt {chunks};$i++){{ $a += ,(New-Object byte[] 4MB); Start-Sleep -Milliseconds 100 }}; Start-Sleep {then_sleep_s}\""
+        "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"$a=@(); for($i=0;$i -lt {chunks};$i++){{ $a += ,(New-Object byte[] 4MB) }}; Start-Sleep {then_sleep_s}\""
     )
 }
 
