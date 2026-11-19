@@ -32,7 +32,7 @@ jobs:
           echo "$files"
           hit() { echo "$files" | grep -Eq "$1" && echo true || echo false; }
           {
-            echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$)')"
+            echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$|\.github/test-budgets\.toml$|\.github/scripts/test_budget\.py$)')"
             echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')"
             echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')"
             echo "workflows=$(hit '^\.github/workflows/')"
@@ -54,7 +54,7 @@ jobs:
         run: for a in 127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5 127.0.0.9; do sudo ifconfig lo0 alias $a up; done
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked --no-fail-fast
+      - run: python .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast
 
   skills:
     needs: changes

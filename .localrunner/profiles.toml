@@ -1,5 +1,5 @@
 [profile.rust-unit]
-command   = "cargo test --workspace --locked --no-fail-fast"
+command   = "python .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast"
 timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
@@ -20,7 +20,7 @@ tags      = ["cargo"]
 steps = [
   { name = "fmt",    command = "cargo fmt --check",                                       timeout_s = 120 },
   { name = "clippy", command = "cargo clippy --workspace --all-targets --locked -- -D warnings", timeout_s = 1200 },
-  { name = "test",   command = "cargo test --workspace --locked --no-fail-fast",          timeout_s = 1800 },
+  { name = "test",   command = "python .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast",          timeout_s = 1800 },
 ]
 
 [profile.rust-fmt]
