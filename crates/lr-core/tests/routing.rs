@@ -260,7 +260,7 @@ fn unsuitable_near_runner_is_skipped_for_a_suitable_far_one() {
 #[test]
 fn order_zone_limit_is_a_hard_boundary() {
     let mut e = local_client("a");
-    e.order.requirements.max_zone = Some(Zone::Lan);
+    e.order.requirements.zones = Some(Zone::up_to(Zone::Lan));
     let runners = zoned_runners();
     let busy = [
         running(entry("x", "agent", 0), "local", 0),
@@ -274,7 +274,7 @@ fn order_zone_limit_is_a_hard_boundary() {
     let err = suitable(&e, &runners[0], &site()).unwrap_err();
     assert!(err.reasons.contains(&MismatchReason::Zone {
         runner: Zone::Remote,
-        allowed: Zone::Lan
+        allowed: Zone::up_to(Zone::Lan)
     }));
 }
 
@@ -283,12 +283,12 @@ fn zone_is_pairwise_per_client_not_from_the_runner_report() {
     let mut office = runner_at("office", "10.1.0.7");
     office.caps.zone = Zone::Local;
     let mut e = entry("a", "agent", 0);
-    e.order.requirements.max_zone = Some(Zone::Lan);
+    e.order.requirements.zones = Some(Zone::up_to(Zone::Lan));
     assert_eq!(
         suitable(&e, &office, &site()).unwrap_err().reasons,
         [MismatchReason::Zone {
             runner: Zone::Remote,
-            allowed: Zone::Lan
+            allowed: Zone::up_to(Zone::Lan)
         }]
     );
     e.client.endpoint = Endpoint::Addr("10.1.3.3".parse().unwrap());

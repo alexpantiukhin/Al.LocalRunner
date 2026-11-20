@@ -117,13 +117,14 @@ pub enum MismatchReason {
         /// Service name.
         name: String,
     },
-    /// The runner is farther than the order allows.
+    /// The zone of the runner is not among the zones the order allows.
     Zone {
         /// Zone of the runner.
         runner: Zone,
-        /// Farthest allowed zone.
-        allowed: Zone,
+        /// Zones the order allows.
+        allowed: BTreeSet<Zone>,
     },
+
     /// A command name of the order is not declared by the runner.
     CommandMissing {
         /// Command name.
@@ -173,7 +174,12 @@ impl fmt::Display for MismatchReason {
             Self::ServiceMissing { name } => write!(f, "service {name} is not described"),
             Self::ServiceUnavailable { name } => write!(f, "service {name} is unavailable"),
             Self::Zone { runner, allowed } => {
-                write!(f, "the zone of runner {runner} is beyond the allowed {allowed}")
+                let list: Vec<&str> = allowed.iter().map(|z| z.as_str()).collect();
+                write!(
+                    f,
+                    "the zone of runner {runner} is not among the allowed zones {}",
+                    list.join(", ")
+                )
             }
             Self::CommandMissing { name } => write!(f, "command {name} is not described"),
             Self::BelowAccept { needed, min } => {
@@ -274,11 +280,11 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
             reasons.push(MismatchReason::CommandMissing { name: name.clone() });
         }
     }
-    if let Some(allowed) = req.max_zone {
-        if caps.zone > allowed {
+    if let Some(allowed) = &req.zones {
+        if !allowed.contains(&caps.zone) {
             reasons.push(MismatchReason::Zone {
                 runner: caps.zone,
-                allowed,
+                allowed: allowed.clone(),
             });
         }
     }

@@ -77,7 +77,7 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         services: Vec::new(),
         secrets: BTreeSet::new(),
         cache: Vec::new(),
-        max_zone: None,
+        zones: None,
         commands: Default::default(),
     }
 }
@@ -134,6 +134,7 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             overrides: ResourceOverride::default(),
             args: Vec::new(),
             labels: Vec::new(),
+            zone_steps: Default::default(),
         }),
     })
 }

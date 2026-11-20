@@ -2,7 +2,7 @@ use crate::error::ProfileError;
 use crate::model::{StepState, Zone};
 use crate::profile_args::ArgSpec;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const SINGLE_STEP_NAME: &str = "run";
 
@@ -62,6 +62,19 @@ pub struct PlatformOverride {
     pub disk_mb: Option<u64>,
 }
 
+fn yes() -> bool {
+    true
+}
+
+/// The steps of one zone of a profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ZoneSteps {
+    /// Ordered steps of the zone.
+    pub steps: Vec<StepSpec>,
+    /// Whether they came from a single `command`.
+    pub from_command: bool,
+}
+
 /// A validated profile: the requirements and steps of a job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -91,12 +104,26 @@ pub struct Profile {
     pub services: Vec<String>,
     /// Secret names needed by the whole job.
     pub secrets: Vec<String>,
-    /// Farthest allowed runner zone.
-    pub zone: Option<Zone>,
-    /// Ordered steps; a single `command` is one step.
+    /// Zones the profile may run in; `None` allows every zone. With `zoned` they are narrowed
+    /// to the zones that have steps; the legacy `zone` key gives the zones up to it.
+    pub zones: Option<BTreeSet<Zone>>,
+    /// Whether the profile uses zones for its steps: it has zone variants or a `zones` list.
+    /// Such an order is not tied to the client's machine and its steps come per zone.
+    #[serde(default)]
+    pub zoned: bool,
+    /// Ordered steps; a single `command` is one step. When the profile has no common block
+    /// of its own (`common` is false) these are the steps of its lowest zone variant, kept
+    /// for the step rows every job has.
     pub steps: Vec<StepSpec>,
     /// Whether `steps` came from a single `command`.
     pub from_command: bool,
+    /// Whether the profile has its own `command` or `steps`, which serve the zones `local`
+    /// and `shared` that have no variant of their own.
+    #[serde(default = "yes")]
+    pub common: bool,
+    /// `[profile.X.zone.<zone>]`: the steps of a zone, replacing the common ones there.
+    #[serde(default)]
+    pub zone_steps: BTreeMap<Zone, ZoneSteps>,
     /// Per-platform overrides.
     pub platform_overrides: BTreeMap<String, PlatformOverride>,
     /// Named arguments the submitter fills into the commands.
@@ -105,6 +132,21 @@ pub struct Profile {
 }
 
 impl Profile {
+    /// The steps each zone runs: its own variant, else the common block for `local` and
+    /// `shared`. A zone missing from the map cannot run the profile: `lan` and `remote` get
+    /// code only from a variant of their own.
+    pub fn zone_steps_effective(&self) -> BTreeMap<Zone, Vec<StepSpec>> {
+        let mut out = BTreeMap::new();
+        for zone in Zone::ALL {
+            if let Some(v) = self.zone_steps.get(&zone) {
+                out.insert(zone, v.steps.clone());
+            } else if self.common && matches!(zone, Zone::Local | Zone::Shared) {
+                out.insert(zone, self.steps.clone());
+            }
+        }
+        out
+    }
+
     /// Indexes of the steps skipped when step `failed` fails; empty when the
     /// failed step has `continue_on_failure`.
     pub fn skipped_after_failure(&self, failed: usize) -> Vec<usize> {
@@ -151,6 +193,7 @@ pub fn resolve_for_platform(p: &Profile, platform: &str) -> Result<Profile, Prof
     let Some(over) = p.platform_overrides.get(platform) else {
         return Ok(out);
     };
+    let timeout_before = out.timeout_s;
     if let Some(t) = over.timeout_s {
         out.timeout_s = t;
     }
@@ -171,6 +214,12 @@ pub fn resolve_for_platform(p: &Profile, platform: &str) -> Result<Profile, Prof
         out.from_command = false;
     } else if out.from_command {
         out.steps[0].timeout_s = out.timeout_s;
+    }
+    if out.timeout_s != timeout_before {
+        let timeout_s = out.timeout_s;
+        for v in out.zone_steps.values_mut().filter(|v| v.from_command) {
+            v.steps[0].timeout_s = timeout_s;
+        }
     }
     Ok(out)
 }

@@ -183,6 +183,7 @@ pub async fn submit_as(
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach,
         wait: true,
     });

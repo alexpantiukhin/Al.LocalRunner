@@ -76,6 +76,13 @@ pub struct OrderArgs {
     /// A profile argument, `name=value`; repeat the flag for several values.
     #[arg(long = "arg", value_name = "NAME=VALUE", value_parser = parse_arg)]
     pub args: Vec<(String, String)>,
+    /// Zones a runner may be in, nearest first: local, shared, lan, remote; a list such as
+    /// `local,shared`. Without it every zone the profile has steps for is allowed.
+    #[arg(long, value_name = "ZONES", value_parser = args::parse_zones, conflicts_with = "max_zone")]
+    pub zones: Option<std::collections::BTreeSet<lr_core::Zone>>,
+    /// Shorthand for `--zones` from local up to this zone.
+    #[arg(long = "max-zone", value_name = "ZONE", value_parser = args::parse_zone)]
+    pub max_zone: Option<lr_core::Zone>,
     /// Without it the order is cancelled when the sending process exits; with it the order outlives the sending process.
     #[arg(long)]
     pub detach: bool,

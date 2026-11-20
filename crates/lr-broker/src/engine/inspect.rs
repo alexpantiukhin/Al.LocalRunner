@@ -32,7 +32,7 @@ fn least_order() -> Requirements {
         services: Vec::new(),
         secrets: BTreeSet::new(),
         cache: Vec::new(),
-        max_zone: None,
+        zones: None,
         commands: BTreeSet::new(),
     }
 }
@@ -157,7 +157,9 @@ impl Engine {
             .map(|(name, slot)| RunnerCaps {
                 name: name.clone(),
                 online: slot.liveness(now) == RunnerLiveness::Online,
-                zone: self.site.zone_between(&client.endpoint, &slot.endpoint),
+                zone: self
+                    .site
+                    .zone_between(&client.endpoint, &client.label, &slot.endpoint, name),
                 caps: caps_for(&viewer, slot),
             })
             .collect();

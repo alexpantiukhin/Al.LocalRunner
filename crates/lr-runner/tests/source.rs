@@ -42,6 +42,26 @@ async fn local_source_step_is_cd() {
 }
 
 #[tokio::test]
+async fn an_own_folder_job_starts_in_the_runners_own_folder_and_clones_nothing() {
+    let rig = Rig::new();
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    let mut spec = worktree_spec("/unused", vec![step("b", "make all", 60)], 60);
+    spec.code = WireCode::Own;
+    b.assign("job-1", 1, spec).await;
+    let r = result_of(&b.until_result().await);
+    assert_eq!(r.state, JobState::Passed);
+    let runs = rig.process.runs();
+    assert_eq!(
+        runs.len(),
+        1,
+        "the steps of the order are the only commands"
+    );
+    assert_eq!(runs[0].cwd, layout().own_dir("acme/app"));
+    assert_eq!(commands(&runs[0]), vec!["make all".to_string()]);
+}
+
+#[tokio::test]
 async fn remote_source_creates_mirror_when_absent() {
     let rig = Rig::new();
     let (_c, _h) = rig.start();

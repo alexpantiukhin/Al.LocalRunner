@@ -118,6 +118,7 @@ impl Broker {
                 })
                 .collect(),
             networks: file.networks.clone(),
+            shared: file.shared_sets(),
         };
         Broker {
             engine: Engine {

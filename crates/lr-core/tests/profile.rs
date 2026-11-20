@@ -406,7 +406,7 @@ disk_mb = 51200
     assert_eq!(p.cache, ["gradle", "cargo"]);
     assert_eq!(p.services, ["build-daemon"]);
     assert_eq!(p.secrets, ["registry_auth"]);
-    assert_eq!(p.zone, Some(Zone::Lan));
+    assert_eq!(p.zones, Some(Zone::up_to(Zone::Lan)));
     assert_eq!(p.disk_mb, Some(51200));
 }
 

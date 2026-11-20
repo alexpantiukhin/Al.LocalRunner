@@ -152,6 +152,12 @@ impl WorkspaceLayout {
         }
     }
 
+    /// The runner's own work folder of a project, kept between jobs: the steps of a job that
+    /// runs outside the `local` zone start here and bring the code themselves.
+    pub fn own_dir(&self, project: &str) -> PathBuf {
+        self.root.join("own").join(dir_name(project, &[project]))
+    }
+
     /// The `{workspace}` of a project fetched from `url`.
     pub fn project_dir(&self, project: &str, url: &str) -> PathBuf {
         self.root.join(dir_name(project, &[project, url]))
@@ -268,6 +274,18 @@ pub fn plan_source(
                 first_ord: 0,
                 remove_after: None,
             })
+        }
+        WireCode::Own => {
+            let dir = layout.own_dir(input.project);
+            return Ok(SourcePlan {
+                make_dirs: vec![dir.clone()],
+                source_steps: Vec::new(),
+                from_profile: false,
+                source_cwd: dir.clone(),
+                job_cwd: dir,
+                first_ord: 0,
+                remove_after: None,
+            });
         }
         WireCode::Commit {
             sha,

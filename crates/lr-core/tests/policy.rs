@@ -46,7 +46,7 @@ fn default_policy_matches_spec_defaults() {
     assert_eq!(p.max_job_timeout_s, None);
     assert_eq!(
         p.runner_zone_order,
-        vec![Zone::Local, Zone::Lan, Zone::Remote]
+        vec![Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
     );
     assert_eq!(p.priority_of(&entry("c", "ci", 0)), CI_PRIORITY);
     assert_eq!(p.priority_of(&entry("a", "agent", 0)), 0);

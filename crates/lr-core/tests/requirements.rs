@@ -22,7 +22,7 @@ fn runner() -> Capabilities {
         tags: set(&["gradle", "emulator", "cargo"]),
         max_job_timeout_s: Some(3600),
         services: BTreeMap::new(),
-        zone: Zone::Lan,
+        zone: Zone::Local,
         machine: None,
         accept: Accept::default(),
         commands: BTreeSet::new(),
@@ -101,7 +101,7 @@ programs = ["git", "git", { name = "gradle", check = "gradle --version" }]
     assert_eq!(r.disk_mb, 5000);
     assert_eq!(r.cache, ["gradle"]);
     assert_eq!(r.services, ["d"]);
-    assert_eq!(r.max_zone, Some(Zone::Lan));
+    assert_eq!(r.zones, Some(Zone::up_to(Zone::Lan)));
     assert_eq!(r.programs.len(), 2);
 }
 
@@ -375,23 +375,136 @@ fn runner_farther_than_profile_zone_does_not_satisfy() {
         "[profile.p]\ncommand = \"x\"\ntimeout_s = 9\nzone = \"local\"\n",
         Some("linux"),
     );
+    let mut caps = runner();
+    caps.zone = Zone::Lan;
     assert_eq!(
-        reasons(&runner(), &r),
+        reasons(&caps, &r),
         [MismatchReason::Zone {
             runner: Zone::Lan,
-            allowed: Zone::Local
+            allowed: Zone::up_to(Zone::Local)
         }]
     );
-    let mut caps = runner();
     caps.zone = Zone::Local;
     assert!(satisfies(&caps, &r).is_ok());
 }
 
 #[test]
-fn no_zone_limit_accepts_remote_runner() {
+fn a_zoned_profile_without_zone_variants_runs_in_local_and_shared_only() {
+    let zoned = BASIC.replace(
+        "cpu = 2",
+        "cpu = 2
+zones = [\"local\", \"shared\", \"lan\", \"remote\"]",
+    );
+    let r = req(&zoned, Some("linux"));
+    assert_eq!(
+        r.zones,
+        Some([Zone::Local, Zone::Shared].into_iter().collect())
+    );
     let mut caps = runner();
-    caps.zone = Zone::Remote;
-    assert!(satisfies(&caps, &req(BASIC, Some("linux"))).is_ok());
+    for zone in [Zone::Local, Zone::Shared] {
+        caps.zone = zone;
+        assert!(satisfies(&caps, &r).is_ok());
+    }
+    for zone in [Zone::Lan, Zone::Remote] {
+        caps.zone = zone;
+        assert_eq!(
+            reasons(&caps, &r),
+            [MismatchReason::Zone {
+                runner: zone,
+                allowed: [Zone::Local, Zone::Shared].into_iter().collect()
+            }]
+        );
+    }
+}
+
+const VARIANTS: &str = r#"
+[profile.p]
+command = "cargo test"
+timeout_s = 600
+mem_mb = 4096
+
+[profile.p.zone.shared]
+command = "docker exec b cargo test"
+
+[profile.p.zone.lan]
+steps = [{ name = "run", command = "git fetch && cargo test", timeout_s = 900 }]
+"#;
+
+#[test]
+fn a_zone_variant_replaces_the_common_steps_in_its_zone_and_opens_it() {
+    let p = one(VARIANTS);
+    let steps = p.zone_steps_effective();
+    assert_eq!(
+        steps.keys().copied().collect::<Vec<_>>(),
+        [Zone::Local, Zone::Shared, Zone::Lan]
+    );
+    assert_eq!(steps[&Zone::Local][0].command, "cargo test");
+    assert_eq!(steps[&Zone::Shared][0].command, "docker exec b cargo test");
+    assert_eq!(steps[&Zone::Lan][0].timeout_s, 900);
+    let r = req(VARIANTS, Some("linux"));
+    assert_eq!(
+        r.zones,
+        Some([Zone::Local, Zone::Shared, Zone::Lan].into_iter().collect())
+    );
+}
+
+#[test]
+fn a_profile_may_have_only_zone_variants() {
+    let p = one("[profile.p]
+timeout_s = 60
+[profile.p.zone.lan]
+command = \"x\"
+");
+    assert!(!p.common);
+    assert_eq!(
+        p.zone_steps_effective().keys().copied().collect::<Vec<_>>(),
+        [Zone::Lan]
+    );
+}
+
+#[test]
+fn zone_variants_must_keep_the_step_names() {
+    let text = "[profile.p]
+command = \"x\"
+timeout_s = 9
+[profile.p.zone.lan]
+steps = [{ name = \"other\", command = \"y\", timeout_s = 9 }]
+";
+    assert!(matches!(
+        parse_profiles(text),
+        Err(ProfileError::Invalid { .. })
+    ));
+}
+
+#[test]
+fn the_zones_key_narrows_the_zones_and_excludes_the_legacy_zone_key() {
+    let narrowed = VARIANTS.replace(
+        "mem_mb = 4096",
+        "mem_mb = 4096
+zones = [\"local\", \"lan\"]",
+    );
+    let r = req(&narrowed, Some("linux"));
+    assert_eq!(
+        r.zones,
+        Some([Zone::Local, Zone::Lan].into_iter().collect())
+    );
+    let both = "[profile.p]
+command = \"x\"
+timeout_s = 9
+zone = \"lan\"
+zones = [\"local\"]
+";
+    assert!(matches!(
+        parse_profiles(both),
+        Err(ProfileError::Invalid { .. })
+    ));
+    let none = "[profile.p]
+command = \"x\"
+timeout_s = 9
+zones = [\"lan\"]
+";
+    let p = one(none);
+    assert!(Requirements::from_profile(&p, Some("linux"), None).is_err());
 }
 
 #[test]

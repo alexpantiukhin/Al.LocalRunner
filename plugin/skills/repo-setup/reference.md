@@ -17,13 +17,14 @@ Only `[profile.<name>]` and `[needs.<name>]` are read at the top level; any othe
 - `cache`: named caches kept on the runner between runs.
 - `services`: runner services the job needs.
 - `secrets`: secret names, never values.
-- `zone`: the farthest allowed runner zone.
+- `zone`: the farthest allowed runner zone (`local`, `shared`, `lan`, `remote`); `zones = ["local", "shared"]`: the allowed zones as a list (it also turns on steps per zone).
+- `[profile.<name>.zone.<zone>]` with `command` or `steps`: the steps of that zone, replacing the common ones there and opening it (`shared` is a disk the broker owner lists in `[[shared]]`; `lan` and `remote` get code only from a variant of their own). Variants keep the step names of the common steps. An order picks zones with `--zones local,shared` (or `--max-zone shared`); a branch or commit is an ordinary `--arg`.
 - `needs`: the name of a `[needs.<name>]` set the profile inherits from, with field overrides.
 - `args.<name>`: a named argument filled with `--arg name=value`; keys `one_of` or `pattern`, `default`, `many`, `join`. A command uses `{name}`; `{? text {name}}` is an optional segment.
 
 Step keys: `name`, `command`, `timeout_s`, `continue_on_failure`; also `mem_mb`, `cpu`, `tags`, `secrets`.
 
-`[needs.<name>]` takes the shared requirement keys: `timeout_s`, `mem_mb`, `cpu`, `disk_mb`, `programs`, `tags`, `exclusive`, `cache`, `services`, `secrets`, `zone`, `platforms`.
+`[needs.<name>]` takes the shared requirement keys: `timeout_s`, `mem_mb`, `cpu`, `disk_mb`, `programs`, `tags`, `exclusive`, `cache`, `services`, `secrets`, `zone`, `zones`, `platforms`.
 
 There is no `env`, no working directory, no `matrix` and no retry. Several commands in one environment are `steps` or one script called from `command`.
 

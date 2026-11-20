@@ -218,6 +218,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 |---|---|
 | `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
 | `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
+| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: client labels and runner names that reach one shared disk; the zone between them is `shared`. Read at start only |
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |

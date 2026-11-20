@@ -337,7 +337,7 @@ pub fn requirements(timeout_s: u64) -> Requirements {
         services: Vec::new(),
         secrets: Default::default(),
         cache: Vec::new(),
-        max_zone: None,
+        zones: None,
         commands: Default::default(),
     }
 }

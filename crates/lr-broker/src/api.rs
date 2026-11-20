@@ -315,7 +315,7 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         branch: job.spec.identity.branch.clone(),
         commit: match &job.spec.code {
             lr_proto::WireCode::Commit { sha, .. } => Some(sha.clone()),
-            lr_proto::WireCode::WorkTree { .. } => None,
+            lr_proto::WireCode::WorkTree { .. } | lr_proto::WireCode::Own => None,
         },
         cwd: Some(job.spec.identity.cwd.display().to_string()),
         timeout_s: Some(job.entry.order.requirements.timeout_s),

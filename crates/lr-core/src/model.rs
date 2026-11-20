@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::str::FromStr;
 
@@ -70,6 +71,8 @@ impl fmt::Display for Timestamp {
 pub enum Zone {
     /// Client and runner share the local IPC of one OS user.
     Local,
+    /// The broker owner declared a shared disk between the client and the runner (`[[shared]]`).
+    Shared,
     /// Same network from the broker's `[networks]`.
     Lan,
     /// Everything else.
@@ -81,9 +84,32 @@ impl Zone {
     pub fn as_str(self) -> &'static str {
         match self {
             Zone::Local => "local",
+            Zone::Shared => "shared",
             Zone::Lan => "lan",
             Zone::Remote => "remote",
         }
+    }
+}
+
+impl Zone {
+    /// Every zone, nearest first.
+    pub const ALL: [Zone; 4] = [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote];
+
+    /// The zones from the nearest up to `max` inclusive.
+    pub fn up_to(max: Zone) -> BTreeSet<Zone> {
+        Zone::ALL.into_iter().filter(|z| *z <= max).collect()
+    }
+
+    /// Parses a comma-separated list such as `local,shared`; an empty list is an error.
+    pub fn parse_list(text: &str) -> Result<BTreeSet<Zone>, String> {
+        let zones = text
+            .split(',')
+            .map(|z| z.trim().parse::<Zone>())
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if zones.is_empty() {
+            return Err("the list of zones is empty".into());
+        }
+        Ok(zones)
     }
 }
 
@@ -99,10 +125,11 @@ impl FromStr for Zone {
     fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "local" => Ok(Zone::Local),
+            "shared" => Ok(Zone::Shared),
             "lan" => Ok(Zone::Lan),
             "remote" => Ok(Zone::Remote),
             other => Err(format!(
-                "unknown zone `{other}`, expected local, lan or remote"
+                "unknown zone `{other}`, expected local, shared, lan or remote"
             )),
         }
     }

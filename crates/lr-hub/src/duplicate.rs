@@ -4,7 +4,7 @@ use lr_proto::{OrderSpec, WireCode};
 pub(crate) fn short_commit(spec: &OrderSpec) -> Option<&str> {
     match &spec.code {
         WireCode::Commit { sha, .. } => Some(&sha[..sha.len().min(7)]),
-        WireCode::WorkTree { .. } => None,
+        WireCode::WorkTree { .. } | WireCode::Own => None,
     }
 }
 

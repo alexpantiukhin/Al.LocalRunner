@@ -141,7 +141,11 @@ fn lower_timeout(
         )));
     }
     spec.requirements.timeout_s = t;
-    for step in &mut spec.steps {
+    for step in spec
+        .steps
+        .iter_mut()
+        .chain(spec.zone_steps.values_mut().flatten())
+    {
         step.timeout_s = step.timeout_s.min(t);
     }
     Ok(())
@@ -193,7 +197,14 @@ pub(crate) async fn build(
     let tree_profile = pick(parse(&bytes, &origin)?, req.profile.as_deref(), &origin)?;
     let platform = platform_of(&tree_profile, req.platform.as_deref())?;
     let mut notes = Notes::default();
+    let zoned = tree_profile.zoned || req.zones.is_some();
     let (profile, code) = match &platform {
+        _ if zoned => (
+            tree_profile,
+            WireCode::WorkTree {
+                cwd: id.cwd.display().to_string(),
+            },
+        ),
         None => (
             tree_profile,
             WireCode::WorkTree {
@@ -213,21 +224,52 @@ pub(crate) async fn build(
             )
         }
     };
-    let requirements = Requirements::from_profile(
+    let mut profile = profile;
+    profile.zoned = zoned;
+    let mut requirements = Requirements::from_profile(
         &profile,
         platform.as_deref(),
         Some(local_machine(&id.os_user)),
     )
     .map_err(|e| invalid(e.to_string()))?;
+    if zoned {
+        requirements.same_machine = None;
+    }
+    if let (Some(asked), Some(allowed)) = (&req.zones, requirements.zones.as_mut()) {
+        let names = |z: &std::collections::BTreeSet<lr_core::Zone>| {
+            z.iter().map(|z| z.as_str()).collect::<Vec<_>>().join(", ")
+        };
+        let had = names(allowed);
+        allowed.retain(|z| asked.contains(z));
+        if allowed.is_empty() {
+            return Err(invalid(format!(
+                "--zones {} names no zone that profile `{}` has steps for; it has: {had}",
+                names(asked),
+                profile.name
+            )));
+        }
+    }
     let mut resolved = match &platform {
         Some(p) => resolve_for_platform(&profile, p).map_err(|e| invalid(e.to_string()))?,
         None => profile.clone(),
     };
     bind_args(&mut resolved.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
+    let mut zone_steps = if zoned {
+        resolved.zone_steps_effective()
+    } else {
+        Default::default()
+    };
+    for steps in zone_steps.values_mut() {
+        bind_args(steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
+    }
+    if let Some(allowed) = &requirements.zones {
+        zone_steps.retain(|z, _| allowed.contains(z));
+    }
     let mut spec = OrderSpec {
         profile: profile.name.clone(),
         requirements,
         steps: resolved.steps,
+        zone_steps,
         enqueued_at: now,
         identity: id.clone(),
         code,

@@ -1,6 +1,6 @@
 use crate::error::ProfileError;
 use crate::model::Zone;
-use crate::profile::{single_step, PlatformOverride, Profile, Program, StepSpec};
+use crate::profile::{single_step, PlatformOverride, Profile, Program, StepSpec, ZoneSteps};
 use crate::profile_args::{build_args, RawArg};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -35,6 +35,20 @@ struct RawStep {
     continue_on_failure: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawVariant {
+    command: Option<String>,
+    steps: Option<Vec<RawStep>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawZone {
+    Max(String),
+    Variants(BTreeMap<String, RawVariant>),
+}
+
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawOverride {
@@ -60,6 +74,7 @@ struct RawNeeds {
     services: Option<Vec<String>>,
     secrets: Option<Vec<String>>,
     zone: Option<String>,
+    zones: Option<Vec<String>>,
     platforms: Option<Vec<String>>,
 }
 
@@ -80,7 +95,8 @@ struct RawProfile {
     cache: Option<Vec<String>>,
     services: Option<Vec<String>>,
     secrets: Option<Vec<String>>,
-    zone: Option<String>,
+    zone: Option<RawZone>,
+    zones: Option<Vec<String>>,
     platforms: Option<Vec<String>>,
     #[serde(default)]
     platform: BTreeMap<String, RawOverride>,
@@ -103,6 +119,7 @@ impl RawNeeds {
             services: self.services.or(base.services),
             secrets: self.secrets.or(base.secrets),
             zone: self.zone.or(base.zone),
+            zones: self.zones.or(base.zones),
             platforms: self.platforms.or(base.platforms),
         }
     }
@@ -147,6 +164,11 @@ fn build(
     raw: RawProfile,
     sets: &BTreeMap<String, RawNeeds>,
 ) -> Result<Profile, ProfileError> {
+    let (max_zone, variants) = match raw.zone {
+        Some(RawZone::Max(z)) => (Some(z), BTreeMap::new()),
+        Some(RawZone::Variants(v)) => (None, v),
+        None => (None, BTreeMap::new()),
+    };
     let own = RawNeeds {
         timeout_s: raw.timeout_s,
         mem_mb: raw.mem_mb,
@@ -158,7 +180,8 @@ fn build(
         cache: raw.cache,
         services: raw.services,
         secrets: raw.secrets,
-        zone: raw.zone,
+        zone: max_zone,
+        zones: raw.zones,
         platforms: raw.platforms,
     };
     let needs = match &raw.needs {
@@ -172,6 +195,8 @@ fn build(
     };
     let timeout_s = positive(&name, "timeout_s", needs.timeout_s)?
         .ok_or_else(|| ProfileError::invalid(&name, "timeout_s", "required"))?;
+    let zone_steps = build_variants(&name, timeout_s, variants)?;
+    let common = raw.command.is_some() || raw.steps.is_some();
     let (steps, from_command) = match (raw.command, raw.steps) {
         (Some(_), Some(_)) => {
             return Err(ProfileError::invalid(
@@ -180,26 +205,44 @@ fn build(
                 "`command` and `steps` are mutually exclusive",
             ))
         }
-        (None, None) => {
-            return Err(ProfileError::invalid(
-                &name,
-                "command",
-                "either `command` or `steps` is required",
-            ))
-        }
+        (None, None) => match zone_steps.values().next() {
+            Some(first) => (first.steps.clone(), first.from_command),
+            None => {
+                return Err(ProfileError::invalid(
+                    &name,
+                    "command",
+                    "either `command` or `steps` is required",
+                ))
+            }
+        },
         (Some(c), None) => (
             vec![single_step(non_empty(&name, "command", c)?, timeout_s)],
             true,
         ),
         (None, Some(s)) => (build_steps(&name, "steps", s)?, false),
     };
-    let zone = needs
-        .zone
-        .map(|z| {
+    check_variant_names(&name, common.then_some(&steps), &zone_steps)?;
+    let zoned = !zone_steps.is_empty() || needs.zones.is_some();
+    let zones = match (needs.zone, needs.zones) {
+        (Some(_), Some(_)) => {
+            return Err(ProfileError::invalid(
+                &name,
+                "zones",
+                "`zone` and `zones` are mutually exclusive",
+            ))
+        }
+        (Some(z), None) => Some(Zone::up_to(
             z.parse::<Zone>()
-                .map_err(|r| ProfileError::invalid(&name, "zone", r))
-        })
-        .transpose()?;
+                .map_err(|r| ProfileError::invalid(&name, "zone", r))?,
+        )),
+        (None, Some(list)) => Some(
+            list.iter()
+                .map(|z| z.parse::<Zone>())
+                .collect::<Result<_, _>>()
+                .map_err(|r| ProfileError::invalid(&name, "zones", r))?,
+        ),
+        (None, None) => None,
+    };
     let mut overrides = BTreeMap::new();
     for (platform, o) in raw.platform {
         let field = format!("platform.{platform}");
@@ -225,13 +268,86 @@ fn build(
         cache: needs.cache.unwrap_or_default(),
         services: needs.services.unwrap_or_default(),
         secrets: needs.secrets.unwrap_or_default(),
-        zone,
+        zones,
+        zoned,
         steps,
         from_command,
+        common,
+        zone_steps,
         platform_overrides: overrides,
         args,
         name,
     })
+}
+
+fn build_variants(
+    profile: &str,
+    timeout_s: u64,
+    raw: BTreeMap<String, RawVariant>,
+) -> Result<BTreeMap<Zone, ZoneSteps>, ProfileError> {
+    let mut out = BTreeMap::new();
+    for (key, v) in raw {
+        let field = format!("zone.{key}");
+        let zone = key
+            .parse::<Zone>()
+            .map_err(|r| ProfileError::invalid(profile, &field, r))?;
+        let (steps, from_command) = match (v.command, v.steps) {
+            (Some(_), Some(_)) => {
+                return Err(ProfileError::invalid(
+                    profile,
+                    &format!("{field}.command"),
+                    "`command` and `steps` are mutually exclusive",
+                ))
+            }
+            (None, None) => {
+                return Err(ProfileError::invalid(
+                    profile,
+                    &field,
+                    "either `command` or `steps` is required",
+                ))
+            }
+            (Some(c), None) => (
+                vec![single_step(
+                    non_empty(profile, &format!("{field}.command"), c)?,
+                    timeout_s,
+                )],
+                true,
+            ),
+            (None, Some(s)) => (build_steps(profile, &format!("{field}.steps"), s)?, false),
+        };
+        out.insert(
+            zone,
+            ZoneSteps {
+                steps,
+                from_command,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn check_variant_names(
+    profile: &str,
+    common: Option<&Vec<StepSpec>>,
+    variants: &BTreeMap<Zone, ZoneSteps>,
+) -> Result<(), ProfileError> {
+    let names = |s: &Vec<StepSpec>| s.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+    let mut reference = common.map(names);
+    for (zone, v) in variants {
+        let own = names(&v.steps);
+        match &reference {
+            Some(r) if *r != own => {
+                return Err(ProfileError::invalid(
+                    profile,
+                    &format!("zone.{zone}"),
+                    "the steps of every zone variant must have the same names, in the same order, as the common steps",
+                ))
+            }
+            Some(_) => {}
+            None => reference = Some(own),
+        }
+    }
+    Ok(())
 }
 
 fn program(raw: RawProgram) -> Program {

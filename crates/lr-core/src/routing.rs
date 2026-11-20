@@ -12,7 +12,12 @@ use std::cmp::Reverse;
 /// same-machine order additionally needs zone `Local`: both connected over local IPC by the
 /// same OS user.
 pub fn suitable(entry: &QueueEntry, runner: &RunnerView, site: &Site) -> Result<Zone, Mismatch> {
-    let zone = site.zone_between(&entry.client.endpoint, &runner.endpoint);
+    let zone = site.zone_between(
+        &entry.client.endpoint,
+        &entry.client.label,
+        &runner.endpoint,
+        &runner.name,
+    );
     let mut caps = runner.caps.clone();
     caps.zone = zone;
     let req = &entry.order.requirements;
@@ -84,7 +89,14 @@ pub fn check_runners(
             let own: Vec<&RunnerView> = runners
                 .iter()
                 .filter(|r| r.online && r.caps.machine.as_ref() == Some(machine))
-                .filter(|r| site.zone_between(&entry.client.endpoint, &r.endpoint) == Zone::Local)
+                .filter(|r| {
+                    site.zone_between(
+                        &entry.client.endpoint,
+                        &entry.client.label,
+                        &r.endpoint,
+                        &r.name,
+                    ) == Zone::Local
+                })
                 .collect();
             if own.is_empty() {
                 let joined = runners

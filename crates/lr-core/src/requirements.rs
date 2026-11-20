@@ -37,8 +37,9 @@ pub struct Requirements {
     pub secrets: BTreeSet<String>,
     /// Named caches.
     pub cache: Vec<String>,
-    /// Farthest allowed runner zone.
-    pub max_zone: Option<Zone>,
+    /// Zones a runner may be in relative to the client; `None` allows every zone. The profile
+    /// and the order's `--zones` already narrowed it to the zones the profile has steps for.
+    pub zones: Option<BTreeSet<Zone>>,
     /// Command names the runner must declare: the broker fills them from the steps of a client
     /// limited to named commands (`[commands] mode = "named"`, spec 3.5) and empties them for any
     /// other client; absent from senders of an earlier minor version.
@@ -68,11 +69,28 @@ impl Requirements {
             Some(name) => resolve_for_platform(profile, name)?,
             None => profile.clone(),
         };
+        let zone_steps = p.zone_steps_effective();
+        let zones = if p.zoned {
+            let mut zones: BTreeSet<Zone> = zone_steps.keys().copied().collect();
+            if let Some(allowed) = &p.zones {
+                zones.retain(|z| allowed.contains(z));
+            }
+            if zones.is_empty() {
+                return Err(ProfileError::Invalid {
+                    profile: profile.name.clone(),
+                    field: "zones".into(),
+                    reason: "no zone is both allowed and has steps".into(),
+                });
+            }
+            Some(zones)
+        } else {
+            p.zones.clone()
+        };
         let mut mem_mb = 0;
         let mut cpu = 0;
         let mut tags: BTreeSet<String> = p.tags.iter().cloned().collect();
         let mut secrets: BTreeSet<String> = p.secrets.iter().cloned().collect();
-        for step in &p.steps {
+        for step in zone_steps.values().flatten() {
             mem_mb = mem_mb.max(step.mem_mb.or(p.mem_mb).unwrap_or(0));
             cpu = cpu.max(step.cpu.or(p.cpu).unwrap_or(0));
             tags.extend(step.tags.iter().flatten().cloned());
@@ -101,7 +119,7 @@ impl Requirements {
             services: p.services.clone(),
             secrets,
             cache: p.cache.clone(),
-            max_zone: p.zone,
+            zones,
             commands: BTreeSet::new(),
         })
     }

@@ -92,20 +92,21 @@ async fn foreign_os_user_gets_broker_host_zone() {
     let site = Site {
         broker_addrs: vec!["192.168.1.10".parse().unwrap()],
         networks,
+        shared: Vec::new(),
     };
-    assert_eq!(site.zone_between(&runner, &runner), Zone::Local);
+    assert_eq!(site.zone_between(&runner, "", &runner, ""), Zone::Local);
     assert_eq!(
-        site.zone_between(&foreign, &runner),
+        site.zone_between(&foreign, "", &runner, ""),
         Zone::Lan,
         "IPC of another OS user counts as the broker host's address"
     );
     let lan_host = Endpoint::Addr("192.168.1.10".parse().unwrap());
     assert_eq!(
-        site.zone_between(&foreign, &lan_host),
-        site.zone_between(&lan_host, &lan_host)
+        site.zone_between(&foreign, "", &lan_host, ""),
+        site.zone_between(&lan_host, "", &lan_host, "")
     );
     let remote = Endpoint::Addr("10.9.9.9".parse().unwrap());
-    assert_eq!(site.zone_between(&foreign, &remote), Zone::Remote);
+    assert_eq!(site.zone_between(&foreign, "", &remote, ""), Zone::Remote);
     let users = LocalUsers::new(vec![
         LocalUser {
             name: r"CORP\another-os-user".into(),

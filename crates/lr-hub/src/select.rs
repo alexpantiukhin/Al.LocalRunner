@@ -19,9 +19,12 @@ pub fn allowed_zones(req: &Requirements) -> Vec<Zone> {
     let farthest = if req.same_machine.is_some() {
         Zone::Local
     } else {
-        req.max_zone.unwrap_or(Zone::Remote)
+        req.zones
+            .as_ref()
+            .and_then(|z| z.iter().max().copied())
+            .unwrap_or(Zone::Remote)
     };
-    [Zone::Local, Zone::Lan, Zone::Remote]
+    [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
         .into_iter()
         .filter(|z| *z <= farthest)
         .collect()

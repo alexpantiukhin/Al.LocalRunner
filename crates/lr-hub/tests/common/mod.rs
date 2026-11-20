@@ -61,6 +61,20 @@ platforms = ["linux"]
 [profile.targeted-remote.args.target]
 default = "all"
 
+[profile.zoned]
+command = "cargo test {target}"
+timeout_s = 600
+mem_mb = 1024
+
+[profile.zoned.args.target]
+default = "all"
+
+[profile.zoned.zone.shared]
+command = "docker exec b cargo test {target}"
+
+[profile.zoned.zone.lan]
+command = "git fetch origin {target} && cargo test {target}"
+
 [profile.targeted-override]
 command = "cargo test {target}"
 timeout_s = 600
@@ -165,6 +179,7 @@ pub fn submit(profile: &str, platform: Option<&str>) -> SubmitRequest {
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach: false,
         wait: false,
     }

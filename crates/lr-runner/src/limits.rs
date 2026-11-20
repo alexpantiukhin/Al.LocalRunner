@@ -98,7 +98,7 @@ mod tests {
             services: Vec::new(),
             secrets: Default::default(),
             cache: Vec::new(),
-            max_zone: None,
+            zones: None,
             commands: Default::default(),
         }
     }

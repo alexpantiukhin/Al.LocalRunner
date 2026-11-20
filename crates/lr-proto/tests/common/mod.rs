@@ -53,7 +53,7 @@ pub fn requirements() -> Requirements {
         services: vec!["build-daemon".into()],
         secrets: ["registry_auth".to_string()].into(),
         cache: vec!["gradle".into()],
-        max_zone: Some(Zone::Lan),
+        zones: Some(Zone::up_to(Zone::Lan)),
         commands: Default::default(),
     }
 }
@@ -113,6 +113,7 @@ pub fn order_spec() -> OrderSpec {
         overrides: ResourceOverride::default(),
         args: Vec::new(),
         labels: Vec::new(),
+        zone_steps: Default::default(),
     }
 }
 

@@ -12,6 +12,8 @@ pub enum RestartOnly {
     Listen,
     /// `[networks]`.
     Networks,
+    /// `[[shared]]`.
+    Shared,
 }
 
 /// What a successful `policy reload` did.
@@ -80,8 +82,12 @@ impl ActivePolicy {
         if file.networks != self.file.networks {
             restart_required.push(RestartOnly::Networks);
         }
+        if file.shared != self.file.shared {
+            restart_required.push(RestartOnly::Shared);
+        }
         file.listen = self.file.listen.clone();
         file.networks = self.file.networks.clone();
+        file.shared = self.file.shared.clone();
         let settings_update = (file.grace != self.file.grace).then(|| file.settings_update());
         self.policy = into_policy(&file, &self.host);
         self.file = file;

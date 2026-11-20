@@ -106,6 +106,7 @@ async fn place(layout: &Layout, broker: &Running, identity: lr_core::Identity) -
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach: true,
         wait: false,
     });

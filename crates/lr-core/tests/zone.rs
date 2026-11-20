@@ -62,10 +62,13 @@ fn ipv6_networks_are_matched() {
 
 #[test]
 fn zone_names_round_trip() {
-    for z in [Zone::Local, Zone::Lan, Zone::Remote] {
+    for z in Zone::ALL {
         assert_eq!(z.as_str().parse::<Zone>().unwrap(), z);
     }
-    assert!(Zone::Local < Zone::Lan && Zone::Lan < Zone::Remote);
+    assert!(Zone::Local < Zone::Shared && Zone::Shared < Zone::Lan && Zone::Lan < Zone::Remote);
+    assert_eq!(Zone::parse_list("local, shared").unwrap().len(), 2);
+    assert!(Zone::parse_list("local,nowhere").is_err());
+    assert_eq!(Zone::up_to(Zone::Shared).len(), 2);
 }
 
 mod pairwise {
@@ -165,5 +168,71 @@ mod pairwise {
             zone_between(&addr("::1"), &addr("192.168.1.20"), &[ip(HOST)], &only_lan),
             Zone::Lan
         );
+    }
+}
+
+mod shared {
+    use lr_core::{Endpoint, Site, Zone};
+    use std::collections::BTreeSet;
+
+    fn site() -> Site {
+        Site {
+            broker_addrs: vec!["192.168.1.10".parse().unwrap()],
+            networks: [("home".to_string(), vec!["192.168.1.0/24".parse().unwrap()])].into(),
+            shared: vec![
+                ["dev", "docker-1", "vm-1"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ["b", "c"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<BTreeSet<_>>(),
+            ],
+        }
+    }
+
+    fn addr(s: &str) -> Endpoint {
+        Endpoint::Addr(s.parse().unwrap())
+    }
+
+    #[test]
+    fn two_names_of_one_block_are_shared_even_when_the_address_says_remote() {
+        let far = addr("8.8.8.8");
+        assert_eq!(site().zone_between(&far, "dev", &far, "vm-1"), Zone::Shared);
+        assert_eq!(
+            site().zone_between(&far, "docker-1", &far, "vm-1"),
+            Zone::Shared
+        );
+    }
+
+    #[test]
+    fn names_of_different_blocks_are_not_connected() {
+        let far = addr("8.8.8.8");
+        assert_eq!(site().zone_between(&far, "dev", &far, "c"), Zone::Remote);
+    }
+
+    #[test]
+    fn local_ipc_of_one_user_stays_local_inside_a_block() {
+        let ipc = Endpoint::Ipc {
+            os_user: "alex".into(),
+        };
+        assert_eq!(
+            site().zone_between(&ipc, "dev", &ipc, "docker-1"),
+            Zone::Local
+        );
+    }
+
+    #[test]
+    fn a_name_in_two_blocks_links_each_block_separately() {
+        let mut s = site();
+        s.shared = vec![
+            ["a", "b"].iter().map(|x| x.to_string()).collect(),
+            ["b", "c"].iter().map(|x| x.to_string()).collect(),
+        ];
+        let far = addr("8.8.8.8");
+        assert_eq!(s.zone_between(&far, "a", &far, "b"), Zone::Shared);
+        assert_eq!(s.zone_between(&far, "b", &far, "c"), Zone::Shared);
+        assert_eq!(s.zone_between(&far, "a", &far, "c"), Zone::Remote);
     }
 }

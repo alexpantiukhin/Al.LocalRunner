@@ -11,13 +11,15 @@ impl Engine {
             return true;
         };
         let now = self.now();
-        self.runners.values().any(|s| {
+        self.runners.iter().any(|(name, s)| {
             (s.serves(now) || s.holds_orders(now))
                 && s.caps.machine.as_ref() == Some(machine)
-                && self
-                    .site
-                    .zone_between(&job.entry.client.endpoint, &s.endpoint)
-                    == Zone::Local
+                && self.site.zone_between(
+                    &job.entry.client.endpoint,
+                    &job.entry.client.label,
+                    &s.endpoint,
+                    name,
+                ) == Zone::Local
         })
     }
 

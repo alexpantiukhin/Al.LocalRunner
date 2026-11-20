@@ -222,6 +222,7 @@ pub async fn submit(
         mem_mb: args.mem,
         cpu: args.cpu,
         args: args.args,
+        zones: args.zones.or(args.max_zone.map(lr_core::Zone::up_to)),
         detach,
         wait,
     };

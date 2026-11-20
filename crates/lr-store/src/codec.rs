@@ -33,7 +33,7 @@ text_enum!(StepState {
     Queued => "queued", Running => "running", Passed => "passed", Failed => "failed",
     Timeout => "timeout", Skipped => "skipped", Cancelled => "cancelled",
 });
-text_enum!(Zone { Local => "local", Lan => "lan", Remote => "remote" });
+text_enum!(Zone { Local => "local", Shared => "shared", Lan => "lan", Remote => "remote" });
 text_enum!(SourceKind { Session => "session", Github => "github" });
 text_enum!(CodeSource { WorkTree => "work_tree", Commit => "commit" });
 text_enum!(MachineKind { Hub => "hub", Runner => "runner" });

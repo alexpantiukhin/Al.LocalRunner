@@ -139,7 +139,7 @@ impl RulePolicy {
             group_by: GroupBy::Label,
             pool,
             max_job_timeout_s: None,
-            runner_zone_order: vec![Zone::Local, Zone::Lan, Zone::Remote],
+            runner_zone_order: vec![Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote],
             admission: Admission::default(),
         }
     }

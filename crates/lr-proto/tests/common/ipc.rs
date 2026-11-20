@@ -12,6 +12,7 @@ pub fn cli_requests() -> Vec<CliRequest> {
             mem_mb: None,
             cpu: None,
             args: Vec::new(),
+            zones: None,
             detach: true,
             wait: false,
         }),

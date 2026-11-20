@@ -89,7 +89,7 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
     let req = &entry.order.requirements;
     let id = &spec.identity;
     let (code_source, commit) = match &spec.code {
-        WireCode::WorkTree { .. } => (CodeSource::WorkTree, None),
+        WireCode::WorkTree { .. } | WireCode::Own => (CodeSource::WorkTree, None),
         WireCode::Commit { sha, .. } => (CodeSource::Commit, Some(sha.clone())),
     };
     let (source, github) = match &id.source {
@@ -293,7 +293,7 @@ impl Engine {
     }
 
     fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
-        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec.steps);
+        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
         let mut requirements = spec.requirements.clone();
         if requirements.same_machine.is_some() {
             requirements.same_machine = Some(MachineRef(client.key.clone()));
@@ -361,7 +361,11 @@ impl Engine {
             return None;
         }
         spec.requirements.timeout_s = max;
-        for step in &mut spec.steps {
+        for step in spec
+            .steps
+            .iter_mut()
+            .chain(spec.zone_steps.values_mut().flatten())
+        {
             step.timeout_s = step.timeout_s.min(max);
         }
         Some(max)

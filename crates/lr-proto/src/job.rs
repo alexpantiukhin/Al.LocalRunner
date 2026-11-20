@@ -1,7 +1,8 @@
 use crate::frame::FRAME_LIMIT;
 use crate::reason::ReasonCode;
-use lr_core::{Identity, JobId, JobState, Requirements, StepSpec, StepState, Timestamp};
+use lr_core::{Identity, JobId, JobState, Requirements, StepSpec, StepState, Timestamp, Zone};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Which code a job runs (spec 3.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +25,9 @@ pub enum WireCode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         branch: Option<String>,
     },
+    /// The runner's own work folder: the steps of the job itself bring the code there (set by
+    /// the broker for an order with zone variants that runs outside the `local` zone).
+    Own,
 }
 
 /// The order as the hub sends it (spec 3.4): data, never code.
@@ -35,6 +39,11 @@ pub struct OrderSpec {
     pub requirements: Requirements,
     /// Steps with timeouts.
     pub steps: Vec<StepSpec>,
+    /// The steps of every zone the order may run in, for a profile with zone variants: the
+    /// broker gives the runner the steps of the runner's zone. Empty for a profile without
+    /// variants, which runs `steps` everywhere it is allowed; absent from older senders.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zone_steps: BTreeMap<Zone, Vec<StepSpec>>,
     /// When the hub enqueued it; kept on re-brokering.
     pub enqueued_at: Timestamp,
     /// Who submitted it.
@@ -55,6 +64,13 @@ pub struct OrderSpec {
     /// senders and when the profile has none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+}
+
+impl OrderSpec {
+    /// Every step the order may run: the common ones and those of each zone variant.
+    pub fn all_steps(&self) -> impl Iterator<Item = &StepSpec> {
+        self.steps.iter().chain(self.zone_steps.values().flatten())
+    }
 }
 
 /// Per-run replacement of profile resources given by the submitter (spec 5).
