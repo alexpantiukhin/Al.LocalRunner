@@ -269,7 +269,7 @@ async fn same_machine_rejection_does_not_search_replacement() {
 
 #[tokio::test]
 async fn a_joined_runner_refusal_reaches_the_client_without_the_start_it_hint() {
-    let joined = "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента";
+    let joined = "runner office joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine";
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Reject(
         ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),

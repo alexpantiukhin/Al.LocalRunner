@@ -38,7 +38,7 @@ async fn hole_filling_respects_head_reservation() {
     let long = hub.accepted().await;
     let reason = long.waiting.expect("long waits");
     assert!(
-        reason.contains("зарезервирован") && reason.contains("head"),
+        reason.contains("reserved") && reason.contains("head"),
         "{reason}"
     );
     r3.quiet().await;
@@ -145,7 +145,10 @@ async fn running_job_is_never_preempted_by_higher_priority() {
     r.assign().await;
     r.send(&started("a1", 1)).await;
     ci.send(&order("c1", req(512, 1, 60))).await;
-    assert_eq!(ci.accepted().await.waiting.as_deref(), Some("раннер занят"));
+    assert_eq!(
+        ci.accepted().await.waiting.as_deref(),
+        Some("the runner is busy")
+    );
     alex.sync().await;
     match r.runner().await {
         BrokerToRunner::Ack(a) => assert_eq!(a.seq, 1),

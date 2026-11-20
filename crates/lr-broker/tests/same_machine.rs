@@ -27,7 +27,7 @@ async fn same_machine_waits_only_if_runner_online_but_busy() {
     hub.send(&order("s2", same_machine_req())).await;
     assert_eq!(
         hub.accepted().await.waiting.as_deref(),
-        Some("раннер занят")
+        Some("the runner is busy")
     );
     assert_eq!(
         h.job_row(ALEX, "s2").await.unwrap().job.state,

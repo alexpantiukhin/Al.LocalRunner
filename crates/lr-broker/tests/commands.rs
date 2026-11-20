@@ -81,8 +81,8 @@ async fn a_name_outside_every_runner_list_is_rejected_with_the_names() {
     assert_eq!(r.code.as_str(), "rejected_command_not_allowed");
     assert_eq!(
         r.detail,
-        "команда rm -rf / не входит в названия раннеров: ярлыку guest разрешены только \
-         названия из списка раннера (названия раннеров: build, test)"
+        "command rm -rf / is not among the runner names: label guest may use only \
+         the names from the runner list (runner names: build, test)"
     );
     h.assert_recorded_rejection("visitor", "j1", "rejected_")
         .await;
@@ -99,7 +99,7 @@ async fn named_mode_rejects_orders_when_no_runner_names_commands() {
     assert!(r.detail.contains("make"), "{}", r.detail);
     assert!(
         r.detail
-            .contains("раннеры этого брокера названий не сообщают"),
+            .contains("the runners of this broker report no names"),
         "{}",
         r.detail
     );
@@ -118,8 +118,8 @@ async fn named_mode_rejects_an_order_without_steps() {
     assert_eq!(r.code.as_str(), "rejected_command_not_allowed");
     assert_eq!(
         r.detail,
-        "заказ без шагов не называет команд: ярлыку guest разрешены только названия из списка \
-         раннера"
+        "an order without steps names no commands: label guest may use only the names from the \
+runner list"
     );
 }
 
@@ -213,8 +213,8 @@ async fn after_a_restart_a_named_order_is_told_the_runners_have_not_returned() {
     assert_eq!(r.code.as_str(), "rejected_command_not_allowed");
     assert_eq!(
         r.detail,
-        "команда build не входит в названия раннеров: ярлыку guest разрешены только названия \
-         из списка раннера (раннеры ещё не вернулись после перезапуска брокера, повторите)"
+        "command build is not among the runner names: label guest may use only the names \
+         from the runner list (runners have not come back after the broker restart, retry)"
     );
     let _back = rejoin(&h, "r1", naming(&["build"])).await;
     guest.send(&order_of("j2", &["build"])).await;
@@ -230,9 +230,13 @@ async fn names_split_between_runners_are_rejected_as_no_matching_runner() {
     guest.send(&order_of("j1", &["build", "test"])).await;
     let r = guest.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_no_matching_runner");
-    assert!(r.detail.contains("команда test не описана"), "{}", r.detail);
     assert!(
-        r.detail.contains("команда build не описана"),
+        r.detail.contains("command test is not described"),
+        "{}",
+        r.detail
+    );
+    assert!(
+        r.detail.contains("command build is not described"),
         "{}",
         r.detail
     );
@@ -268,15 +272,15 @@ async fn the_restart_remark_ends_once_the_grace_period_after_a_restart_is_over()
     let r = h.member_runner("r1", "10.0.0.7", naming(&["build"])).await;
     r.close().await;
     let h = h.restart().await;
-    let rule = "команда build не входит в названия раннеров: ярлыку guest разрешены только \
-                названия из списка раннера";
+    let rule = "command build is not among the runner names: label guest may use only \
+                the names from the runner list";
     h.clock.advance(Duration::from_secs(3 * 60 - 1));
     h.poke().await;
     let mut guest = h.member_hub("visitor", "guest", "10.0.0.22").await;
     guest.send(&order_of("j1", &["build"])).await;
     assert_eq!(
         guest.rejected().await.detail,
-        format!("{rule} (раннеры ещё не вернулись после перезапуска брокера, повторите)")
+        format!("{rule} (runners have not come back after the broker restart, retry)")
     );
     h.clock.advance(Duration::from_secs(1));
     h.poke().await;
@@ -286,7 +290,7 @@ async fn the_restart_remark_ends_once_the_grace_period_after_a_restart_is_over()
     guest.send(&order_of("j2", &["build"])).await;
     assert_eq!(
         guest.rejected().await.detail,
-        format!("{rule} (раннеры этого брокера названий не сообщают)"),
+        format!("{rule} (the runners of this broker report no names)"),
         "[grace] lost_min = 3 after the restart: a runner that never came back is not awaited"
     );
 }

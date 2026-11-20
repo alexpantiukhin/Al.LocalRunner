@@ -365,20 +365,20 @@ impl Engine {
                         Some(&"runner_busy") => self.holders_text(viewer),
                         _ => String::new(),
                     };
-                    format!("ждёт: {w}{holders}")
+                    format!("waits: {w}{holders}")
                 }
-                _ => "ждёт в очереди".to_string(),
+                _ => "waits in the queue".to_string(),
             },
             Some(j) if j.started_at.is_none() => self.granted_text(j),
             Some(j) => format!(
-                "выполняется на раннере {}",
+                "running on runner {}",
                 j.runner.as_deref().unwrap_or_default()
             ),
             None => finished_text(&rec.job, a.sees_fields()),
         };
         let text = match self.find(key) {
             Some(j) if a.sees_fields() && !j.spec.labels.is_empty() => {
-                format!("{text}; метки профиля: {}", j.spec.labels.join(", "))
+                format!("{text}; profile labels: {}", j.spec.labels.join(", "))
             }
             _ => text,
         };
@@ -394,12 +394,12 @@ impl Engine {
             .filter(|h| self.access_to(viewer, &h.key.client) != Access::Hidden)
             .map(|h| {
                 let since = h.started_at.unwrap_or(h.assigned_at);
-                let mut text = format!("заказом {}", h.key.job);
+                let mut text = format!("order {}", h.key.job);
                 let age = age_text(now.millis_since(since));
                 if h.started_at.is_some() {
                     text.push_str(&format!(" ({age})"));
                 } else {
-                    text.push_str(&format!(" (выдан, не начат, {age})"));
+                    text.push_str(&format!(" (assigned, not started, {age})"));
                 }
                 text
             })
@@ -407,19 +407,19 @@ impl Engine {
         if holders.is_empty() {
             return String::new();
         }
-        format!(" {}", holders.join(", "))
+        format!(" with {}", holders.join(", "))
     }
 
     fn granted_text(&self, j: &super::Job) -> String {
         let now = self.now();
         let runner = j.runner.as_deref().unwrap_or_default();
         let mut text = format!(
-            "выдан раннеру {runner}, ждёт старта уже {}",
+            "assigned to runner {runner}, waiting to start for {}",
             age_text(now.millis_since(j.assigned_at))
         );
         if let Some(slot) = self.runners.get(runner) {
             text.push_str(&format!(
-                "; раннер отвечал {} назад",
+                "; the runner answered {} ago",
                 age_text(now.millis_since(slot.last_heard))
             ));
             match slot.liveness(now) {
@@ -441,7 +441,7 @@ impl Engine {
         let (rec, a) = self.run_of(viewer, job, client).await?;
         if !a.sees_log() {
             return Err(ReadReply::Denied {
-                reason: "полный лог отдаётся только клиенту-владельцу запуска".into(),
+                reason: "the full log goes only to the client that owns the run".into(),
             });
         }
         let bytes = self.store.read_log(&rec.job.key).await.unwrap_or_default();
@@ -511,27 +511,27 @@ fn state_name(s: JobState) -> String {
 
 fn reason_words(code: &ReasonCode) -> &'static str {
     match code {
-        ReasonCode::RunnerStopped => "раннер остановлен",
-        ReasonCode::RunnerRemoved => "раннер удалён",
-        ReasonCode::BrokerUnavailable => "брокер был недоступен, джоба прервана",
-        ReasonCode::RunnerLost => "раннер пропал",
-        ReasonCode::ClientRemoved => "ключ клиента отозван",
-        ReasonCode::SenderGone => "отправитель ушёл, заказ отозван",
-        ReasonCode::HubAbsent => "hub отсутствовал дольше срока",
-        ReasonCode::ServiceFailed => "сервис раннера не поднялся",
-        ReasonCode::SecretMissing => "секрет недоступен",
-        ReasonCode::RunnerRestarted => "раннер перезапущен при живой джобе",
-        ReasonCode::CancelledByUser => "отменена пользователем",
-        ReasonCode::DiskInsufficient => "раннеру не хватило места на диске",
-        ReasonCode::ResourceExceeded => "превышены заявленные ресурсы",
-        ReasonCode::RunnerDraining => "раннер останавливался",
-        ReasonCode::Rejected(RejectReason::NoMatchingRunner) => "ни один раннер не подходит",
-        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine) => "нет раннера на машине клиента",
-        ReasonCode::Rejected(RejectReason::PoolMemory) => "просит больше памяти, чем есть в пуле",
-        ReasonCode::Rejected(RejectReason::PoolCpu) => "просит больше CPU, чем есть в пуле",
-        ReasonCode::Rejected(RejectReason::Timeout) => "таймаут выше потолка брокера",
-        ReasonCode::Rejected(_) => "не принята политикой брокера",
-        ReasonCode::Other(_) => "код новой версии",
+        ReasonCode::RunnerStopped => "runner stopped",
+        ReasonCode::RunnerRemoved => "runner removed",
+        ReasonCode::BrokerUnavailable => "the broker was unavailable, the job was aborted",
+        ReasonCode::RunnerLost => "runner lost",
+        ReasonCode::ClientRemoved => "client key revoked",
+        ReasonCode::SenderGone => "the sender is gone, the order was withdrawn",
+        ReasonCode::HubAbsent => "the hub was absent too long",
+        ReasonCode::ServiceFailed => "the runner service did not start",
+        ReasonCode::SecretMissing => "secret unavailable",
+        ReasonCode::RunnerRestarted => "runner restarted while the job was alive",
+        ReasonCode::CancelledByUser => "cancelled by the user",
+        ReasonCode::DiskInsufficient => "the runner ran out of disk",
+        ReasonCode::ResourceExceeded => "declared resources exceeded",
+        ReasonCode::RunnerDraining => "the runner was draining",
+        ReasonCode::Rejected(RejectReason::NoMatchingRunner) => "no runner matches",
+        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine) => "no runner on the client machine",
+        ReasonCode::Rejected(RejectReason::PoolMemory) => "asks for more memory than the pool has",
+        ReasonCode::Rejected(RejectReason::PoolCpu) => "asks for more CPU than the pool has",
+        ReasonCode::Rejected(RejectReason::Timeout) => "timeout above the broker ceiling",
+        ReasonCode::Rejected(_) => "refused by the broker policy",
+        ReasonCode::Other(_) => "code of a newer version",
     }
 }
 
@@ -539,23 +539,23 @@ fn finished_text(row: &JobRow, full: bool) -> String {
     let reason = crate::api::reason_of(row.cancel_reason.as_deref());
     let mut text = match (&reason, row.state) {
         (Some(code), JobState::Cancelled) if code.is_rejection() => {
-            format!("отклонена при приёме: {} ({code})", reason_words(code))
+            format!("rejected at intake: {} ({code})", reason_words(code))
         }
         (Some(code), JobState::Cancelled) => {
-            format!("отменена: {} ({code})", reason_words(code))
+            format!("cancelled: {} ({code})", reason_words(code))
         }
         (Some(code), state) => format!(
-            "завершена: {}, {} ({code})",
+            "finished: {}, {} ({code})",
             state_name(state),
             reason_words(code)
         ),
-        (None, state) => format!("завершена: {}", state_name(state)),
+        (None, state) => format!("finished: {}", state_name(state)),
     };
     if !full {
         return text;
     }
     if let Some(by) = row.cancelled_by.as_deref().filter(|b| !b.is_empty()) {
-        text.push_str(&format!("; кто: {by}"));
+        text.push_str(&format!("; by: {by}"));
     }
     let detail = row.cancel_reason.as_deref().and_then(|r| match reason {
         Some(_) => r.split_once(": ").map(|(_, d)| d),
@@ -572,9 +572,9 @@ fn finished_text(row: &JobRow, full: bool) -> String {
 
 fn age_text(ms: u64) -> String {
     match ms / 1000 {
-        0..=59 => format!("{} с", ms / 1000),
-        60..=3599 => format!("{} мин", ms / 60_000),
-        _ => format!("{} ч {} мин", ms / 3_600_000, ms / 60_000 % 60),
+        0..=59 => format!("{} s", ms / 1000),
+        60..=3599 => format!("{} min", ms / 60_000),
+        _ => format!("{} h {} min", ms / 3_600_000, ms / 60_000 % 60),
     }
 }
 

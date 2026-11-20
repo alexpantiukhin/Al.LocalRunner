@@ -106,6 +106,15 @@ fn parse(args: &[&str]) -> Command {
 }
 
 #[test]
+fn status_of_one_job_accepts_and_ignores_the_label() {
+    let Command::Status { job, label, .. } = parse(&["status", "j1", "--as", "agent"]) else {
+        panic!("status");
+    };
+    assert_eq!(job.as_deref(), Some("j1"));
+    assert_eq!(label.as_deref(), Some("agent"));
+}
+
+#[test]
 fn history_flags_become_the_brokers_filter() {
     let Command::History(h) = parse(&[
         "history",
@@ -588,7 +597,6 @@ fn status_of_one_job_refuses_the_list_filters_it_would_ignore() {
     for filter in [
         &["--project", "owner/repo"][..],
         &["--source", "session"][..],
-        &["--as", "ci"][..],
     ] {
         let mut argv = vec!["localrunner", "status", "j1"];
         argv.extend_from_slice(filter);
@@ -765,22 +773,26 @@ fn status_with_a_job_id_parses_and_prints_its_state_and_reason() {
         steps: Vec::new(),
         secrets: Vec::new(),
         cancelled_by: None,
-        wait_reason: Some("раннер занят заказом j1 (3 мин)".into()),
+        wait_reason: Some("the runner is busy with order j1 (3 min)".into()),
     };
     detail.summary.state = JobState::Queued;
     let text = job_lines(
         "office",
         &JobId("j2".into()),
-        "ждёт: раннер занят заказом j1 (3 мин)",
+        "waits: the runner is busy with order j1 (3 min)",
         Some(&detail),
     )
     .join("\n");
-    for needed in ["j2", "office", "queued", "раннер занят заказом j1 (3 мин)"]
-    {
+    for needed in [
+        "j2",
+        "office",
+        "queued",
+        "the runner is busy with order j1 (3 min)",
+    ] {
         assert!(text.contains(needed), "{needed} missing:\n{text}");
     }
-    let bare = job_lines("office", &JobId("j2".into()), "ждёт в очереди", None).join("\n");
-    assert!(bare.contains("ждёт в очереди"), "{bare}");
+    let bare = job_lines("office", &JobId("j2".into()), "waits in the queue", None).join("\n");
+    assert!(bare.contains("waits in the queue"), "{bare}");
 }
 
 #[test]

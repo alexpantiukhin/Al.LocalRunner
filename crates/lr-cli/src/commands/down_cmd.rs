@@ -36,7 +36,7 @@ pub enum Target {
 }
 
 /// The targets of `down names`, runners first; without names every runner of the
-/// installation, the hub and the broker.
+/// installation, the hub and the broker. The word `runner` stands for every runner.
 pub fn down_targets(layout: &Layout, names: &[String]) -> Vec<Target> {
     let mut out: Vec<Target> = if names.is_empty() {
         let mut all: Vec<Target> = layout
@@ -49,10 +49,15 @@ pub fn down_targets(layout: &Layout, names: &[String]) -> Vec<Target> {
     } else {
         names
             .iter()
-            .map(|n| match n.as_str() {
-                "hub" => Target::Hub,
-                "broker" => Target::Broker,
-                _ => Target::Runner(n.clone()),
+            .flat_map(|n| match n.as_str() {
+                "hub" => vec![Target::Hub],
+                "broker" => vec![Target::Broker],
+                "runner" => layout
+                    .runner_names()
+                    .into_iter()
+                    .map(Target::Runner)
+                    .collect(),
+                _ => vec![Target::Runner(n.clone())],
             })
             .collect()
     };
@@ -237,7 +242,7 @@ fn still_running(name: &str, has_job: Option<bool>) -> String {
             lr_runner::STOP_BOUND.as_secs()
         ),
         _ => format!(
-            "{name}: still running, it stops when its job ends (`localrunner status` shows the job)"
+            "{name}: still draining its job, it stops when the job ends (`localrunner status` shows the job)"
         ),
     }
 }
@@ -301,9 +306,10 @@ pub trait Roles: Send + Sync {
     /// Whether runner `name` runs a job, from [`Roles::running_jobs`]; `None` when not known.
     async fn runner_has_job(&self, name: &str) -> Option<bool> {
         let on = format!(" on {name} (");
+        let local = format!(" on local:{name} (");
         self.running_jobs()
             .await
-            .map(|lines| lines.iter().any(|l| l.contains(&on)))
+            .map(|lines| lines.iter().any(|l| l.contains(&on) || l.contains(&local)))
     }
     /// Prints a line of the report of `down`.
     fn say(&self, line: &str) {
@@ -523,6 +529,23 @@ pub async fn down_for(
     interrupt: impl Future<Output = ()>,
 ) -> Result<i32, String> {
     let explicit = !names.is_empty();
+    let known = layout.runner_names();
+    let unknown: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !matches!(*n, "hub" | "broker" | "runner") && !known.contains(&n.to_string()))
+        .collect();
+    if !unknown.is_empty() {
+        let available = if known.is_empty() {
+            "none".to_string()
+        } else {
+            known.join(", ")
+        };
+        return Err(format!(
+            "no runner with this name: {}; available: {available}",
+            unknown.join(", ")
+        ));
+    }
     let targets = down_targets(layout, &names);
     if targets.is_empty() {
         return Err("nothing to stop".into());

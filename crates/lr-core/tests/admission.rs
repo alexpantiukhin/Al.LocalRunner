@@ -49,7 +49,7 @@ fn the_texts_name_the_foreign_load() {
     };
     assert_eq!(
         mem.to_string(),
-        "занято чужими процессами: свободно 800 МБ, нужно 2000"
+        "busy with foreign processes: 800 MB free, 2000 MB needed"
     );
     let cpu = Wait::ForeignLoad {
         resource: LoadResource::Cpu,
@@ -58,7 +58,7 @@ fn the_texts_name_the_foreign_load() {
     };
     assert_eq!(
         cpu.to_string(),
-        "занято чужими процессами: CPU 95%, нужно 4 ядер"
+        "busy with foreign processes: CPU 95%, 4 cores needed"
     );
 }
 

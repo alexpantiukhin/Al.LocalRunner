@@ -85,7 +85,7 @@ async fn an_order_waits_for_free_memory_and_starts_when_it_appears() {
     );
     assert_eq!(
         s.queue[0].wait_reason.as_deref(),
-        Some("занято чужими процессами: свободно 500 МБ, нужно 1024")
+        Some("busy with foreign processes: 500 MB free, 1024 MB needed")
     );
     assert_eq!(s.queue[0].wait_code.as_deref(), Some("foreign_load"));
     r.send(&load(4096, 0)).await;
@@ -107,7 +107,7 @@ async fn foreign_cpu_keeps_the_order_queued() {
     );
     assert_eq!(
         s.queue[0].wait_reason.as_deref(),
-        Some("занято чужими процессами: CPU 95%, нужно 4 ядер")
+        Some("busy with foreign processes: CPU 95%, 4 cores needed")
     );
     r.send(&load(8192, 10)).await;
     r.assign().await;

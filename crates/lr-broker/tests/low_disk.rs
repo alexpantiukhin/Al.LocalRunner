@@ -43,7 +43,7 @@ async fn an_order_waits_for_free_disk_with_the_figures_and_starts_when_it_appear
     );
     assert_eq!(
         s.queue[0].wait_reason.as_deref(),
-        Some("мало места на диске: свободно 12 ГБ из 40 ГБ нужных")
+        Some("low disk: 12 GB free of 40 GB needed")
     );
     assert_eq!(s.queue[0].wait_code.as_deref(), Some("low_disk"));
     r.send(&disk(Some(50_000))).await;

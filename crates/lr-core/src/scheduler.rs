@@ -110,9 +110,9 @@ pub enum Wait {
 impl fmt::Display for Wait {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Memory { needed, free } => write!(f, "нужно {needed} МБ, свободно {free}"),
-            Self::Cpu { needed, free } => write!(f, "нужно {needed} CPU, свободно {free}"),
-            Self::Exclusive { tag, holder } => write!(f, "тег {tag} занят джобой {holder}"),
+            Self::Memory { needed, free } => write!(f, "needs {needed} MB, {free} free"),
+            Self::Cpu { needed, free } => write!(f, "needs {needed} CPU, {free} free"),
+            Self::Exclusive { tag, holder } => write!(f, "tag {tag} is held by job {holder}"),
             Self::Reserved {
                 rule,
                 cpu,
@@ -122,12 +122,12 @@ impl fmt::Display for Wait {
             } => {
                 let mut parts = Vec::new();
                 if *cpu > 0 {
-                    parts.push(format!("{cpu} из {pool_cpu} ядер"));
+                    parts.push(format!("{cpu} of {pool_cpu} cores"));
                 }
                 if *mem_mb > 0 {
-                    parts.push(format!("{mem_mb} из {pool_mem_mb} МБ"));
+                    parts.push(format!("{mem_mb} of {pool_mem_mb} MB"));
                 }
-                write!(f, "правило {rule}: {} зарезервированы", parts.join(" и "))
+                write!(f, "rule {rule}: {} reserved", parts.join(" and "))
             }
             Self::Quota {
                 rule,
@@ -136,27 +136,27 @@ impl fmt::Display for Wait {
                 mem_mb,
                 max_mem_mb,
             } => {
-                write!(f, "правило {rule}: квота группы, запущено {running}")?;
+                write!(f, "rule {rule}: group quota, {running} running")?;
                 if let Some(max) = max_running {
-                    write!(f, " из {max}")?;
+                    write!(f, " of {max}")?;
                 }
-                write!(f, ", память {mem_mb} МБ")?;
+                write!(f, ", memory {mem_mb} MB")?;
                 if let Some(max) = max_mem_mb {
-                    write!(f, " из {max}")?;
+                    write!(f, " of {max}")?;
                 }
                 Ok(())
             }
             Self::LowDisk { free_mb, needed_mb } => write!(
                 f,
-                "мало места на диске: свободно {} ГБ из {} ГБ нужных",
+                "low disk: {} GB free of {} GB needed",
                 free_mb / 1024,
                 needed_mb.div_ceil(1024)
             ),
-            Self::RunnerBusy => write!(f, "раннер занят"),
-            Self::RunnerOffline => write!(f, "подходящие раннеры offline"),
-            Self::NoRunner => write!(f, "нет подходящего раннера"),
+            Self::RunnerBusy => write!(f, "the runner is busy"),
+            Self::RunnerOffline => write!(f, "the matching runners are offline"),
+            Self::NoRunner => write!(f, "no matching runner"),
             Self::HeadReserved { head, at } => {
-                write!(f, "старт зарезервирован для {head} на {at}")
+                write!(f, "the start is reserved for {head} at {at}")
             }
             Self::ForeignLoad {
                 resource: LoadResource::Memory,
@@ -164,7 +164,7 @@ impl fmt::Display for Wait {
                 level,
             } => write!(
                 f,
-                "занято чужими процессами: свободно {level} МБ, нужно {needed}"
+                "busy with foreign processes: {level} MB free, {needed} MB needed"
             ),
             Self::ForeignLoad {
                 resource: LoadResource::Cpu,
@@ -172,7 +172,7 @@ impl fmt::Display for Wait {
                 level,
             } => write!(
                 f,
-                "занято чужими процессами: CPU {level}%, нужно {needed} ядер"
+                "busy with foreign processes: CPU {level}%, {needed} cores needed"
             ),
         }
     }
@@ -238,17 +238,17 @@ impl fmt::Display for Reject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PoolMemory { needed, limit } => {
-                write!(f, "нужно {needed} МБ, максимум в пуле {limit}")
+                write!(f, "needs {needed} MB, the pool maximum is {limit}")
             }
             Self::PoolCpu { needed, limit } => {
-                write!(f, "нужно {needed} CPU, максимум в пуле {limit}")
+                write!(f, "needs {needed} CPU, the pool maximum is {limit}")
             }
             Self::Timeout { needed, ceiling } => {
-                write!(f, "потолок таймаута {ceiling} с, нужно {needed}")
+                write!(f, "the timeout ceiling is {ceiling} s, {needed} needed")
             }
             Self::Reserved { rule, mem_mb, cpu } => write!(
                 f,
-                "правило {rule}: после резерва в пуле не остаётся {mem_mb} МБ и {cpu} CPU"
+                "rule {rule}: after the reserve the pool has no {mem_mb} MB and {cpu} CPU left"
             ),
             Self::Quota {
                 rule,
@@ -256,9 +256,9 @@ impl fmt::Display for Reject {
                 max_mem_mb,
                 max_running,
             } => {
-                write!(f, "правило {rule}: квота группы")?;
+                write!(f, "rule {rule}: group quota")?;
                 if let Some(max) = max_mem_mb {
-                    write!(f, " {max} МБ меньше {mem_mb}")?;
+                    write!(f, " {max} MB is less than {mem_mb}")?;
                 }
                 if let Some(max) = max_running {
                     write!(f, " max_running {max}")?;
@@ -267,13 +267,13 @@ impl fmt::Display for Reject {
             }
             Self::NoMatchingRunner { runners } => {
                 if runners.is_empty() {
-                    return write!(f, "нет зарегистрированных раннеров");
+                    return write!(f, "no registered runners");
                 }
                 let parts: Vec<String> = runners.iter().map(|(n, m)| format!("{n}: {m}")).collect();
                 f.write_str(&parts.join(" | "))
             }
             Self::NoRunnerOnMachine { joined } if joined.is_empty() => {
-                write!(f, "нет раннера на вашей установке, запустите его: up")
+                write!(f, "no runner on your installation, start it: up")
             }
             Self::NoRunnerOnMachine { joined } => {
                 let parts: Vec<String> = joined

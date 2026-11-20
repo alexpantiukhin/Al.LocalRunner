@@ -7,7 +7,7 @@ use lr_abstractions::{Level, OutboxKind};
 use lr_core::{JobId, JobState, JOINED_BY_KEY};
 use lr_proto::{CliReply, ProtocolErrorCode, ReasonCode, RejectReason};
 
-pub(crate) const UP_HINT: &str = "нет раннера на вашей установке, запустите его: localrunner up";
+pub(crate) const UP_HINT: &str = "no runner on your installation, start it: localrunner up";
 
 impl Engine {
     pub(crate) fn start_selection(&mut self, job: &JobId) {
@@ -36,7 +36,7 @@ impl Engine {
         if !any_allowed && !track.excluded.is_empty() {
             let (code, detail) = track.last_rejection.clone().unwrap_or((
                 ReasonCode::Rejected(RejectReason::NoMatchingRunner),
-                "все брокеры отказали".into(),
+                "all brokers refused".into(),
             ));
             let (tx, job) = (self.tx.clone(), job.clone());
             let decision = Decision::Reject(code, detail);
@@ -79,7 +79,7 @@ impl Engine {
                 if let Err(e) = self.s.store.set_broker(job, Some(&name)).await {
                     let pause = self.policy.brokers.query_retry_s.max(1);
                     track.stage = Stage::Waiting;
-                    track.wait_reason = Some("выбор брокера не записан, повтор".into());
+                    track.wait_reason = Some("the broker choice was not saved, retrying".into());
                     track.next_select = Some(self.s.clock.now().plus_secs(pause));
                     self.store_failed("storage failed: broker choice not recorded", job, &e);
                     return;

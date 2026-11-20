@@ -26,7 +26,10 @@ async fn secret_not_allowed_for_label_rejected() {
     .await;
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
-    assert_eq!(r.detail, "секрет signing_key не разрешён ярлыку agent");
+    assert_eq!(
+        r.detail,
+        "secret signing_key is not allowed for label agent"
+    );
     h.assert_recorded_rejection("laptop", "j1", "rejected_secret_not_allowed")
         .await;
 }
@@ -57,7 +60,7 @@ async fn no_label_may_request_secrets_without_an_allow_entry() {
         .await;
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
-    assert_eq!(r.detail, "секрет registry_auth не разрешён ярлыку ci");
+    assert_eq!(r.detail, "secret registry_auth is not allowed for label ci");
 }
 
 #[tokio::test]
@@ -75,7 +78,7 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
         state: JobState::Failed,
         exit_code: None,
         reason: Some(ReasonCode::SecretMissing),
-        detail: Some("секрет не найден: registry_auth".into()),
+        detail: Some("secret not found: registry_auth".into()),
         peak_disk_mb: None,
         peak_mem_mb: None,
     }))
@@ -84,7 +87,7 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
     let row = h.until_state("ci-box", "j1", JobState::Failed).await;
     assert_eq!(
         row.job.cancel_reason.as_deref(),
-        Some("secret_missing: секрет не найден: registry_auth")
+        Some("secret_missing: secret not found: registry_auth")
     );
     let result = loop {
         if let BrokerToHub::JobResult(res) = hub.hub().await {

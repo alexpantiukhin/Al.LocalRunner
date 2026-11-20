@@ -53,7 +53,7 @@ impl Engine {
             .collect();
         let allowed = client.owner && self.policy.file().cancel.others == CancelOthers::Owner;
         let denial = match matches.as_slice() {
-            [] => Some(format!("заказ {} не найден", c.job)),
+            [] => Some(format!("order {} not found", c.job)),
             _ if !allowed => Some(
                 "чужой заказ: отменять чужие заказы может только владелец брокера \
                  ([cancel] others)"
@@ -61,7 +61,7 @@ impl Engine {
             ),
             [_] => None,
             many => Some(format!(
-                "JobId {} есть у нескольких клиентов ({}); укажите клиента",
+                "JobId {} belongs to several clients ({}); name the client",
                 c.job,
                 many.iter()
                     .map(|k| k.client.as_str())

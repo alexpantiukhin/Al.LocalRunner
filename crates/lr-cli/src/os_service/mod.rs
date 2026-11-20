@@ -6,6 +6,7 @@
 
 mod actions;
 pub mod autostart;
+pub mod console_text;
 pub mod plans;
 pub mod programs;
 pub mod quote;

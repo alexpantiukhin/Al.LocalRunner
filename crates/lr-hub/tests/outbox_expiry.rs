@@ -64,10 +64,10 @@ async fn expired_order_is_rejected_with_the_broker_never_came_reason() {
     match cli.reply().await {
         CliReply::Rejected { code, detail } => {
             assert_eq!(code, ReasonCode::Rejected(RejectReason::OutboxExpired));
-            assert_eq!(detail, "брокер не появился за срок: 2 ч");
+            assert_eq!(detail, "no broker appeared in time: 2 h");
         }
         other => panic!("{other:?}"),
     }
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
-    assert!(log.contains("брокер не появился за срок: 2 ч"), "{log}");
+    assert!(log.contains("no broker appeared in time: 2 h"), "{log}");
 }

@@ -93,8 +93,8 @@ fn run(program: &str, args: &[String], tolerate: &Tolerate) -> Result<(), String
     if fine {
         Ok(())
     } else {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let text = String::from_utf8_lossy(&out.stdout);
+        let err = super::console_text::console_text(&out.stderr);
+        let text = super::console_text::console_text(&out.stdout);
         Err(format!("exit code {code}: {}{}", err.trim(), text.trim()))
     }
 }

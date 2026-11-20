@@ -21,12 +21,22 @@ pub async fn ask_manager<T: Send + 'static>(
 }
 
 /// The state from `sc.exe query` output: `Some(true)` for `RUNNING`, `Some(false)` for another
-/// state, `None` when the output has no `STATE` line.
+/// state, `None` when the output has no state line. The line is found by its `STATE` key and,
+/// when a localised `sc.exe` translates the key, by position: `TYPE` is the first line whose
+/// value starts with a number, the state is the second, and its number 4 means running.
 pub fn parse_sc_state(output: &str) -> Option<bool> {
-    output.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        (key.trim() == "STATE").then(|| value.split_whitespace().nth(1) == Some("RUNNING"))
-    })
+    let numbered: Vec<(&str, u32)> = output
+        .lines()
+        .filter_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            Some((key.trim(), value.split_whitespace().next()?.parse().ok()?))
+        })
+        .collect();
+    let (_, code) = numbered
+        .iter()
+        .find(|(key, _)| *key == "STATE")
+        .or_else(|| numbered.get(1))?;
+    Some(*code == 4)
 }
 
 /// The state from `systemctl is-active` output: `Some(true)` for `active`, `Some(false)` for any
@@ -48,7 +58,7 @@ pub fn parse_launchctl_state(output: &str) -> Option<bool> {
 fn output_of(program: &str, args: &[&str]) -> Option<String> {
     let path = programs::program_path(program).ok()?;
     let out = Command::new(path).args(args).output().ok()?;
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    Some(super::console_text::console_text(&out.stdout))
 }
 
 /// Whether the broker service is running according to the service manager: `None` when that is

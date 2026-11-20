@@ -20,7 +20,7 @@ fn exceeded(job: &str, seq: u64) -> RunnerToBroker {
         state: JobState::Failed,
         exit_code: None,
         reason: Some(ReasonCode::ResourceExceeded),
-        detail: Some("превышен заявленный mem_mb: заявлено 512 МБ, пик 900 МБ".into()),
+        detail: Some("declared mem_mb exceeded: declared 512 MB, peak 900 MB".into()),
         peak_mem_mb: Some(900),
         peak_disk_mb: Some(40),
     })
@@ -202,7 +202,7 @@ async fn an_exceeded_result_is_stored_failed_with_reason_text_and_peaks() {
     assert_eq!(rec.job.peak_disk_mb, Some(40));
     let stored = rec.job.cancel_reason.expect("reason stored");
     assert!(
-        stored.starts_with("resource_exceeded: ") && stored.contains("пик 900 МБ"),
+        stored.starts_with("resource_exceeded: ") && stored.contains("peak 900 MB"),
         "{stored}"
     );
     let jobs = history(
@@ -232,8 +232,8 @@ async fn an_exceeded_result_is_stored_failed_with_reason_text_and_peaks() {
     match explain {
         ReadReply::Explain { text, .. } => {
             assert!(text.contains("resource_exceeded"), "{text}");
-            assert!(text.contains("пик памяти 900 МБ"), "{text}");
-            assert!(text.contains("пик диска 40 МБ"), "{text}");
+            assert!(text.contains("memory peak 900 MB"), "{text}");
+            assert!(text.contains("disk peak 40 MB"), "{text}");
         }
         other => panic!("expected an explanation, got {other:?}"),
     }

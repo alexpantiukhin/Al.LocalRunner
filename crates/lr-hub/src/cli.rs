@@ -37,7 +37,7 @@ impl Engine {
             CliRequest::Done { job } => self.done(e.conn, &job),
             CliRequest::Wait { job } => self.wait(e.conn, &job, &e.reply, &e.hangup),
             CliRequest::Cancel(req) => Some(self.cancel(&e.os_user, req).await),
-            CliRequest::Read(r) => self.read(r, &e.reply),
+            CliRequest::Read(r) => self.read(&e.os_user, r, &e.reply),
             CliRequest::Brokers => Some(self.brokers().await),
             CliRequest::Jobs { label, active } => Some(self.jobs(&e.os_user, &label, active)),
             CliRequest::Orders => Some(self.orders(&e.os_user)),
@@ -271,9 +271,18 @@ impl Engine {
         let jobs: Vec<JobId> = match &req.target {
             CancelTarget::Job(job) => {
                 let Some(t) = self.tracks.get(job) else {
+                    if let Some((_, f)) = self.recent.iter().find(|(j, _)| j == job) {
+                        return error(
+                            ProtocolErrorCode::Malformed,
+                            format!(
+                                "job {job} already finished: {}",
+                                format!("{:?}", f.summary.state).to_lowercase()
+                            ),
+                        );
+                    }
                     return error(
                         ProtocolErrorCode::Malformed,
-                        format!("job {job} is not active on this hub"),
+                        format!("job {job} is not known to this hub"),
                     );
                 };
                 if !t.owned_by(os_user, &actor.label) && !req.force {
@@ -336,7 +345,53 @@ impl Engine {
         }
     }
 
-    fn read(&mut self, r: CliRead, reply: &mpsc::Sender<CliReply>) -> Option<CliReply> {
+    fn rejected_here(&self, os_user: &str, request: &ReadRequest) -> Option<CliReply> {
+        let (ReadRequest::Explain { job, .. } | ReadRequest::HistoryShow { job, .. }) = request
+        else {
+            return None;
+        };
+        let (_, f) = self.recent.iter().find(|(j, _)| j == job)?;
+        let CliReply::Rejected { code, detail } = &f.reply else {
+            return None;
+        };
+        if f.os_user != os_user {
+            return None;
+        }
+        let reply = match request {
+            ReadRequest::Explain { .. } => lr_proto::ReadReply::Explain {
+                job: job.clone(),
+                text: format!("rejected: {detail} ({})", code.as_str()),
+            },
+            _ => lr_proto::ReadReply::Job(Box::new(lr_proto::JobDetail {
+                summary: f.summary.clone(),
+                note: None,
+                branch: f.summary.branch.clone(),
+                cwd: f.summary.cwd.clone(),
+                commit: f.summary.commit.clone(),
+                os_user: None,
+                source: f.summary.source,
+                github_run_url: None,
+                steps: Vec::new(),
+                secrets: Vec::new(),
+                cancelled_by: None,
+                wait_reason: Some(format!("rejected: {detail} ({})", code.as_str())),
+            })),
+        };
+        Some(CliReply::Read {
+            broker: "hub".to_string(),
+            reply,
+        })
+    }
+
+    fn read(
+        &mut self,
+        os_user: &str,
+        r: CliRead,
+        reply: &mpsc::Sender<CliReply>,
+    ) -> Option<CliReply> {
+        if let Some(answer) = self.rejected_here(os_user, &r.request) {
+            return Some(answer);
+        }
         if matches!(
             r.request,
             ReadRequest::Subscribe { .. }

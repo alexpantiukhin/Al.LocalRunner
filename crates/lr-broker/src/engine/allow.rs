@@ -4,7 +4,7 @@ use lr_core::{QueueEntry, StepSpec};
 use lr_proto::{OrderSpec, RejectReason};
 use std::collections::BTreeSet;
 
-const RESTARTED: &str = "раннеры ещё не вернулись после перезапуска брокера, повторите";
+const RESTARTED: &str = "runners have not come back after the broker restart, retry";
 
 impl Engine {
     pub(crate) fn allowed(
@@ -19,7 +19,7 @@ impl Engine {
         if let Some(name) = req.secrets.iter().find(|n| !secrets.contains(n)) {
             return Err((
                 RejectReason::SecretNotAllowed,
-                format!("секрет {name} не разрешён ярлыку {label}"),
+                format!("secret {name} is not allowed for label {label}"),
             ));
         }
         if let Some(name) = req
@@ -29,7 +29,7 @@ impl Engine {
         {
             return Err((
                 RejectReason::ServiceNotAllowed,
-                format!("сервис {name} не разрешён ярлыку {label}"),
+                format!("service {name} is not allowed for label {label}"),
             ));
         }
         if file.command_mode(&entry.client.key, label) == CommandMode::Named {
@@ -52,11 +52,11 @@ impl Engine {
     }
 
     fn named_only(&self, label: &str, spec: &OrderSpec) -> Result<(), (RejectReason, String)> {
-        let rule = format!("ярлыку {label} разрешены только названия из списка раннера");
+        let rule = format!("label {label} may use only the names from the runner list");
         if spec.steps.is_empty() {
             return Err((
                 RejectReason::CommandNotAllowed,
-                format!("заказ без шагов не называет команд: {rule}"),
+                format!("an order without steps names no commands: {rule}"),
             ));
         }
         let known: BTreeSet<&str> = self
@@ -74,10 +74,10 @@ impl Engine {
         let restored = self.runners.values().any(|slot| slot.restored);
         let names = match (known.is_empty(), restored) {
             (true, true) => RESTARTED.to_string(),
-            (true, false) => "раннеры этого брокера названий не сообщают".to_string(),
+            (true, false) => "the runners of this broker report no names".to_string(),
             (false, _) => {
                 let list: Vec<&str> = known.into_iter().collect();
-                let names = format!("названия раннеров: {}", list.join(", "));
+                let names = format!("runner names: {}", list.join(", "));
                 if restored {
                     format!("{names}; {RESTARTED}")
                 } else {
@@ -88,7 +88,7 @@ impl Engine {
         Err((
             RejectReason::CommandNotAllowed,
             format!(
-                "команда {} не входит в названия раннеров: {rule} ({names})",
+                "command {} is not among the runner names: {rule} ({names})",
                 step.command
             ),
         ))

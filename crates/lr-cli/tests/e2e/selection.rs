@@ -204,7 +204,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
         "{detail}"
     );
     assert!(
-        detail.contains("нужно 12288 МБ, у раннера 1024"),
+        detail.contains("needs 12288 MB, the runner has 1024"),
         "every broker answered, none fits: the refusal gives the figures: {detail}"
     );
 
@@ -219,7 +219,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
         "{detail}"
     );
     assert!(
-        detail.starts_with("нет подходящего раннера: local:") && !detail.contains("main:"),
+        detail.starts_with("no matching runner: local:") && !detail.contains("main:"),
         "a lan order is refused without asking the remote broker: {detail}"
     );
     assert!(

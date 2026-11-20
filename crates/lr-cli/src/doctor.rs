@@ -95,8 +95,11 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
         Containment::ProcessGroup => check(
             "process tree",
             Status::Warn,
-            "process group only: detached descendants may survive and `limit` runs as `warn` \
-             (Linux: no cgroup v2 user scope and no delegated subtree with the memory controller)",
+            "process group only: this check ran from your shell, not from the runner service, so \
+             it says nothing about the service (see the `runner <name> memory limit` line and \
+             `enforcement` in `localrunner runners`); for a process started like this, detached \
+             descendants may survive and `limit` runs as `warn` (Linux: no cgroup v2 user scope \
+             and no delegated subtree with the memory controller)",
         ),
     });
 }

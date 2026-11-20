@@ -123,7 +123,7 @@ async fn intake_rejects_when_no_registered_runner_suits_with_figures() {
         none.code,
         ReasonCode::Rejected(RejectReason::NoMatchingRunner)
     );
-    assert!(none.detail.contains("нет зарегистрированных раннеров"));
+    assert!(none.detail.contains("no registered runners"));
     let _r = h
         .member_runner("r-small", "10.0.0.7", caps(&["linux"], 4096, 8))
         .await;
@@ -204,7 +204,10 @@ async fn order_waits_when_every_suitable_runner_is_offline() {
     hub.until_runner("r1", false).await;
     hub.send(&order("j1", req(512, 1, 60))).await;
     let a = hub.accepted().await;
-    assert_eq!(a.waiting.as_deref(), Some("подходящие раннеры offline"));
+    assert_eq!(
+        a.waiting.as_deref(),
+        Some("the matching runners are offline")
+    );
 }
 
 #[tokio::test]
@@ -218,7 +221,7 @@ async fn accepted_names_why_the_order_waits() {
     hub.send(&order("j2", req(512, 1, 60))).await;
     assert_eq!(
         hub.accepted().await.waiting.as_deref(),
-        Some("раннер занят")
+        Some("the runner is busy")
     );
 }
 

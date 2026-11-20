@@ -359,7 +359,7 @@ impl Engine {
             &[("job", &job.0)],
         );
         let code = ReasonCode::Rejected(RejectReason::Other("rejected_order_unreadable".into()));
-        let detail = "запись заказа в hub.db не читается".to_string();
+        let detail = "the order record in hub.db cannot be read".to_string();
         self.final_reject(job, code, detail).await;
     }
 
@@ -454,7 +454,7 @@ impl Engine {
                 name: "hub",
                 force: false,
                 code: ReasonCode::SenderGone,
-                reason: Some("отправитель завершился"),
+                reason: Some("the sender ended"),
             };
             self.cancel_job(&job, cancel).await;
         }

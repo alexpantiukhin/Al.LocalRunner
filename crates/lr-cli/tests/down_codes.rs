@@ -31,7 +31,8 @@ async fn down_of_a_named_role_that_does_not_run_exits_with_1_and_a_full_down_wit
     }
     assert_eq!(down(&layout, vec!["hub".into()], false).await, Ok(1));
     assert_eq!(down(&layout, vec!["broker".into()], true).await, Ok(1));
-    assert_eq!(down(&layout, vec!["r9".into()], false).await, Ok(1));
+    let unknown = down(&layout, vec!["r9".into()], false).await.unwrap_err();
+    assert_eq!(unknown, "no runner with this name: r9; available: none");
     assert_eq!(down(&layout, Vec::new(), false).await, Ok(0));
 }
 
@@ -71,6 +72,34 @@ async fn down_names_a_runner_that_runs_as_an_os_service_instead_of_calling_it_st
         Ok(1),
         "a full down that leaves a runner running says so in its exit code"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_of_the_word_runner_stops_every_runner_and_an_unknown_name_lists_the_available_ones() {
+    let dir = TempDir::new("down-word-runner");
+    let layout = with_runner(&dir);
+    let roles = FakeRoles::new(true, 0);
+    let code = down_with(
+        &layout,
+        vec!["runner".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(0));
+    let told: Vec<String> = roles
+        .told
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    assert_eq!(told, vec!["r1".to_string()]);
+    let err = down_with(&layout, vec!["r2".into()], false, &roles, pending::<()>())
+        .await
+        .unwrap_err();
+    assert_eq!(err, "no runner with this name: r2; available: r1");
 }
 
 fn within_30_to_31_s(start: tokio::time::Instant) {
@@ -197,9 +226,20 @@ async fn a_runner_with_no_job_that_does_not_stop_is_not_told_to_wait_for_a_job()
     assert_eq!(
         busy.said(),
         vec![
-            "r1: still running, it stops when its job ends (`localrunner status` shows the job)"
+            "r1: still draining its job, it stops when the job ends (`localrunner status` shows the job)"
                 .to_string()
         ]
+    );
+
+    let local = FakeRoles::new(false, usize::MAX);
+    *local.jobs.lock().unwrap() = Some(vec!["job-1 on local:r1 (rust-unit), running 1 s".into()]);
+    down_with(&layout, vec!["r1".into()], false, &local, pending::<()>())
+        .await
+        .unwrap();
+    assert!(
+        local.said()[0].contains("still draining its job"),
+        "{:?}",
+        local.said()
     );
 }
 

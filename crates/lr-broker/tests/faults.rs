@@ -144,7 +144,7 @@ async fn a_resent_order_with_an_unreadable_stored_spec_that_no_longer_fits_is_re
     assert_eq!(row.job.state, JobState::Cancelled);
     assert_eq!(
         row.job.cancel_reason.as_deref(),
-        Some("rejected_pool_memory: нужно 10000000 МБ, максимум в пуле 16384")
+        Some("rejected_pool_memory: needs 10000000 MB, the pool maximum is 16384")
     );
     assert_eq!(row.job.cancelled_by.as_deref(), Some("broker"));
     assert!(lr_abstractions::BrokerStore::orders(h.store.as_ref())

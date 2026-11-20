@@ -99,8 +99,8 @@ impl Engine {
             Err(e) => return self.retry_later("mark a run lost", &e, Retry::Lose(job, code)),
         }
         let detail = job.runner.as_ref().map(|r| match code {
-            ReasonCode::RunnerRemoved => format!("раннер {r} удалён"),
-            _ => format!("раннер {r} не отчитался в срок"),
+            ReasonCode::RunnerRemoved => format!("runner {r} removed"),
+            _ => format!("runner {r} did not report in time"),
         });
         self.finish(&job, JobState::Lost, None, Some(code), detail)
             .await;

@@ -22,7 +22,7 @@ async fn reserve_wait_says_n_of_m_cores_reserved_by_the_named_rule() {
     hub.send(&order("j2", req(1024, 4, 60))).await;
     assert_eq!(
         hub.accepted().await.waiting.as_deref(),
-        Some("правило ci-reserve: 2 из 8 ядер зарезервированы")
+        Some("rule ci-reserve: 2 of 8 cores reserved")
     );
 }
 

@@ -42,7 +42,7 @@ async fn an_order_that_never_fits_with_its_services_is_rejected_on_pool_memory()
     assert_eq!(r.code.as_str(), "rejected_pool_memory");
     assert_eq!(
         r.detail,
-        "нужно 18096 МБ, максимум в пуле 16384 (джоба 14000 МБ + сервисы 4096 МБ)"
+        "needs 18096 MB, the pool maximum is 16384 (job 14000 MB + services 4096 MB)"
     );
 }
 
@@ -57,11 +57,11 @@ async fn a_runner_that_fits_the_job_but_not_its_services_does_not_match() {
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_no_matching_runner");
     assert!(
-        r.detail.contains("r1: нужно 10096 МБ, у раннера 8192"),
+        r.detail.contains("r1: needs 10096 MB, the runner has 8192"),
         "{}",
         r.detail
     );
-    assert!(r.detail.contains("джоба 6000 МБ"), "{}", r.detail);
+    assert!(r.detail.contains("job 6000 MB"), "{}", r.detail);
 }
 
 #[tokio::test]

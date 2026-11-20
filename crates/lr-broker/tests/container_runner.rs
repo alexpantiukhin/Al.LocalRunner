@@ -16,7 +16,7 @@ async fn a_work_tree_order_with_no_runner_at_all_keeps_the_start_it_hint() {
     );
     assert_eq!(
         refused.detail,
-        "нет раннера на вашей установке, запустите его: up"
+        "no runner on your installation, start it: up"
     );
 }
 
@@ -33,7 +33,7 @@ async fn a_container_runner_never_gets_a_work_tree_order_and_takes_commit_orders
     );
     assert_eq!(
         refused.detail,
-        "раннер box подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+        "runner box joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
     );
     container.quiet().await;
     hub.send(&order("commit", req(512, 1, 60))).await;

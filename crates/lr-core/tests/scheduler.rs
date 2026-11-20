@@ -132,7 +132,7 @@ fn larger_than_pool_never_fits() {
             limit: 8192
         }
     );
-    assert_eq!(err.to_string(), "нужно 12288 МБ, максимум в пуле 8192");
+    assert_eq!(err.to_string(), "needs 12288 MB, the pool maximum is 8192");
     assert_eq!(
         s.can_ever_fit(&req(1024, 9, 60)),
         Err(Reject::PoolCpu {
@@ -170,6 +170,6 @@ fn timestamps_render_as_utc_and_head_reserved_uses_them() {
     };
     assert_eq!(
         w.to_string(),
-        "старт зарезервирован для h на 2023-11-14 22:13:20 UTC"
+        "the start is reserved for h at 2023-11-14 22:13:20 UTC"
     );
 }

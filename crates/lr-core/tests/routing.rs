@@ -54,7 +54,7 @@ fn same_machine_order_only_matches_that_installation() {
     );
     assert!(out.assignments.is_empty());
     assert_eq!(out.waiting[0].1, Wait::RunnerBusy);
-    assert_eq!(Wait::RunnerBusy.to_string(), "раннер занят");
+    assert_eq!(Wait::RunnerBusy.to_string(), "the runner is busy");
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn a_joined_runner_is_refused_a_work_tree_order_with_a_reason_naming_it() {
     );
     assert_eq!(
         err.to_string(),
-        "раннер office подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+        "runner office joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
     );
 }
 
@@ -105,7 +105,10 @@ fn a_local_runner_of_another_user_is_refused_with_the_old_meaning() {
             joined: false
         }]
     );
-    assert_eq!(err.to_string(), "раннер bob-runner не на машине клиента");
+    assert_eq!(
+        err.to_string(),
+        "runner bob-runner is not on the client machine"
+    );
 }
 
 #[test]
@@ -141,9 +144,9 @@ fn a_work_tree_order_with_only_joined_runners_is_refused_naming_them() {
         }
     );
     let text = err.to_string();
-    assert!(text.contains("раннер office подключён по ключу: он берёт только заказы по коммиту"));
-    assert!(text.contains("раннер lab подключён по ключу"));
-    assert!(!text.contains("запустите"));
+    assert!(text.contains("runner office joined by key: it takes only commit orders"));
+    assert!(text.contains("runner lab joined by key"));
+    assert!(!text.contains("start it"));
 }
 
 #[test]
@@ -155,7 +158,9 @@ fn same_machine_with_online_unsuitable_runner_rejected_with_numbers() {
         panic!("{err:?}");
     };
     assert_eq!(runners[0].0, "alex-runner");
-    assert!(err.to_string().contains("нужно 32768 МБ, у раннера 16384"));
+    assert!(err
+        .to_string()
+        .contains("needs 32768 MB, the runner has 16384"));
 }
 
 #[test]
@@ -175,8 +180,8 @@ fn order_no_runner_suits_is_rejected_with_numbers() {
     let mut off = runner("off");
     off.online = false;
     let err = check_runners(&e, &[runner("r1"), off], &site()).unwrap_err();
-    assert!(err.to_string().contains("r1: adb не найден"));
-    assert!(err.to_string().contains("off: adb не найден"));
+    assert!(err.to_string().contains("r1: adb not found"));
+    assert!(err.to_string().contains("off: adb not found"));
 }
 
 #[test]

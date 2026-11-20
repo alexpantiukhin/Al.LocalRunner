@@ -38,7 +38,10 @@ async fn service_not_allowed_for_label_rejected() {
     agent.send(&order("j1", needs_service(512))).await;
     let r = agent.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_service_not_allowed");
-    assert_eq!(r.detail, "сервис build-daemon не разрешён ярлыку agent");
+    assert_eq!(
+        r.detail,
+        "service build-daemon is not allowed for label agent"
+    );
     let mut ci = h.member_hub("ci-box", "ci", "10.0.0.21").await;
     ci.send(&order("j1", needs_service(512))).await;
     ci.accepted().await;

@@ -148,10 +148,10 @@ fn rejection_text(row: &JobRow) -> Option<String> {
 
 /// The sentence about the peaks of a finished run, `None` when the runner reported none.
 pub fn peaks_text(row: &JobRow) -> Option<String> {
-    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} МБ"));
+    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} MB"));
     (row.peak_mem_mb.is_some() || row.peak_disk_mb.is_some()).then(|| {
         format!(
-            "пик памяти {}, пик диска {}",
+            "memory peak {}, disk peak {}",
             mb(row.peak_mem_mb),
             mb(row.peak_disk_mb)
         )
