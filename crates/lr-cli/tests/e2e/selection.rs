@@ -81,11 +81,10 @@ async fn leave_the_lan(main: &Layout, roles: &mut Roles, address: &str) {
         .replace(LAN, "")
         .replace("127.0.0.1:0", address);
     roles.take_broker().stopped().await;
-    eventually("the broker's port to be free", HANG, || {
-        let free = std::net::TcpListener::bind(address).is_ok();
-        async move { free.then_some(()) }
-    })
-    .await;
+    assert!(
+        std::net::TcpListener::bind(address).is_ok(),
+        "the stopped broker let its port go"
+    );
     std::fs::write(&file, away).unwrap();
     roles.push(
         start_broker(main, false)

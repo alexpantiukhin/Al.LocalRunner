@@ -101,6 +101,9 @@ impl Running {
         for l in &listeners {
             l.closed().await;
         }
+        if let Some(tls) = &self.tls {
+            tls.closed().await;
+        }
         for t in tasks {
             let _ = t.await;
         }
@@ -125,6 +128,9 @@ impl Running {
         }
         for l in self.listeners.drain(..) {
             l.close();
+        }
+        if let Some(tls) = &self.tls {
+            tls.close();
         }
         for l in self.loggers.drain(..) {
             l.shutdown();
