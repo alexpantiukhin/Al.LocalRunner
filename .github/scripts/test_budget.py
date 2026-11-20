@@ -1,4 +1,4 @@
-import re, subprocess, sys, tomllib
+import os, re, subprocess, sys, tomllib
 
 KINDS = ("unit", "integration", "e2e")
 RUNNING = re.compile(r"^\s*Running (unittests|\S+)")
@@ -38,9 +38,18 @@ def verdict(sums, budgets):
     return out, over
 
 
+def with_overrides(budgets):
+    out = dict(budgets)
+    for k in KINDS:
+        value = os.environ.get(f"TEST_BUDGET_{k.upper()}_S", "").strip()
+        if value:
+            out[k] = float(value)
+    return out
+
+
 def main(argv):
     with open(".github/test-budgets.toml", "rb") as f:
-        budgets = tomllib.load(f)["budget_s"]
+        budgets = with_overrides(tomllib.load(f)["budget_s"])
     if argv[0] == "--from-log":
         lines = open(argv[1], encoding="utf-8", errors="replace").read().splitlines()
         code = 0
