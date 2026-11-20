@@ -96,7 +96,12 @@ impl TlsListening {
 
     /// Stops accepting on every network socket at once.
     pub fn close(&self) {
-        for l in self.sockets.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        for l in self
+            .sockets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+        {
             l.close();
         }
     }
