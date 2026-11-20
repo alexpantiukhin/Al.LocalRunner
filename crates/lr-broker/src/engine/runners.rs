@@ -4,9 +4,9 @@ use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
-    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, RunnerLiveness, ServiceReport,
-    WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE,
-    STALE_AFTER_MISSED,
+    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, ReasonCode, RunnerLiveness,
+    ServiceReport, WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S,
+    MISSED_HEARTBEATS_OFFLINE, STALE_AFTER_MISSED,
 };
 use std::collections::BTreeSet;
 
@@ -210,7 +210,12 @@ impl Engine {
         Ok(())
     }
 
-    pub(crate) async fn runner_resumed(&mut self, runner: &str, points: &[lr_proto::ResumePoint]) {
+    pub(crate) async fn runner_resumed(
+        &mut self,
+        runner: &str,
+        points: &[lr_proto::ResumePoint],
+        incomplete: bool,
+    ) {
         let held = |j: &Job| {
             j.runner.as_deref() == Some(runner) && j.started_at.is_none() && j.gone_since.is_some()
         };
@@ -221,9 +226,24 @@ impl Engine {
         for j in self.active.iter_mut().filter(|j| held(j)) {
             j.gone_since = None;
         }
-        let changed = !unknown.is_empty();
+        let mut changed = !unknown.is_empty();
         for job in unknown {
             self.requeue_or_retry(job).await;
+        }
+        let forgotten = |j: &Job| {
+            !incomplete
+                && j.runner.as_deref() == Some(runner)
+                && j.started_at.is_some()
+                && !points.iter().any(|p| p.job == j.key.job)
+        };
+        let (gone, keep): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.active)
+            .into_iter()
+            .partition(forgotten);
+        self.active = keep;
+        changed |= !gone.is_empty();
+        let now = self.now();
+        for job in gone {
+            self.lose(job, now, ReasonCode::RunnerLost).await;
         }
         if changed {
             self.plan().await;
@@ -297,8 +317,11 @@ impl Engine {
                 );
             }
         }
-        let on_foreign_load = self.wait_codes.values().any(|c| *c == "foreign_load");
-        if !was_online || (load_changed && on_foreign_load) {
+        let on_load = self
+            .wait_codes
+            .values()
+            .any(|c| matches!(*c, "foreign_load" | "low_disk"));
+        if !was_online || (load_changed && on_load) {
             self.plan().await;
         }
     }

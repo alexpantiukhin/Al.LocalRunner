@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
@@ -28,6 +28,21 @@ pub struct TlsListener {
     local: SocketAddr,
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
     task: JoinHandle<()>,
+    released: watch::Receiver<bool>,
+}
+
+/// The bound socket and, dropped after it, the signal that the port is free again.
+struct Bound {
+    tcp: TcpListener,
+    _released: Released,
+}
+
+struct Released(watch::Sender<bool>);
+
+impl Drop for Released {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
 }
 
 struct Shared {
@@ -64,17 +79,35 @@ impl TlsListener {
             slots: Slots::new(limits),
         });
         let (tx, rx) = mpsc::channel(1);
-        let task = tokio::spawn(accept_loop(tcp, shared, tx));
+        let (released_tx, released) = watch::channel(false);
+        let bound = Bound {
+            tcp,
+            _released: Released(released_tx),
+        };
+        let task = tokio::spawn(accept_loop(bound, shared, tx));
         Ok(TlsListener {
             local,
             ready: Mutex::new(rx),
             task,
+            released,
         })
     }
 
     /// The bound address (the real port when bound to port 0).
     pub fn local_addr(&self) -> SocketAddr {
         self.local
+    }
+
+    /// Stops accepting at once; [`TlsListener::closed`] says when the port is free.
+    pub fn close(&self) {
+        self.task.abort();
+    }
+
+    /// Waits until the listening socket is closed and its port can be bound again; it only
+    /// ends after [`TlsListener::close`] (or the drop of the listener).
+    pub async fn closed(&self) {
+        let mut released = self.released.clone();
+        let _ = released.wait_for(|freed| *freed).await;
     }
 }
 
@@ -84,9 +117,9 @@ impl Drop for TlsListener {
     }
 }
 
-async fn accept_loop(tcp: TcpListener, shared: Arc<Shared>, tx: mpsc::Sender<StreamTransport>) {
+async fn accept_loop(bound: Bound, shared: Arc<Shared>, tx: mpsc::Sender<StreamTransport>) {
     loop {
-        let (stream, from) = match tcp.accept().await {
+        let (stream, from) = match bound.tcp.accept().await {
             Ok(x) => x,
             Err(_) => {
                 tokio::time::sleep(Duration::from_millis(50)).await;

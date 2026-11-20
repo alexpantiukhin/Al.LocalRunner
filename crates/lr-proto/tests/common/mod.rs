@@ -86,6 +86,7 @@ pub fn caps() -> WireCapabilities {
         ]),
         machine: Some(MachineRef("m-1".into())),
         accept_min_mem_mb: Some(8192),
+        accept_min_free_disk_mb: None,
         cache_max_mb: Some(40_000),
         cache_used_mb: Some(1200),
         service_mem_mb: Default::default(),
@@ -159,6 +160,7 @@ pub fn summary() -> JobSummary {
         source: Some(WireSource::Session),
         note: None,
         branch: None,
+        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,
@@ -215,6 +217,7 @@ pub fn spread() -> SpreadView {
 pub fn stats() -> StatsView {
     StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: "build".into(),
             runs: 3,
             passed: 2,
@@ -330,6 +333,7 @@ pub fn resume() -> Resume {
                 last_seq: 0,
             },
         ],
+        incomplete: false,
     }
 }
 

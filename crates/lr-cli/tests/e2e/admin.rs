@@ -184,7 +184,7 @@ async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
     let held = queued(&main, &next).await;
     let why = held.wait_reason.clone().unwrap_or_default();
     assert!(
-        why.contains("правило one-at-a-time"),
+        why.contains("rule one-at-a-time"),
         "the delay names the rule: {held:?}"
     );
     let view = status(&main).await.expect("status");

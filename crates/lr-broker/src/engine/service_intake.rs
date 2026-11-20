@@ -23,7 +23,7 @@ impl Engine {
             if extra == 0 {
                 detail
             } else {
-                format!("{detail} (джоба {job_mb} МБ + сервисы {extra} МБ)")
+                format!("{detail} (job {job_mb} MB + services {extra} MB)")
             }
         };
         let policy = self.policy.policy();
@@ -36,7 +36,7 @@ impl Engine {
             let detail = r.to_string();
             let detail = match &r {
                 Reject::NoMatchingRunner { .. } if !req.services.is_empty() => {
-                    format!("{detail} (джоба {job_mb} МБ + сервисы раннера)")
+                    format!("{detail} (job {job_mb} MB + runner services)")
                 }
                 _ => detail,
             };

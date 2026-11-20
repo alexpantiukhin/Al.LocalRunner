@@ -66,6 +66,7 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         source: None,
         note: None,
         branch: None,
+        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,
@@ -117,6 +118,7 @@ fn stats(profile: &str) -> StatsView {
     };
     StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: profile.into(),
             runs: 1,
             passed: 1,

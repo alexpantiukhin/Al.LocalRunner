@@ -3,7 +3,7 @@ use lr_abstractions::{Applied, Level, OutboxKind, Transition};
 use lr_core::{JobState, Zone};
 use lr_proto::{BrokerToHub, QueueEvent, ReasonCode, RejectReason, Returned};
 
-const NO_RUNNER_HINT: &str = "нет раннера на вашей установке, запустите его: up";
+const NO_RUNNER_HINT: &str = "no runner on your installation, start it: up";
 
 impl Engine {
     fn has_live_runner(&self, job: &Job) -> bool {

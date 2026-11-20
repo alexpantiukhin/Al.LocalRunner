@@ -1,7 +1,9 @@
 use crate::agent::{Current, Shared};
 use crate::connect::Session;
 use crate::hooks_config::CleanupOn;
-use crate::prepare::{apply_job_temp, job_env, job_temp, resolve_commands, step_secrets, Prepared};
+use crate::prepare::{
+    apply_job_home, apply_job_temp, job_env, job_temp, resolve_commands, step_secrets, Prepared,
+};
 use crate::run::run_phases;
 use lr_abstractions::{stop_signal, Level, Stop, StoreError};
 use lr_core::{JobId, JobState, StepState};
@@ -306,7 +308,18 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
                 }
                 Ok(()) => {
                     let mut env = job_env(shared, &job);
-                    apply_job_temp(&mut env, &job_temp(shared, &job));
+                    let temp = job_temp(shared, &job);
+                    apply_job_temp(&mut env, &temp);
+                    if shared.job_settings().job_home {
+                        let home = apply_job_home(&mut env, &temp);
+                        if let Err(e) = shared.deps.files.create_dir_all(&home).await {
+                            shared.diag.event(
+                                lr_abstractions::Level::Warn,
+                                "the job HOME directory was not created",
+                                &[("job", &job.0), ("error", &e.to_string())],
+                            );
+                        }
+                    }
                     let prepared = Prepared {
                         job: job.clone(),
                         spec: &a.spec,

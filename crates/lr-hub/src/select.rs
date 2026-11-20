@@ -51,7 +51,7 @@ pub fn suitable(runners: &[RunnerCaps], req: &Requirements) -> Result<usize, Str
     let mut why = Vec::new();
     for r in runners {
         if !r.online {
-            why.push(format!("{}: не на связи", r.name));
+            why.push(format!("{}: not connected", r.name));
             continue;
         }
         match satisfies(&r.clone().into_capabilities(), req) {
@@ -63,7 +63,7 @@ pub fn suitable(runners: &[RunnerCaps], req: &Requirements) -> Result<usize, Str
         return Ok(count);
     }
     if why.is_empty() {
-        why.push("нет раннеров".into());
+        why.push("no runners".into());
     }
     Err(why.join("; "))
 }
@@ -233,7 +233,7 @@ impl Choice {
         if self.groups().is_empty() {
             return Decision::Reject(
                 ReasonCode::Rejected(RejectReason::ZoneNotServed),
-                "нет брокеров в допустимых зонах заказа".into(),
+                "no brokers in the zones the order allows".into(),
             );
         }
         let attempts = self.policy.query_attempts.max(1);
@@ -243,15 +243,15 @@ impl Choice {
                 Pass::NoneSuitable(figures) => {
                     return Decision::Reject(
                         ReasonCode::Rejected(RejectReason::NoMatchingRunner),
-                        format!("нет подходящего раннера: {figures}"),
+                        format!("no matching runner: {figures}"),
                     )
                 }
-                Pass::NoneAnswered => return Decision::Wait("брокеры недоступны".into()),
+                Pass::NoneAnswered => return Decision::Wait("brokers unavailable".into()),
                 Pass::SomeUnavailable(names) if attempt == attempts => {
                     return Decision::Reject(
                         ReasonCode::Rejected(RejectReason::BrokersUnreachable),
                         format!(
-                            "брокеры не ответили за {attempts} попыток: {}",
+                            "the brokers did not answer in {attempts} attempts: {}",
                             names.join(", ")
                         ),
                     )
@@ -264,6 +264,6 @@ impl Choice {
                 }
             }
         }
-        Decision::Wait("брокеры недоступны".into())
+        Decision::Wait("brokers unavailable".into())
     }
 }

@@ -286,11 +286,13 @@ impl Session<'_> {
         true
     }
 
-    async fn resume_points(&self) -> Vec<ResumePoint> {
+    async fn resume_points(&self) -> (Vec<ResumePoint>, bool) {
         let d = &self.shared.deps;
+        let mut incomplete = false;
         let mut jobs: BTreeSet<JobId> = match d.store.pending_outbox().await {
             Ok(p) => p.into_iter().map(|e| e.job).collect(),
             Err(e) => {
+                incomplete = true;
                 self.shared.diag.event(
                     Level::Error,
                     "outbox unreadable for resume",
@@ -317,7 +319,7 @@ impl Session<'_> {
             };
             points.push(ResumePoint { job, last_seq });
         }
-        points
+        (points, incomplete)
     }
 
     async fn idle_and_stopping(&self) -> bool {
@@ -560,9 +562,11 @@ pub(crate) async fn session(
         held: VecDeque::new(),
         heard: false,
     };
-    let points = s.resume_points().await;
+    let (points, incomplete) = s.resume_points().await;
     let report = shared.services().report(shared.now()).await;
-    if !s.send(&RunnerToBroker::Resume(Resume { points })).await
+    if !s
+        .send(&RunnerToBroker::Resume(Resume { points, incomplete }))
+        .await
         || !s.send(&RunnerToBroker::ServicesReport(report)).await
         || !s.flush(&mut inbox).await
     {

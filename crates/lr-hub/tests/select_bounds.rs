@@ -73,7 +73,7 @@ async fn zone_admitting_no_broker_is_rejected_not_kept_in_outbox() {
     match cli.reply().await {
         CliReply::Rejected { code, detail } => {
             assert_eq!(code, ReasonCode::Rejected(RejectReason::ZoneNotServed));
-            assert_eq!(detail, "нет брокеров в допустимых зонах заказа");
+            assert_eq!(detail, "no brokers in the zones the order allows");
         }
         other => panic!("{other:?}"),
     }

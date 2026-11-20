@@ -216,7 +216,10 @@ fn timeout_above_limit_is_rejected_at_intake() {
             ceiling: 3600
         }
     );
-    assert_eq!(err.to_string(), "потолок таймаута 3600 с, нужно 7200");
+    assert_eq!(
+        err.to_string(),
+        "the timeout ceiling is 3600 s, 7200 needed"
+    );
     let ok = entry_with("y", "agent", 0, req(1024, 1, 3600));
     assert!(p.admit(&ok.order, &ok.client).is_ok());
 }
@@ -251,7 +254,7 @@ fn reserve_is_kept_from_other_orders_even_when_free() {
     assert!(matches!(err, Wait::Reserved { ref rule, cpu: 2, .. } if rule == "ci-reserve"));
     assert_eq!(
         err.to_string(),
-        "правило ci-reserve: 2 из 8 ядер и 4096 из 16384 МБ зарезервированы"
+        "rule ci-reserve: 2 of 8 cores and 4096 of 16384 MB reserved"
     );
     let cpu_only = Wait::Reserved {
         rule: "ci-reserve".into(),
@@ -262,7 +265,7 @@ fn reserve_is_kept_from_other_orders_even_when_free() {
     };
     assert_eq!(
         cpu_only.to_string(),
-        "правило ci-reserve: 2 из 8 ядер зарезервированы"
+        "rule ci-reserve: 2 of 8 cores reserved"
     );
     let ci = entry_with("c", "ci", 0, req(1024, 8, 60));
     assert!(p.gate(&ci, &[]).is_ok());

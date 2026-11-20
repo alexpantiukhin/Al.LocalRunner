@@ -187,7 +187,7 @@ fn runner_with_lower_timeout_ceiling_does_not_satisfy() {
     );
     assert_eq!(
         err.to_string(),
-        "нужен таймаут 7200 с, потолок раннера 3600 с"
+        "needs a timeout of 7200 s, the runner ceiling is 3600 s"
     );
 }
 
@@ -227,7 +227,7 @@ fn missing_program_reports_which() {
             }
         ]
     );
-    assert!(err.to_string().contains("adb не найден"));
+    assert!(err.to_string().contains("adb not found"));
 }
 
 #[test]
@@ -246,7 +246,7 @@ fn not_enough_memory_reports_numbers() {
             available: 8192
         }]
     );
-    assert!(err.to_string().contains("нужно 12288 МБ"));
+    assert!(err.to_string().contains("needs 12288 MB"));
 }
 
 #[test]
@@ -445,7 +445,7 @@ fn command_names_must_all_be_declared_by_the_runner() {
             name: "test".into()
         }
         .to_string(),
-        "команда test не описана"
+        "command test is not described"
     );
     caps.commands = set(&["build", "test", "lint"]);
     assert!(satisfies(&caps, &r).is_ok());

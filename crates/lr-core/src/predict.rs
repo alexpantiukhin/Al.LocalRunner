@@ -93,6 +93,7 @@ impl<'a> Planner<'a> {
         slots: &[Slot<'_>],
         running: usize,
     ) -> Result<Vec<(&'a RunnerView, Zone)>, Wait> {
+        let candidates = self.admit_disk(entry, candidates)?;
         let admission = self.policy.admission();
         if admission.foreign_load == ForeignLoadMode::Off {
             return Ok(candidates);
@@ -130,6 +131,36 @@ impl<'a> Planner<'a> {
         }
         match refused {
             Some(w) if kept.is_empty() => Err(w),
+            _ => Ok(kept),
+        }
+    }
+
+    fn admit_disk(
+        &self,
+        entry: &QueueEntry,
+        candidates: Vec<(&'a RunnerView, Zone)>,
+    ) -> Result<Vec<(&'a RunnerView, Zone)>, Wait> {
+        let req = &entry.order.requirements;
+        let mut short: Option<(u64, u64)> = None;
+        let mut kept = Vec::with_capacity(candidates.len());
+        for (runner, zone) in candidates {
+            let floor = runner.caps.accept.min_free_disk_mb;
+            let free = runner.load.and_then(|l| l.free_disk_mb);
+            let (Some(floor), Some(free)) = (floor, free) else {
+                kept.push((runner, zone));
+                continue;
+            };
+            let needed = floor.max(req.disk_mb);
+            if free >= needed {
+                kept.push((runner, zone));
+            } else if short.is_none_or(|(best, _)| free > best) {
+                short = Some((free, needed));
+            }
+        }
+        match short {
+            Some((free_mb, needed_mb)) if kept.is_empty() => {
+                Err(Wait::LowDisk { free_mb, needed_mb })
+            }
             _ => Ok(kept),
         }
     }

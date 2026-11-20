@@ -1,0 +1,4 @@
+[budget_s]
+unit = 10
+integration = 120
+e2e = 40

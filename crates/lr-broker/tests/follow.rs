@@ -88,7 +88,7 @@ async fn log_follow_is_refused_to_another_client() {
     assert_eq!(
         reply,
         ReadReply::Denied {
-            reason: "полный лог отдаётся только клиенту-владельцу запуска".into()
+            reason: "the full log goes only to the client that owns the run".into()
         }
     );
 }

@@ -104,7 +104,13 @@ impl Engine {
                 RunnerInfo {
                     name: name.clone(),
                     online: liveness != RunnerLiveness::Offline,
-                    caps: caps_for(viewer, slot),
+                    caps: {
+                        let mut caps = caps_for(viewer, slot);
+                        if let Some(free) = slot.load.and_then(|l| l.free_disk_mb) {
+                            caps.disk_mb = free;
+                        }
+                        caps
+                    },
                     last_seen: Some(slot.last_seen),
                     free_mem_mb: free_mem,
                     free_cpu,

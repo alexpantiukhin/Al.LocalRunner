@@ -8,6 +8,7 @@ mod cli;
 mod client;
 mod decide;
 mod deps;
+mod duplicate;
 mod engine;
 mod handles;
 mod inbound;

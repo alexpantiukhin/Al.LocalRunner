@@ -35,7 +35,7 @@ pub fn repo(dir: &TempDir) -> PathBuf {
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(repo.join(".localrunner")).unwrap();
     let slow = if cfg!(windows) {
-        "ping -n 120 127.0.0.1"
+        "waitfor /t 120 lrslow"
     } else {
         "sleep 120"
     };

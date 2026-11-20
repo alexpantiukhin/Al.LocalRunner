@@ -7,7 +7,6 @@ use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_proto::{AdminReply, AdminRequest};
 use std::path::Path;
-use std::time::Duration;
 
 async fn join_code(layout: &Layout) -> (String, String) {
     let admin = IpcClient::connect_broker_admin(&layout.admin_ipc())
@@ -72,15 +71,10 @@ async fn a_broker_moved_with_its_state_keeps_its_joined_runner_without_a_new_joi
 
     hub_role.stopped().await;
     broker.stopped().await;
-    eventually(
-        "the old broker to free its port",
-        Duration::from_secs(20),
-        || {
-            let free = std::net::TcpListener::bind(&address).is_ok();
-            async move { free.then_some(()) }
-        },
-    )
-    .await;
+    assert!(
+        std::net::TcpListener::bind(&address).is_ok(),
+        "the stopped broker let its port go"
+    );
 
     let moved = layout(&dir, "moved", "");
     copy_tree(&first.root, &moved.root, "machine-id");

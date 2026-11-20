@@ -303,7 +303,7 @@ localrunner up runner
 
 `--count N` (1 to 64) creates runners `box-1` … `box-N` from one `runner.toml` template; each has its own directory, key and record on the broker. `--name` wins over `name` in the file; with neither, the machine name is used.
 
-`runner join` copies the template into `runner/<name>/runner.toml`, and that copy wins: later edits of the template do not reach a joined runner, while a runner that never joined reads the template. `localrunner runner config <name>` shows the file a runner reads and its path; `--diff` shows the lines in which the own copy differs from the template.
+`runner join` copies the template into `runner/<name>/runner.toml`, and that copy wins: later edits of the template do not reach a joined runner, while a runner that never joined reads the template. `localrunner runner config <name>` shows the file a runner reads and its path; `--diff` shows the lines in which the own copy differs from the template. A joined runner on the same machine as the broker needs its own state directory (`--state-dir`), different from the broker's.
 
 A runner keeps what it still has to deliver to the broker in an outbox. If the broker has already cancelled or lost a job, its entries can stay pending; `localrunner runner outbox drop [--runner NAME] <job-id>` closes them while the runner runs and prints `closed N entries of <job-id>`. It is refused while the runner still runs that job; without `--runner` it takes the only runner of the installation. A runner that is not running prints `not running` and the exit code is 1.
 

@@ -81,11 +81,10 @@ async fn leave_the_lan(main: &Layout, roles: &mut Roles, address: &str) {
         .replace(LAN, "")
         .replace("127.0.0.1:0", address);
     roles.take_broker().stopped().await;
-    eventually("the broker's port to be free", HANG, || {
-        let free = std::net::TcpListener::bind(address).is_ok();
-        async move { free.then_some(()) }
-    })
-    .await;
+    assert!(
+        std::net::TcpListener::bind(address).is_ok(),
+        "the stopped broker let its port go"
+    );
     std::fs::write(&file, away).unwrap();
     roles.push(
         start_broker(main, false)
@@ -204,7 +203,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
         "{detail}"
     );
     assert!(
-        detail.contains("нужно 12288 МБ, у раннера 1024"),
+        detail.contains("needs 12288 MB, the runner has 1024"),
         "every broker answered, none fits: the refusal gives the figures: {detail}"
     );
 
@@ -219,7 +218,7 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
         "{detail}"
     );
     assert!(
-        detail.starts_with("нет подходящего раннера: local:") && !detail.contains("main:"),
+        detail.starts_with("no matching runner: local:") && !detail.contains("main:"),
         "a lan order is refused without asking the remote broker: {detail}"
     );
     assert!(

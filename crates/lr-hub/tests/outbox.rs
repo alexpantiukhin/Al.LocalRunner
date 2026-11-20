@@ -84,6 +84,30 @@ async fn ttl_hours_from_policy_is_used() {
 }
 
 #[tokio::test]
+async fn cancel_of_a_finished_job_says_it_already_finished_and_of_an_unknown_one_says_unknown() {
+    let mut rig = Rig::new();
+    rig.local = true;
+    rig.start();
+    let cli = rig.cli().await;
+    let job = cli.submit(submit("unit", None)).await;
+    cli.send(cancel(&job, "agent", false)).await;
+    assert!(matches!(cli.reply().await, CliReply::Cancelled { .. }));
+    cli.send(cancel(&job, "agent", false)).await;
+    match cli.reply().await {
+        CliReply::Error(e) => {
+            assert_eq!(e.message, format!("job {job} already finished: cancelled"))
+        }
+        other => panic!("{other:?}"),
+    }
+    let ghost = JobId("j-unknown".into());
+    cli.send(cancel(&ghost, "agent", false)).await;
+    match cli.reply().await {
+        CliReply::Error(e) => assert_eq!(e.message, "job j-unknown is not known to this hub"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn cancel_before_any_broker_drops_the_order_locally() {
     let mut rig = Rig::new();
     rig.local = true;
@@ -331,7 +355,7 @@ async fn denied_cancel_ack_without_seq_is_understood() {
     until(&local, "cancel sent", || local.cancels().len() == 1).await;
     let denied = serde_json::json!({
         "type": "cancel_ack", "job": job.0, "seq": 0, "cancel_seq": 2,
-        "outcome": "denied", "denial": "заказ не найден"
+        "outcome": "denied", "denial": "order not found"
     });
     local
         .send_frame(Frame::from_bytes(serde_json::to_vec(&denied).unwrap()))

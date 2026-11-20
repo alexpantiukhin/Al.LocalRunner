@@ -87,6 +87,80 @@ async fn variables_of_the_job_env_section_reach_the_job_and_may_replace_home() {
 }
 
 #[tokio::test]
+async fn variables_of_the_job_env_section_reach_the_source_steps_too() {
+    let mut rig = Rig::new();
+    rig.settings
+        .job_env
+        .insert("GIT_CONFIG_COUNT".into(), "1".into());
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign("job-1", 1, commit_spec(vec![step("b", "make", 60)], 60))
+        .await;
+    b.until_result().await;
+    let runs = rig.process.runs();
+    assert!(
+        runs.len() >= 2,
+        "a source phase and a profile phase: {}",
+        runs.len()
+    );
+    for run in &runs {
+        assert!(
+            env_of(run).contains(&("GIT_CONFIG_COUNT".into(), "1".into())),
+            "{:?}",
+            run.steps
+                .iter()
+                .map(|s| s.spec.command.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+async fn homes_of(job_env_home: Option<&str>, job_home: bool) -> Vec<(String, String)> {
+    let mut rig = Rig::new();
+    rig.settings.job_home = job_home;
+    if let Some(h) = job_env_home {
+        rig.settings.job_env.insert("HOME".into(), h.into());
+    }
+    rig.files.mkdir(Path::new("/w/tree"));
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    b.assign(
+        "job-1",
+        1,
+        worktree_spec("/w/tree", vec![step("b", "make", 60)], 60),
+    )
+    .await;
+    b.until_result().await;
+    env_of(&rig.process.runs()[0])
+}
+
+fn var(env: &[(String, String)], name: &str) -> Option<String> {
+    env.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+}
+
+#[tokio::test]
+async fn job_home_gives_each_job_a_home_inside_its_private_directory() {
+    let env = homes_of(None, true).await;
+    let temp = var(&env, "TEMP").unwrap();
+    let home = var(&env, "HOME").unwrap();
+    assert!(home.starts_with(&temp) && home.ends_with("home"), "{env:?}");
+    assert_eq!(var(&env, "USERPROFILE"), Some(home));
+}
+
+#[tokio::test]
+async fn without_job_home_the_home_is_left_as_it_was() {
+    let env = homes_of(None, false).await;
+    assert_eq!(var(&env, "HOME").as_deref(), Some("/home/runner"));
+    assert_eq!(var(&env, "USERPROFILE"), None);
+}
+
+#[tokio::test]
+async fn job_env_home_still_wins_over_job_home() {
+    let env = homes_of(Some("/data/home"), true).await;
+    assert_eq!(var(&env, "HOME").as_deref(), Some("/data/home"));
+}
+
+#[tokio::test]
 async fn secrets_reach_only_the_steps_that_requested_them() {
     let rig = Rig::new();
     rig.files.mkdir(Path::new("/w/tree"));

@@ -32,8 +32,11 @@ async fn hub_absent_cancels_waiting_orders_after_absent_after_min() {
     let row = h.until_state(ALEX, "j1", JobState::Cancelled).await;
     assert_eq!(row.job.cancel_reason.as_deref(), Some("hub_absent"));
     let mut hub = h.local_hub("alex").await;
-    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    hub.send(&HubToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     let r = loop {
         if let BrokerToHub::JobResult(r) = hub.hub().await {
             break r;

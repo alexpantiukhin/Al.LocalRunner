@@ -189,7 +189,10 @@ async fn own_runs_are_shown_in_full() {
     assert!(hist.iter().all(|j| j.note.as_deref() == Some("why")));
     assert_eq!(s.running[0].steps.len(), 1);
     assert_eq!(s.queue[0].position, 1);
-    assert_eq!(s.queue[0].wait_reason.as_deref(), Some("раннер занят"));
+    assert_eq!(
+        s.queue[0].wait_reason.as_deref(),
+        Some("the runner is busy")
+    );
     let ReadReply::Job(d) = alex.read(show("j1")).await else {
         panic!("own run")
     };
@@ -567,9 +570,9 @@ async fn explain_of_a_granted_order_says_how_long_it_waits_and_when_the_runner_a
     pass_time_heard(&h, &mut r, &mut alex, 5).await;
     h.clock.advance(std::time::Duration::from_secs(20));
     let text = explain_text(alex.read(explain_of("j1")).await);
-    assert!(text.contains("выдан раннеру r1"), "{text}");
-    assert!(text.contains("ждёт старта уже 2 мин"), "{text}");
-    assert!(text.contains("раннер отвечал 20 с назад"), "{text}");
+    assert!(text.contains("assigned to runner r1"), "{text}");
+    assert!(text.contains("waiting to start for 2 min"), "{text}");
+    assert!(text.contains("the runner answered 20 s ago"), "{text}");
     assert!(
         !text.contains("stale") && !text.contains("offline"),
         "{text}"
@@ -588,11 +591,14 @@ async fn explain_names_the_job_that_holds_the_only_slot() {
     alex.send(&order("j2", req(512, 1, 60))).await;
     assert_eq!(
         alex.accepted().await.waiting.as_deref(),
-        Some("раннер занят")
+        Some("the runner is busy")
     );
     pass_time_heard(&h, &mut r, &mut alex, 9).await;
     let text = explain_text(alex.read(explain_of("j2")).await);
-    assert!(text.contains("раннер занят заказом j1 (3 мин)"), "{text}");
+    assert!(
+        text.contains("the runner is busy with order j1 (3 min)"),
+        "{text}"
+    );
 }
 
 #[tokio::test]
@@ -610,16 +616,16 @@ async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
     alex.send(&order("j2", req(512, 1, 60))).await;
     alex.accepted().await;
     let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
-    assert!(seen_by_ci.contains("раннер занят"), "{seen_by_ci}");
+    assert!(seen_by_ci.contains("the runner is busy"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
-    assert!(!seen_by_ci.contains("заказом"), "{seen_by_ci}");
+    assert!(!seen_by_ci.contains("order"), "{seen_by_ci}");
     assert!(
-        !seen_by_ci.contains('(') && !seen_by_ci.contains("мин"),
+        !seen_by_ci.contains('(') && !seen_by_ci.contains("min"),
         "the age of the hidden job leaks: {seen_by_ci}"
     );
     let seen_by_owner = explain_text(alex.read(explain_of("j2")).await);
     assert!(
-        seen_by_owner.contains("раннер занят заказом j1 ("),
+        seen_by_owner.contains("the runner is busy with order j1 ("),
         "{seen_by_owner}"
     );
 }
@@ -814,10 +820,10 @@ async fn explain_answers_for_a_rejected_order_and_names_the_unmet_requirement() 
     alex.send(&order("j9", bash_needed())).await;
     alex.rejected().await;
     let text = explain_text(alex.read(explain_of("j9")).await);
-    assert!(text.contains("отклонена при приёме"), "{text}");
+    assert!(text.contains("rejected at intake"), "{text}");
     assert!(text.contains("rejected_no_matching_runner"), "{text}");
-    assert!(text.contains("r1: bash не найден"), "{text}");
-    assert!(text.contains("кто: broker"), "{text}");
+    assert!(text.contains("r1: bash not found"), "{text}");
+    assert!(text.contains("by: broker"), "{text}");
     match alex.read(explain_of("never-sent")).await {
         ReadReply::NotFound { what } => assert_eq!(what, "job never-sent"),
         other => panic!("expected not found, got {other:?}"),
@@ -831,9 +837,9 @@ async fn explain_of_a_cancelled_order_names_who_cancelled_it_and_why() {
     alex.send(&cancel("j2", 2)).await;
     cancel_acked(&mut alex).await;
     let text = explain_text(alex.read(explain_of("j2")).await);
-    assert!(text.contains("отменена"), "{text}");
+    assert!(text.contains("cancelled"), "{text}");
     assert!(text.contains("cancelled_by_user"), "{text}");
-    assert!(text.contains("кто: agent-1"), "{text}");
+    assert!(text.contains("by: agent-1"), "{text}");
     assert!(text.contains("stop"), "{text}");
 }
 
@@ -963,5 +969,5 @@ async fn an_unknown_canceller_is_absent_not_empty() {
     let j2 = runs.iter().find(|s| s.job.0 == "j2").unwrap();
     assert_eq!(j2.cancelled_by, None);
     let text = explain_text(alex.read(explain_of("j2")).await);
-    assert!(!text.contains("кто:"), "{text}");
+    assert!(!text.contains("by:"), "{text}");
 }

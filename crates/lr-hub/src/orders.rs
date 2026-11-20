@@ -108,7 +108,7 @@ async fn committed(
     if !repo.is_pushed(root, &sha).await.map_err(repo_err)? {
         return Err(Refusal::Rejected(
             ReasonCode::Rejected(RejectReason::CommitNotPushed),
-            format!("HEAD {sha} не запушен: закоммитьте и запушьте ветку (MR не нужен)"),
+            format!("HEAD {sha} is not pushed: commit and push the branch (no MR is needed)"),
         ));
     }
     match repo.has_uncommitted(root).await {

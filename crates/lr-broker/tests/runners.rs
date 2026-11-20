@@ -310,8 +310,11 @@ async fn reconnect_with_replay(h: &Harness, name: &str, addr: &str) -> Conn {
     let mut c = h.dial(member_peer(&format!("pk-{name}"), addr)).await;
     c.send(&hello(name, Some(linux()))).await;
     c.welcome().await;
-    c.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    c.send(&RunnerToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     c
 }
 

@@ -79,6 +79,24 @@ fn share(part: u64, all: u64) -> String {
     }
 }
 
+fn memory_line(m: &lr_proto::MemoryStatsView) -> String {
+    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} MB"));
+    let verdict = match (m.declared_mb, m.max_mb) {
+        (Some(d), Some(max)) if max > d => " (the peak is above the declared value: raise mem_mb)",
+        (Some(d), Some(max)) if max.saturating_mul(2) < d => {
+            " (the declared value is more than twice the peak: it can be lowered)"
+        }
+        _ => "",
+    };
+    format!(
+        "    memory: declared {}; peak median {}, max {} over {} runs{verdict}",
+        mb(m.declared_mb),
+        mb(m.median_mb),
+        mb(m.max_mb),
+        m.measured
+    )
+}
+
 /// The statistics of every broker as text.
 pub fn stats_lines(per: &[(String, StatsView)]) -> Vec<String> {
     let mut out = Vec::new();
@@ -101,6 +119,13 @@ pub fn stats_lines(per: &[(String, StatsView)]) -> Vec<String> {
                 spread(&p.wait_ms),
                 spread(&p.duration_ms)
             ));
+            if let Some(m) = p
+                .mem
+                .as_ref()
+                .filter(|m| m.declared_mb.is_some() || m.measured > 0)
+            {
+                out.push(memory_line(m));
+            }
             for s in &p.steps {
                 out.push(format!(
                     "    step {}: {} runs, {} passed; duration {}",
@@ -192,7 +217,7 @@ fn kind_column(r: &RunnerInfo) -> String {
 fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
     let c = &r.caps;
     out.push(format!(
-        "  {}\t{}{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
+        "  {}\t{}{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\tdisk free {} GB\t\
          tags {}\tprograms {}",
         r.name,
         liveness_text(r),
@@ -203,6 +228,7 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         r.free_mem_mb,
         c.cpu,
         r.free_cpu,
+        c.disk_mb / 1024,
         listed(c.tags.iter()),
         listed(c.programs.iter()),
     ));

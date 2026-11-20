@@ -26,6 +26,7 @@ pub struct TlsListening {
     merged: Arc<MergedListener>,
     addresses: Vec<ListenAddr>,
     bound: Mutex<Option<Vec<SocketAddr>>>,
+    sockets: Mutex<Vec<Arc<TlsListener>>>,
     starting: tokio::sync::Mutex<()>,
     desk: Option<Arc<crate::join::JoinDesk>>,
 }
@@ -44,6 +45,7 @@ impl TlsListening {
             merged,
             addresses,
             bound: Mutex::new(None),
+            sockets: Mutex::new(Vec::new()),
             starting: tokio::sync::Mutex::new(()),
             desk: None,
         }
@@ -76,7 +78,12 @@ impl TlsListening {
         }
         let bound: Vec<SocketAddr> = listeners.iter().map(|l| l.local_addr()).collect();
         for l in listeners {
-            let l: Arc<dyn Listener> = Arc::new(l);
+            let l = Arc::new(l);
+            self.sockets
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(l.clone());
+            let l: Arc<dyn Listener> = l;
             let l: Arc<dyn Listener> = match &self.desk {
                 Some(desk) => Arc::new(crate::join::JoiningListener::new(l, desk.clone())),
                 None => l,
@@ -85,6 +92,30 @@ impl TlsListening {
         }
         *self.bound.lock().unwrap_or_else(|e| e.into_inner()) = Some(bound.clone());
         Ok(bound)
+    }
+
+    /// Stops accepting on every network socket at once.
+    pub fn close(&self) {
+        for l in self
+            .sockets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+        {
+            l.close();
+        }
+    }
+
+    /// Waits until the network sockets closed by [`TlsListening::close`] have let their ports go.
+    pub async fn closed(&self) {
+        let sockets = self
+            .sockets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        for l in sockets {
+            l.closed().await;
+        }
     }
 
     /// The bound addresses, empty while not listening.

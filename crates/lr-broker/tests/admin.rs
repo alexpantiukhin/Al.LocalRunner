@@ -408,8 +408,11 @@ async fn a_held_assignment_of_a_revoked_key_resumed_without_it_is_cancelled() {
     let mut back = h.dial(member_peer("pk-r1", "10.0.0.5")).await;
     back.send(&hello("r1", Some(linux()))).await;
     back.welcome().await;
-    back.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    back.send(&RunnerToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     ends_client_removed_and_r2_gets_nothing(&h, &mut r2).await;
     back.quiet().await;
 }

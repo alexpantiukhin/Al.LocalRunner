@@ -17,6 +17,9 @@ pub enum ServiceStatus {
 pub struct Accept {
     /// Only orders needing at least this much memory are accepted.
     pub min_mem_mb: Option<u64>,
+    /// A job starts only while the volume of the job root has at least this much free disk (the
+    /// larger of this and the job's own `disk_mb` counts).
+    pub min_free_disk_mb: Option<u64>,
 }
 
 /// What a runner reports about itself.
@@ -49,7 +52,7 @@ pub struct Capabilities {
 }
 
 /// The words that mark a refusal naming a runner joined by key.
-pub const JOINED_BY_KEY: &str = "подключён по ключу";
+pub const JOINED_BY_KEY: &str = "joined by key";
 
 /// One reason a runner does not suit an order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,43 +141,43 @@ pub enum MismatchReason {
 impl fmt::Display for MismatchReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Platform { needed } => write!(f, "платформа {needed} не заявлена"),
+            Self::Platform { needed } => write!(f, "platform {needed} is not declared"),
             Self::NotSameMachine { runner, .. } if runner.is_empty() => {
-                write!(f, "раннер не на машине клиента")
+                write!(f, "the runner is not on the client machine")
             }
             Self::NotSameMachine {
                 runner,
                 joined: true,
             } => write!(
                 f,
-                "раннер {runner} {JOINED_BY_KEY}: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента"
+                "runner {runner} {JOINED_BY_KEY}: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
             ),
             Self::NotSameMachine {
                 runner,
                 joined: false,
-            } => write!(f, "раннер {runner} не на машине клиента"),
+            } => write!(f, "runner {runner} is not on the client machine"),
             Self::Memory { needed, available } => {
-                write!(f, "нужно {needed} МБ, у раннера {available}")
+                write!(f, "needs {needed} MB, the runner has {available}")
             }
             Self::Cpu { needed, available } => {
-                write!(f, "нужно {needed} CPU, у раннера {available}")
+                write!(f, "needs {needed} CPU, the runner has {available}")
             }
             Self::Disk { needed, available } => {
-                write!(f, "нужно {needed} МБ диска, свободно {available}")
+                write!(f, "needs {needed} MB of disk, {available} free")
             }
-            Self::Program { name } => write!(f, "{name} не найден"),
-            Self::Tag { name } => write!(f, "тег {name} не заявлен"),
+            Self::Program { name } => write!(f, "{name} not found"),
+            Self::Tag { name } => write!(f, "tag {name} is not declared"),
             Self::Timeout { needed, ceiling } => {
-                write!(f, "нужен таймаут {needed} с, потолок раннера {ceiling} с")
+                write!(f, "needs a timeout of {needed} s, the runner ceiling is {ceiling} s")
             }
-            Self::ServiceMissing { name } => write!(f, "сервис {name} не описан"),
-            Self::ServiceUnavailable { name } => write!(f, "сервис {name} недоступен"),
+            Self::ServiceMissing { name } => write!(f, "service {name} is not described"),
+            Self::ServiceUnavailable { name } => write!(f, "service {name} is unavailable"),
             Self::Zone { runner, allowed } => {
-                write!(f, "зона раннера {runner}, допустима не дальше {allowed}")
+                write!(f, "the zone of runner {runner} is beyond the allowed {allowed}")
             }
-            Self::CommandMissing { name } => write!(f, "команда {name} не описана"),
+            Self::CommandMissing { name } => write!(f, "command {name} is not described"),
             Self::BelowAccept { needed, min } => {
-                write!(f, "заказ на {needed} МБ легче допуска раннера {min} МБ")
+                write!(f, "an order of {needed} MB is below the runner minimum of {min} MB")
             }
         }
     }

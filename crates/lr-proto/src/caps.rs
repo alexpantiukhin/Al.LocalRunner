@@ -25,6 +25,10 @@ pub struct WireLoad {
     pub cpu_busy_percent: u8,
     /// Logical cores of the machine.
     pub cpu_cores: u32,
+    /// Free disk on the volume of the job root, MB; absent from runners of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_disk_mb: Option<u64>,
 }
 
 impl From<WireLoad> for MachineLoad {
@@ -33,6 +37,7 @@ impl From<WireLoad> for MachineLoad {
             free_mem_mb: l.free_mem_mb,
             cpu_busy_percent: l.cpu_busy_percent.min(100),
             cpu_cores: l.cpu_cores,
+            free_disk_mb: l.free_disk_mb,
         }
     }
 }
@@ -61,6 +66,9 @@ pub struct WireCapabilities {
     pub machine: Option<MachineRef>,
     /// `[accept] min_mem_mb`.
     pub accept_min_mem_mb: Option<u64>,
+    /// `[accept] min_free_disk_mb`; absent from runners of an earlier minor version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_min_free_disk_mb: Option<u64>,
     /// Cache size limit in MB, for the runners page.
     pub cache_max_mb: Option<u64>,
     /// Cache fill in MB.
@@ -113,6 +121,7 @@ impl From<&Capabilities> for WireCapabilities {
                 .collect(),
             machine: c.machine.clone(),
             accept_min_mem_mb: c.accept.min_mem_mb,
+            accept_min_free_disk_mb: c.accept.min_free_disk_mb,
             cache_max_mb: None,
             cache_used_mb: None,
             service_mem_mb: BTreeMap::new(),
@@ -152,6 +161,7 @@ impl WireCapabilities {
             machine: self.machine,
             accept: Accept {
                 min_mem_mb: self.accept_min_mem_mb,
+                min_free_disk_mb: self.accept_min_free_disk_mb,
             },
             commands: self.commands,
         }

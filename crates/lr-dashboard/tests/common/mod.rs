@@ -44,6 +44,7 @@ fn job(
                 source: None,
                 note: None,
                 branch: None,
+                commit: None,
                 cwd: None,
                 timeout_s: None,
                 github_run_url: None,

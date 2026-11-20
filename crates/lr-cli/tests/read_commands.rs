@@ -34,6 +34,7 @@ fn summary(job: &str, queued: u64) -> JobSummary {
         source: Some(WireSource::Session),
         note: None,
         branch: None,
+        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,
@@ -102,6 +103,15 @@ fn parse(args: &[&str]) -> Command {
     let mut argv = vec!["localrunner"];
     argv.extend_from_slice(args);
     Cli::try_parse_from(argv).expect("parses").command
+}
+
+#[test]
+fn status_of_one_job_accepts_and_ignores_the_label() {
+    let Command::Status { job, label, .. } = parse(&["status", "j1", "--as", "agent"]) else {
+        panic!("status");
+    };
+    assert_eq!(job.as_deref(), Some("j1"));
+    assert_eq!(label.as_deref(), Some("agent"));
 }
 
 #[test]
@@ -346,9 +356,72 @@ fn log_printer_masks_secrets_even_when_a_chunk_splits_them() {
 }
 
 #[test]
+fn stats_print_declared_and_real_memory_with_a_verdict() {
+    let view = |declared, max| StatsView {
+        profiles: vec![ProfileStatsView {
+            mem: Some(lr_proto::MemoryStatsView {
+                declared_mb: declared,
+                measured: 5,
+                median_mb: Some(9000),
+                max_mb: max,
+            }),
+            profile: "rust-test".into(),
+            runs: 5,
+            passed: 5,
+            failed: 0,
+            timeouts: 0,
+            cancelled: 0,
+            lost: 0,
+            wait_ms: SpreadView {
+                median: None,
+                p95: None,
+            },
+            duration_ms: SpreadView {
+                median: None,
+                p95: None,
+            },
+            steps: Vec::new(),
+        }],
+        clients: Vec::new(),
+    };
+    let text = |declared, max| {
+        stats_lines(&[("local".into(), view(declared, max))]).join(
+            "
+",
+        )
+    };
+    let over = text(Some(8192), Some(22_000));
+    assert!(
+        over.contains("memory: declared 8192 MB; peak median 9000 MB, max 22000 MB over 5 runs")
+            && over.contains("raise mem_mb"),
+        "{over}"
+    );
+    let slack = text(Some(65_536), Some(22_000));
+    assert!(slack.contains("can be lowered"), "{slack}");
+    let fine = text(Some(24_000), Some(22_000));
+    assert!(
+        !fine.contains("raise") && !fine.contains("lowered"),
+        "{fine}"
+    );
+    let none = stats_lines(&[(
+        "local".into(),
+        StatsView {
+            profiles: Vec::new(),
+            clients: Vec::new(),
+        },
+    )])
+    .join(
+        "
+",
+    );
+    assert!(!none.contains("memory:"));
+}
+
+#[test]
 fn stats_and_runners_print_per_broker() {
     let stats = StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: "unit".into(),
             runs: 4,
             passed: 3,
@@ -386,6 +459,7 @@ fn stats_and_runners_print_per_broker() {
             services: BTreeMap::new(),
             machine: None,
             accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
             cache_max_mb: None,
             cache_used_mb: None,
             service_mem_mb: Default::default(),
@@ -523,7 +597,6 @@ fn status_of_one_job_refuses_the_list_filters_it_would_ignore() {
     for filter in [
         &["--project", "owner/repo"][..],
         &["--source", "session"][..],
-        &["--as", "ci"][..],
     ] {
         let mut argv = vec!["localrunner", "status", "j1"];
         argv.extend_from_slice(filter);
@@ -650,6 +723,7 @@ fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo 
             services: BTreeMap::new(),
             machine: None,
             accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
             cache_max_mb: None,
             cache_used_mb: None,
             service_mem_mb: Default::default(),
@@ -699,22 +773,26 @@ fn status_with_a_job_id_parses_and_prints_its_state_and_reason() {
         steps: Vec::new(),
         secrets: Vec::new(),
         cancelled_by: None,
-        wait_reason: Some("раннер занят заказом j1 (3 мин)".into()),
+        wait_reason: Some("the runner is busy with order j1 (3 min)".into()),
     };
     detail.summary.state = JobState::Queued;
     let text = job_lines(
         "office",
         &JobId("j2".into()),
-        "ждёт: раннер занят заказом j1 (3 мин)",
+        "waits: the runner is busy with order j1 (3 min)",
         Some(&detail),
     )
     .join("\n");
-    for needed in ["j2", "office", "queued", "раннер занят заказом j1 (3 мин)"]
-    {
+    for needed in [
+        "j2",
+        "office",
+        "queued",
+        "the runner is busy with order j1 (3 min)",
+    ] {
         assert!(text.contains(needed), "{needed} missing:\n{text}");
     }
-    let bare = job_lines("office", &JobId("j2".into()), "ждёт в очереди", None).join("\n");
-    assert!(bare.contains("ждёт в очереди"), "{bare}");
+    let bare = job_lines("office", &JobId("j2".into()), "waits in the queue", None).join("\n");
+    assert!(bare.contains("waits in the queue"), "{bare}");
 }
 
 #[test]

@@ -42,8 +42,11 @@ async fn rejoin(h: &Harness, name: &str) -> Conn {
 
 async fn final_result(h: &Harness) -> JobResult {
     let mut hub = h.local_hub("alex").await;
-    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    hub.send(&HubToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     loop {
         if let BrokerToHub::JobResult(r) = hub.hub().await {
             return r;

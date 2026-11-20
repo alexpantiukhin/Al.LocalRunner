@@ -69,13 +69,13 @@ pub(super) fn overridden(
     let mut parts = Vec::new();
     if over.mem_mb.is_some() && req.mem_mb > pool.mem_mb {
         parts.push(format!(
-            "--mem {} МБ больше пула: максимум в пуле {} МБ",
+            "--mem {} MB is above the pool: the pool maximum is {} MB",
             req.mem_mb, pool.mem_mb
         ));
     }
     if over.cpu.is_some() && req.cpu > pool.cpu {
         parts.push(format!(
-            "--cpu {} больше пула: максимум в пуле {} CPU",
+            "--cpu {} is above the pool: the pool maximum is {} CPU",
             req.cpu, pool.cpu
         ));
     }
@@ -285,7 +285,7 @@ impl Engine {
         if active >= limit {
             return Err((
                 RejectReason::QueueLimit,
-                format!("активных заказов у клиента {active}, предел {limit}"),
+                format!("the client has {active} active orders, the limit is {limit}"),
             ));
         }
         self.allowed(entry, spec)?;

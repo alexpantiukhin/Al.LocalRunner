@@ -96,6 +96,7 @@ async fn broker_resume_drops_what_it_already_has() {
             job: JobId("job-1".into()),
             last_seq: 2,
         }],
+        incomplete: false,
     }))
     .await;
     rig.settle().await;

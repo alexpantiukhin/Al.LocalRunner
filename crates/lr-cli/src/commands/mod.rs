@@ -168,8 +168,8 @@ pub enum Command {
         /// Only this source; not with `JOB`.
         #[arg(long, value_enum, conflicts_with = "job")]
         source: Option<SourceArg>,
-        /// Only this label; not with `JOB`.
-        #[arg(long = "as", value_name = "LABEL", conflicts_with = "job")]
+        /// Only this label; with `JOB` it is accepted and ignored: the job id is enough.
+        #[arg(long = "as", value_name = "LABEL")]
         label: Option<String>,
         /// Only this broker.
         #[arg(long)]
@@ -229,7 +229,8 @@ pub enum Command {
     /// Stop runners, the hub and the broker: runners finish the current job (default) or
     /// cancel it.
     Down {
-        /// Runner names, `hub` or `broker`; every role of this installation when omitted.
+        /// Runner names, `runner` (every runner), `hub` or `broker`; every role of this
+        /// installation when omitted.
         names: Vec<String>,
         /// Finish the current job first (default).
         #[arg(long, conflicts_with = "cancel")]

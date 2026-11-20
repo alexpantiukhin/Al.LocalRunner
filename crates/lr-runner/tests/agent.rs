@@ -204,9 +204,31 @@ async fn heartbeat_carries_the_load_of_the_machine() {
                 free_mem_mb: 2048,
                 cpu_busy_percent: 40,
                 cpu_cores: 8,
+                free_disk_mb: None,
             })
         }
     );
+}
+
+#[tokio::test]
+async fn heartbeat_carries_the_free_disk_of_the_job_root() {
+    let rig = Rig::new();
+    rig.load.set(Some(lr_abstractions::LoadSample {
+        free_mem_mb: 2048,
+        cpu_busy_percent: 40,
+        cpu_cores: 8,
+    }));
+    rig.disk.set(std::path::Path::new("/"), 12_288);
+    let (_c, _h) = rig.start();
+    let b = Broker::accept(&rig).await;
+    rig.advance(15 * SEC).await;
+    let m = b
+        .until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
+        .await;
+    match m {
+        RunnerToBroker::Heartbeat { load: Some(l) } => assert_eq!(l.free_disk_mb, Some(12_288)),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[tokio::test]

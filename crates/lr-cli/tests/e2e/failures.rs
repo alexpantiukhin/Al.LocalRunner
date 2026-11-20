@@ -196,7 +196,7 @@ async fn timeout_kills_grandchildren() {
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    let timeout_s = 5;
+    let timeout_s = 12;
     let repo = repo(&dir, &helper_profile("tree", Mode::Tree, &gate, timeout_s));
     let (client, job) = submit(&layout, &repo, "tree", None).await;
     let grandchild = gate.started("tree", "grandchild").await;

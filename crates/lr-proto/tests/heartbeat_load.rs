@@ -29,6 +29,7 @@ fn a_heartbeat_with_a_load_round_trips() {
             free_mem_mb: 4096,
             cpu_busy_percent: 37,
             cpu_cores: 16,
+            free_disk_mb: None,
         }),
     };
     let bytes = encode(&beat).unwrap();
@@ -45,6 +46,7 @@ fn the_load_converts_for_the_scheduler_and_clamps_the_percent() {
         free_mem_mb: 10,
         cpu_busy_percent: 250,
         cpu_cores: 4,
+        free_disk_mb: None,
     }
     .into();
     assert_eq!(
@@ -52,7 +54,8 @@ fn the_load_converts_for_the_scheduler_and_clamps_the_percent() {
         MachineLoad {
             free_mem_mb: 10,
             cpu_busy_percent: 100,
-            cpu_cores: 4
+            cpu_cores: 4,
+            free_disk_mb: None
         }
     );
 }

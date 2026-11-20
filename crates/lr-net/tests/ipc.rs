@@ -222,6 +222,7 @@ async fn client_without_preamble_not_accepted() {
         .expect("the real client is not held up")
         .unwrap();
     exchange(real.as_ref(), server.as_ref()).await;
+    tokio::time::pause();
     let more =
         tokio::time::timeout(PREAMBLE_TIMEOUT + Duration::from_secs(1), listener.accept()).await;
     assert!(

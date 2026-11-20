@@ -74,8 +74,8 @@ pub(crate) fn exceeded_detail(e: &Exceeded) -> String {
         LimitedResource::Disk => ("disk_mb", e.declared_mb.unwrap_or(e.limit_mb)),
     };
     format!(
-        "превышен заявленный {key}: заявлено {declared} МБ, пик {} МБ",
-        e.peak_mb
+        "declared {key} exceeded: declared {declared} MB, ceiling {} MB, peak {} MB; raise {key} in the profile",
+        e.limit_mb, e.peak_mb
     )
 }
 
@@ -231,13 +231,13 @@ mod tests {
         };
         assert_eq!(
             exceeded_detail(&e),
-            "превышен заявленный mem_mb: заявлено 4000 МБ, пик 5200 МБ"
+            "declared mem_mb exceeded: declared 4000 MB, ceiling 5000 MB, peak 5200 MB; raise mem_mb in the profile"
         );
         let d = Exceeded {
             resource: LimitedResource::Disk,
             declared_mb: None,
             ..e
         };
-        assert!(exceeded_detail(&d).starts_with("превышен заявленный disk_mb: заявлено 5000"));
+        assert!(exceeded_detail(&d).starts_with("declared disk_mb exceeded: declared 5000"));
     }
 }

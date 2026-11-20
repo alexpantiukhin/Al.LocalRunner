@@ -132,6 +132,42 @@ async fn platform_order_reads_profile_from_commit_with_repo_url_and_branch() {
 }
 
 #[tokio::test]
+async fn an_identical_order_warns_with_the_existing_job_and_is_queued_anyway() {
+    let mut rig = Rig::new();
+    rig.join("lan1").await;
+    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    until(&lan, "connected", || lan.resumed()).await;
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
+        .await;
+    let first = match cli.reply().await {
+        CliReply::Submitted { job, warnings } => {
+            assert!(warnings.is_empty(), "{warnings:?}");
+            job
+        }
+        other => panic!("{other:?}"),
+    };
+    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
+        .await;
+    match cli.reply().await {
+        CliReply::Submitted { job, warnings } => {
+            assert_ne!(job, first, "the copy is queued too");
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+            let short = &COMMIT[..7];
+            assert!(
+                warnings[0].contains(&format!("job {first}"))
+                    && warnings[0].contains(&format!("commit {short}"))
+                    && warnings[0].contains("identical"),
+                "{warnings:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    until(&lan, "both orders sent", || lan.orders().len() == 2).await;
+}
+
+#[tokio::test]
 async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
     let mut rig = Rig::new();
     rig.repo.set_uncommitted(&repo_root(), true);
@@ -157,7 +193,10 @@ async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
     cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
         .await;
     match cli.reply().await {
-        CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
+        CliReply::Submitted { warnings, .. } => assert!(
+            warnings.iter().all(|w| !w.contains("uncommitted")),
+            "{warnings:?}"
+        ),
         other => panic!("{other:?}"),
     }
 }

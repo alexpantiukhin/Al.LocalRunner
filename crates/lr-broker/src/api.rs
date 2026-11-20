@@ -6,8 +6,8 @@ use crate::policy::OthersOrders;
 use lr_abstractions::{JobRecord, JobRow, SourceKind, Spread, Stats, StepRow};
 use lr_core::{JobState, StepState, Timestamp};
 use lr_proto::{
-    ClientUsageView, JobDetail, JobSummary, ProfileStatsView, QueueEvent, ReasonCode, SpreadView,
-    StatsView, StepStatsView, StepView, Topic, WireSource,
+    ClientUsageView, JobDetail, JobSummary, MemoryStatsView, ProfileStatsView, QueueEvent,
+    ReasonCode, SpreadView, StatsView, StepStatsView, StepView, Topic, WireSource,
 };
 
 /// How much of a run a reader may see.
@@ -69,6 +69,7 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.note = None;
             s.branch = None;
             s.cwd = None;
+            s.commit = None;
             s.timeout_s = None;
             s.github_run_url = None;
             s.peak_mem_mb = None;
@@ -147,10 +148,10 @@ fn rejection_text(row: &JobRow) -> Option<String> {
 
 /// The sentence about the peaks of a finished run, `None` when the runner reported none.
 pub fn peaks_text(row: &JobRow) -> Option<String> {
-    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} МБ"));
+    let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| format!("{v} MB"));
     (row.peak_mem_mb.is_some() || row.peak_disk_mb.is_some()).then(|| {
         format!(
-            "пик памяти {}, пик диска {}",
+            "memory peak {}, disk peak {}",
             mb(row.peak_mem_mb),
             mb(row.peak_disk_mb)
         )
@@ -184,6 +185,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         source: Some(wire_source(row.source)),
         note: row.note.clone(),
         branch: row.branch.clone(),
+        commit: row.commit_sha.clone(),
         cwd: Some(row.cwd.clone()),
         timeout_s: None,
         github_run_url: None,
@@ -311,6 +313,10 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         }),
         note: job.spec.identity.note.clone(),
         branch: job.spec.identity.branch.clone(),
+        commit: match &job.spec.code {
+            lr_proto::WireCode::Commit { sha, .. } => Some(sha.clone()),
+            lr_proto::WireCode::WorkTree { .. } => None,
+        },
         cwd: Some(job.spec.identity.cwd.display().to_string()),
         timeout_s: Some(job.entry.order.requirements.timeout_s),
         github_run_url: match &job.spec.identity.source {
@@ -347,6 +353,12 @@ pub fn stats_view(s: &Stats) -> StatsView {
                 lost: p.lost,
                 wait_ms: spread(&p.wait_ms),
                 duration_ms: spread(&p.duration_ms),
+                mem: Some(MemoryStatsView {
+                    declared_mb: p.mem.declared_mb,
+                    measured: p.mem.measured,
+                    median_mb: p.mem.median_mb,
+                    max_mb: p.mem.max_mb,
+                }),
                 steps: p
                     .steps
                     .iter()

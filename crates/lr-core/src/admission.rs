@@ -46,6 +46,8 @@ pub struct MachineLoad {
     pub cpu_busy_percent: u8,
     /// Logical cores of the machine.
     pub cpu_cores: u32,
+    /// Free disk on the volume of the job root, MB; `None` when the runner does not say.
+    pub free_disk_mb: Option<u64>,
 }
 
 /// Which resource the foreign load takes.

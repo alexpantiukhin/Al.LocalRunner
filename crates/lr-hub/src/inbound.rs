@@ -78,7 +78,13 @@ impl Engine {
                         last_seq: t.order.last_seq,
                     })
                     .collect();
-                self.send_now(name, &HubToBroker::Resume(Resume { points }));
+                self.send_now(
+                    name,
+                    &HubToBroker::Resume(Resume {
+                        points,
+                        incomplete: false,
+                    }),
+                );
                 self.flush(name).await;
                 let waiting: Vec<JobId> = self
                     .tracks

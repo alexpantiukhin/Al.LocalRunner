@@ -451,6 +451,7 @@ path = "/usr/bin"
     assert_eq!(s.name, "linux-heavy");
     assert!(s.platforms.contains("android") && s.tags.contains("emulator"));
     assert_eq!(s.accept_min_mem_mb, Some(8192));
+    assert_eq!(s.accept_min_free_disk_mb, None);
     assert!(s.programs.contains("git") && s.programs.contains("adb"));
     assert_eq!(s.max_job_timeout_s, Some(3600));
     assert_eq!(s.cache.max_size_gb, Some(40));
@@ -707,4 +708,20 @@ async fn a_stop_while_the_welcome_never_comes_ends_within_the_bound() {
     assert!(h.is_finished(), "a missing welcome kept the runner");
     assert_eq!(h.await.unwrap(), AgentExit::Stopped);
     assert_eq!(rig.pending().await.len(), 5, "the outbox is kept");
+}
+
+#[test]
+fn accept_min_free_disk_mb_is_read_and_zero_is_refused() {
+    let ok = "name = \"r\"
+[accept]
+min_free_disk_mb = 40960
+[env]
+path = \"/usr/bin\"
+";
+    let s = RunnerSettings::from_toml(ok, PathBuf::from("/state")).unwrap();
+    assert_eq!(s.accept_min_free_disk_mb, Some(40960));
+    assert_eq!(s.capabilities(None).accept_min_free_disk_mb, Some(40960));
+    let zero = ok.replace("40960", "0");
+    let e = RunnerSettings::from_toml(&zero, PathBuf::from("/state")).unwrap_err();
+    assert!(e.0.contains("min_free_disk_mb"), "{}", e.0);
 }

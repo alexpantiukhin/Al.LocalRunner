@@ -172,6 +172,17 @@ pub(crate) fn apply_job_temp(env: &mut Vec<(String, String)>, temp: &Path) {
     }
 }
 
+/// Points `HOME` and `USERPROFILE` of a job at a directory of its own inside `temp`.
+pub(crate) fn apply_job_home(env: &mut Vec<(String, String)>, temp: &Path) -> PathBuf {
+    let home = temp.join("home");
+    let value = home.to_string_lossy().into_owned();
+    env.retain(|(k, _)| !["HOME", "USERPROFILE"].contains(&k.as_str()));
+    for name in ["HOME", "USERPROFILE"] {
+        env.push((name.to_string(), value.clone()));
+    }
+    home
+}
+
 /// A short label unique per job, for cleanup hooks to find what the job left behind.
 pub(crate) fn job_label(job: &JobId) -> String {
     format!("lr-{}", job.0)

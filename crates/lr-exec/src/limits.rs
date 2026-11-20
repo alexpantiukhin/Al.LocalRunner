@@ -263,8 +263,8 @@ pub(crate) fn kill_line(ex: &Exceeded) -> String {
     let (_, key) = names(ex.resource);
     let declared = ex.declared_mb.unwrap_or(ex.limit_mb);
     format!(
-        "localrunner: killed: declared {key} exceeded: declared {declared} MB, peak {} MB\n",
-        ex.peak_mb
+        "localrunner: killed: declared {key} exceeded: declared {declared} MB, ceiling {} MB, peak {} MB (raise {key} in the profile)\n",
+        ex.limit_mb, ex.peak_mb
     )
 }
 
@@ -585,7 +585,7 @@ mod tests {
         );
         assert_eq!(
             kill_line(&ex),
-            "localrunner: killed: declared mem_mb exceeded: declared 1000 MB, peak 1500 MB\n"
+            "localrunner: killed: declared mem_mb exceeded: declared 1000 MB, ceiling 1250 MB, peak 1500 MB (raise mem_mb in the profile)\n"
         );
         assert_eq!(
             held_line(&ex),

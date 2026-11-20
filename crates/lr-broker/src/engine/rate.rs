@@ -39,7 +39,7 @@ impl Engine {
             return None;
         }
         Some(format!(
-            "больше {limit} запросов API за минуту у клиента; повторите позже"
+            "more than {limit} API requests per minute from the client; retry later"
         ))
     }
 

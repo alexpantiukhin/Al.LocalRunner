@@ -3,7 +3,7 @@ mod common;
 use common::broker::{OnOrder, Script};
 use common::*;
 use lr_core::Zone;
-use lr_proto::{CliReply, ReasonCode, RejectReason};
+use lr_proto::{CliRead, CliReply, CliRequest, ReadReply, ReadRequest, ReasonCode, RejectReason};
 
 fn lan_only(rig: &Rig) {
     let profiles = PROFILES.replace(
@@ -47,6 +47,59 @@ async fn rejection_with_no_allowed_broker_left_reports_the_last_reason() {
         other => panic!("{other:?}"),
     }
     assert_eq!(far.queries(), 0);
+}
+
+#[tokio::test]
+async fn an_order_the_hub_rejected_is_explained_by_the_hub_itself() {
+    let mut rig = Rig::new();
+    lan_only(&rig);
+    rig.join("lan-a").await;
+    let no_runner = ReasonCode::Rejected(RejectReason::NoMatchingRunner);
+    let lan = rig.broker(
+        "lan-a",
+        Zone::Lan,
+        Script::linux(Zone::Lan).on_order(OnOrder::Reject(no_runner, "needs 99 MB".into())),
+    );
+    rig.start();
+    until(&lan, "lan connected", || lan.resumed()).await;
+    settle().await;
+    let cli = rig.cli().await;
+    let mut req = submit("remote", Some("linux"));
+    req.wait = true;
+    let job = cli.submit(req).await;
+    assert!(matches!(cli.reply().await, CliReply::Rejected { .. }));
+    for request in [
+        ReadRequest::Explain {
+            job: job.clone(),
+            client: None,
+        },
+        ReadRequest::HistoryShow {
+            job: job.clone(),
+            client: None,
+        },
+    ] {
+        cli.send(CliRequest::Read(CliRead {
+            broker: Some("lan-a".into()),
+            request,
+        }))
+        .await;
+        match cli.reply().await {
+            CliReply::Read {
+                reply: ReadReply::Explain { text, .. },
+                ..
+            } => assert!(text.starts_with("rejected: needs 99 MB"), "{text}"),
+            CliReply::Read {
+                reply: ReadReply::Job(d),
+                ..
+            } => assert!(
+                d.wait_reason
+                    .as_deref()
+                    .is_some_and(|w| w.starts_with("rejected: needs 99 MB")),
+                "{d:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
 }
 
 #[tokio::test]

@@ -129,6 +129,7 @@ fn status_masks_the_last_lines_of_running_jobs() {
         source: None,
         note: None,
         branch: None,
+        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,

@@ -13,7 +13,7 @@ use std::time::Duration;
 #[cfg(windows)]
 fn allocate(chunks: u32, then_sleep_s: u32) -> String {
     format!(
-        "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"$a=@(); for($i=0;$i -lt {chunks};$i++){{ $a += ,(New-Object byte[] 4MB); Start-Sleep -Milliseconds 100 }}; Start-Sleep {then_sleep_s}\""
+        "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command \"$a=@(); for($i=0;$i -lt {chunks};$i++){{ $a += ,(New-Object byte[] 4MB) }}; Start-Sleep {then_sleep_s}\""
     )
 }
 
@@ -103,7 +103,9 @@ async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
     assert!(outcome.usage.peak_mem_mb.unwrap() > 150);
     let text = events_text(&events);
     assert!(
-        text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB, peak"),
+        text.contains(
+            "localrunner: killed: declared mem_mb exceeded: declared 100 MB, ceiling 150 MB, peak"
+        ),
         "{text}"
     );
 }

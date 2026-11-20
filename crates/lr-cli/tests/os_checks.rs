@@ -302,6 +302,10 @@ fn sc_query_output_gives_the_running_state() {
     assert_eq!(parse_sc_state(&stopped), Some(false));
     let starting = running.replace("4  RUNNING", "2  START_PENDING");
     assert_eq!(parse_sc_state(&starting), Some(false));
+    let localised = running.replace("STATE   ", "СОСТОЯНИЕ");
+    assert_eq!(parse_sc_state(&localised), Some(true));
+    let localised_stopped = localised.replace("4  RUNNING", "1  STOPPED");
+    assert_eq!(parse_sc_state(&localised_stopped), Some(false));
     let missing = "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:\r\n";
     assert_eq!(parse_sc_state(missing), None);
     assert_eq!(parse_sc_state(""), None);

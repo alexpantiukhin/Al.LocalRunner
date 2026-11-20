@@ -27,7 +27,7 @@ async fn runner_smaller_than_the_override_does_not_match_with_figures() {
     let r = hub.rejected().await;
     assert_eq!(r.code, ReasonCode::Rejected(RejectReason::NoMatchingRunner));
     assert!(
-        r.detail.contains("r-small") && r.detail.contains("нужно 6144 МБ, у раннера 4096"),
+        r.detail.contains("r-small") && r.detail.contains("needs 6144 MB, the runner has 4096"),
         "{}",
         r.detail
     );
@@ -39,7 +39,7 @@ async fn runner_smaller_than_the_override_does_not_match_with_figures() {
     let r = hub.rejected().await;
     assert_eq!(r.code, ReasonCode::Rejected(RejectReason::NoMatchingRunner));
     assert!(
-        r.detail.contains("нужно 4 CPU, у раннера 2"),
+        r.detail.contains("needs 4 CPU, the runner has 2"),
         "{}",
         r.detail
     );
@@ -107,7 +107,7 @@ async fn trimmed_order_still_skips_a_runner_with_a_lower_ceiling() {
     assert!(
         r.detail.contains("r-low")
             && r.detail
-                .contains("нужен таймаут 600 с, потолок раннера 300 с"),
+                .contains("needs a timeout of 600 s, the runner ceiling is 300 s"),
         "{}",
         r.detail
     );

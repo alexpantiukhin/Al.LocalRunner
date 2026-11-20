@@ -71,6 +71,7 @@ impl Engine {
                 .collect(),
             machine: None,
             accept_min_mem_mb: row.accept_min_mem_mb,
+            accept_min_free_disk_mb: None,
             cache_max_mb: Some(row.cache_max_mb),
             cache_used_mb: Some(row.cache_used_mb),
             service_mem_mb: Default::default(),
