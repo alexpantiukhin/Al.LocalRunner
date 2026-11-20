@@ -65,6 +65,9 @@ pub struct RunnerSettings {
     pub disk_mb: u64,
     /// `[accept] min_mem_mb`.
     pub accept_min_mem_mb: Option<u64>,
+    /// `[accept] min_free_disk_mb`: no job starts while the volume of the job root has less
+    /// free disk than this (or than the job's own `disk_mb`, if larger).
+    pub accept_min_free_disk_mb: Option<u64>,
     /// `[limits] max_job_timeout_s`: the timeout ceiling; `None` for none.
     pub max_job_timeout_s: Option<u64>,
     /// `[cache]`.
@@ -134,6 +137,7 @@ struct RetentionFile {
 #[derive(Deserialize, Default)]
 struct Accept {
     min_mem_mb: Option<u64>,
+    min_free_disk_mb: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -213,6 +217,7 @@ impl RunnerSettings {
             cpu: 0,
             disk_mb: 0,
             accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
             max_job_timeout_s: None,
             cache: Retention::default(),
             workspace: Retention::default(),
@@ -249,6 +254,12 @@ impl RunnerSettings {
         s.tags = f.tags;
         s.programs = f.programs.into_keys().collect();
         s.accept_min_mem_mb = f.accept.min_mem_mb;
+        if f.accept.min_free_disk_mb == Some(0) {
+            return Err(SettingsError(
+                "[accept] min_free_disk_mb must be above 0".into(),
+            ));
+        }
+        s.accept_min_free_disk_mb = f.accept.min_free_disk_mb;
         s.max_job_timeout_s = f.limits.max_job_timeout_s;
         s.enforce = f.limits.enforce.as_deref().map(enforce_mode).transpose()?;
         s.mem_headroom_pct = headroom_pct("mem_headroom", f.limits.mem_headroom)?;
@@ -321,6 +332,7 @@ impl RunnerSettings {
                 .collect(),
             machine: None,
             accept_min_mem_mb: self.accept_min_mem_mb,
+            accept_min_free_disk_mb: self.accept_min_free_disk_mb,
             cache_max_mb: self
                 .cache
                 .max_size_gb

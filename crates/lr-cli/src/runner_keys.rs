@@ -30,7 +30,7 @@ const RETENTION: [&str; 3] = ["max_size_gb", "retention_days", "evict"];
 
 fn section_keys(section: &str) -> Option<&'static [&'static str]> {
     match section {
-        "accept" => Some(&["min_mem_mb"]),
+        "accept" => Some(&["min_mem_mb", "min_free_disk_mb"]),
         "limits" => Some(&[
             "max_job_timeout_s",
             "enforce",

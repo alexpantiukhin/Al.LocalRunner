@@ -5,9 +5,8 @@ use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
     DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, ReasonCode, RunnerLiveness,
-    ServiceReport,
-    WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE,
-    STALE_AFTER_MISSED,
+    ServiceReport, WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S,
+    MISSED_HEARTBEATS_OFFLINE, STALE_AFTER_MISSED,
 };
 use std::collections::BTreeSet;
 
@@ -312,8 +311,11 @@ impl Engine {
                 );
             }
         }
-        let on_foreign_load = self.wait_codes.values().any(|c| *c == "foreign_load");
-        if !was_online || (load_changed && on_foreign_load) {
+        let on_load = self
+            .wait_codes
+            .values()
+            .any(|c| matches!(*c, "foreign_load" | "low_disk"));
+        if !was_online || (load_changed && on_load) {
             self.plan().await;
         }
     }

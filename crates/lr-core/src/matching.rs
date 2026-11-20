@@ -17,6 +17,9 @@ pub enum ServiceStatus {
 pub struct Accept {
     /// Only orders needing at least this much memory are accepted.
     pub min_mem_mb: Option<u64>,
+    /// A job starts only while the volume of the job root has at least this much free disk (the
+    /// larger of this and the job's own `disk_mb` counts).
+    pub min_free_disk_mb: Option<u64>,
 }
 
 /// What a runner reports about itself.

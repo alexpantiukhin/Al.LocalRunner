@@ -48,6 +48,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         services: BTreeMap::new(),
         machine: None,
         accept_min_mem_mb: None,
+        accept_min_free_disk_mb: None,
         cache_max_mb: None,
         cache_used_mb: None,
         service_mem_mb: Default::default(),

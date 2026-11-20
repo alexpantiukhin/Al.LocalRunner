@@ -133,6 +133,7 @@ fn capabilities_convert_without_loss() {
         machine: Some(lr_core::MachineRef("m".into())),
         accept: Accept {
             min_mem_mb: Some(4096),
+            min_free_disk_mb: None,
         },
         commands: set(["build".to_string()]),
     };

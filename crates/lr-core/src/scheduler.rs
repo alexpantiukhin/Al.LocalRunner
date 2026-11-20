@@ -98,6 +98,13 @@ pub enum Wait {
         /// Free MB, or foreign CPU busy percent.
         level: u64,
     },
+    /// The disk of every suitable runner has less free space than a job may start with.
+    LowDisk {
+        /// Free MB on the runner with the most.
+        free_mb: u64,
+        /// Needed MB: the runner's `[accept] min_free_disk_mb` or the job's `disk_mb`, the larger.
+        needed_mb: u64,
+    },
 }
 
 impl fmt::Display for Wait {
@@ -139,6 +146,12 @@ impl fmt::Display for Wait {
                 }
                 Ok(())
             }
+            Self::LowDisk { free_mb, needed_mb } => write!(
+                f,
+                "мало места на диске: свободно {} ГБ из {} ГБ нужных",
+                free_mb / 1024,
+                needed_mb.div_ceil(1024)
+            ),
             Self::RunnerBusy => write!(f, "раннер занят"),
             Self::RunnerOffline => write!(f, "подходящие раннеры offline"),
             Self::NoRunner => write!(f, "нет подходящего раннера"),

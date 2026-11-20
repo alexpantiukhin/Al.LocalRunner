@@ -192,7 +192,7 @@ fn kind_column(r: &RunnerInfo) -> String {
 fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
     let c = &r.caps;
     out.push(format!(
-        "  {}\t{}{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\t\
+        "  {}\t{}{}\tlast seen {}\tplatforms {}\tmemory {} MB, free in the pool {} MB\tcpu {}, free in the pool {}\tdisk free {} GB\t\
          tags {}\tprograms {}",
         r.name,
         liveness_text(r),
@@ -203,6 +203,7 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         r.free_mem_mb,
         c.cpu,
         r.free_cpu,
+        c.disk_mb / 1024,
         listed(c.tags.iter()),
         listed(c.programs.iter()),
     ));

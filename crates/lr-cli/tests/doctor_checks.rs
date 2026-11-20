@@ -418,6 +418,7 @@ fn runners_on_another_version_are_named_per_broker() {
             services: Default::default(),
             machine: None,
             accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
             cache_max_mb: None,
             cache_used_mb: None,
             service_mem_mb: Default::default(),

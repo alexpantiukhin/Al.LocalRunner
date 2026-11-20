@@ -37,6 +37,7 @@ pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
         services: BTreeMap::new(),
         machine: machine.map(|m| MachineRef(m.into())),
         accept_min_mem_mb: None,
+        accept_min_free_disk_mb: None,
         cache_max_mb: None,
         cache_used_mb: None,
         service_mem_mb: Default::default(),

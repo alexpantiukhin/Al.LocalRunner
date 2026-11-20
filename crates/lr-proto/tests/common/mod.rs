@@ -86,6 +86,7 @@ pub fn caps() -> WireCapabilities {
         ]),
         machine: Some(MachineRef("m-1".into())),
         accept_min_mem_mb: Some(8192),
+        accept_min_free_disk_mb: None,
         cache_max_mb: Some(40_000),
         cache_used_mb: Some(1200),
         service_mem_mb: Default::default(),

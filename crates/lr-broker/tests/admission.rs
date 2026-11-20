@@ -14,6 +14,7 @@ fn load(free_mem_mb: u64, cpu_busy_percent: u8) -> RunnerToBroker {
             free_mem_mb,
             cpu_busy_percent,
             cpu_cores: 8,
+            free_disk_mb: None,
         }),
     }
 }

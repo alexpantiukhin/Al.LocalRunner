@@ -39,7 +39,8 @@ pub(crate) fn saturation_reason(wait: &Wait) -> Option<&'static str> {
         Wait::RunnerOffline
         | Wait::NoRunner
         | Wait::HeadReserved { .. }
-        | Wait::ForeignLoad { .. } => None,
+        | Wait::ForeignLoad { .. }
+        | Wait::LowDisk { .. } => None,
     }
 }
 
@@ -48,6 +49,7 @@ pub(crate) fn saturation_reason(wait: &Wait) -> Option<&'static str> {
 pub(crate) fn wait_code(wait: &Wait) -> &'static str {
     match wait {
         Wait::ForeignLoad { .. } => "foreign_load",
+        Wait::LowDisk { .. } => "low_disk",
         Wait::RunnerOffline => "offline",
         Wait::NoRunner => "no_runner",
         Wait::HeadReserved { .. } => "reserved",
