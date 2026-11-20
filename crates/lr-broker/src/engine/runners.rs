@@ -4,7 +4,8 @@ use super::{Engine, Job, Role};
 use lr_abstractions::{Level, RunnerRow, RunnerState, StoreError};
 use lr_core::{Capabilities, Endpoint, MachineRef, RunnerView, Timestamp, Zone};
 use lr_proto::{
-    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, RunnerLiveness, ServiceReport,
+    DrainReason, ProtocolError, ProtocolErrorCode, QueueEvent, ReasonCode, RunnerLiveness,
+    ServiceReport,
     WireCapabilities, WireLoad, WireServiceStatus, HEARTBEAT_INTERVAL_S, MISSED_HEARTBEATS_OFFLINE,
     STALE_AFTER_MISSED,
 };
@@ -221,9 +222,23 @@ impl Engine {
         for j in self.active.iter_mut().filter(|j| held(j)) {
             j.gone_since = None;
         }
-        let changed = !unknown.is_empty();
+        let mut changed = !unknown.is_empty();
         for job in unknown {
             self.requeue_or_retry(job).await;
+        }
+        let forgotten = |j: &Job| {
+            j.runner.as_deref() == Some(runner)
+                && j.started_at.is_some()
+                && !points.iter().any(|p| p.job == j.key.job)
+        };
+        let (gone, keep): (Vec<Job>, Vec<Job>) = std::mem::take(&mut self.active)
+            .into_iter()
+            .partition(forgotten);
+        self.active = keep;
+        changed |= !gone.is_empty();
+        let now = self.now();
+        for job in gone {
+            self.lose(job, now, ReasonCode::RunnerLost).await;
         }
         if changed {
             self.plan().await;
