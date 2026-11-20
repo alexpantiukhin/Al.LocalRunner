@@ -85,6 +85,9 @@ pub struct RunnerSettings {
     pub home: Option<String>,
     /// `TEMP` of every job.
     pub temp: Option<String>,
+    /// `job_home`: every job gets `HOME` and `USERPROFILE` in a directory of its own inside its
+    /// private temporary directory; `[job_env]` still has the last word.
+    pub job_home: bool,
     /// `[service.*]`: declared services by name.
     pub services: BTreeMap<String, ServiceSpec>,
     /// `[commands]`: command lines by name, the only ones run for a client limited to named
@@ -180,6 +183,8 @@ struct File {
     cleanup: Vec<RawCleanup>,
     #[serde(default)]
     job_env: BTreeMap<String, String>,
+    #[serde(default)]
+    job_home: bool,
 }
 
 fn retention(section: &str, f: RetentionFile) -> Result<Retention, SettingsError> {
@@ -216,6 +221,7 @@ impl RunnerSettings {
             process: None,
             path: None,
             home: None,
+            job_home: false,
             temp: None,
             services: BTreeMap::new(),
             commands: BTreeMap::new(),
@@ -253,6 +259,7 @@ impl RunnerSettings {
         s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
+        s.job_home = f.job_home;
         s.services = services(f.service)?;
         if let Some(name) = f
             .commands

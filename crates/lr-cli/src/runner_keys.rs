@@ -3,7 +3,7 @@
 
 use toml::{Table, Value};
 
-const TOP: [&str; 19] = [
+const TOP: [&str; 20] = [
     "name",
     "platforms",
     "tags",
@@ -20,6 +20,7 @@ const TOP: [&str; 19] = [
     "grace",
     "env",
     "job_env",
+    "job_home",
     "cleanup",
     "service",
     "commands",
