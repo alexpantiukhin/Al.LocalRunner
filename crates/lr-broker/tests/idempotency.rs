@@ -171,6 +171,7 @@ async fn hub_resume_resends_only_what_it_has_not_seen() {
             job: JobId("j1".into()),
             last_seq: 1,
         }],
+        incomplete: false,
     }))
     .await;
     let got = back.sync().await;

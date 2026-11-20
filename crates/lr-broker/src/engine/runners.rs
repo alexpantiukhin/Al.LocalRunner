@@ -210,7 +210,12 @@ impl Engine {
         Ok(())
     }
 
-    pub(crate) async fn runner_resumed(&mut self, runner: &str, points: &[lr_proto::ResumePoint]) {
+    pub(crate) async fn runner_resumed(
+        &mut self,
+        runner: &str,
+        points: &[lr_proto::ResumePoint],
+        incomplete: bool,
+    ) {
         let held = |j: &Job| {
             j.runner.as_deref() == Some(runner) && j.started_at.is_none() && j.gone_since.is_some()
         };
@@ -226,7 +231,8 @@ impl Engine {
             self.requeue_or_retry(job).await;
         }
         let forgotten = |j: &Job| {
-            j.runner.as_deref() == Some(runner)
+            !incomplete
+                && j.runner.as_deref() == Some(runner)
                 && j.started_at.is_some()
                 && !points.iter().any(|p| p.job == j.key.job)
         };

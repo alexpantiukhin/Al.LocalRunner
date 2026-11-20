@@ -156,8 +156,11 @@ async fn restored_same_machine_order_waits_one_grace_period_for_its_runner() {
     h.poke().await;
     h.until_state(ALEX, "s1", JobState::Cancelled).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    hub.send(&HubToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     assert_eq!(returned(&mut hub).await.code.as_str(), NO_RUNNER);
 }
 
@@ -171,8 +174,11 @@ async fn restored_same_machine_order_runs_when_its_runner_comes_back() {
     r.assign().await;
     let h = h.restart().await;
     let mut back = h.local_runner("alex", "lr", linux()).await;
-    back.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    back.send(&RunnerToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     assert_eq!(back.assign().await.job, JobId("s1".into()));
 }
 
@@ -230,8 +236,11 @@ upgrade_hold_s = 60
     h.poke().await;
     h.until_state(ALEX, "s2", JobState::Cancelled).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    hub.send(&HubToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     let back = returned(&mut hub).await;
     assert_eq!(
         (back.job, back.code.as_str()),

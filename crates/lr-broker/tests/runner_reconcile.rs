@@ -10,7 +10,11 @@ async fn reconnect(h: &Harness, name: &str, addr: &str, points: Vec<ResumePoint>
     let mut c = h.dial(member_peer(&format!("pk-{name}"), addr)).await;
     c.send(&hello(name, Some(linux()))).await;
     c.welcome().await;
-    c.send(&RunnerToBroker::Resume(Resume { points })).await;
+    c.send(&RunnerToBroker::Resume(Resume {
+        points,
+        incomplete: false,
+    }))
+    .await;
     c
 }
 
@@ -72,6 +76,28 @@ async fn a_job_the_runner_still_reports_is_kept() {
     r1.quiet().await;
     assert_eq!(
         h.job_row(ALEX, "alive").await.unwrap().job.state,
+        JobState::Running
+    );
+}
+
+#[tokio::test]
+async fn a_resume_the_runner_marks_incomplete_loses_nothing() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    running_job(&mut hub, &mut r1, "unsure").await;
+    r1.close().await;
+    let mut c = h.dial(member_peer("pk-r1", "10.0.0.7")).await;
+    c.send(&hello("r1", Some(linux()))).await;
+    c.welcome().await;
+    c.send(&RunnerToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: true,
+    }))
+    .await;
+    c.quiet().await;
+    assert_eq!(
+        h.job_row(ALEX, "unsure").await.unwrap().job.state,
         JobState::Running
     );
 }

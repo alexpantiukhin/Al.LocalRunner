@@ -156,6 +156,10 @@ pub struct ResumePoint {
 pub struct Resume {
     /// Per job.
     pub points: Vec<ResumePoint>,
+    /// The sender could not read its outbox: the list may miss jobs, so the receiver must not
+    /// conclude from a missing job that the sender lost it. Absent from older peers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
 }
 
 impl Resume {

@@ -333,6 +333,7 @@ pub fn resume() -> Resume {
                 last_seq: 0,
             },
         ],
+        incomplete: false,
     }
 }
 

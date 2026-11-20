@@ -31,8 +31,11 @@ async fn started_on_vanished_runner(h: &Harness) -> Conn {
 
 async fn final_result(h: &Harness) -> JobResult {
     let mut hub = h.local_hub("alex").await;
-    hub.send(&HubToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    hub.send(&HubToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     loop {
         if let BrokerToHub::JobResult(r) = hub.hub().await {
             return r;
@@ -359,6 +362,7 @@ async fn a_runner_that_resumes_the_job_keeps_it_past_the_grace() {
             job: JobId("j1".into()),
             last_seq: 0,
         }],
+        incomplete: false,
     }))
     .await;
     for _ in 0..4 {
@@ -379,8 +383,11 @@ async fn a_runner_that_resumes_without_the_job_gives_it_back_at_once() {
     let h = Harness::start(GRACE);
     confirmed_on_vanished_runner(&h).await;
     let mut back = rejoin(&h, "r1").await;
-    back.send(&RunnerToBroker::Resume(Resume { points: Vec::new() }))
-        .await;
+    back.send(&RunnerToBroker::Resume(Resume {
+        points: Vec::new(),
+        incomplete: false,
+    }))
+    .await;
     let a = back.assign().await;
     assert_eq!(a.job, JobId("j1".into()));
 }

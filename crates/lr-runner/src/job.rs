@@ -312,7 +312,13 @@ async fn execute(shared: &Shared, a: Assign, signal: lr_abstractions::StopSignal
                     apply_job_temp(&mut env, &temp);
                     if shared.job_settings().job_home {
                         let home = apply_job_home(&mut env, &temp);
-                        let _ = shared.deps.files.create_dir_all(&home).await;
+                        if let Err(e) = shared.deps.files.create_dir_all(&home).await {
+                            shared.diag.event(
+                                lr_abstractions::Level::Warn,
+                                "the job HOME directory was not created",
+                                &[("job", &job.0), ("error", &e.to_string())],
+                            );
+                        }
                     }
                     let prepared = Prepared {
                         job: job.clone(),

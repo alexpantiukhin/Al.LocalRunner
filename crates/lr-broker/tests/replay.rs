@@ -37,6 +37,7 @@ fn resume_from(last_seq: u64) -> HubToBroker {
             job: JobId("j1".into()),
             last_seq,
         }],
+        incomplete: false,
     })
 }
 
