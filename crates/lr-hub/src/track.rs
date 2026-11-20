@@ -121,6 +121,10 @@ impl Track {
             }),
             note: spec.and_then(|s| s.identity.note.clone()),
             branch: spec.and_then(|s| s.identity.branch.clone()),
+            commit: spec.and_then(|s| match &s.code {
+                lr_proto::WireCode::Commit { sha, .. } => Some(sha.clone()),
+                lr_proto::WireCode::WorkTree { .. } => None,
+            }),
             cwd: spec.map(|s| s.identity.cwd.display().to_string()),
             timeout_s: spec.map(|s| s.requirements.timeout_s),
             github_run_url: spec.and_then(|s| match &s.identity.source {

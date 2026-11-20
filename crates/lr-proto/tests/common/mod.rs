@@ -159,6 +159,7 @@ pub fn summary() -> JobSummary {
         source: Some(WireSource::Session),
         note: None,
         branch: None,
+        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,

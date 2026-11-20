@@ -80,7 +80,8 @@ impl Engine {
                 return Some(CliReply::Rejected { code, detail })
             }
         };
-        let (spec, warnings) = (built.spec, built.warnings);
+        let (spec, mut warnings) = (built.spec, built.warnings);
+        warnings.extend(self.duplicate_warning(&spec));
         if let Some(e) = &built.dirty_check_failed {
             self.s.diag(
                 Level::Warn,

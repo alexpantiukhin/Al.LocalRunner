@@ -77,6 +77,7 @@ fn summary(job: &str, state: JobState, mine: bool) -> JobSummary {
         source: mine.then_some(WireSource::Github),
         note: mine.then(|| "flaky emulator".into()),
         branch: mine.then(|| "feat/x".into()),
+        commit: None,
         cwd: mine.then(|| "/work/app".into()),
         timeout_s: mine.then_some(600),
         github_run_url: mine.then(|| "https://github.com/acme/app/actions/runs/7".into()),

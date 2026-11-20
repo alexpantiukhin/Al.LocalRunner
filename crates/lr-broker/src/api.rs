@@ -69,6 +69,7 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.note = None;
             s.branch = None;
             s.cwd = None;
+            s.commit = None;
             s.timeout_s = None;
             s.github_run_url = None;
             s.peak_mem_mb = None;
@@ -184,6 +185,7 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         source: Some(wire_source(row.source)),
         note: row.note.clone(),
         branch: row.branch.clone(),
+        commit: row.commit_sha.clone(),
         cwd: Some(row.cwd.clone()),
         timeout_s: None,
         github_run_url: None,
@@ -311,6 +313,10 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         }),
         note: job.spec.identity.note.clone(),
         branch: job.spec.identity.branch.clone(),
+        commit: match &job.spec.code {
+            lr_proto::WireCode::Commit { sha, .. } => Some(sha.clone()),
+            lr_proto::WireCode::WorkTree { .. } => None,
+        },
         cwd: Some(job.spec.identity.cwd.display().to_string()),
         timeout_s: Some(job.entry.order.requirements.timeout_s),
         github_run_url: match &job.spec.identity.source {

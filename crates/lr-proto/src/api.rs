@@ -258,6 +258,10 @@ pub struct JobSummary {
     /// Working directory of the submitter; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Commit the order was submitted at; hidden at `summary`, absent for a work-tree order and
+    /// from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     /// Job timeout in seconds; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
