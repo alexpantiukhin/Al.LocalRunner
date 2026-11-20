@@ -103,7 +103,9 @@ async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
     assert!(outcome.usage.peak_mem_mb.unwrap() > 150);
     let text = events_text(&events);
     assert!(
-        text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB, peak"),
+        text.contains(
+            "localrunner: killed: declared mem_mb exceeded: declared 100 MB, ceiling 150 MB, peak"
+        ),
         "{text}"
     );
 }

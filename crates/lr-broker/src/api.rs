@@ -6,8 +6,8 @@ use crate::policy::OthersOrders;
 use lr_abstractions::{JobRecord, JobRow, SourceKind, Spread, Stats, StepRow};
 use lr_core::{JobState, StepState, Timestamp};
 use lr_proto::{
-    ClientUsageView, JobDetail, JobSummary, ProfileStatsView, QueueEvent, ReasonCode, SpreadView,
-    StatsView, StepStatsView, StepView, Topic, WireSource,
+    ClientUsageView, JobDetail, JobSummary, MemoryStatsView, ProfileStatsView, QueueEvent,
+    ReasonCode, SpreadView, StatsView, StepStatsView, StepView, Topic, WireSource,
 };
 
 /// How much of a run a reader may see.
@@ -353,6 +353,12 @@ pub fn stats_view(s: &Stats) -> StatsView {
                 lost: p.lost,
                 wait_ms: spread(&p.wait_ms),
                 duration_ms: spread(&p.duration_ms),
+                mem: Some(MemoryStatsView {
+                    declared_mb: p.mem.declared_mb,
+                    measured: p.mem.measured,
+                    median_mb: p.mem.median_mb,
+                    max_mb: p.mem.max_mb,
+                }),
                 steps: p
                     .steps
                     .iter()

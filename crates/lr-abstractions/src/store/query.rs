@@ -102,6 +102,19 @@ pub struct StepStats {
     pub duration_ms: Spread,
 }
 
+/// Memory of the runs of a profile: what the latest run declared and what the runs really used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryStats {
+    /// `mem_mb` of the latest run of the profile.
+    pub declared_mb: Option<u64>,
+    /// Runs that reported a peak.
+    pub measured: u64,
+    /// Median peak, MB.
+    pub median_mb: Option<u64>,
+    /// Greatest peak, MB.
+    pub max_mb: Option<u64>,
+}
+
 /// Statistics of one profile.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileStats {
@@ -125,6 +138,8 @@ pub struct ProfileStats {
     pub duration_ms: Spread,
     /// Per step name, in step order of first appearance.
     pub steps: Vec<StepStats>,
+    /// Declared and real memory.
+    pub mem: MemoryStats,
 }
 
 /// How much of the pool a client used.
@@ -202,6 +217,21 @@ pub fn compute_stats(jobs: &[JobRecord], query: &StatsQuery) -> Stats {
     }
 }
 
+fn memory_stats(runs: &[&JobRecord]) -> MemoryStats {
+    let mut peaks: Vec<u64> = runs.iter().filter_map(|r| r.job.peak_mem_mb).collect();
+    let declared_mb = runs
+        .iter()
+        .max_by_key(|r| r.job.queued_at)
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.spec.resolved_json).ok())
+        .and_then(|v| v["requirements"]["mem_mb"].as_u64());
+    MemoryStats {
+        declared_mb,
+        measured: peaks.len() as u64,
+        median_mb: nearest_rank(&mut peaks, 50),
+        max_mb: peaks.iter().copied().max(),
+    }
+}
+
 fn profile_stats(name: &str, runs: &[&JobRecord]) -> ProfileStats {
     let count = |s: JobState| runs.iter().filter(|r| r.job.state == s).count() as u64;
     let started: Vec<&&JobRecord> = runs.iter().filter(|r| r.job.started_at.is_some()).collect();
@@ -229,6 +259,7 @@ fn profile_stats(name: &str, runs: &[&JobRecord]) -> ProfileStats {
         }
     }
     ProfileStats {
+        mem: memory_stats(runs),
         profile: name.to_string(),
         runs: runs.len() as u64,
         passed: count(JobState::Passed),

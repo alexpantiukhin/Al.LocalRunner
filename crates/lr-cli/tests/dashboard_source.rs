@@ -118,6 +118,7 @@ fn stats(profile: &str) -> StatsView {
     };
     StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: profile.into(),
             runs: 1,
             passed: 1,

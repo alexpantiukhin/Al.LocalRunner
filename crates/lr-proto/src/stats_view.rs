@@ -22,6 +22,19 @@ pub struct StepStatsView {
     pub duration_ms: SpreadView,
 }
 
+/// Declared and real memory of a profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryStatsView {
+    /// `mem_mb` of the latest run.
+    pub declared_mb: Option<u64>,
+    /// Runs that reported a peak.
+    pub measured: u64,
+    /// Median peak, MB.
+    pub median_mb: Option<u64>,
+    /// Greatest peak, MB.
+    pub max_mb: Option<u64>,
+}
+
 /// Statistics of one profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileStatsView {
@@ -45,6 +58,9 @@ pub struct ProfileStatsView {
     pub duration_ms: SpreadView,
     /// Per step.
     pub steps: Vec<StepStatsView>,
+    /// Declared and real memory; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem: Option<MemoryStatsView>,
 }
 
 /// How much of the pool a client used.

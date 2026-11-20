@@ -19,8 +19,8 @@ pub use broker_rows::{
 };
 pub use hub::{ActiveOrder, BrokerLink, HubStore};
 pub use query::{
-    compute_stats, nearest_rank, ClientUsage, JobFilter, ProfileStats, Spread, Stats, StatsQuery,
-    StepStats,
+    compute_stats, nearest_rank, ClientUsage, JobFilter, MemoryStats, ProfileStats, Spread, Stats,
+    StatsQuery, StepStats,
 };
 pub use runner::{CacheEntry, CacheKey, RunnerStore, ServiceRow, ServiceState};
 

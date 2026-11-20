@@ -293,7 +293,7 @@ async fn exceeded_job_fails_with_the_resource_reason() {
     assert_eq!(r.reason, Some(ReasonCode::ResourceExceeded));
     assert_eq!(
         r.detail.as_deref(),
-        Some("превышен заявленный mem_mb: заявлено 4000 МБ, пик 5200 МБ")
+        Some("превышен заявленный mem_mb: заявлено 4000 МБ, потолок 5000 МБ, пик 5200 МБ; увеличьте mem_mb в профиле")
     );
     assert_eq!(r.peak_mem_mb, Some(5200));
 }

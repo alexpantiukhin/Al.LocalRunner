@@ -217,6 +217,7 @@ pub fn spread() -> SpreadView {
 pub fn stats() -> StatsView {
     StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: "build".into(),
             runs: 3,
             passed: 2,

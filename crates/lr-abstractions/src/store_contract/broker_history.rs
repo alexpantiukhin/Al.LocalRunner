@@ -160,6 +160,36 @@ pub async fn stats_count_final_runs_with_median_and_p95(store: &dyn BrokerStore)
     assert_eq!(store.stats(&mine).await.unwrap().profiles[0].runs, 1);
 }
 
+/// Stats report the `mem_mb` the latest run of a profile declared next to the median and the
+/// greatest peak the runs really used; a run without a peak is not a sample.
+pub async fn stats_report_declared_and_real_memory(store: &dyn BrokerStore) {
+    for (job, declared, queued, peak) in [
+        ("a", 4096, 0, Some(3000)),
+        ("b", 4096, 10, Some(9000)),
+        ("c", 8192, 20, Some(5000)),
+        ("d", 8192, 30, None),
+    ] {
+        let mut i = intake("c1", job, "heavy", at(queued));
+        i.spec.resolved_json = format!(r#"{{"requirements":{{"mem_mb":{declared}}}}}"#);
+        let key = i.job.key.clone();
+        store.accept(i).await.unwrap();
+        store.grant(&key, "r1").await.unwrap();
+        store
+            .transition(&key, Transition::to(JobState::Running, at(queued + 1)))
+            .await
+            .unwrap();
+        let mut end = Transition::to(JobState::Passed, at(queued + 5));
+        end.peak_mem_mb = peak;
+        store.transition(&key, end).await.unwrap();
+    }
+    let stats = store.stats(&StatsQuery::default()).await.unwrap();
+    let m = stats.profiles[0].mem;
+    assert_eq!(m.declared_mb, Some(8192));
+    assert_eq!(m.measured, 3);
+    assert_eq!(m.median_mb, Some(5000));
+    assert_eq!(m.max_mb, Some(9000));
+}
+
 /// Stats count timed out, cancelled and lost runs of a profile apart from passed and failed.
 pub async fn stats_count_timeouts_cancels_and_losses(store: &dyn BrokerStore) {
     finished(store, "c1", "a", "check", (0, 10, 20), JobState::Passed).await;

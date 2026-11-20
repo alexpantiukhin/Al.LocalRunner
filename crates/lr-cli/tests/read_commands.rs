@@ -347,9 +347,72 @@ fn log_printer_masks_secrets_even_when_a_chunk_splits_them() {
 }
 
 #[test]
+fn stats_print_declared_and_real_memory_with_a_verdict() {
+    let view = |declared, max| StatsView {
+        profiles: vec![ProfileStatsView {
+            mem: Some(lr_proto::MemoryStatsView {
+                declared_mb: declared,
+                measured: 5,
+                median_mb: Some(9000),
+                max_mb: max,
+            }),
+            profile: "rust-test".into(),
+            runs: 5,
+            passed: 5,
+            failed: 0,
+            timeouts: 0,
+            cancelled: 0,
+            lost: 0,
+            wait_ms: SpreadView {
+                median: None,
+                p95: None,
+            },
+            duration_ms: SpreadView {
+                median: None,
+                p95: None,
+            },
+            steps: Vec::new(),
+        }],
+        clients: Vec::new(),
+    };
+    let text = |declared, max| {
+        stats_lines(&[("local".into(), view(declared, max))]).join(
+            "
+",
+        )
+    };
+    let over = text(Some(8192), Some(22_000));
+    assert!(
+        over.contains("memory: declared 8192 MB; peak median 9000 MB, max 22000 MB over 5 runs")
+            && over.contains("raise mem_mb"),
+        "{over}"
+    );
+    let slack = text(Some(65_536), Some(22_000));
+    assert!(slack.contains("can be lowered"), "{slack}");
+    let fine = text(Some(24_000), Some(22_000));
+    assert!(
+        !fine.contains("raise") && !fine.contains("lowered"),
+        "{fine}"
+    );
+    let none = stats_lines(&[(
+        "local".into(),
+        StatsView {
+            profiles: Vec::new(),
+            clients: Vec::new(),
+        },
+    )])
+    .join(
+        "
+",
+    );
+    assert!(!none.contains("memory:"));
+}
+
+#[test]
 fn stats_and_runners_print_per_broker() {
     let stats = StatsView {
         profiles: vec![ProfileStatsView {
+            mem: None,
             profile: "unit".into(),
             runs: 4,
             passed: 3,
