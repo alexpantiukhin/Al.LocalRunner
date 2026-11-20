@@ -121,7 +121,7 @@ fn spec_example_policy_parses() {
     );
     assert_eq!(
         f.routing.runner_zone_order,
-        [Zone::Local, Zone::Lan, Zone::Remote]
+        [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
     );
     assert_eq!(f.history.keep_days.get(), 180);
     assert_eq!(f.history.logs_max_gb.get(), 2);
