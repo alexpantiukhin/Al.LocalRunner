@@ -73,7 +73,7 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     let left = runners(&main).await.expect("runners");
     assert!(left.is_empty(), "{left:?}");
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -151,8 +151,8 @@ async fn removed_client_waiting_orders_end_client_removed() {
     theirs_client.close().await;
     waiting_client.close().await;
 
-    guest_hub.stop();
-    roles.stop();
+    guest_hub.stopped().await;
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -215,7 +215,7 @@ async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("held-by-the-rule"), "{}", b.output);
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

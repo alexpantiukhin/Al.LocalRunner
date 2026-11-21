@@ -142,7 +142,6 @@ pub async fn spec_is_replaced_only_before_the_run_is_final(store: &dyn BrokerSto
     let key = queued(store, "c1", "j1").await;
     let spec = JobSpecRow {
         resolved_json: "{\"restored\":true}".into(),
-        profile_commit: Some("abc".into()),
     };
     assert_eq!(
         store.replace_spec(&key, spec.clone()).await.unwrap(),

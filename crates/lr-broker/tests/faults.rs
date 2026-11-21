@@ -86,7 +86,6 @@ async fn stored_but_unreadable(h: &Harness, hub: &mut Conn) {
     FaultyStore::clear(&h.faults.fail_accept_seq);
     let broken = JobSpecRow {
         resolved_json: "{".into(),
-        profile_commit: None,
     };
     let key = JobKey::new(ALEX, "j1");
     assert_eq!(

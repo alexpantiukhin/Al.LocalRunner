@@ -27,6 +27,7 @@ pub struct Running {
     stop_signal: Option<Arc<Notify>>,
     listeners: Vec<Arc<IpcListener>>,
     events: Option<BusEvents>,
+    graceful: bool,
 }
 
 impl Running {
@@ -91,8 +92,14 @@ impl Running {
         let tasks = std::mem::take(&mut self.tasks);
         let exits = std::mem::take(&mut self.exits);
         let listeners = std::mem::take(&mut self.listeners);
-        for t in &tasks {
-            t.abort();
+        if self.graceful {
+            for l in &listeners {
+                l.close();
+            }
+        } else {
+            for t in &tasks {
+                t.abort();
+            }
         }
         for e in &exits {
             e.abort();
@@ -162,6 +169,7 @@ pub async fn start_broker(layout: &Layout, foreground: bool) -> Result<Running, 
         stop_signal: Some(stop),
         listeners,
         events: Some(events),
+        graceful: false,
     })
 }
 
@@ -178,6 +186,7 @@ pub async fn start_hub(layout: &Layout, foreground: bool) -> Result<Running, Str
         stop_signal: None,
         listeners: vec![parts.ipc],
         events: None,
+        graceful: true,
     })
 }
 
@@ -233,6 +242,7 @@ pub async fn start_runners(
         stop_signal: None,
         listeners: Vec::new(),
         events: None,
+        graceful: false,
     };
     for n in instance_names(&base, count)? {
         let parts = build::runner(layout, &n, config, foreground).await?;

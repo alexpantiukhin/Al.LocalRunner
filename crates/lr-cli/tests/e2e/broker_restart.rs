@@ -49,7 +49,7 @@ async fn restart_and_run(dir: &TempDir, move_listen: bool) {
         .expect("runner starts");
     runner_online(&layout, "r1").await;
 
-    broker.stop();
+    broker.stopped().await;
     broker_gone(&layout).await;
 
     if move_listen {
@@ -74,9 +74,9 @@ async fn restart_and_run(dir: &TempDir, move_listen: bool) {
     let ended = until_exit(client, &job, HANG).await;
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
 
-    runners.stop();
-    hub_role.stop();
-    broker.stop();
+    runners.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -131,9 +131,9 @@ async fn up_and_doctor_name_a_runner_that_is_alive_but_not_connected() {
         "{checks:?}"
     );
 
-    runners.stop();
-    hub_role.stop();
-    broker.stop();
+    runners.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     remove(dir).await;
 }
 
@@ -150,7 +150,7 @@ async fn hub_lines_name_a_broker_that_went_away() {
     runner_online(&layout, "r1").await;
     assert!(link_report::hub_lines(&layout).await.is_empty());
 
-    broker.stop();
+    broker.stopped().await;
     broker_gone(&layout).await;
     let lines = link_report::hub_lines(&layout).await;
     assert!(
@@ -169,8 +169,8 @@ async fn hub_lines_name_a_broker_that_went_away() {
     .await;
     assert!(link_report::hub_lines(&layout).await.is_empty());
 
-    runners.stop();
-    hub_role.stop();
-    broker.stop();
+    runners.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     remove(dir).await;
 }

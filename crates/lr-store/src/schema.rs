@@ -78,7 +78,11 @@ fn broker_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
              ALTER TABLE job DROP COLUMN code_source;",
         )?;
     }
-    for (table, column) in [("job", "commit_sha"), ("order", "same_machine")] {
+    for (table, column) in [
+        ("job", "commit_sha"),
+        ("order", "same_machine"),
+        ("job_spec", "profile_commit"),
+    ] {
         if has_column(tx, table, column)? {
             tx.execute_batch(&format!("ALTER TABLE \"{table}\" DROP COLUMN {column};"))?;
         }

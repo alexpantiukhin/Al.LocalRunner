@@ -6,7 +6,7 @@ use lr_cli::commands::view::read;
 use lr_cli::dashboard::HubSource;
 use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
-use lr_cli::roles::{start_broker, start_hub, start_runners};
+use lr_cli::roles::{start_broker, start_hub, start_runners, Running};
 use lr_core::{JobId, JobState};
 use lr_dashboard::{Dashboard, DashboardOptions, RunningDashboard};
 use lr_proto::{AdminReply, AdminRequest, ReadRequest};
@@ -177,10 +177,7 @@ pub fn queued_of(job: &JobId) -> impl Fn(&Value) -> bool + '_ {
 
 /// A broker with `others_orders = others`, its hub and runner `r1`, and a hub of another
 /// machine joined to it; both hubs subscribed through their dashboards' SSE.
-async fn two_hubs(
-    dir: &TempDir,
-    others: &str,
-) -> (Layout, Layout, Vec<Box<dyn FnOnce()>>, Watched, Watched) {
+async fn two_hubs(dir: &TempDir, others: &str) -> (Layout, Layout, Vec<Running>, Watched, Watched) {
     let main = layout(
         dir,
         "main",
@@ -216,12 +213,7 @@ async fn two_hubs(
     .await;
     let owner = Watched::open(&main).await;
     let other = Watched::open(&guest).await;
-    let stops: Vec<Box<dyn FnOnce()>> = vec![
-        Box::new(move || runners.stop()),
-        Box::new(move || guest_hub.stop()),
-        Box::new(move || main_hub.stop()),
-        Box::new(move || broker.stop()),
-    ];
+    let stops: Vec<Running> = vec![runners, guest_hub, main_hub, broker];
     (main, guest, stops, owner, other)
 }
 
@@ -232,12 +224,12 @@ async fn run_quick(main: &Layout, repo: &std::path::Path) -> JobId {
     job
 }
 
-async fn finish(stops: Vec<Box<dyn FnOnce()>>, watched: [Watched; 2], dir: TempDir) {
+async fn finish(stops: Vec<Running>, watched: [Watched; 2], dir: TempDir) {
     for w in watched {
         w.running.shutdown().await;
     }
     for stop in stops {
-        stop();
+        stop.stopped().await;
     }
     remove(dir).await;
 }
@@ -284,7 +276,7 @@ async fn a_client_without_access_to_other_orders_gets_no_event_about_them() {
     let r2 = start_runners(&main, Some("r2"), 1, None, false)
         .await
         .unwrap_or_else(|e| panic!("runner r2 starts: {e}"));
-    stops.insert(0, Box::new(move || r2.stop()));
+    stops.insert(0, r2);
     let online = |e: &Value| {
         e["event"]["type"] == "runner_online"
             && e["event"]["name"]

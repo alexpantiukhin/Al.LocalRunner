@@ -48,7 +48,7 @@ fn broker_db_has_the_tables_and_columns_of_the_er_diagram() {
     let want = expect(&[
         ("job", "client_key, id, project, source, label, note, branch, cwd, profile, platform, runner_name, client_machine, client_label, os_user, secrets, queued_at, started_at, finished_at, state, exit_code, cancelled_by, cancel_reason, peak_mem_mb, peak_disk_mb, recv_seq_hub, recv_seq_runner, send_seq_runner"),
         ("step", "client_key, job_id, ord, name, command, state, exit_code, started_at, finished_at, timeout_s"),
-        ("job_spec", "client_key, job_id, resolved_json, profile_commit, order_json"),
+        ("job_spec", "client_key, job_id, resolved_json, order_json"),
         ("github_run", "client_key, job_id, repository, workflow, job_name, run_id, attempt, ref, actor, run_url"),
         ("job_log", "client_key, job_id, path, bytes, updated_at"),
         ("machine", "name, machine_id, kind, label, public_key, registered_at, last_seen, revoked_at"),
@@ -520,6 +520,7 @@ async fn unfinished_commit_orders_are_failed_by_the_version_five_migration() {
     conn.execute_batch(
         "ALTER TABLE job ADD COLUMN code_source TEXT NOT NULL DEFAULT 'commit';
          ALTER TABLE job ADD COLUMN commit_sha TEXT;
+         ALTER TABLE job_spec ADD COLUMN profile_commit TEXT;
          ALTER TABLE \"order\" ADD COLUMN same_machine INTEGER NOT NULL DEFAULT 0;
          PRAGMA user_version = 4;",
     )
@@ -534,6 +535,7 @@ async fn unfinished_commit_orders_are_failed_by_the_version_five_migration() {
     let job_columns = &columns(&path)["job"];
     assert!(!job_columns.contains(&"commit_sha".to_string()));
     assert!(!job_columns.contains(&"code_source".to_string()));
+    assert!(!columns(&path)["job_spec"].contains(&"profile_commit".to_string()));
     let left: i64 = Connection::open(&path)
         .unwrap()
         .query_row("SELECT COUNT(*) FROM \"order\"", [], |r| r.get(0))

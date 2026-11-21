@@ -80,7 +80,7 @@ async fn small_order_fills_the_hole_without_delaying_the_head() {
     );
     assert!(started_at(&small) < started_at(&heavy), "{rows:?}");
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

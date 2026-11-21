@@ -171,8 +171,8 @@ async fn a_hub_only_laptop_refuses_a_lan_order_once_no_admissible_broker_is_left
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 
-    laptop_hub.stop();
-    roles.stop();
+    laptop_hub.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }
 
@@ -233,8 +233,8 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 
-    laptop_hub.stop();
-    laptop_roles.stop();
-    roles.stop();
+    laptop_hub.stopped().await;
+    laptop_roles.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }

@@ -32,7 +32,7 @@ fn a_good_file_prints_the_summary_then_the_secrets_report_and_exits_0() {
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     let text = out(&o);
     let summary = text
-        .find("profile unit: by work tree, timeout 900 s")
+        .find("profile unit: no platforms, timeout 900 s")
         .unwrap_or_else(|| panic!("{text}"));
     let secrets = text
         .find("no profile asks for a secret")
@@ -91,7 +91,7 @@ fn json_is_one_document() {
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     let v: serde_json::Value =
         serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", out(&o)));
-    assert_eq!(v["profiles"][0]["platform_mode"], "by commit");
+    assert_eq!(v["profiles"][0]["platform_mode"], "with platforms");
     assert_eq!(v["ok"], true);
     assert_eq!(v["ignored_sections"], serde_json::json!([]));
     assert_eq!(v["secrets"]["ok"], true);

@@ -147,7 +147,6 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             .collect(),
         spec: JobSpecRow {
             resolved_json: json.clone(),
-            profile_commit: None,
         },
         github,
         order: OrderRow {

@@ -122,7 +122,7 @@ async fn drain_finishes_the_job_stops_services_then_says_bye() {
     assert!(matches!(bye.as_slice(), [AgentExit::Stopped]), "{bye:?}");
     offline(&main, "r1").await;
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -354,5 +354,5 @@ async fn up_all_without_init_starts_the_hub_once_the_broker_answers() {
     assert!(ended.output.contains("on-this-machine"), "{}", ended.output);
 
     drop(down_after);
-    remove(dir).await;
+    remove_after_processes(dir).await;
 }

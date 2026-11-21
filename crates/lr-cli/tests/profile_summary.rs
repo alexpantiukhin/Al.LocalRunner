@@ -17,10 +17,10 @@ fn a_command_profile_is_summarized() {
     let p = summarize(&parse_profiles(text).unwrap()[0]);
     assert_eq!(p.command.as_deref(), Some("cargo test"));
     assert!(p.steps.is_empty());
-    assert_eq!(p.platform_mode, "by work tree");
+    assert_eq!(p.platform_mode, "no platforms");
     let l = lines(text);
     assert!(
-        l.contains(&"profile unit: by work tree, timeout 900 s".to_string()),
+        l.contains(&"profile unit: no platforms, timeout 900 s".to_string()),
         "{l:?}"
     );
     assert!(l.contains(&"  command: cargo test".to_string()));
@@ -39,7 +39,7 @@ fn a_steps_profile_lists_every_step() {
 }
 
 #[test]
-fn platforms_and_platform_tables_mean_by_commit() {
+fn platforms_and_platform_tables_mean_with_platforms() {
     let texts = [
         "[profile.p]\ncommand = \"true\"\ntimeout_s = 5\nplatforms = [\"linux\"]\n",
         "[profile.p]\ncommand = \"true\"\ntimeout_s = 5\n[profile.p.platform.ios]\ncommand = \"true\"\n",
@@ -47,9 +47,9 @@ fn platforms_and_platform_tables_mean_by_commit() {
     ];
     for text in texts {
         let p = summarize(&parse_profiles(text).unwrap()[0]);
-        assert_eq!(p.platform_mode, "by commit", "{text}");
+        assert_eq!(p.platform_mode, "with platforms", "{text}");
     }
-    assert!(lines(texts[0])[0].contains("by commit (linux)"));
+    assert!(lines(texts[0])[0].contains("with platforms (linux)"));
 }
 
 #[test]

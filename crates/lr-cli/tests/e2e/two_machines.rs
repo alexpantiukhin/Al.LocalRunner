@@ -110,9 +110,9 @@ async fn join_runner_by_code_then_job_runs_remote() {
         "{rows:?}"
     );
 
-    remote.stop();
-    hub_role.stop();
-    broker.stop();
+    remote.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     remove(dir).await;
 }
 
@@ -174,8 +174,8 @@ async fn hub_joins_by_code_with_the_owner_label_and_its_orders_carry_it() {
     let main_row = row(&main, &from_main).await;
     assert_eq!(main_row.client_label, LABEL, "{main_row:?}");
 
-    laptop_hub.stop();
-    roles.stop();
+    laptop_hub.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }
 
@@ -226,8 +226,8 @@ async fn one_code_for_three_runners_refuses_the_fourth() {
     let listed = names(&main, AdminRequest::RunnerList).await;
     assert_eq!(listed.len(), 3, "{listed:?}");
 
-    three.stop();
-    roles.stop();
+    three.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }
 

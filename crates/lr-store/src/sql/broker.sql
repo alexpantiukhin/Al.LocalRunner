@@ -100,7 +100,6 @@ CREATE TABLE job_spec (
     client_key     TEXT NOT NULL,
     job_id         TEXT NOT NULL,
     resolved_json  TEXT NOT NULL,
-    profile_commit TEXT,
     order_json     TEXT NOT NULL,
     PRIMARY KEY (client_key, job_id),
     FOREIGN KEY (client_key, job_id) REFERENCES job (client_key, id) ON DELETE CASCADE

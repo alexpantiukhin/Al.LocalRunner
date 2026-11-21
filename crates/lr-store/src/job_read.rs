@@ -70,12 +70,11 @@ fn record(conn: &Connection, job: JobRow) -> R<JobRecord> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let spec = conn.query_row(
-        "SELECT resolved_json, profile_commit FROM job_spec WHERE client_key = ?1 AND job_id = ?2",
+        "SELECT resolved_json FROM job_spec WHERE client_key = ?1 AND job_id = ?2",
         [&c, &id],
         |r| {
             Ok(JobSpecRow {
                 resolved_json: r.get(0)?,
-                profile_commit: r.get(1)?,
             })
         },
     )?;

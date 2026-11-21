@@ -40,9 +40,9 @@ impl Roles {
         self.0.remove(0)
     }
 
-    pub fn stop(mut self) {
+    pub async fn stopped(mut self) {
         while let Some(r) = self.0.pop() {
-            r.stop();
+            r.stopped().await;
         }
     }
 

@@ -122,8 +122,8 @@ async fn github_run_killed_by_signal_cancels_its_job() {
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("ordinary-after-ci"), "{}", b.output);
 
-    ci_hub.stop();
-    roles.stop();
+    ci_hub.stopped().await;
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

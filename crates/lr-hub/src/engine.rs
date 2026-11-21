@@ -193,9 +193,10 @@ impl Hub {
         engine.restore().await;
         engine.sample_outbox().await;
         let started = d.clock.now();
+        let mut clients = Vec::new();
         for t in targets {
             engine.links.entry(t.name.clone()).or_default().since = Some(started);
-            client::spawn(t, shared.clone(), tx.clone());
+            clients.push(client::spawn(t, shared.clone(), tx.clone()));
         }
         let (ipc_tx, ipc_shared) = (tx.clone(), shared.clone());
         let ipc =
@@ -227,6 +228,12 @@ impl Hub {
         }
         ipc.abort();
         ticks.abort();
+        for c in &clients {
+            c.abort();
+        }
+        for c in clients {
+            let _ = c.await;
+        }
     }
 }
 

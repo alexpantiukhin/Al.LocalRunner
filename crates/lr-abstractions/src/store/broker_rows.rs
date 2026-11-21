@@ -120,8 +120,6 @@ pub struct StepRow {
 pub struct JobSpecRow {
     /// Resolved profile and order as JSON.
     pub resolved_json: String,
-    /// Commit the profile was read from.
-    pub profile_commit: Option<String>,
 }
 
 /// Row of `github_run`.

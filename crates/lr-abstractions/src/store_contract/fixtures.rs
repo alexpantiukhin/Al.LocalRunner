@@ -58,7 +58,6 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
         steps: vec![step(0, "build"), step(1, "test")],
         spec: JobSpecRow {
             resolved_json: format!("{{\"job\":\"{job}\"}}"),
-            profile_commit: None,
         },
         github: None,
         order: OrderRow {

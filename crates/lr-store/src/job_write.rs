@@ -121,13 +121,12 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
             )?;
         }
         tx.execute(
-            "INSERT INTO job_spec (client_key, job_id, resolved_json, profile_commit, order_json) \
-             VALUES (?1,?2,?3,?4,?5)",
+            "INSERT INTO job_spec (client_key, job_id, resolved_json, order_json) \
+             VALUES (?1,?2,?3,?4)",
             params![
                 c,
                 id,
                 intake.spec.resolved_json,
-                intake.spec.profile_commit,
                 order_snapshot(&intake.order)
             ],
         )?;
@@ -324,8 +323,8 @@ pub(crate) fn replace_spec(conn: &mut Connection, key: &JobKey, spec: &JobSpecRo
             return Ok(Applied::Ignored);
         }
         tx.execute(
-            "UPDATE job_spec SET resolved_json = ?3, profile_commit = ?4 \n             WHERE client_key = ?1 AND job_id = ?2",
-            params![key.client, key.job.0, spec.resolved_json, spec.profile_commit],
+            "UPDATE job_spec SET resolved_json = ?3 \n             WHERE client_key = ?1 AND job_id = ?2",
+            params![key.client, key.job.0, spec.resolved_json],
         )?;
         Ok(Applied::Changed)
     })
