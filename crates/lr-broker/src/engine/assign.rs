@@ -106,7 +106,7 @@ impl Engine {
             (spec.steps.clone(), spec.code.clone())
         } else {
             let steps = spec.zone_steps.get(&a.zone).unwrap_or(&spec.steps).clone();
-            let code = if a.zone == lr_core::Zone::Local {
+            let code = if matches!(a.zone, lr_core::Zone::Local | lr_core::Zone::Shared) {
                 spec.code.clone()
             } else {
                 lr_proto::WireCode::Own

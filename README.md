@@ -366,7 +366,7 @@ Runner services (a build daemon, an emulator) are described in `[service.<name>]
 | How it connects | Over the local channel of the broker on this computer (any OS user the broker lets in connects this way); it needs no `broker.toml` and no key | By key (`join`), over the network or from a container, even if it is on the same computer |
 | Its name | `local:<name>` | The name it was given when it joined |
 | Zone toward the client | `local`, when it runs as the same OS user as the client | `shared`, `lan` or `remote`, never `local` |
-| Steps it runs | The steps of its zone, in the client's directory | The steps of its zone, in its own work folder |
+| Steps it runs | The steps of its zone, in the client's directory | The steps of its zone: in the client's directory in `shared`, in a work folder of the job in `lan` and `remote` |
 
 Consequences:
 
@@ -453,7 +453,7 @@ steps = [
 
 A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `labels` are free-form names the broker policy can match with `label` in a rule (they are not runner requirements and have no command-line flag). `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
 
-**The client's directory.** In the zone `local` a job runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Do not touch the files of a long run in progress. Outside `local` the runner works in its own folder and the steps of the zone bring the code.
+**The client's directory.** In the zone `local` a job runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Do not touch the files of a long run in progress. In `shared` the runner sees the same directory through the shared disk. In `lan` and `remote` the runner works in a folder of the job, which it removes at the end, and the steps of the zone bring the code.
 
 ## Logging
 

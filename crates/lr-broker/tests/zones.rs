@@ -45,7 +45,7 @@ async fn a_runner_named_with_the_client_in_one_shared_block_gets_the_shared_step
     hub.accepted().await;
     let assign = runner.assign().await;
     assert_eq!(assign.spec.steps, vec![step("shared")]);
-    assert_eq!(assign.spec.code, WireCode::Own);
+    assert!(matches!(assign.spec.code, WireCode::WorkTree { .. }));
 }
 
 #[tokio::test]
