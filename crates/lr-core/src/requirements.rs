@@ -12,6 +12,7 @@ pub struct MachineRef(pub String);
 
 /// What a job needs from a runner (spec 4), derived from a profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "WireRequirements")]
 pub struct Requirements {
     /// The single platform of the job; `None` for a same-machine job.
     pub platform: Option<String>,
@@ -45,6 +46,51 @@ pub struct Requirements {
     /// other client; absent from senders of an earlier minor version.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub commands: BTreeSet<String>,
+}
+
+/// [`Requirements`] as it is read: a record written before zones were a collection carries the
+/// farthest allowed zone as `max_zone`, which becomes the zones from the nearest up to it.
+#[derive(Deserialize)]
+struct WireRequirements {
+    platform: Option<String>,
+    timeout_s: u64,
+    mem_mb: u64,
+    cpu: u32,
+    disk_mb: u64,
+    programs: Vec<Program>,
+    tags: BTreeSet<String>,
+    exclusive: BTreeSet<String>,
+    same_machine: Option<MachineRef>,
+    services: Vec<String>,
+    secrets: BTreeSet<String>,
+    cache: Vec<String>,
+    #[serde(default)]
+    zones: Option<BTreeSet<Zone>>,
+    #[serde(default)]
+    max_zone: Option<Zone>,
+    #[serde(default)]
+    commands: BTreeSet<String>,
+}
+
+impl From<WireRequirements> for Requirements {
+    fn from(w: WireRequirements) -> Requirements {
+        Requirements {
+            platform: w.platform,
+            timeout_s: w.timeout_s,
+            mem_mb: w.mem_mb,
+            cpu: w.cpu,
+            disk_mb: w.disk_mb,
+            programs: w.programs,
+            tags: w.tags,
+            exclusive: w.exclusive,
+            same_machine: w.same_machine,
+            services: w.services,
+            secrets: w.secrets,
+            cache: w.cache,
+            zones: w.zones.or_else(|| w.max_zone.map(Zone::up_to)),
+            commands: w.commands,
+        }
+    }
 }
 
 impl Requirements {
@@ -90,7 +136,12 @@ impl Requirements {
         let mut cpu = 0;
         let mut tags: BTreeSet<String> = p.tags.iter().cloned().collect();
         let mut secrets: BTreeSet<String> = p.secrets.iter().cloned().collect();
-        for step in zone_steps.values().flatten() {
+        let allowed = |z: &Zone| zones.as_ref().is_none_or(|list| list.contains(z));
+        for step in zone_steps
+            .iter()
+            .filter(|(z, _)| allowed(z))
+            .flat_map(|(_, steps)| steps)
+        {
             mem_mb = mem_mb.max(step.mem_mb.or(p.mem_mb).unwrap_or(0));
             cpu = cpu.max(step.cpu.or(p.cpu).unwrap_or(0));
             tags.extend(step.tags.iter().flatten().cloned());

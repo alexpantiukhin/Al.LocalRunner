@@ -128,7 +128,7 @@ impl Engine {
                     client: job.key.client.clone(),
                     project: spec.identity.project.clone(),
                     requirements: job.entry.order.requirements.clone(),
-                    steps,
+                    steps: steps.clone(),
                     secrets: job
                         .entry
                         .order
@@ -155,6 +155,7 @@ impl Engine {
         self.observe_wait(&job, now);
         let group = self.policy.policy().group_of(&job.entry.client);
         self.served.record(&group, now);
+        job.spec.steps = steps;
         job.runner = Some(a.runner);
         job.assigned_at = now;
         self.waits.remove(&job.key);

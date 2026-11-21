@@ -27,8 +27,8 @@ impl fmt::Display for Version {
     }
 }
 
-/// The version this build speaks: wire version 1.0.
-pub const PROTOCOL_VERSION: Version = Version { major: 1, minor: 0 };
+/// The version this build speaks: wire version 2.0.
+pub const PROTOCOL_VERSION: Version = Version { major: 2, minor: 0 };
 
 /// The handshake was refused because the majors differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

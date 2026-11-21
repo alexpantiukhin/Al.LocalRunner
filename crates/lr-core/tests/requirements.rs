@@ -563,3 +563,14 @@ fn command_names_must_all_be_declared_by_the_runner() {
     caps.commands = set(&["build", "test", "lint"]);
     assert!(satisfies(&caps, &r).is_ok());
 }
+
+#[test]
+fn a_record_with_the_old_max_zone_reads_as_the_zones_up_to_it() {
+    let r = req(BASIC, None);
+    let mut v = toml::Value::try_from(&r).unwrap();
+    let o = v.as_table_mut().unwrap();
+    o.remove("zones");
+    o.insert("max_zone".into(), toml::Value::String("lan".into()));
+    let back: Requirements = v.try_into().unwrap();
+    assert_eq!(back.zones, Some(lr_core::Zone::up_to(lr_core::Zone::Lan)));
+}

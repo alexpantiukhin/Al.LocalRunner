@@ -87,3 +87,18 @@ async fn a_client_label_outside_the_block_does_not_make_the_zone_shared() {
     let assign = runner.assign().await;
     assert_eq!(assign.spec.steps, vec![step("lan")]);
 }
+
+#[tokio::test]
+async fn an_order_that_allows_a_zone_without_steps_is_refused_at_intake() {
+    let h = Harness::start(POLICY);
+    let mut runner = h.member_runner("other", "10.0.0.8", linux()).await;
+    let mut hub = h.member_hub("hub", "dev", "10.0.0.5").await;
+    hub.send(&zoned_order("a", &[Zone::Remote])).await;
+    let refused = hub.rejected().await;
+    assert!(
+        refused.detail.contains("remote"),
+        "the refusal names the zone: {}",
+        refused.detail
+    );
+    runner.quiet().await;
+}

@@ -147,6 +147,13 @@ impl Profile {
         out
     }
 
+    /// Whether a zone variant has other step names than the common steps.
+    pub(crate) fn steps_names_differ_from_variants(&self) -> bool {
+        let names = |s: &[StepSpec]| s.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+        let own = names(&self.steps);
+        self.zone_steps.values().any(|v| names(&v.steps) != own)
+    }
+
     /// Indexes of the steps skipped when step `failed` fails; empty when the
     /// failed step has `continue_on_failure`.
     pub fn skipped_after_failure(&self, failed: usize) -> Vec<usize> {
@@ -214,6 +221,14 @@ pub fn resolve_for_platform(p: &Profile, platform: &str) -> Result<Profile, Prof
         out.from_command = false;
     } else if out.from_command {
         out.steps[0].timeout_s = out.timeout_s;
+    }
+    if out.common && out.steps_names_differ_from_variants() {
+        return Err(ProfileError::Invalid {
+            profile: p.name.clone(),
+            field: format!("platform.{platform}"),
+            reason: "the steps of the platform must keep the step names of the zone variants"
+                .into(),
+        });
     }
     if out.timeout_s != timeout_before {
         let timeout_s = out.timeout_s;

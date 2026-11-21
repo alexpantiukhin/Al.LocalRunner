@@ -226,6 +226,26 @@ pub(crate) async fn build(
     };
     let mut profile = profile;
     profile.zoned = zoned;
+    if let Some(asked) = &req.zones {
+        let names = |z: &std::collections::BTreeSet<lr_core::Zone>| {
+            z.iter().map(|z| z.as_str()).collect::<Vec<_>>().join(", ")
+        };
+        let mut allowed: std::collections::BTreeSet<lr_core::Zone> =
+            profile.zone_steps_effective().keys().copied().collect();
+        if let Some(own) = &profile.zones {
+            allowed.retain(|z| own.contains(z));
+        }
+        let had = names(&allowed);
+        allowed.retain(|z| asked.contains(z));
+        if allowed.is_empty() {
+            return Err(invalid(format!(
+                "--zones {} names no zone that profile `{}` has steps for; it has: {had}",
+                names(asked),
+                profile.name
+            )));
+        }
+        profile.zones = Some(allowed);
+    }
     let mut requirements = Requirements::from_profile(
         &profile,
         platform.as_deref(),
@@ -235,30 +255,16 @@ pub(crate) async fn build(
     if zoned {
         requirements.same_machine = None;
     }
-    if let (Some(asked), Some(allowed)) = (&req.zones, requirements.zones.as_mut()) {
-        let names = |z: &std::collections::BTreeSet<lr_core::Zone>| {
-            z.iter().map(|z| z.as_str()).collect::<Vec<_>>().join(", ")
-        };
-        let had = names(allowed);
-        allowed.retain(|z| asked.contains(z));
-        if allowed.is_empty() {
-            return Err(invalid(format!(
-                "--zones {} names no zone that profile `{}` has steps for; it has: {had}",
-                names(asked),
-                profile.name
-            )));
-        }
-    }
     let mut resolved = match &platform {
         Some(p) => resolve_for_platform(&profile, p).map_err(|e| invalid(e.to_string()))?,
         None => profile.clone(),
     };
-    bind_args(&mut resolved.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
     let mut zone_steps = if zoned {
         resolved.zone_steps_effective()
     } else {
         Default::default()
     };
+    bind_args(&mut resolved.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
     for steps in zone_steps.values_mut() {
         bind_args(steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
     }

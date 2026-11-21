@@ -288,8 +288,38 @@ impl Engine {
                 format!("the client has {active} active orders, the limit is {limit}"),
             ));
         }
+        Self::zones_have_steps(spec)?;
         self.allowed(entry, spec)?;
         self.admit_fit(entry, spec)
+    }
+
+    /// An order with steps per zone may only allow zones it has steps for.
+    fn zones_have_steps(spec: &OrderSpec) -> Result<(), (RejectReason, String)> {
+        if spec.zone_steps.is_empty() {
+            return Ok(());
+        }
+        let missing: Vec<&str> = match &spec.requirements.zones {
+            Some(zones) => zones
+                .iter()
+                .filter(|z| !spec.zone_steps.contains_key(z))
+                .map(|z| z.as_str())
+                .collect(),
+            None => lr_core::Zone::ALL
+                .iter()
+                .filter(|z| !spec.zone_steps.contains_key(z))
+                .map(|z| z.as_str())
+                .collect(),
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err((
+            RejectReason::NoMatchingRunner,
+            format!(
+                "the order allows the zones {} but has no steps for them",
+                missing.join(", ")
+            ),
+        ))
     }
 
     fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {

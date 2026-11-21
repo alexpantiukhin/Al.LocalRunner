@@ -162,7 +162,7 @@ async fn incompatible_major_version_is_refused() {
     let h = Harness::start("");
     let mut c = h.connect_local("alex").await;
     c.send(&HubToBroker::Hello(Hello {
-        version: Version { major: 2, minor: 0 },
+        version: Version { major: 3, minor: 0 },
         name: "hub".into(),
         capabilities: None,
     }))
