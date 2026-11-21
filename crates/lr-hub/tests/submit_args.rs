@@ -68,8 +68,7 @@ async fn commit_order_gets_substitution_too() {
 #[tokio::test]
 async fn platform_override_command_gets_substitution() {
     let mut rig = Rig::new();
-    rig.join("lan1").await;
-    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
+    let lan = rig.local_broker(Script::linux(Zone::Local));
     rig.start();
     until(&lan, "connected", || lan.resumed()).await;
     rig.cli()

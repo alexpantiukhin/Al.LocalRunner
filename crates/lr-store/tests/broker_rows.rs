@@ -164,7 +164,6 @@ async fn github_facts_note_and_requeue_snapshot_survive_reopen() {
         actor: "alex".into(),
         run_url: "https://example.test/run/1".into(),
     });
-    i.order.same_machine = true;
     i.order.priority_hint = Some(-4);
     let (key, github, order) = (i.job.key.clone(), i.github.clone(), i.order.clone());
     store.accept(i).await.unwrap();

@@ -8,7 +8,7 @@ use crate::select::Decision;
 use crate::track::{Finished, Link, Stage, Track};
 use lr_abstractions::{
     Clock, Dialer, Files, Frame, HubStore, Level, LogSink, Meter, OutboxKind, ProcessInspector,
-    Record, Repository, Role,
+    Record, Role,
 };
 use lr_core::{JobId, Timestamp, Zone};
 use lr_proto::{
@@ -40,7 +40,6 @@ pub(crate) struct Shared {
     pub(crate) dialer: Arc<dyn Dialer>,
     pub(crate) inspector: Arc<dyn ProcessInspector>,
     pub(crate) files: Arc<dyn Files>,
-    pub(crate) repository: Arc<dyn Repository>,
     pub(crate) log: Arc<dyn LogSink>,
     pub(crate) meter: Arc<dyn Meter>,
     pub(crate) name: String,
@@ -168,7 +167,6 @@ impl Hub {
             dialer: d.dialer,
             inspector: d.inspector,
             files: d.files,
-            repository: d.repository,
             log: d.log,
             meter: d.meter,
             name: d.name,

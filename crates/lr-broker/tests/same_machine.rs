@@ -21,10 +21,10 @@ async fn same_machine_waits_only_if_runner_online_but_busy() {
     let h = Harness::start("");
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     assert_eq!(hub.accepted().await.waiting, None);
     assert_eq!(r.assign().await.job, JobId("s1".into()));
-    hub.send(&order("s2", same_machine_req())).await;
+    hub.send(&order("s2", local_only_req())).await;
     assert_eq!(
         hub.accepted().await.waiting.as_deref(),
         Some("the runner is busy")
@@ -39,22 +39,22 @@ async fn same_machine_waits_only_if_runner_online_but_busy() {
 async fn same_machine_rejected_if_runner_offline_or_gone_before_start() {
     let h = Harness::start("");
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("none", same_machine_req())).await;
+    hub.send(&order("none", local_only_req())).await;
     assert_eq!(hub.rejected().await.code.as_str(), NO_RUNNER);
 
     let r = h.local_runner("alex", "lr", linux()).await;
     r.close().await;
     hub.until_runner("local:lr", false).await;
-    hub.send(&order("offline", same_machine_req())).await;
+    hub.send(&order("offline", local_only_req())).await;
     assert_eq!(hub.rejected().await.code.as_str(), NO_RUNNER);
     h.assert_recorded_rejection(ALEX, "offline", NO_RUNNER)
         .await;
 
     let mut r = h.local_runner("alex", "lr", linux()).await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
-    hub.send(&order("s2", same_machine_req())).await;
+    hub.send(&order("s2", local_only_req())).await;
     hub.accepted().await;
     r.close().await;
     let mut got = [returned(&mut hub).await, returned(&mut hub).await];
@@ -75,13 +75,13 @@ async fn same_machine_order_keeps_waiting_while_another_runner_of_the_installati
     let h = Harness::start("");
     let mut busy = h.local_runner("alex", "lr2", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s0", same_machine_req())).await;
+    hub.send(&order("s0", local_only_req())).await;
     hub.accepted().await;
     busy.assign().await;
     busy.send(&started("s0", 1)).await;
     hub.started_notice().await;
     let mut r1 = h.local_runner("alex", "lr1", linux()).await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r1.assign().await;
     r1.close().await;
@@ -99,7 +99,7 @@ async fn draining_runner_does_not_count_for_a_same_machine_order() {
     r.send(&RunnerToBroker::Drain { reason: None }).await;
     let mut hub = h.local_hub("alex").await;
     hub.sync().await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     assert_eq!(hub.rejected().await.code.as_str(), NO_RUNNER);
 }
 
@@ -110,7 +110,7 @@ async fn a_new_same_machine_order_is_accepted_while_its_runner_drains_for_an_upg
     r.send(&drain(Some(DrainReason::Upgrade))).await;
     let mut hub = h.local_hub("alex").await;
     hub.sync().await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     assert_eq!(
         h.job_row(ALEX, "s1").await.unwrap().job.state,
@@ -123,10 +123,10 @@ async fn queued_same_machine_order_is_returned_when_its_last_runner_drains() {
     let h = Harness::start("");
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
-    hub.send(&order("s2", same_machine_req())).await;
+    hub.send(&order("s2", local_only_req())).await;
     hub.accepted().await;
     r.send(&RunnerToBroker::Drain { reason: None }).await;
     let back = returned(&mut hub).await;
@@ -142,7 +142,7 @@ async fn restored_same_machine_order_waits_one_grace_period_for_its_runner() {
     let h = Harness::start("[grace]\nlost_min = 2\n");
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
     let h = h.restart().await;
@@ -169,7 +169,7 @@ async fn restored_same_machine_order_runs_when_its_runner_comes_back() {
     let h = Harness::start("[grace]\nlost_min = 2\n");
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
     let h = h.restart().await;
@@ -185,12 +185,12 @@ async fn restored_same_machine_order_runs_when_its_runner_comes_back() {
 async fn busy_with_a_queued_order(h: &Harness) -> (Conn, Conn) {
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
     r.send(&started("s1", 1)).await;
     hub.started_notice().await;
-    hub.send(&order("s2", same_machine_req())).await;
+    hub.send(&order("s2", local_only_req())).await;
     hub.accepted().await;
     (r, hub)
 }

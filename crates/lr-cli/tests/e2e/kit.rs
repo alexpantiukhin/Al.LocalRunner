@@ -192,6 +192,39 @@ pub fn held_profile(name: &str, gate: &Gate, timeout_s: u64, extra: &str) -> Str
     )
 }
 
+/// The `lan` and `remote` variants of `name` that run `command`, so the profile may go beyond
+/// the machine of the client.
+pub fn far_variants(name: &str, command: &str) -> String {
+    ["lan", "remote"]
+        .iter()
+        .map(|zone| {
+            format!(
+                "\n[profile.{name}.zone.{zone}]\ncommand = {}\n",
+                toml_str(command)
+            )
+        })
+        .collect()
+}
+
+/// A held profile that may also run in the `lan` and `remote` zones.
+pub fn held_far_profile(name: &str, gate: &Gate, timeout_s: u64, extra: &str) -> String {
+    let command = gate.command(Mode::Wait, name);
+    format!(
+        "{}{}",
+        held_profile(name, gate, timeout_s, extra),
+        far_variants(name, &command)
+    )
+}
+
+/// A profile that prints `text` and ends and may also run in the `lan` and `remote` zones.
+pub fn echo_far_profile(name: &str, text: &str, timeout_s: u64, extra: &str) -> String {
+    format!(
+        "{}{}",
+        echo_profile(name, text, timeout_s, extra),
+        far_variants(name, &format!("echo {text}"))
+    )
+}
+
 /// A profile that prints `text` and ends.
 pub fn echo_profile(name: &str, text: &str, timeout_s: u64, extra: &str) -> String {
     format!("[profile.{name}]\ncommand = \"echo {text}\"\ntimeout_s = {timeout_s}\n{extra}")

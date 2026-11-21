@@ -4,7 +4,7 @@ use crate::orders::order_payload;
 use crate::select::{allowed_zones, broker_zone, Candidate, Choice, Decision};
 use crate::track::{Finished, Stage};
 use lr_abstractions::{Level, OutboxKind};
-use lr_core::{JobId, JobState, JOINED_BY_KEY};
+use lr_core::{JobId, JobState};
 use lr_proto::{CliReply, ProtocolErrorCode, ReasonCode, RejectReason};
 
 pub(crate) const UP_HINT: &str = "no runner on your installation, start it: localrunner up";
@@ -90,7 +90,7 @@ impl Engine {
                 self.flush(&name).await;
             }
             Decision::Wait(reason) => {
-                if let (true, Some(why)) = (track.same_machine(), refused) {
+                if let (true, Some(why)) = (track.local_only(), refused) {
                     let code = ReasonCode::Rejected(RejectReason::LocalUserUnknown);
                     return self.final_reject(job, code, why).await;
                 }
@@ -110,9 +110,7 @@ impl Engine {
         let jobs: Vec<JobId> = self
             .tracks
             .iter()
-            .filter(|(_, t)| {
-                t.same_machine() && matches!(t.stage, Stage::Selecting | Stage::Waiting)
-            })
+            .filter(|(_, t)| t.local_only() && matches!(t.stage, Stage::Selecting | Stage::Waiting))
             .map(|(j, _)| j.clone())
             .collect();
         for job in jobs {
@@ -137,8 +135,8 @@ impl Engine {
                 .final_result(job, JobState::Cancelled, None, reason)
                 .await;
         }
-        let Some(spec) = track.spec.clone().filter(|_| !track.same_machine()) else {
-            let detail = if track.same_machine() && !detail.contains(JOINED_BY_KEY) {
+        let Some(spec) = track.spec.clone().filter(|_| !track.local_only()) else {
+            let detail = if track.local_only() {
                 format!("{detail}; {UP_HINT}")
             } else {
                 detail

@@ -68,7 +68,6 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             client_machine: format!("m-{client}"),
             spec_json: format!("{{\"job\":\"{job}\"}}"),
             platform: Some("linux".into()),
-            same_machine: false,
             priority_hint: None,
             enqueued_at: queued_at,
             state: "queued".into(),

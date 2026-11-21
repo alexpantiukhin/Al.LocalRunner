@@ -70,12 +70,6 @@ fn default_not_matching_pattern_rejected() {
 }
 
 #[test]
-fn reserved_name_rejected() {
-    let text = format!("{BASE}[profile.t.args.branch]\ndefault = \"x\"\n");
-    assert_eq!(invalid(&text), ("t".into(), "args.branch".into()));
-}
-
-#[test]
 fn unknown_key_in_arg_rejected() {
     let (profile, _) = invalid(&with_arg("colour = \"red\""));
     assert_eq!(profile, "t");
@@ -85,4 +79,12 @@ fn unknown_key_in_arg_rejected() {
 fn join_without_many_rejected() {
     let text = with_arg("join = \",\"");
     assert_eq!(invalid(&text), ("t".into(), "args.target.join".into()));
+}
+
+#[test]
+fn branch_commit_and_repo_url_are_ordinary_argument_names() {
+    for name in ["branch", "commit", "repo_url"] {
+        let text = format!("{BASE}[profile.t.args.{name}]\ndefault = \"x\"\n");
+        assert!(parse_profiles(&text).is_ok(), "{name}");
+    }
 }

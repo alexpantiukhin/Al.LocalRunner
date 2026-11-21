@@ -1,6 +1,6 @@
 use super::harness::START;
 use lr_abstractions::{Peer, PeerAccess};
-use lr_core::{Endpoint, Identity, JobId, MachineRef, Requirements, Source, StepSpec, Timestamp};
+use lr_core::{Endpoint, Identity, JobId, Requirements, Source, StepSpec, Timestamp};
 use lr_proto::*;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::IpAddr;
@@ -73,7 +73,6 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         programs: Vec::new(),
         tags: BTreeSet::new(),
         exclusive: BTreeSet::new(),
-        same_machine: None,
         services: Vec::new(),
         secrets: BTreeSet::new(),
         cache: Vec::new(),
@@ -82,10 +81,10 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
     }
 }
 
-pub fn same_machine_req() -> Requirements {
+pub fn local_only_req() -> Requirements {
     let mut r = req(512, 1, 60);
     r.platform = None;
-    r.same_machine = Some(MachineRef("whatever-the-hub-says".into()));
+    r.zones = Some(BTreeSet::from([lr_core::Zone::Local]));
     r
 }
 
@@ -125,10 +124,8 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             }],
             enqueued_at: Timestamp(enqueued_ms),
             identity: identity("agent-1"),
-            code: WireCode::Commit {
-                sha: "abc".into(),
-                repo_url: None,
-                branch: None,
+            code: WireCode::WorkTree {
+                cwd: "/work/app".into(),
             },
             wanted_priority: None,
             overrides: ResourceOverride::default(),

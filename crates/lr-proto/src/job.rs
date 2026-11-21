@@ -8,22 +8,10 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireCode {
-    /// The client's work tree, same machine only.
+    /// The client's work tree: the runner of the `local` zone runs in the submitter's directory.
     WorkTree {
         /// Working directory of the submitter.
         cwd: String,
-    },
-    /// A pushed commit.
-    Commit {
-        /// Commit hash.
-        sha: String,
-        /// Address of the repository (`git remote get-url origin`) the runner mirrors and
-        /// fetches; absent from senders of an older minor version.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        repo_url: Option<String>,
-        /// Branch of the submitter, for the `{branch}` placeholder of a profile `source` step.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        branch: Option<String>,
     },
     /// The runner's own work folder: the steps of the job itself bring the code there (set by
     /// the broker for an order with zone variants that runs outside the `local` zone).

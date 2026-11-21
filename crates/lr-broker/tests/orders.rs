@@ -30,10 +30,8 @@ async fn order_accepted_then_assigned_to_matching_runner() {
     assert_eq!(assign.spec.steps[0].command, "make");
     assert_eq!(
         assign.spec.code,
-        WireCode::Commit {
-            sha: "abc".into(),
-            repo_url: None,
-            branch: None
+        WireCode::WorkTree {
+            cwd: "/work/app".into()
         }
     );
     assert_eq!(assign.spec.broker_lost_kill_s, Some(180));

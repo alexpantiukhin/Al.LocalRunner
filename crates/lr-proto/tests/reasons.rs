@@ -107,7 +107,6 @@ fn intake_refusals_have_their_own_rejected_codes() {
         "rejected_outbox_expired",
         "rejected_queue_limit",
         "rejected_rate_limited",
-        "rejected_commit_not_pushed",
         "rejected_service_not_allowed",
         "rejected_command_not_allowed",
         "rejected_override_above_pool",

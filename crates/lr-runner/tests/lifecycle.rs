@@ -437,10 +437,6 @@ max_size_gb = 40
 retention_days = 14
 evict = "lru"
 
-[workspace]
-max_size_gb = 20
-retention_days = 7
-
 [grace]
 broker_lost_kill_s = 120
 
@@ -456,8 +452,6 @@ path = "/usr/bin"
     assert_eq!(s.max_job_timeout_s, Some(3600));
     assert_eq!(s.cache.max_size_gb, Some(40));
     assert_eq!(s.cache.retention_days, Some(14));
-    assert_eq!(s.workspace.max_size_gb, Some(20));
-    assert_eq!(s.workspace.retention_days, Some(7));
     assert_eq!(s.broker_lost_kill_s, Some(120));
     assert_eq!(s.path.as_deref(), Some("/usr/bin"));
     let caps = s.capabilities(None);

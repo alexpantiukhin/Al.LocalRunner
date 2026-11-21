@@ -17,7 +17,6 @@ async fn a_profile_with_zone_variants_is_sent_with_the_steps_of_every_zone() {
     rig.cli().await.submit(submit("zoned", None)).await;
     until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
-    assert_eq!(spec.requirements.same_machine, None);
     assert_eq!(
         spec.requirements.zones,
         zones(&[Zone::Local, Zone::Shared, Zone::Lan])
@@ -86,5 +85,4 @@ async fn a_profile_without_variants_runs_in_local_and_shared_when_zones_are_aske
     until(&local, "order sent", || local.orders().len() == 1).await;
     let spec = &local.orders()[0].spec;
     assert_eq!(spec.requirements.zones, zones(&[Zone::Local, Zone::Shared]));
-    assert_eq!(spec.requirements.same_machine, None);
 }

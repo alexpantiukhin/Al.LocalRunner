@@ -1,6 +1,6 @@
 use lr_core::{
-    cache_env_var, parse_profiles, satisfies, Accept, Capabilities, MachineRef, MismatchReason,
-    Profile, ProfileError, Requirements, ServiceStatus, Zone,
+    cache_env_var, parse_profiles, satisfies, Accept, Capabilities, MismatchReason, Profile,
+    ProfileError, Requirements, ServiceStatus, Zone,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,7 +30,7 @@ fn runner() -> Capabilities {
 }
 
 fn req(text: &str, platform: Option<&str>) -> Requirements {
-    Requirements::from_profile(&one(text), platform, Some(MachineRef("m1".into()))).unwrap()
+    Requirements::from_profile(&one(text), platform).unwrap()
 }
 
 const BASIC: &str = "[profile.p]\ncommand = \"x\"\ntimeout_s = 600\nmem_mb = 4096\ncpu = 2\n";
@@ -101,7 +101,11 @@ programs = ["git", "git", { name = "gradle", check = "gradle --version" }]
     assert_eq!(r.disk_mb, 5000);
     assert_eq!(r.cache, ["gradle"]);
     assert_eq!(r.services, ["d"]);
-    assert_eq!(r.zones, Some(Zone::up_to(Zone::Lan)));
+    assert_eq!(
+        r.zones,
+        Some(BTreeSet::from([Zone::Local, Zone::Shared])),
+        "the legacy zone is the limit; a profile without variants has steps for local and shared only"
+    );
     assert_eq!(r.programs.len(), 2);
 }
 
@@ -122,36 +126,7 @@ mem_mb = 9000
 #[test]
 fn unsupported_platform_fails_derivation() {
     let p = one("[profile.p]\ncommand = \"x\"\ntimeout_s = 1\nplatforms = [\"linux\"]\n");
-    assert!(Requirements::from_profile(&p, Some("ios"), None).is_err());
-}
-
-#[test]
-fn no_platform_means_same_machine_as_client() {
-    let r = req(BASIC, None);
-    assert_eq!(r.platform, None);
-    assert_eq!(r.same_machine, Some(MachineRef("m1".into())));
-}
-
-#[test]
-fn platform_job_is_not_tied_to_a_machine() {
-    assert_eq!(req(BASIC, Some("linux")).same_machine, None);
-}
-
-#[test]
-fn same_machine_job_needs_runner_with_that_machine() {
-    let r = req(BASIC, None);
-    let mut caps = runner();
-    assert_eq!(
-        reasons(&caps, &r),
-        [MismatchReason::NotSameMachine {
-            runner: String::new(),
-            joined: false
-        }]
-    );
-    caps.machine = Some(MachineRef("other".into()));
-    assert!(satisfies(&caps, &r).is_err());
-    caps.machine = Some(MachineRef("m1".into()));
-    assert!(satisfies(&caps, &r).is_ok());
+    assert!(Requirements::from_profile(&p, Some("ios")).is_err());
 }
 
 #[test]
@@ -308,17 +283,6 @@ programs = [\"nope\"]
             }
         ]
     );
-}
-
-#[test]
-fn no_platform_and_no_client_machine_is_an_error() {
-    let p = one(BASIC);
-    match Requirements::from_profile(&p, None, None).unwrap_err() {
-        ProfileError::Invalid { profile, field, .. } => {
-            assert_eq!((profile.as_str(), field.as_str()), ("p", "platform"));
-        }
-        other => panic!("expected Invalid, got {other:?}"),
-    }
 }
 
 #[test]
@@ -504,7 +468,7 @@ timeout_s = 9
 zones = [\"lan\"]
 ";
     let p = one(none);
-    assert!(Requirements::from_profile(&p, Some("linux"), None).is_err());
+    assert!(Requirements::from_profile(&p, Some("linux")).is_err());
 }
 
 #[test]

@@ -15,7 +15,7 @@ const EXEMPT: &[(&str, &str, &str)] = &[
     (
         "16.7",
         "a second OS user cannot be created or logged in by a test",
-        "lr-broker/tests/assign.rs::same_machine_order_goes_only_to_ipc_runner_of_the_same_os_user",
+        "lr-broker/tests/assign.rs::a_local_only_order_goes_only_to_the_ipc_runner_of_the_same_os_user",
     ),
     (
         "16.9",

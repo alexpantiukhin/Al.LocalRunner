@@ -8,7 +8,7 @@ use lr_proto::*;
 async fn a_work_tree_order_with_no_runner_at_all_keeps_the_start_it_hint() {
     let h = Harness::start("");
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("tree", same_machine_req())).await;
+    hub.send(&order("tree", local_only_req())).await;
     let refused = hub.rejected().await;
     assert_eq!(
         refused.code,
@@ -21,11 +21,11 @@ async fn a_work_tree_order_with_no_runner_at_all_keeps_the_start_it_hint() {
 }
 
 #[tokio::test]
-async fn a_container_runner_never_gets_a_work_tree_order_and_takes_commit_orders() {
+async fn a_container_runner_is_not_in_the_local_zone_and_takes_orders_of_its_own_zone() {
     let h = Harness::start("");
     let mut container = h.member_runner("box", "172.17.0.2", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("tree", same_machine_req())).await;
+    hub.send(&order("tree", local_only_req())).await;
     let refused = hub.rejected().await;
     assert_eq!(
         refused.code,
@@ -33,12 +33,12 @@ async fn a_container_runner_never_gets_a_work_tree_order_and_takes_commit_orders
     );
     assert_eq!(
         refused.detail,
-        "runner box joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
+        "no runner on your installation, start it: up"
     );
     container.quiet().await;
-    hub.send(&order("commit", req(512, 1, 60))).await;
+    hub.send(&order("own", req(512, 1, 60))).await;
     hub.accepted().await;
     let a = container.assign().await;
-    assert_eq!(a.job, JobId("commit".into()));
-    assert_eq!(a.spec.requirements.same_machine, None);
+    assert_eq!(a.job, JobId("own".into()));
+    assert!(!a.spec.requirements.local_only());
 }

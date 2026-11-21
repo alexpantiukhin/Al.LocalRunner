@@ -62,10 +62,10 @@ impl Track {
         }
     }
 
-    pub(crate) fn same_machine(&self) -> bool {
+    pub(crate) fn local_only(&self) -> bool {
         self.spec
             .as_ref()
-            .is_some_and(|s| s.requirements.same_machine.is_some())
+            .is_some_and(|s| crate::select::local_only(&s.requirements))
     }
 
     pub(crate) fn owned_by(&self, os_user: &str, label: &str) -> bool {
@@ -121,10 +121,7 @@ impl Track {
             }),
             note: spec.and_then(|s| s.identity.note.clone()),
             branch: spec.and_then(|s| s.identity.branch.clone()),
-            commit: spec.and_then(|s| match &s.code {
-                lr_proto::WireCode::Commit { sha, .. } => Some(sha.clone()),
-                lr_proto::WireCode::WorkTree { .. } | lr_proto::WireCode::Own => None,
-            }),
+            commit: None,
             cwd: spec.map(|s| s.identity.cwd.display().to_string()),
             timeout_s: spec.map(|s| s.requirements.timeout_s),
             github_run_url: spec.and_then(|s| match &s.identity.source {

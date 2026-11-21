@@ -31,12 +31,14 @@ async fn restart_hub(layout: &Layout, old: Running) -> Running {
 }
 
 fn remote_profile(name: &str, text: &str, extra: &str) -> String {
-    echo_profile(
+    let mut out = echo_profile(
         name,
         text,
         120,
         &format!("platforms = [\"{PLATFORM}\"]\n{extra}"),
-    )
+    );
+    out.push_str(&far_variants(name, &format!("echo {text}")));
+    out
 }
 
 fn profiles() -> String {
@@ -49,7 +51,7 @@ fn profiles() -> String {
             "lan-only",
             "inside-the-lan",
             "mem_mb = 256
-zone = \"lan\"
+zones = [\"local\", \"shared\", \"lan\"]
 "
         ),
         remote_profile(

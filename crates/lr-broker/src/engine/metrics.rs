@@ -59,7 +59,7 @@ pub(crate) fn wait_code(wait: &Wait) -> &'static str {
 
 fn label_of(job: &Job, known: &BTreeSet<&str>) -> String {
     match &job.entry.order.requirements.platform {
-        None => SAME_MACHINE.to_string(),
+        None => ANY_PLATFORM.to_string(),
         Some(p) if known.contains(p.as_str()) => p.clone(),
         Some(_) => OTHER_PLATFORM.to_string(),
     }

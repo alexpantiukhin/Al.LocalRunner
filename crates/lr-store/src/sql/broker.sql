@@ -139,7 +139,6 @@ CREATE TABLE "order" (
     client_machine TEXT NOT NULL,
     spec_json      TEXT NOT NULL,
     platform       TEXT,
-    same_machine   INTEGER NOT NULL,
     priority_hint  INTEGER,
     enqueued_at    INTEGER NOT NULL,
     state          TEXT NOT NULL,

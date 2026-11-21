@@ -58,7 +58,12 @@ async fn drain_finishes_the_job_stops_services_then_says_bye() {
     let profiles = format!(
         "{}\n{}\n{}",
         held_profile("work", &gate, 120, "mem_mb = 64\nservices = [\"svc\"]\n"),
-        echo_profile("late", "never-runs", 60, "mem_mb = 64\n"),
+        echo_profile(
+            "late",
+            "never-runs",
+            60,
+            "mem_mb = 64\nzones = [\"local\"]\n"
+        ),
         held_profile("hold", &gate, 120, "mem_mb = 64\n"),
     );
     let repo = repo(&dir, &profiles);
@@ -219,7 +224,7 @@ async fn upgrade_with_an_older_database_keeps_a_backup_and_uninstall_keeps_state
     assert_eq!(schema_version(&backup), 1);
     assert_eq!(schema_version(&hub_db), 2);
     assert!(main.root.join("broker.db.bak-1").is_file());
-    assert_eq!(schema_version(&broker_db), 4);
+    assert_eq!(schema_version(&broker_db), 5);
     passes(&main, &repo, "quick").await;
     assert_eq!(
         history(&main).await.len(),

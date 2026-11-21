@@ -200,7 +200,7 @@ pub(crate) fn jobs(conn: &Connection, filter: &JobFilter) -> R<Vec<JobRecord>> {
 
 pub(crate) fn orders(conn: &Connection) -> R<Vec<OrderRow>> {
     let mut stmt = conn.prepare(
-        "SELECT client_key, job_id, client_machine, spec_json, platform, same_machine, \
+        "SELECT client_key, job_id, client_machine, spec_json, platform, \
          priority_hint, enqueued_at, state FROM \"order\" \
          ORDER BY enqueued_at, client_key, job_id",
     )?;
@@ -214,10 +214,9 @@ pub(crate) fn orders(conn: &Connection) -> R<Vec<OrderRow>> {
                 client_machine: r.get(2)?,
                 spec_json: r.get(3)?,
                 platform: r.get(4)?,
-                same_machine: r.get(5)?,
-                priority_hint: r.get(6)?,
-                enqueued_at: col_time(r, 7)?,
-                state: r.get(8)?,
+                priority_hint: r.get(5)?,
+                enqueued_at: col_time(r, 6)?,
+                state: r.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

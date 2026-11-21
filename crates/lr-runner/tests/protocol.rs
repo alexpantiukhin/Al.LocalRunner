@@ -1,17 +1,16 @@
 mod common;
 
 use common::*;
-use lr_abstractions::{CacheKey, Clock, Frame, Listener, RunnerStore, DEFAULT_CANCEL_GRACE};
-use lr_core::{JobId, Timestamp};
+use lr_abstractions::{Clock, Frame, Listener, DEFAULT_CANCEL_GRACE};
+use lr_core::JobId;
 use lr_proto::{
     decode, BrokerToRunner, ProtocolError, ProtocolErrorCode, Resume, ResumePoint, RunnerToBroker,
 };
-use lr_runner::{AgentExit, Retention, WorkspaceLayout, WORKSPACE_CLIENT};
+use lr_runner::AgentExit;
 use std::path::Path;
 use std::time::Duration;
 
 const SEC: Duration = Duration::from_secs(1);
-const DAY: u64 = 86_400_000;
 
 #[tokio::test]
 async fn hello_refused_for_authorization_stops_the_agent() {
@@ -119,52 +118,6 @@ async fn reconnect_backoff_doubles_up_to_thirty_seconds() {
         assert!(waited <= 30, "next attempt at most 30 s away");
     }
     assert_eq!(waited, 29, "attempts at 0, 1, 3, 7, 15, 31, 61, 91, 121 s");
-}
-
-#[tokio::test]
-async fn mirror_is_indexed_and_expires_with_workspace_retention() {
-    let url = "https://git.example.com/acme/app.git";
-    let mut rig = Rig::new();
-    rig.settings.workspace = Retention {
-        max_size_gb: None,
-        retention_days: Some(7),
-    };
-    let mirror = WorkspaceLayout::new(state_dir()).mirror_dir("acme/app", url);
-    {
-        let (_c, h) = rig.start();
-        let b = Broker::accept(&rig).await;
-        b.assign("job-1", 1, commit_spec(vec![step("b", "make", 60)], 60))
-            .await;
-        b.until_result().await;
-        rig.settle().await;
-        h.abort();
-        rig.settle().await;
-    }
-    let entries = rig.store.cache_entries().await.unwrap();
-    let entry = entries
-        .iter()
-        .find(|e| e.key.client == WORKSPACE_CLIENT)
-        .expect("the mirror is in the index");
-    assert_eq!(entry.path, mirror.display().to_string());
-    assert_eq!(entry.last_used, Timestamp(START));
-    rig.files.mkdir(&mirror);
-    rig.clock.advance(Duration::from_millis(8 * DAY));
-    rig.net.cut(BROKER);
-    let (_c, _h) = rig.start();
-    let _b = Broker::accept(&rig).await;
-    assert!(
-        !rig.files.is_dir(&mirror),
-        "unused for 8 days, removed at start"
-    );
-    let left: Vec<CacheKey> = rig
-        .store
-        .cache_entries()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|e| e.key)
-        .collect();
-    assert!(left.iter().all(|k| k.client != WORKSPACE_CLIENT));
 }
 
 #[tokio::test]

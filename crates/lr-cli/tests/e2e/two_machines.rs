@@ -81,8 +81,11 @@ async fn join_runner_by_code_then_job_runs_remote() {
     let known = runners(&main).await.expect("runners");
     assert_eq!(known.len(), 1, "only the joined runner: {known:?}");
 
-    let profiles = format!(
-        "[profile.remote]\ncommand = \"echo ran-on-the-joined-runner\"\ntimeout_s = 120\nmem_mb = 256\nplatforms = [\"{PLATFORM}\"]\n"
+    let profiles = echo_far_profile(
+        "remote",
+        "ran-on-the-joined-runner",
+        120,
+        &format!("mem_mb = 256\nplatforms = [\"{PLATFORM}\"]\n"),
     );
     let repo = repo(&dir, &profiles);
     common::git(dir.path(), &["init", "-q", "--bare", "origin.git"]);
@@ -145,7 +148,7 @@ async fn hub_joins_by_code_with_the_owner_label_and_its_orders_carry_it() {
 
     let profiles = format!(
         "{}\n{}",
-        echo_profile(
+        echo_far_profile(
             "remote",
             "from-the-laptop",
             120,

@@ -30,7 +30,7 @@ There is no `env`, no working directory, no `matrix` and no retry. Several comma
 
 ## Pitfalls
 
-1. A profile with `platforms` or a `platform.*` table is ordered by commit: the order carries a pushed commit (a pushed `HEAD` is required for a runner of another installation) and the runner must declare the platform in its `runner.toml`, where the template has `platforms` commented out. Without platforms the profile runs by work tree.
+1. A profile with `platforms` or a `platform.*` table needs a runner that declares the platform in its `runner.toml`, where the template has `platforms` commented out. A profile without `[profile.X.zone.<zone>]` variants runs only in the zones `local` and `shared`; to run on a `lan` or `remote` runner give it a variant for that zone, whose steps bring the code (for example `git fetch` and `checkout` of `{branch}`, passed as `--arg branch=...`).
 2. A `keychain:` secret source is parsed but not read by `profile check`; prefer `env:`.
 3. The secret names `PATH`, `HOME`, `TEMP`, `TMP` and `LOCALRUNNER_*` are reserved and fail the job.
 4. The `check` of a profile's `programs` runs only on the runner, against its own `[programs]`.

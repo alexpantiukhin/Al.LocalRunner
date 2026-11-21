@@ -333,7 +333,6 @@ pub fn requirements(timeout_s: u64) -> Requirements {
         programs: Vec::new(),
         tags: Default::default(),
         exclusive: Default::default(),
-        same_machine: None,
         services: Vec::new(),
         secrets: Default::default(),
         cache: Vec::new(),
@@ -357,13 +356,9 @@ pub fn worktree_spec(cwd: &str, steps: Vec<StepSpec>, timeout_s: u64) -> AssignS
     }
 }
 
-pub fn commit_spec(steps: Vec<StepSpec>, timeout_s: u64) -> AssignSpec {
+pub fn own_spec(steps: Vec<StepSpec>, timeout_s: u64) -> AssignSpec {
     AssignSpec {
-        code: WireCode::Commit {
-            sha: "0123456789abcdef0123456789abcdef01234567".into(),
-            repo_url: Some("https://git.example.com/acme/app.git".into()),
-            branch: Some("main".into()),
-        },
+        code: WireCode::Own,
         ..worktree_spec("/unused", steps, timeout_s)
     }
 }

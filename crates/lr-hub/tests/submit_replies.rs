@@ -12,8 +12,6 @@ async fn several_platforms_without_platform_flag_ask_to_choose_one() {
         "platforms = [\"linux\"]",
         "platforms = [\"windows\", \"linux\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),

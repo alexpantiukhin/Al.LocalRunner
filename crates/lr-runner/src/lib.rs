@@ -30,7 +30,7 @@ mod source;
 pub use agent::{
     AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps, SettingsCell, UpgradeLive,
 };
-pub use cache::{plan_sweep, CacheLayout, WORKSPACE_CLIENT};
+pub use cache::{plan_sweep, CacheLayout};
 pub use connect::STOP_BOUND;
 pub use hooks_config::{
     apply_owner_env, CleanupHook, CleanupOn, DEFAULT_CLEANUP_TIMEOUT_S, DEFAULT_HEADROOM_PCT,
@@ -43,7 +43,4 @@ pub use service_config::{
 pub use settings::{
     Retention, RunnerSettings, SettingsError, DEFAULT_LOST_KILL_S, MAX_HEARTBEAT_S, MAX_LOST_KILL_S,
 };
-pub use source::{
-    plan_source, quote_arg, validate_branch, validate_commit, validate_repo_url, SourceError,
-    SourceInput, SourcePlan, WorkspaceLayout, SOURCE_STEP,
-};
+pub use source::{plan_source, SourcePlan, WorkspaceLayout};

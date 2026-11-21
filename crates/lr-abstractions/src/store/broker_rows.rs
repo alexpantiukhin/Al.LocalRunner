@@ -178,10 +178,8 @@ pub struct OrderRow {
     pub client_machine: String,
     /// The order as JSON.
     pub spec_json: String,
-    /// Platform; `None` for a same-machine order.
+    /// Platform; `None` when the order names none.
     pub platform: Option<String>,
-    /// Whether it must run on the client's machine.
-    pub same_machine: bool,
     /// Priority the order wishes.
     pub priority_hint: Option<i64>,
     /// When the hub enqueued it; kept on re-brokering.

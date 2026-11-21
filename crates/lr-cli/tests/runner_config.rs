@@ -175,7 +175,7 @@ fn a_valid_file_has_no_warnings() {
         [accept]\nmin_mem_mb = 1\n[limits]\nmax_job_timeout_s = 60\nenforce = \"warn\"\n\
         mem_headroom = 1.5\ndisk_headroom = 1.5\n\
         [cache]\nmax_size_gb = 1\nretention_days = 2\nevict = \"lru\"\n\
-        [workspace]\nmax_size_gb = 1\n[grace]\nbroker_lost_kill_s = 5\n\
+        [grace]\nbroker_lost_kill_s = 5\n\
         [env]\npath = \"/usr/bin\"\n[job_env]\nJAVA_HOME = \"/jdk\"\nHOME = \"/h\"\n\
         [[cleanup]]\nname = \"c\"\ncommand = \"x\"\ntimeout_s = 5\non = [\"failed\"]\n\
         [programs]\ngit = {}\n[secret.k]\nfrom = \"env:K\"\n\

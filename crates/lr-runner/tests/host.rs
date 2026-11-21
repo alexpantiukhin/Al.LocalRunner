@@ -102,7 +102,7 @@ async fn work_tree_job_is_measured_on_the_volume_of_its_directory() {
     b.assign(
         "job-2",
         1,
-        needing(commit_spec(vec![step("b", "make", 600)], 600), 500),
+        needing(own_spec(vec![step("b", "make", 600)], 600), 500),
     )
     .await;
     let r = result_of(&b.until_result().await);

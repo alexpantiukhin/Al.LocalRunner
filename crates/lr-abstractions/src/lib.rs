@@ -23,7 +23,6 @@ pub mod load;
 pub mod logsink;
 pub mod meter;
 pub mod process;
-pub mod repository;
 pub mod secrets;
 pub mod store;
 pub mod transport;
@@ -46,7 +45,6 @@ pub use process::{
     ResourceLimits, SpawnSpec, StepOutcome, Stop, StopHandle, StopSignal, Usage,
     DEFAULT_CANCEL_GRACE, MASK,
 };
-pub use repository::{Repository, RepositoryError};
 pub use secrets::{SecretError, SecretSource, SecretValue};
 pub use store::{
     outlives_cancel, ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry,

@@ -94,7 +94,6 @@ mod tests {
             programs: Vec::new(),
             tags: Default::default(),
             exclusive: Default::default(),
-            same_machine: None,
             services: Vec::new(),
             secrets: Default::default(),
             cache: Vec::new(),

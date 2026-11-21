@@ -8,13 +8,12 @@ use lr_abstractions::{
     OrderRow, SourceKind, StepRow, StoreError, Transition,
 };
 use lr_core::{
-    ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject, Requirements,
-    Source, StepState,
+    ClientView, Declared, JobState, PoolLimits, QueueEntry, Reject, Requirements, Source, StepState,
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
     ReadAnswer, ReadReply, ReadRequest, ReasonCode, Received, RejectReason, Rejected,
-    ResourceOverride, Resume, WireCode,
+    ResourceOverride, Resume,
 };
 
 pub(super) fn reject_reason(r: &Reject) -> RejectReason {
@@ -25,7 +24,7 @@ pub(super) fn reject_reason(r: &Reject) -> RejectReason {
         Reject::Reserved { .. } => RejectReason::Reserved,
         Reject::Quota { .. } => RejectReason::Quota,
         Reject::NoMatchingRunner { .. } => RejectReason::NoMatchingRunner,
-        Reject::NoRunnerOnMachine { .. } => RejectReason::NoRunnerOnMachine,
+        Reject::NoRunnerOnMachine => RejectReason::NoRunnerOnMachine,
     }
 }
 
@@ -88,10 +87,7 @@ pub(super) fn overridden(
 fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -> Intake {
     let req = &entry.order.requirements;
     let id = &spec.identity;
-    let (code_source, commit) = match &spec.code {
-        WireCode::WorkTree { .. } | WireCode::Own => (CodeSource::WorkTree, None),
-        WireCode::Commit { sha, .. } => (CodeSource::Commit, Some(sha.clone())),
-    };
+    let (code_source, commit) = (CodeSource::WorkTree, None::<String>);
     let (source, github) = match &id.source {
         Source::Session => (SourceKind::Session, None),
         Source::Github(g) => (
@@ -162,7 +158,6 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             client_machine: client.machine_id.clone(),
             spec_json: json,
             platform: req.platform.clone(),
-            same_machine: req.same_machine.is_some(),
             priority_hint: spec.wanted_priority,
             enqueued_at: spec.enqueued_at,
             state: "queued".into(),
@@ -324,10 +319,7 @@ impl Engine {
 
     fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
         spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
-        let mut requirements = spec.requirements.clone();
-        if requirements.same_machine.is_some() {
-            requirements.same_machine = Some(MachineRef(client.key.clone()));
-        }
+        let requirements = spec.requirements.clone();
         let entry = QueueEntry {
             order: lr_core::Order {
                 job: self.internal_id(),

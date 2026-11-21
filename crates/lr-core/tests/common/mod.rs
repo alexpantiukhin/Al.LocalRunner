@@ -23,7 +23,6 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         programs: Vec::new(),
         tags: BTreeSet::new(),
         exclusive: BTreeSet::new(),
-        same_machine: None,
         services: Vec::new(),
         secrets: BTreeSet::new(),
         cache: Vec::new(),

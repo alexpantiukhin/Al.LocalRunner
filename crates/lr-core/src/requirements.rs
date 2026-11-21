@@ -14,7 +14,7 @@ pub struct MachineRef(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "WireRequirements")]
 pub struct Requirements {
-    /// The single platform of the job; `None` for a same-machine job.
+    /// The single platform of the job, if the profile names one.
     pub platform: Option<String>,
     /// Job timeout in seconds.
     pub timeout_s: u64,
@@ -30,8 +30,6 @@ pub struct Requirements {
     pub tags: BTreeSet<String>,
     /// Tags nobody else may hold meanwhile.
     pub exclusive: BTreeSet<String>,
-    /// Set when the job must run on the same machine as the client.
-    pub same_machine: Option<MachineRef>,
     /// Services the runner must offer.
     pub services: Vec<String>,
     /// Secret names requested by the job or any step.
@@ -60,7 +58,6 @@ struct WireRequirements {
     programs: Vec<Program>,
     tags: BTreeSet<String>,
     exclusive: BTreeSet<String>,
-    same_machine: Option<MachineRef>,
     services: Vec<String>,
     secrets: BTreeSet<String>,
     cache: Vec<String>,
@@ -83,7 +80,6 @@ impl From<WireRequirements> for Requirements {
             programs: w.programs,
             tags: w.tags,
             exclusive: w.exclusive,
-            same_machine: w.same_machine,
             services: w.services,
             secrets: w.secrets,
             cache: w.cache,
@@ -94,44 +90,37 @@ impl From<WireRequirements> for Requirements {
 }
 
 impl Requirements {
-    /// Derives the requirements of a job from `profile`.
-    ///
-    /// With a `platform` the profile is resolved for it and the job is not tied to
-    /// a machine. Without one the job runs on the client's machine: `client_machine`
-    /// becomes `same_machine` and is required: without it an error is returned.
+    /// Whether the order may run only in the `local` zone: with the client, over the local IPC
+    /// of its OS user.
+    pub fn local_only(&self) -> bool {
+        self.zones
+            .as_ref()
+            .is_some_and(|z| z.len() == 1 && z.contains(&Zone::Local))
+    }
+
+    /// Derives the requirements of a job from `profile`; with a `platform` the profile is
+    /// resolved for it first.
     pub fn from_profile(
         profile: &Profile,
         platform: Option<&str>,
-        client_machine: Option<MachineRef>,
     ) -> Result<Requirements, ProfileError> {
-        if platform.is_none() && client_machine.is_none() {
-            return Err(ProfileError::Invalid {
-                profile: profile.name.clone(),
-                field: "platform".into(),
-                reason: "a job without a platform needs the client machine".into(),
-            });
-        }
         let p = match platform {
             Some(name) => resolve_for_platform(profile, name)?,
             None => profile.clone(),
         };
         let zone_steps = p.zone_steps_effective();
-        let zones = if p.zoned {
-            let mut zones: BTreeSet<Zone> = zone_steps.keys().copied().collect();
-            if let Some(allowed) = &p.zones {
-                zones.retain(|z| allowed.contains(z));
-            }
-            if zones.is_empty() {
-                return Err(ProfileError::Invalid {
-                    profile: profile.name.clone(),
-                    field: "zones".into(),
-                    reason: "no zone is both allowed and has steps".into(),
-                });
-            }
-            Some(zones)
-        } else {
-            p.zones.clone()
-        };
+        let mut zones: BTreeSet<Zone> = zone_steps.keys().copied().collect();
+        if let Some(allowed) = &p.zones {
+            zones.retain(|z| allowed.contains(z));
+        }
+        if zones.is_empty() {
+            return Err(ProfileError::Invalid {
+                profile: profile.name.clone(),
+                field: "zones".into(),
+                reason: "no zone is both allowed and has steps".into(),
+            });
+        }
+        let zones = Some(zones);
         let mut mem_mb = 0;
         let mut cpu = 0;
         let mut tags: BTreeSet<String> = p.tags.iter().cloned().collect();
@@ -162,11 +151,6 @@ impl Requirements {
             programs,
             tags,
             exclusive: p.exclusive.iter().cloned().collect(),
-            same_machine: if platform.is_none() {
-                client_machine
-            } else {
-                None
-            },
             services: p.services.clone(),
             secrets,
             cache: p.cache.clone(),

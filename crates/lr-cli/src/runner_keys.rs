@@ -3,7 +3,7 @@
 
 use toml::{Table, Value};
 
-const TOP: [&str; 20] = [
+const TOP: [&str; 19] = [
     "name",
     "platforms",
     "tags",
@@ -16,7 +16,6 @@ const TOP: [&str; 20] = [
     "accept",
     "limits",
     "cache",
-    "workspace",
     "grace",
     "env",
     "job_env",
@@ -38,7 +37,7 @@ fn section_keys(section: &str) -> Option<&'static [&'static str]> {
             "disk_headroom",
         ]),
         "env" => Some(&["path"]),
-        "cache" | "workspace" => Some(&RETENTION),
+        "cache" => Some(&RETENTION),
         "grace" => Some(&["broker_lost_kill_s"]),
         _ => None,
     }
@@ -75,7 +74,7 @@ pub fn unknown_keys(table: &Table) -> Vec<String> {
             ));
         }
     }
-    for (name, known) in ["accept", "limits", "cache", "workspace", "grace", "env"]
+    for (name, known) in ["accept", "limits", "cache", "grace", "env"]
         .iter()
         .filter_map(|s| section_keys(s).map(|k| (*s, k)))
     {

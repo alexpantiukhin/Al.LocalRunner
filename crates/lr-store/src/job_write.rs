@@ -16,7 +16,6 @@ struct Snapshot {
     spec_json: String,
     client_machine: String,
     platform: Option<String>,
-    same_machine: bool,
     priority_hint: Option<i64>,
     enqueued_at: u64,
     state: String,
@@ -27,7 +26,6 @@ fn order_snapshot(o: &OrderRow) -> String {
         spec_json: o.spec_json.clone(),
         client_machine: o.client_machine.clone(),
         platform: o.platform.clone(),
-        same_machine: o.same_machine,
         priority_hint: o.priority_hint,
         enqueued_at: o.enqueued_at.0,
         state: o.state.clone(),
@@ -37,14 +35,13 @@ fn order_snapshot(o: &OrderRow) -> String {
 fn insert_order(tx: &Transaction<'_>, o: &OrderRow) -> R<()> {
     tx.execute(
         "INSERT INTO \"order\" (client_key, job_id, client_machine, spec_json, platform, \
-         same_machine, priority_hint, enqueued_at, state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+         priority_hint, enqueued_at, state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
         params![
             o.key.client,
             o.key.job.0,
             o.client_machine,
             o.spec_json,
             o.platform,
-            o.same_machine,
             o.priority_hint,
             time(o.enqueued_at),
             o.state
@@ -226,7 +223,6 @@ pub(crate) fn requeue(conn: &mut Connection, key: &JobKey) -> R<()> {
             client_machine: v.client_machine,
             spec_json: v.spec_json,
             platform: v.platform,
-            same_machine: v.same_machine,
             priority_hint: v.priority_hint,
             enqueued_at: Timestamp(v.enqueued_at),
             state: v.state,

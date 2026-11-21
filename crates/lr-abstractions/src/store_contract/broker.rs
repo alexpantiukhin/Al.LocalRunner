@@ -318,10 +318,9 @@ pub async fn peaks_are_stored_with_the_final_state(store: &dyn BrokerStore) {
 }
 
 /// A granted run that never started goes back to the queue with its runner cleared; the store
-/// rebuilds the order row it stored at accept, `same_machine` and priority hint included.
+/// rebuilds the order row it stored at accept, priority hint included.
 pub async fn unstarted_granted_run_can_be_requeued(store: &dyn BrokerStore) {
     let mut i = intake("c1", "j1", "check", T0);
-    i.order.same_machine = true;
     i.order.priority_hint = Some(5);
     let (key, order) = (i.job.key.clone(), i.order.clone());
     store.accept(i).await.unwrap();

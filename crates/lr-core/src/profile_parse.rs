@@ -222,7 +222,6 @@ fn build(
         (None, Some(s)) => (build_steps(&name, "steps", s)?, false),
     };
     check_variant_names(&name, common.then_some(&steps), &zone_steps)?;
-    let zoned = !zone_steps.is_empty() || needs.zones.is_some();
     let zones = match (needs.zone, needs.zones) {
         (Some(_), Some(_)) => {
             return Err(ProfileError::invalid(
@@ -269,7 +268,6 @@ fn build(
         services: needs.services.unwrap_or_default(),
         secrets: needs.secrets.unwrap_or_default(),
         zones,
-        zoned,
         steps,
         from_command,
         common,

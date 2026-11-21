@@ -104,13 +104,9 @@ pub struct Profile {
     pub services: Vec<String>,
     /// Secret names needed by the whole job.
     pub secrets: Vec<String>,
-    /// Zones the profile may run in; `None` allows every zone. With `zoned` they are narrowed
+    /// Zones the profile may run in; `None` allows every zone. They are narrowed
     /// to the zones that have steps; the legacy `zone` key gives the zones up to it.
     pub zones: Option<BTreeSet<Zone>>,
-    /// Whether the profile uses zones for its steps: it has zone variants or a `zones` list.
-    /// Such an order is not tied to the client's machine and its steps come per zone.
-    #[serde(default)]
-    pub zoned: bool,
     /// Ordered steps; a single `command` is one step. When the profile has no common block
     /// of its own (`common` is false) these are the steps of its lowest zone variant, kept
     /// for the step rows every job has.
