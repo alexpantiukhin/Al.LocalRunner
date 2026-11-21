@@ -149,7 +149,6 @@ fn job_card_shows_secret_names_without_values() {
         [
             "branch",
             "cancelled_by",
-            "commit",
             "cwd",
             "github_run_url",
             "note",

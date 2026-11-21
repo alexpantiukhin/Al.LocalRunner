@@ -305,7 +305,7 @@ async fn project_cache_share_sends_one_cache_client_for_two_clients_of_a_project
     let h = Harness::start("[cache]\nshare = \"project\"\n");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut laptop = h.member_hub("laptop", "agent", "10.0.0.20").await;
-    let mut desk = h.member_hub("desk", "agent", "10.0.0.21").await;
+    let mut desk = h.member_hub("desk", "desk-pc", "10.0.0.21").await;
     laptop.send(&order("j1", req(512, 1, 60))).await;
     laptop.accepted().await;
     let first = r.assign().await;

@@ -1,7 +1,7 @@
 //! Conversions between the Rust rows of `lr-abstractions` and SQLite values: enums as lowercase
 //! text, times and counters as `INTEGER` (u64 bit-cast to i64, lossless), sets and maps as JSON.
 
-use lr_abstractions::{CodeSource, MachineKind, OutboxKind, RunnerState, ServiceState, SourceKind};
+use lr_abstractions::{MachineKind, OutboxKind, RunnerState, ServiceState, SourceKind};
 use lr_core::{JobState, StepState, Timestamp, Zone};
 use rusqlite::types::Type;
 use rusqlite::Row;
@@ -35,7 +35,6 @@ text_enum!(StepState {
 });
 text_enum!(Zone { Local => "local", Shared => "shared", Lan => "lan", Remote => "remote" });
 text_enum!(SourceKind { Session => "session", Github => "github" });
-text_enum!(CodeSource { WorkTree => "work_tree", Commit => "commit" });
 text_enum!(MachineKind { Hub => "hub", Runner => "runner" });
 text_enum!(RunnerState {
     Registered => "registered", Online => "online", Offline => "offline",

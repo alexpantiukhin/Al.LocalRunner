@@ -61,7 +61,7 @@ pub struct OrderArgs {
     /// Free note stored with the run.
     #[arg(long)]
     pub note: Option<String>,
-    /// One platform; makes it a commit order.
+    /// One platform: the profile is resolved for it.
     #[arg(long)]
     pub platform: Option<String>,
     /// Lowers the profile timeout, in seconds.

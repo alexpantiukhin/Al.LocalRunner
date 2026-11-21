@@ -10,7 +10,6 @@ fn detail() -> JobDetail {
         note: Some("check".into()),
         branch: Some("main".into()),
         cwd: Some("/work/repo".into()),
-        commit: None,
         os_user: Some("alex".into()),
         source: Some(WireSource::Session),
         github_run_url: None,

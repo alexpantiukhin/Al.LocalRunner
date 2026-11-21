@@ -14,8 +14,8 @@ use rusqlite::types::Value;
 use rusqlite::{params_from_iter, Connection, OptionalExtension, Row};
 
 const JOB_COLUMNS: &str = "client_key, id, project, source, label, note, branch, cwd, profile, \
-    platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, \
-    code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
+    platform, runner_name, client_machine, client_label, os_user, secrets, \
+    queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
     cancel_reason, peak_mem_mb, peak_disk_mb";
 
 fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
@@ -33,21 +33,19 @@ fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
         profile: r.get(8)?,
         platform: r.get(9)?,
         runner: r.get(10)?,
-        commit_sha: r.get(11)?,
-        client_machine: r.get(12)?,
-        client_label: r.get(13)?,
-        os_user: r.get(14)?,
-        secrets: col_json(r, 15)?,
-        code_source: col_enum(r, 16)?,
-        queued_at: col_time(r, 17)?,
-        started_at: col_opt_time(r, 18)?,
-        finished_at: col_opt_time(r, 19)?,
-        state: col_enum(r, 20)?,
-        exit_code: r.get(21)?,
-        cancelled_by: r.get::<_, Option<String>>(22)?.filter(|b| !b.is_empty()),
-        cancel_reason: r.get(23)?,
-        peak_mem_mb: col_opt_u64(r, 24)?,
-        peak_disk_mb: col_opt_u64(r, 25)?,
+        client_machine: r.get(11)?,
+        client_label: r.get(12)?,
+        os_user: r.get(13)?,
+        secrets: col_json(r, 14)?,
+        queued_at: col_time(r, 15)?,
+        started_at: col_opt_time(r, 16)?,
+        finished_at: col_opt_time(r, 17)?,
+        state: col_enum(r, 18)?,
+        exit_code: r.get(19)?,
+        cancelled_by: r.get::<_, Option<String>>(20)?.filter(|b| !b.is_empty()),
+        cancel_reason: r.get(21)?,
+        peak_mem_mb: col_opt_u64(r, 22)?,
+        peak_disk_mb: col_opt_u64(r, 23)?,
     })
 }
 

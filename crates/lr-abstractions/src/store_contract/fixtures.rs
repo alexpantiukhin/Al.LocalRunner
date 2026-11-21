@@ -1,8 +1,8 @@
 //! Rows used by the contract cases.
 
 use crate::store::{
-    CodeSource, Intake, JobKey, JobRow, JobSpecRow, Join, JoinCodeRow, MachineKind, MachineRow,
-    OrderRow, RunnerRow, RunnerState, SourceKind, StepRow,
+    Intake, JobKey, JobRow, JobSpecRow, Join, JoinCodeRow, MachineKind, MachineRow, OrderRow,
+    RunnerRow, RunnerState, SourceKind, StepRow,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,12 +41,10 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             profile: profile.to_string(),
             platform: Some("linux".into()),
             runner: None,
-            commit_sha: Some("abc123".into()),
             client_machine: format!("m-{client}"),
             client_label: format!("label-{client}"),
             os_user: "alex".into(),
             secrets: vec!["registry_auth".into()],
-            code_source: CodeSource::Commit,
             queued_at,
             started_at: None,
             finished_at: None,

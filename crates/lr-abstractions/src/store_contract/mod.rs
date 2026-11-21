@@ -98,6 +98,7 @@ macro_rules! broker_store_contract {
             broker_registry::multi_use_code_counts_down_per_join,
             broker_registry::named_code_admits_only_its_name,
             broker_registry::code_label_applied_to_joining_machine,
+            broker_registry::a_hub_label_is_taken_by_one_hub_at_a_time,
             broker_registry::join_code_found_by_hash,
             broker_registry::invalid_codes_refused_without_spending_a_use,
             broker_registry::taken_name_refused_until_revoked,

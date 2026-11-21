@@ -356,7 +356,6 @@ impl Engine {
                 note: None,
                 branch: f.summary.branch.clone(),
                 cwd: f.summary.cwd.clone(),
-                commit: f.summary.commit.clone(),
                 os_user: None,
                 source: f.summary.source,
                 github_run_url: None,

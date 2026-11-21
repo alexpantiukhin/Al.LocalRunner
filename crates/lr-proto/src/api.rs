@@ -258,10 +258,6 @@ pub struct JobSummary {
     /// Working directory of the submitter; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Commit the order was submitted at; hidden at `summary`, absent for a work-tree order and
-    /// from older peers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub commit: Option<String>,
     /// Job timeout in seconds; hidden at `summary`. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u64>,
@@ -316,8 +312,6 @@ pub struct JobDetail {
     pub branch: Option<String>,
     /// Working directory on the client.
     pub cwd: Option<String>,
-    /// Commit of a commit job.
-    pub commit: Option<String>,
     /// OS user of the submitter.
     pub os_user: Option<String>,
     /// Source kind.
@@ -418,7 +412,7 @@ pub enum RunnerLiveness {
 pub enum RunnerKind {
     /// Connected over the local channel of the broker on this machine.
     Local,
-    /// Connected by key; takes only commit orders.
+    /// Connected by key; never in the zone `local`.
     Joined,
     /// A kind this version does not know.
     #[serde(other)]

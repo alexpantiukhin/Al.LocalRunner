@@ -164,7 +164,6 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
         format!("note      {}", dash(&d.note)),
         format!("branch    {}", dash(&d.branch)),
         format!("directory {}", dash(&d.cwd)),
-        format!("commit    {}", dash(&d.commit)),
         format!("os user   {}", dash(&d.os_user)),
         format!("platform  {}", dash(&s.platform)),
         format!("runner    {}", dash(&s.runner)),

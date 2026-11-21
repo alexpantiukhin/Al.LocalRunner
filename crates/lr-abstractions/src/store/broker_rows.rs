@@ -43,15 +43,6 @@ pub enum SourceKind {
     Github,
 }
 
-/// Which code the job runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CodeSource {
-    /// The client's work tree (same machine only).
-    WorkTree,
-    /// A pushed commit.
-    Commit,
-}
-
 /// Row of `job`: one run with everything known about it (spec 8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobRow {
@@ -75,8 +66,6 @@ pub struct JobRow {
     pub platform: Option<String>,
     /// Runner the job was granted to.
     pub runner: Option<String>,
-    /// Commit checked out for a commit job.
-    pub commit_sha: Option<String>,
     /// MachineId of the client, from its key record.
     pub client_machine: String,
     /// Client label, from its key record.
@@ -85,8 +74,6 @@ pub struct JobRow {
     pub os_user: String,
     /// Names (never values) of the secrets requested.
     pub secrets: Vec<String>,
-    /// Code source.
-    pub code_source: CodeSource,
     /// When the hub enqueued it.
     pub queued_at: Timestamp,
     /// `Started` on the broker clock.

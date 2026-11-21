@@ -142,7 +142,7 @@ async fn a_client_trusted_with_any_command_never_gets_names_from_its_order() {
 async fn a_key_entry_limits_only_that_client() {
     let h = Harness::start("[[commands.client]]\nkey = \"visitor\"\nmode = \"named\"\n");
     let mut r = h.member_runner("r1", "10.0.0.7", naming(&["make"])).await;
-    let mut visitor = h.member_hub("visitor", "agent", "10.0.0.22").await;
+    let mut visitor = h.member_hub("visitor", "visitor-pc", "10.0.0.22").await;
     visitor.send(&order("j1", req(512, 1, 60))).await;
     visitor.accepted().await;
     assert!(r.assign().await.spec.named_commands);

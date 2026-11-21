@@ -69,7 +69,6 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.note = None;
             s.branch = None;
             s.cwd = None;
-            s.commit = None;
             s.timeout_s = None;
             s.github_run_url = None;
             s.peak_mem_mb = None;
@@ -89,7 +88,6 @@ pub fn mask_detail(mut d: JobDetail, access: Access) -> Option<JobDetail> {
         d.note = None;
         d.branch = None;
         d.cwd = None;
-        d.commit = None;
         d.os_user = None;
         d.source = None;
         d.github_run_url = None;
@@ -185,7 +183,6 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         source: Some(wire_source(row.source)),
         note: row.note.clone(),
         branch: row.branch.clone(),
-        commit: row.commit_sha.clone(),
         cwd: Some(row.cwd.clone()),
         timeout_s: None,
         github_run_url: None,
@@ -272,7 +269,6 @@ pub fn detail_of(rec: &JobRecord, wait_reason: Option<String>) -> JobDetail {
         note: row.note.clone(),
         branch: row.branch.clone(),
         cwd: Some(row.cwd.clone()),
-        commit: row.commit_sha.clone(),
         os_user: Some(row.os_user.clone()),
         source: Some(wire_source(row.source)),
         github_run_url: rec.github.as_ref().map(|g| g.run_url.clone()),
@@ -313,7 +309,6 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         }),
         note: job.spec.identity.note.clone(),
         branch: job.spec.identity.branch.clone(),
-        commit: None,
         cwd: Some(job.spec.identity.cwd.display().to_string()),
         timeout_s: Some(job.entry.order.requirements.timeout_s),
         github_run_url: match &job.spec.identity.source {

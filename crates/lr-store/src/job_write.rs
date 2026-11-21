@@ -71,10 +71,10 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
         let j = &intake.job;
         tx.execute(
             "INSERT INTO job (client_key, id, project, source, label, note, branch, cwd, profile, \
-             platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, \
-             code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
+             platform, runner_name, client_machine, client_label, os_user, secrets, \
+             queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
              cancel_reason, peak_mem_mb, peak_disk_mb) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,\
-             ?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)",
+             ?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)",
             params![
                 j.key.client,
                 j.key.job.0,
@@ -87,12 +87,10 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
                 j.profile,
                 j.platform,
                 j.runner,
-                j.commit_sha,
                 j.client_machine,
                 j.client_label,
                 j.os_user,
                 json(&j.secrets),
-                j.code_source.text(),
                 time(j.queued_at),
                 opt_time(j.started_at),
                 opt_time(j.finished_at),

@@ -125,6 +125,41 @@ pub async fn code_label_applied_to_joining_machine(store: &dyn BrokerStore) {
     assert_eq!(own.label, "agent");
 }
 
+/// The label of a hub is its name in `[[shared]]`: a second hub cannot take it, neither by a
+/// new code nor by a code issued earlier; a revoked hub frees it; runners may share a label.
+pub async fn a_hub_label_is_taken_by_one_hub_at_a_time(store: &dyn BrokerStore) {
+    let mut first = code("h1", MachineKind::Hub, 1);
+    first.label = Some("main-laptop".into());
+    store.issue_code(first.clone()).await.unwrap();
+    store
+        .redeem(join("h1", machine("hub-1", MachineKind::Hub, "k1"), at(1)))
+        .await
+        .unwrap();
+    let mut again = code("h2", MachineKind::Hub, 1);
+    again.label = Some("main-laptop".into());
+    assert!(matches!(
+        store.issue_code(again.clone()).await,
+        Err(StoreError::Duplicate(_))
+    ));
+    let mut late = code("h3", MachineKind::Hub, 1);
+    late.label = Some("work-laptop".into());
+    store.issue_code(late).await.unwrap();
+    let mut clash = machine("hub-2", MachineKind::Hub, "k2");
+    clash.label = "main-laptop".into();
+    let mut by_code = code("h4", MachineKind::Hub, 1);
+    by_code.label = None;
+    store.issue_code(by_code).await.unwrap();
+    assert!(matches!(
+        store.redeem(join("h4", clash, at(2))).await,
+        Err(StoreError::Duplicate(_))
+    ));
+    store.revoke("hub-1", at(3)).await.unwrap();
+    store.issue_code(again).await.unwrap();
+    let mut runner_code = code("r1", MachineKind::Runner, 2);
+    runner_code.label = Some("main-laptop".into());
+    store.issue_code(runner_code).await.unwrap();
+}
+
 /// A code is found by its hash, with its current uses; an unknown hash finds nothing.
 pub async fn join_code_found_by_hash(store: &dyn BrokerStore) {
     let c = code("h", MachineKind::Runner, 2);
@@ -170,10 +205,9 @@ pub async fn invalid_codes_refused_without_spending_a_use(store: &dyn BrokerStor
 /// revocation the name can join again.
 pub async fn taken_name_refused_until_revoked(store: &dyn BrokerStore) {
     joined(store, "laptop", MachineKind::Hub).await;
-    store
-        .issue_code(code("h2", MachineKind::Hub, 1))
-        .await
-        .unwrap();
+    let mut second = code("h2", MachineKind::Hub, 1);
+    second.label = None;
+    store.issue_code(second).await.unwrap();
     let same_name = machine("laptop", MachineKind::Hub, "new-key");
     assert!(matches!(
         store.redeem(join("h2", same_name.clone(), at(2))).await,

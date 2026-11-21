@@ -4,8 +4,8 @@ use super::hello::peer_kind;
 use super::{Client, Engine, Job};
 use crate::policy::TimeoutAboveMax;
 use lr_abstractions::{
-    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level,
-    OrderRow, SourceKind, StepRow, StoreError, Transition,
+    GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level, OrderRow,
+    SourceKind, StepRow, StoreError, Transition,
 };
 use lr_core::{
     ClientView, Declared, JobState, PoolLimits, QueueEntry, Reject, Requirements, Source, StepState,
@@ -87,7 +87,6 @@ pub(super) fn overridden(
 fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -> Intake {
     let req = &entry.order.requirements;
     let id = &spec.identity;
-    let (code_source, commit) = (CodeSource::WorkTree, None::<String>);
     let (source, github) = match &id.source {
         Source::Session => (SourceKind::Session, None),
         Source::Github(g) => (
@@ -117,12 +116,10 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             profile: spec.profile.clone(),
             platform: req.platform.clone(),
             runner: None,
-            commit_sha: commit.clone(),
             client_machine: client.machine_id.clone(),
             client_label: client.label.clone(),
             os_user: id.os_user.clone(),
             secrets: req.secrets.iter().cloned().collect(),
-            code_source,
             queued_at: spec.enqueued_at,
             started_at: None,
             finished_at: None,
@@ -150,7 +147,7 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             .collect(),
         spec: JobSpecRow {
             resolved_json: json.clone(),
-            profile_commit: commit,
+            profile_commit: None,
         },
         github,
         order: OrderRow {
