@@ -134,7 +134,13 @@ impl Cleanup<'_> {
 
 async fn plan(shared: &Shared, p: &Prepared<'_>) -> Result<SourcePlan, String> {
     let spec = p.spec;
-    let plan = plan_source(&shared.workspace(), &spec.code, &spec.project, &p.job.0);
+    let plan = plan_source(
+        &shared.workspace(),
+        &spec.code,
+        &spec.project,
+        &spec.client,
+        &p.job.0,
+    );
     if let WireCode::WorkTree { cwd } = &spec.code {
         let there = shared
             .deps

@@ -46,11 +46,11 @@ impl WorkspaceLayout {
     }
 
     /// The work folder of one job: the steps of a job that runs outside the `local` zone start
-    /// here and bring the code themselves; two jobs of a project never share it.
-    pub fn own_dir(&self, project: &str, job: &str) -> PathBuf {
+    /// here and bring the code themselves; no two jobs share it, whatever their project or client.
+    pub fn own_dir(&self, project: &str, client: &str, job: &str) -> PathBuf {
         self.root
             .join("own")
-            .join(dir_name(project, &[project, job]))
+            .join(dir_name(project, &[project, client, job]))
     }
 }
 
@@ -69,6 +69,7 @@ pub fn plan_source(
     layout: &WorkspaceLayout,
     code: &WireCode,
     project: &str,
+    client: &str,
     job: &str,
 ) -> SourcePlan {
     match code {
@@ -77,7 +78,7 @@ pub fn plan_source(
             job_cwd: PathBuf::from(cwd),
         },
         WireCode::Own => {
-            let dir = layout.own_dir(project, job);
+            let dir = layout.own_dir(project, client, job);
             SourcePlan {
                 make_dirs: vec![dir.clone()],
                 job_cwd: dir,

@@ -50,10 +50,14 @@ async fn an_own_folder_job_starts_in_the_runners_own_folder_and_clones_nothing()
         1,
         "the steps of the order are the only commands"
     );
-    assert_eq!(runs[0].cwd, layout().own_dir("acme/app", "job-1"));
+    assert_eq!(
+        runs[0].cwd,
+        layout().own_dir("acme/app", "client-1", "job-1")
+    );
     assert_eq!(commands(&runs[0]), vec!["make all".to_string()]);
     assert!(
-        !rig.files.is_dir(&layout().own_dir("acme/app", "job-1")),
+        !rig.files
+            .is_dir(&layout().own_dir("acme/app", "client-1", "job-1")),
         "the folder of the job is removed when it ends"
     );
 }
@@ -62,17 +66,21 @@ async fn an_own_folder_job_starts_in_the_runners_own_folder_and_clones_nothing()
 fn two_jobs_of_a_project_get_different_folders() {
     let l = layout();
     assert_ne!(
-        l.own_dir("acme/app", "job-1"),
-        l.own_dir("acme/app", "job-2")
+        l.own_dir("acme/app", "client-1", "job-1"),
+        l.own_dir("acme/app", "client-2", "job-1")
+    );
+    assert_ne!(
+        l.own_dir("acme/app", "client-1", "job-1"),
+        l.own_dir("acme/app", "client-1", "job-2")
     );
 }
 
 #[test]
 fn own_folder_names_are_safe_and_distinct() {
     let l = layout();
-    let a = l.own_dir("acme/app", "job-1");
-    let b = l.own_dir("acme_app", "job-1");
-    let d = l.own_dir("../../etc", "job-1");
+    let a = l.own_dir("acme/app", "client-1", "job-1");
+    let b = l.own_dir("acme_app", "client-1", "job-1");
+    let d = l.own_dir("../../etc", "client-1", "job-1");
     assert_ne!(a, b);
     assert_eq!(
         d.parent().unwrap(),
@@ -102,7 +110,7 @@ async fn a_job_root_holds_workspace_cache_and_temp_while_the_state_directory_sta
     assert_eq!(result_of(&b.until_result().await).state, JobState::Passed);
     let runs = rig.process.runs();
     let ws = WorkspaceLayout::new(job_root());
-    let own = ws.own_dir("acme/app", "job-1");
+    let own = ws.own_dir("acme/app", "client-1", "job-1");
     assert!(own.starts_with(job_root().join("workspace")));
     assert_eq!(runs[0].cwd, own);
     let temp = job_root().join("tmp").join("lr-job-1");
