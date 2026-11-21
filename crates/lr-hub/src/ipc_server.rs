@@ -19,7 +19,9 @@ pub(crate) async fn serve(
     events: mpsc::Sender<Event>,
 ) {
     let mut next: ConnId = 0;
+    let mut connections = tokio::task::JoinSet::new();
     loop {
+        while connections.try_join_next().is_some() {}
         let t = match ipc.accept().await {
             Ok(t) => t,
             Err(e) => {
@@ -35,7 +37,7 @@ pub(crate) async fn serve(
         next = next.wrapping_add(1);
         let t: Arc<dyn Transport> = Arc::from(t);
         let (shared, events) = (shared.clone(), events.clone());
-        tokio::spawn(async move { connection(next, t, shared, events).await });
+        connections.spawn(async move { connection(next, t, shared, events).await });
     }
 }
 

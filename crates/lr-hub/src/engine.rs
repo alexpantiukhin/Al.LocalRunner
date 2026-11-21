@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 
 /// Name under which the broker of this machine (reached over local IPC) is listed.
 pub const LOCAL_BROKER: &str = "local";
@@ -33,6 +33,7 @@ pub type ReloadPolicy = Arc<dyn Fn() -> Result<HubPolicy, String> + Send + Sync>
 
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
+const RELEASE_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) struct Shared {
     pub(crate) clock: Arc<dyn Clock>,
@@ -49,6 +50,7 @@ pub(crate) struct Shared {
     pub(crate) bus: broadcast::Sender<DashboardEvent>,
     next_req: AtomicU64,
     pub(crate) overflows: Overflows,
+    _released: oneshot::Sender<()>,
 }
 
 impl Shared {
@@ -157,6 +159,8 @@ impl Hub {
     /// Serves until the IPC listener closes or its owner asks it to stop (`down`).
     pub async fn run(self) {
         let d = self.deps;
+        let release_clock = d.clock.clone();
+        let (released_tx, released_rx) = oneshot::channel::<()>();
         let reload_logging = self.reload_logging;
         let reload_policy = self.reload_policy;
         let shared = Arc::new(Shared {
@@ -174,6 +178,7 @@ impl Hub {
             bus: crate::bus::new_bus(),
             next_req: AtomicU64::new(0),
             overflows: Overflows::default(),
+            _released: released_tx,
         });
         let (tx, mut rx) = mpsc::channel(EVENT_QUEUE);
         let mut engine = Engine {
@@ -233,6 +238,12 @@ impl Hub {
         }
         for c in clients {
             let _ = c.await;
+        }
+        drop(engine);
+        drop(shared);
+        tokio::select! {
+            _ = released_rx => {}
+            _ = release_clock.sleep(RELEASE_WAIT) => {}
         }
     }
 }
