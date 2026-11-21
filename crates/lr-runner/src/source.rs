@@ -29,8 +29,8 @@ pub(crate) fn dir_name(label: &str, key: &[&str]) -> String {
     format!("{clean}-{:016x}", fnv(key))
 }
 
-/// Where the jobs of a runner that run outside the `local` zone work: the runner's own work
-/// folder `<job root>/workspace/own/<project>-<hash>`, kept between jobs. The name part is
+/// Where the jobs of a runner that run outside the `local` zone work: a work folder of the
+/// job `<job root>/workspace/own/<project>-<hash>`, removed when the job ends. The name part is
 /// reduced to `[A-Za-z0-9._-]` and 48 characters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceLayout {
@@ -45,10 +45,12 @@ impl WorkspaceLayout {
         }
     }
 
-    /// The runner's own work folder of a project: the steps of a job that runs outside the
-    /// `local` zone start here and bring the code themselves.
-    pub fn own_dir(&self, project: &str) -> PathBuf {
-        self.root.join("own").join(dir_name(project, &[project]))
+    /// The work folder of one job: the steps of a job that runs outside the `local` zone start
+    /// here and bring the code themselves; two jobs of a project never share it.
+    pub fn own_dir(&self, project: &str, job: &str) -> PathBuf {
+        self.root
+            .join("own")
+            .join(dir_name(project, &[project, job]))
     }
 }
 
@@ -62,15 +64,20 @@ pub struct SourcePlan {
 }
 
 /// Plans the working directory of a job: the submitter's directory for the `local` zone
-/// (`WorkTree`), the runner's own work folder of the project otherwise (`Own`).
-pub fn plan_source(layout: &WorkspaceLayout, code: &WireCode, project: &str) -> SourcePlan {
+/// (`WorkTree`), a work folder of the job otherwise (`Own`).
+pub fn plan_source(
+    layout: &WorkspaceLayout,
+    code: &WireCode,
+    project: &str,
+    job: &str,
+) -> SourcePlan {
     match code {
         WireCode::WorkTree { cwd } => SourcePlan {
             make_dirs: Vec::new(),
             job_cwd: PathBuf::from(cwd),
         },
         WireCode::Own => {
-            let dir = layout.own_dir(project);
+            let dir = layout.own_dir(project, job);
             SourcePlan {
                 make_dirs: vec![dir.clone()],
                 job_cwd: dir,

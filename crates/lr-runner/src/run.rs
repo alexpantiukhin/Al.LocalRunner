@@ -85,12 +85,25 @@ const TEMP_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(2
 struct Cleanup<'a> {
     shared: &'a Shared,
     temp: PathBuf,
+    own: Option<PathBuf>,
     caches: Vec<CacheKey>,
 }
 
 impl Cleanup<'_> {
     async fn run(self) {
         let s = self.shared;
+        if let Some(own) = &self.own {
+            if let Err(e) = s.deps.files.remove_dir_all(own).await {
+                s.diag.event(
+                    Level::Error,
+                    "job folder not removed",
+                    &[
+                        ("path", &own.display().to_string()),
+                        ("error", &e.to_string()),
+                    ],
+                );
+            }
+        }
         let dir = &self.temp;
         let mut removed = s.deps.files.remove_dir_all(dir).await;
         for _ in 0..TEMP_RETRIES {
@@ -121,7 +134,7 @@ impl Cleanup<'_> {
 
 async fn plan(shared: &Shared, p: &Prepared<'_>) -> Result<SourcePlan, String> {
     let spec = p.spec;
-    let plan = plan_source(&shared.workspace(), &spec.code, &spec.project);
+    let plan = plan_source(&shared.workspace(), &spec.code, &spec.project, &p.job.0);
     if let WireCode::WorkTree { cwd } = &spec.code {
         let there = shared
             .deps
@@ -197,6 +210,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     let cleanup = Cleanup {
         shared,
         temp,
+        own: plan.make_dirs.first().cloned(),
         caches: keys,
     };
     let mut peaks = Usage::default();
