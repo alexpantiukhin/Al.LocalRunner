@@ -417,8 +417,7 @@ fn a_secret_name_cannot_be_inherited_from_the_process() {
         PathBuf::from("/s"),
         HOST,
     )
-    .err()
-    .expect("refused")
+    .expect_err("refused")
     .to_string();
     assert!(
         err.contains("[secret.registry_auth]") && err.contains("never inherited"),

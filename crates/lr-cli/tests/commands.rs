@@ -510,7 +510,7 @@ fn wait_follows_the_given_ids_the_active_jobs_of_a_label_or_its_last_job() {
         vec![(job("j2"), Some("gate".into()))]
     );
     assert_eq!(
-        wait_targets(&[], Some("a"), &[], &[done.clone()]).unwrap(),
+        wait_targets(&[], Some("a"), &[], std::slice::from_ref(&done)).unwrap(),
         vec![(job("j1"), Some("unit".into()))]
     );
     assert_eq!(
