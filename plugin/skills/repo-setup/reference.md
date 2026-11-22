@@ -31,7 +31,8 @@ There is no `env`, no working directory, no `matrix` and no retry. Several comma
 ## Pitfalls
 
 1. A profile with `platforms` or a `platform.*` table needs a runner that declares the platform in its `runner.toml`, where the template has `platforms` commented out. A profile without `[profile.X.zone.<zone>]` variants runs only in the zones `local` and `shared`; to run on a `lan` or `remote` runner give it a variant for that zone, whose steps bring the code (for example `git fetch` and `checkout` of `{branch}`, passed as `--arg branch=...`).
-2. A `keychain:` secret source is parsed but not read by `profile check`; prefer `env:`.
+2. In `lan` and `remote` a job works in its own folder, which the runner deletes when the job ends: what must survive between runs (a dependency store, a build cache) is declared as a `cache` of the profile. In `local` and `shared` the job works in the client's directory.
+3. A `keychain:` secret source is parsed but not read by `profile check`; prefer `env:`.
 3. The secret names `PATH`, `HOME`, `TEMP`, `TMP` and `LOCALRUNNER_*` are reserved and fail the job.
 4. The `check` of a profile's `programs` runs only on the runner, against its own `[programs]`.
 5. Masking of secrets in output is job-wide and exact: never use short values such as `true` or `1` as secrets.
