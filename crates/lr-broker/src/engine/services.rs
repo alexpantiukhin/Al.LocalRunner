@@ -30,6 +30,12 @@ impl Engine {
                 );
             }
         }
+        self.publish(
+            None,
+            QueueEvent::RunnerChanged {
+                name: name.to_string(),
+            },
+        );
         self.plan().await;
     }
 

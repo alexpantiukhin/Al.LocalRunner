@@ -123,6 +123,7 @@ pub fn topic_of(event: &QueueEvent) -> Topic {
         | QueueEvent::JobFinished { .. } => Topic::Queue,
         QueueEvent::RunnerOnline { .. }
         | QueueEvent::RunnerOffline { .. }
+        | QueueEvent::RunnerChanged { .. }
         | QueueEvent::ServiceChanged { .. } => Topic::Runners,
         QueueEvent::Unknown => Topic::Unknown,
     }

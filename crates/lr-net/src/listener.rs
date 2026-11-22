@@ -29,6 +29,7 @@ pub struct TlsListener {
     ready: Mutex<mpsc::Receiver<StreamTransport>>,
     task: JoinHandle<()>,
     released: watch::Receiver<bool>,
+    freed: watch::Receiver<u64>,
 }
 
 /// The bound socket and, dropped after it, the signal that the port is free again.
@@ -72,11 +73,13 @@ impl TlsListener {
     ) -> Result<TlsListener, NetError> {
         let tcp = TcpListener::bind(addr.socket_addr()).await?;
         let local = tcp.local_addr()?;
+        let slots = Slots::new(limits);
+        let freed = slots.freed();
         let shared = Arc::new(Shared {
             acceptor: TlsAcceptor::from(identity.server_config()?),
             own: identity.fingerprint(),
             gate,
-            slots: Slots::new(limits),
+            slots,
         });
         let (tx, rx) = mpsc::channel(1);
         let (released_tx, released) = watch::channel(false);
@@ -90,12 +93,19 @@ impl TlsListener {
             ready: Mutex::new(rx),
             task,
             released,
+            freed,
         })
     }
 
     /// The bound address (the real port when bound to port 0).
     pub fn local_addr(&self) -> SocketAddr {
         self.local
+    }
+
+    /// A counter that grows by one every time a joining connection gives its slot back;
+    /// waiting for it to move tells a caller that a joining slot is free again.
+    pub fn slot_releases(&self) -> watch::Receiver<u64> {
+        self.freed.clone()
     }
 
     /// Stops accepting at once; [`TlsListener::closed`] says when the port is free.

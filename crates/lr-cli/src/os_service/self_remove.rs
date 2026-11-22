@@ -63,7 +63,10 @@ fn spawn_cleanup(old: &Path) -> io::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map(|_| ())
+        .map(|_child| {
+            #[cfg(test)]
+            println!("LR_CLEANUP_HELPER_PID={}", _child.id());
+        })
 }
 
 #[cfg(not(windows))]
@@ -100,6 +103,20 @@ mod tests {
     }
 
     #[cfg(windows)]
+    fn wait_for_exit(pid: u32) {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        let process = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if process.is_null() {
+            return;
+        }
+        let waited = unsafe { WaitForSingleObject(process, 20_000) };
+        unsafe { CloseHandle(process) };
+        assert_eq!(waited, WAIT_OBJECT_0, "the cleanup helper ends");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_running_executable_is_renamed_and_the_helper_deletes_it_with_its_directory() {
         const CHILD: &str = "LOCALRUNNER_SELF_REMOVE_CHILD";
@@ -111,20 +128,26 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let exe = dir.join("child.exe");
         std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
-        let status = std::process::Command::new(&exe)
+        let out = std::process::Command::new(&exe)
             .args([
                 "--exact",
                 "os_service::self_remove::tests::a_running_executable_is_renamed_and_the_helper_deletes_it_with_its_directory",
+                "--nocapture",
             ])
             .env(CHILD, "1")
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success());
+        assert!(out.status.success());
         assert!(!exe.exists());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while dir.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let pid: u32 = stdout
+            .lines()
+            .find_map(|l| l.split_once("LR_CLEANUP_HELPER_PID=").map(|(_, pid)| pid))
+            .expect("the child reports the cleanup helper")
+            .trim()
+            .parse()
+            .unwrap();
+        wait_for_exit(pid);
         assert!(!dir.exists(), "the helper left {}", dir.display());
     }
 }

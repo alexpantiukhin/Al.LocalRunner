@@ -137,19 +137,10 @@ impl System for Recorder {
     fn apply(&self, action: &Action) -> Result<(), String> {
         self.applied.lock().unwrap().push(action.clone());
         match action {
-            Action::RemoveDirAll(dir) if self.purge => remove_when_closed(dir),
+            Action::RemoveDirAll(dir) if self.purge => {
+                std::fs::remove_dir_all(dir).map_err(|e| e.to_string())
+            }
             _ => Ok(()),
-        }
-    }
-}
-
-fn remove_when_closed(dir: &Path) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    loop {
-        match std::fs::remove_dir_all(dir) {
-            Ok(()) => return Ok(()),
-            Err(e) if started.elapsed() > HANG => return Err(e.to_string()),
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
         }
     }
 }
