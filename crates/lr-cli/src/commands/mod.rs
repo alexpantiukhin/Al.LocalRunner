@@ -118,11 +118,16 @@ pub enum Command {
         #[command(flatten)]
         order: OrderArgs,
     },
-    /// Watch a job; interrupting cancels nothing.
+    /// Watch jobs; interrupting cancels nothing. One job streams its output and ends with its
+    /// exit code; several jobs (or `--as` alone) print one result line per job.
     Wait {
-        /// The job.
-        job: String,
-        /// Print JSON: the output goes to stderr, stdout gets the final state.
+        /// The jobs; with none, the active jobs of `--as` (else its last job).
+        #[arg(required_unless_present = "label")]
+        jobs: Vec<String>,
+        /// Submitter label: with ids, checks that the jobs are its own; alone, selects its jobs.
+        #[arg(long = "as", value_name = "LABEL")]
+        label: Option<String>,
+        /// Print JSON: the output goes to stderr, stdout gets the final state (one line per job).
         #[arg(long)]
         json: bool,
     },
@@ -385,7 +390,7 @@ pub async fn run(cli: Cli) -> i32 {
     let result = match cli.command {
         Command::Submit { order, wait, json } => jobs::submit(&layout, order, wait, json).await,
         Command::Run { order } => jobs::submit(&layout, order, true, false).await,
-        Command::Wait { job, json } => jobs::wait(&layout, &job, json).await,
+        Command::Wait { jobs, label, json } => jobs::wait_jobs(&layout, jobs, label, json).await,
         Command::Jobs {
             label,
             active,

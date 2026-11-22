@@ -470,6 +470,83 @@ fn jobs_mine_prints_project_source_and_label_together() {
     assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-");
 }
 
+#[test]
+fn wait_takes_several_jobs_or_a_label_and_log_takes_a_label() {
+    use clap::Parser;
+    use lr_cli::commands::Cli;
+    for args in [
+        &["wait", "j1", "j2"][..],
+        &["wait", "--as", "agent-1"][..],
+        &["wait", "j1", "--as", "agent-1"][..],
+        &["log", "j1", "--as", "agent-1"][..],
+    ] {
+        let mut argv = vec!["localrunner"];
+        argv.extend(args);
+        assert!(Cli::try_parse_from(&argv).is_ok(), "{args:?}");
+    }
+    assert!(Cli::try_parse_from(["localrunner", "wait"]).is_err());
+}
+
+#[test]
+fn wait_follows_the_given_ids_the_active_jobs_of_a_label_or_its_last_job() {
+    use lr_cli::commands::jobs::wait_targets;
+    let mut running = summary("j2", JobState::Running);
+    running.profile = Some("gate".into());
+    let done = summary("j1", JobState::Passed);
+    let ids = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let job = |s: &str| JobId(s.into());
+    assert_eq!(
+        wait_targets(&ids(&["j9", "j8"]), None, &[], &[]).unwrap(),
+        vec![(job("j9"), None), (job("j8"), None)]
+    );
+    assert_eq!(
+        wait_targets(
+            &[],
+            Some("a"),
+            &[running.clone()],
+            &[done.clone(), running.clone()]
+        )
+        .unwrap(),
+        vec![(job("j2"), Some("gate".into()))]
+    );
+    assert_eq!(
+        wait_targets(&[], Some("a"), &[], &[done.clone()]).unwrap(),
+        vec![(job("j1"), Some("unit".into()))]
+    );
+    assert_eq!(
+        wait_targets(&[], Some("a"), &[], &[]).unwrap_err(),
+        "no jobs of label a"
+    );
+    assert_eq!(
+        wait_targets(&ids(&["j1"]), Some("a"), &[], &[done]).unwrap(),
+        vec![(job("j1"), Some("unit".into()))]
+    );
+    assert_eq!(
+        wait_targets(&ids(&["j7"]), Some("a"), &[], &[]).unwrap_err(),
+        "job j7 is not a job of label a known to the hub"
+    );
+}
+
+#[test]
+fn a_wait_line_names_the_job_the_profile_and_the_state() {
+    use lr_cli::commands::jobs::{wait_line, Ended};
+    let ended = |state| Ended::Exit {
+        state,
+        exit_code: Some(0),
+        reason: None,
+    };
+    let job = JobId("j1".into());
+    assert_eq!(
+        wait_line(&job, Some("unit"), &ended(JobState::Passed)),
+        "j1 unit Passed"
+    );
+    assert_eq!(
+        wait_line(&job, None, &ended(JobState::Failed)),
+        "j1 - Failed"
+    );
+    assert_eq!(wait_line(&job, None, &Ended::Rejected), "j1 - Rejected");
+}
+
 #[cfg(unix)]
 #[test]
 fn prepare_ipc_failure_names_the_directory() {

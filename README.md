@@ -617,8 +617,8 @@ All commands:
 |---|---|
 | `submit [profile] --as label` | submit an order, print the id, return at once |
 | `run [profile] --as label` | the same, but show the output and return the exit code |
-| `wait <job>` | follow a job; interrupting cancels nothing |
-| `log <job> [--step name] [--tail N] [-f]` | the job log |
+| `wait <job>... [--as L] [--json]` | follow a job and end with its exit code; interrupting cancels nothing. Several jobs, or `--as L` alone (the active jobs of that label, else its last job), print one line per job when it ends (`<job-id> <profile> <state>`, the profile is `-` without `--as`), no log; the code is the first non-zero one. With ids, `--as` checks that they are jobs of that label |
+| `log <job> [--as L] [--step name] [--tail N] [-f]` | the job log; `--as` is accepted so a session can pass its label to every command, the label is not used |
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `status <job>`, `explain <job>` | the queue with the `stale` and `offline` runners (`--json`: a `runners` array per broker); one job with its record; why an order waits, how long it has waited for a runner to start it, and which job holds the slot |

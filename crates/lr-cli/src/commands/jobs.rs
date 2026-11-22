@@ -298,6 +298,121 @@ pub async fn wait(layout: &Layout, job: &str, json: bool) -> Result<i32, String>
     Ok(ended.process_code())
 }
 
+async fn own_jobs(
+    layout: &Layout,
+    label: &str,
+    active: bool,
+) -> Result<Vec<lr_proto::JobSummary>, String> {
+    let client = hub(layout).await?;
+    let req = CliRequest::Jobs {
+        label: label.to_string(),
+        active,
+    };
+    let jobs = match client.call::<_, CliReply>(&req).await? {
+        CliReply::Jobs { jobs } => jobs,
+        other => return Err(unexpected(&other)),
+    };
+    client.close().await;
+    Ok(jobs)
+}
+
+/// The jobs `wait` follows: the given ids (each must be a job of `label` when it is given),
+/// else the active jobs of `label`, else its last job. Each comes with its profile when the
+/// label made it known.
+pub fn wait_targets(
+    ids: &[String],
+    label: Option<&str>,
+    active: &[lr_proto::JobSummary],
+    recent: &[lr_proto::JobSummary],
+) -> Result<Vec<(JobId, Option<String>)>, String> {
+    let pair = |j: &lr_proto::JobSummary| (j.job.clone(), j.profile.clone());
+    let label_text = label.unwrap_or_default();
+    if ids.is_empty() {
+        return match active.last().or(recent.last()) {
+            None => Err(format!("no jobs of label {label_text}")),
+            Some(_) if !active.is_empty() => Ok(active.iter().map(pair).collect()),
+            Some(last) => Ok(vec![pair(last)]),
+        };
+    }
+    ids.iter()
+        .map(|id| match label {
+            None => Ok((JobId(id.clone()), None)),
+            Some(l) => active
+                .iter()
+                .chain(recent)
+                .find(|j| j.job.0 == *id)
+                .map(pair)
+                .ok_or_else(|| format!("job {id} is not a job of label {l} known to the hub")),
+        })
+        .collect()
+}
+
+/// One result line of `wait` over several jobs: job, profile (`-` when unknown), state.
+pub fn wait_line(job: &JobId, profile: Option<&str>, ended: &Ended) -> String {
+    let state = match ended {
+        Ended::Exit { state, .. } => format!("{state:?}"),
+        Ended::Rejected => "Rejected".to_string(),
+    };
+    format!("{job} {} {state}", profile.unwrap_or("-"))
+}
+
+/// `wait [jobs...] [--as LABEL] [--json]`. One job: [`wait`] (its output, its exit code).
+/// Several: waits for all of them at once and prints a line per job when it ends, without the
+/// log (`log <job>` has it); the code is the first non-zero one, else 0.
+pub async fn wait_jobs(
+    layout: &Layout,
+    ids: Vec<String>,
+    label: Option<String>,
+    json: bool,
+) -> Result<i32, String> {
+    let (active, recent) = match &label {
+        Some(l) => (
+            own_jobs(layout, l, true).await?,
+            own_jobs(layout, l, false).await?,
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
+    let targets = wait_targets(&ids, label.as_deref(), &active, &recent)?;
+    if let [(job, _)] = targets.as_slice() {
+        return wait(layout, &job.0, json).await;
+    }
+    let redactor = cli_redactor(layout);
+    let local = tokio::task::LocalSet::new();
+    let mut clients = Vec::new();
+    for (job, profile) in targets {
+        clients.push((hub(layout).await?, job, profile));
+    }
+    local
+        .run_until(async move {
+            let mut set = tokio::task::JoinSet::new();
+            for (client, job, profile) in clients {
+                let redactor = redactor.clone();
+                set.spawn_local(async move {
+                    let ended = match client.send(&CliRequest::Wait { job: job.clone() }).await {
+                        Ok(()) => follow_to_end(&client, &job, &redactor, &mut |_| {}).await,
+                        Err(e) => Err(e),
+                    };
+                    (job, profile, ended)
+                });
+            }
+            let mut code = 0;
+            while let Some(done) = set.join_next().await {
+                let (job, profile, ended) = done.map_err(|e| e.to_string())?;
+                let ended = ended?;
+                if json {
+                    println!("{}", ended_json(&job, &ended));
+                } else {
+                    println!("{}", wait_line(&job, profile.as_deref(), &ended));
+                }
+                if code == 0 {
+                    code = ended.process_code();
+                }
+            }
+            Ok(code)
+        })
+        .await
+}
+
 #[derive(serde::Deserialize)]
 struct HandleLabel {
     label: String,
