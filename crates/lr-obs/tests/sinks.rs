@@ -26,6 +26,7 @@ fn journal_text_is_cut_to_the_event_log_limit() {
 struct Paused {
     ready: Arc<std::sync::atomic::AtomicU64>,
     ticks: Arc<std::sync::atomic::AtomicU64>,
+    asked: std::sync::mpsc::Sender<()>,
 }
 
 impl lr_obs::queue::Writer for Paused {
@@ -36,6 +37,7 @@ impl lr_obs::queue::Writer for Paused {
     fn ready(&mut self) -> bool {
         self.ready
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.asked.send(());
         false
     }
 
@@ -52,9 +54,11 @@ fn paused_writer_does_not_spin_the_worker() {
     use std::sync::atomic::{AtomicU64, Ordering};
     let ready = Arc::new(AtomicU64::new(0));
     let ticks = Arc::new(AtomicU64::new(0));
+    let (asked, paused) = std::sync::mpsc::channel();
     let writer = Paused {
         ready: ready.clone(),
         ticks: ticks.clone(),
+        asked,
     };
     let meter: Arc<dyn Meter> = Arc::new(Metrics::new(T0, false));
     let q = Arc::new(Queued::new(
@@ -68,12 +72,15 @@ fn paused_writer_does_not_spin_the_worker() {
         std::thread::spawn(move || q.run())
     };
     let redactor = lr_obs::Redactor::new(&[]);
+    q.accept(redactor.redact(&record("engine", Level::Info, "first")));
+    paused
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the worker asks the paused writer");
     let started = std::time::Instant::now();
     for n in 0..20_000 {
         q.accept(redactor.redact(&record("engine", Level::Info, &format!("m{n}"))));
     }
     let accepting = started.elapsed();
-    std::thread::sleep(std::time::Duration::from_millis(1500));
     q.close();
     worker.join().unwrap();
     assert!(

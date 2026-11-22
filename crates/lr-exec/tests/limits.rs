@@ -8,7 +8,6 @@ use lr_core::{JobState, StepState};
 use lr_exec::{ExecRunner, SystemClock};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 #[cfg(windows)]
 fn allocate(chunks: u32, then_sleep_s: u32) -> String {
@@ -65,12 +64,7 @@ async fn run_with(
     let runner = ExecRunner::new(Arc::new(SystemClock));
     let out = Recorder::new();
     let (_handle, stop) = stop_signal();
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(90),
-        runner.run_job(spec, out.as_ref(), stop),
-    )
-    .await
-    .expect("run_job did not return");
+    let outcome = runner.run_job(spec, out.as_ref(), stop).await;
     (outcome, out.events())
 }
 

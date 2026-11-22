@@ -592,6 +592,11 @@ pub enum QueueEvent {
         /// Runner name.
         name: String,
     },
+    /// A runner reported new capabilities.
+    RunnerChanged {
+        /// Runner name.
+        name: String,
+    },
     /// A service changed.
     ServiceChanged {
         /// Runner name.

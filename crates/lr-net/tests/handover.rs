@@ -73,8 +73,13 @@ async fn joining_connections_are_capped_per_source() {
     let _s2 = b.accept().await;
     let err = b.dial(&key()).await.err().expect("third from one source");
     assert_eq!(refusal_code(&err), Some(ProtocolErrorCode::RateLimited));
+    let mut freed = b.listener.slot_releases();
+    freed.mark_unchanged();
     s1.close().await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(10), freed.changed())
+        .await
+        .expect("the closed joiner gives its slot back")
+        .expect("the listener is alive");
     b.dial(&key())
         .await
         .expect("a closed joiner gives its slot back");

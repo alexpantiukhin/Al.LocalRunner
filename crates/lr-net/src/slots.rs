@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::watch;
 
 /// Time a new connection has for TLS and the key proof.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -98,6 +99,7 @@ struct State {
 pub(crate) struct Slots {
     limits: Limits,
     state: Mutex<State>,
+    freed: watch::Sender<u64>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -136,6 +138,7 @@ impl Slots {
         Arc::new(Slots {
             limits,
             state: Mutex::new(State::default()),
+            freed: watch::channel(0).0,
         })
     }
 
@@ -199,6 +202,10 @@ impl Slots {
     pub(crate) fn limits(&self) -> &Limits {
         &self.limits
     }
+
+    pub(crate) fn freed(&self) -> watch::Receiver<u64> {
+        self.freed.subscribe()
+    }
 }
 
 impl Drop for Slot {
@@ -218,6 +225,10 @@ impl Drop for Slot {
                 s.joining -= 1;
                 give(&mut s.joining_of, source);
             }
+        }
+        drop(s);
+        if self.pool == Pool::Joining {
+            self.slots.freed.send_modify(|n| *n += 1);
         }
     }
 }

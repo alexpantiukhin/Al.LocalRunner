@@ -2,8 +2,9 @@ mod common;
 
 use common::loopback::{layout, place, repo, until_ready};
 use common::TempDir;
+use lr_cli::commands::jobs::hub;
 use lr_cli::dashboard::HubSource;
-use lr_cli::hub_watch::{hub_stopped, stopped_after_misses};
+use lr_cli::hub_watch::stopped_after_misses;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_dashboard::{Dashboard, DashboardOptions};
 use std::sync::Arc;
@@ -120,11 +121,30 @@ async fn the_dashboard_ends_once_the_hub_it_serves_stops_answering() {
     let dir = TempDir::new("dashboard-down");
     let layout = layout(&dir);
     let hub_role = start_hub(&layout, false).await.expect("hub starts");
+    let (answered, seen) = tokio::sync::oneshot::channel();
+    let answered = std::sync::Mutex::new(Some(answered));
     let watch = tokio::spawn({
         let layout = layout.clone();
-        async move { hub_stopped(&layout, Duration::from_millis(100)).await }
+        async move {
+            let probe = || async {
+                let up = match hub(&layout).await {
+                    Ok(client) => {
+                        client.close().await;
+                        true
+                    }
+                    Err(_) => false,
+                };
+                if up {
+                    if let Some(tx) = answered.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
+                }
+                up
+            };
+            stopped_after_misses(probe, Duration::from_millis(100)).await
+        }
     });
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    seen.await.expect("the watch saw the hub answer");
     assert!(!watch.is_finished(), "the hub still answers");
     hub_role.stop();
     tokio::time::timeout(Duration::from_secs(10), watch)

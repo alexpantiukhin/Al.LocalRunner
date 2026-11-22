@@ -85,6 +85,24 @@ async fn capabilities_update_replaces_what_the_runner_offers() {
 }
 
 #[tokio::test]
+async fn a_capabilities_update_is_announced_as_a_runner_change() {
+    let mut h = Harness::start("");
+    let r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    r.send(&RunnerToBroker::CapabilitiesUpdate(CapabilitiesUpdate {
+        capabilities: linux(),
+    }))
+    .await;
+    h.local_hub("alex").await.sync().await;
+    let mut changed = Vec::new();
+    while let Ok(lr_broker::BusEvent { event, .. }) = h.events.try_recv() {
+        if let QueueEvent::RunnerChanged { name } = event {
+            changed.push(name);
+        }
+    }
+    assert_eq!(changed, ["r1"]);
+}
+
+#[tokio::test]
 async fn services_report_is_shown_on_the_runners_list() {
     let h = Harness::start("");
     let r = h.member_runner("r1", "10.0.0.7", with_service()).await;

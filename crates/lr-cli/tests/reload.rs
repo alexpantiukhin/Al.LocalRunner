@@ -1,5 +1,6 @@
 mod common;
 
+use common::hub_events::until_hub;
 use common::loopback::{layout, until_ready};
 use common::TempDir;
 use lr_cli::commands::jobs::hub;
@@ -9,7 +10,6 @@ use lr_cli::commands::RoleArg;
 use lr_cli::paths::Layout;
 use lr_cli::roles::{start_broker, start_hub, start_runners};
 use lr_cli::runner_config::RunnerConfig;
-use std::time::Duration;
 
 fn write_runner_toml(layout: &Layout, extra: &str) {
     std::fs::write(
@@ -39,13 +39,14 @@ async fn tags_of_r1(layout: &Layout) -> Vec<String> {
 }
 
 async fn until_tag(layout: &Layout, tag: &str) {
-    for _ in 0..150 {
-        if tags_of_r1(layout).await.iter().any(|t| t == tag) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("the broker never saw tag {tag}");
+    until_hub(layout, &format!("the broker to see tag {tag}"), || async {
+        tags_of_r1(layout)
+            .await
+            .iter()
+            .any(|t| t == tag)
+            .then_some(())
+    })
+    .await;
 }
 
 fn only_runner(answers: Vec<(String, Outcome)>) -> Outcome {

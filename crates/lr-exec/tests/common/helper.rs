@@ -14,7 +14,7 @@ const COUNT: &str = "LR_EXEC_COUNT";
 const DETACH: &str = "LR_EXEC_DETACH";
 const READY: &str = "LR_EXEC_READY";
 const TEST_NAME: &str = "common::helper_process";
-const LIFETIME: Duration = Duration::from_secs(120);
+const LIFETIME: Duration = Duration::from_secs(25);
 const READY_LIMIT: Duration = Duration::from_secs(10);
 
 static SOFT_MARKER: OnceLock<std::ffi::CString> = OnceLock::new();

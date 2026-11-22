@@ -147,6 +147,7 @@ pub fn events() -> Vec<QueueEvent> {
         },
         QueueEvent::RunnerOnline { name: "r-1".into() },
         QueueEvent::RunnerOffline { name: "r-1".into() },
+        QueueEvent::RunnerChanged { name: "r-1".into() },
         QueueEvent::ServiceChanged {
             runner: "r-1".into(),
             service: service_report(),
