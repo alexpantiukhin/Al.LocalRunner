@@ -314,7 +314,7 @@ async fn unsubscribe_is_never_rate_limited() {
     else {
         panic!("no subscription")
     };
-    alex.send(&order("j1", same_machine_req())).await;
+    alex.send(&order("j1", local_only_req())).await;
     alex.rejected().await;
     assert!(rate_limited(&alex.read(ReadRequest::Runners).await));
     let reply = alex.read(ReadRequest::Unsubscribe { sub }).await;

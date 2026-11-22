@@ -9,8 +9,8 @@ struct Counts {
 }
 
 const THRESHOLD: Counts = Counts {
-    eventually: 1,
-    sleep: 8,
+    eventually: 0,
+    sleep: 7,
     timeouts: 3,
 };
 

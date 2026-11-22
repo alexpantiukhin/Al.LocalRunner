@@ -3,7 +3,6 @@
 
 use crate::broker_admin::{ipc_access, listen_addresses, BrokerAdmin, TlsListening};
 use crate::fs_files::StdFiles;
-use crate::git_repo::GitRepository;
 use crate::host;
 use crate::host_load;
 use crate::net::{MergedListener, NetAdmission, RoutingDialer};
@@ -295,7 +294,6 @@ pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> 
         local_broker: local_broker_configured(layout).then(|| layout.broker_ipc()),
         inspector: Arc::new(OsProcessInspector),
         files: Arc::new(StdFiles),
-        repository: Arc::new(GitRepository),
         log: logger.clone(),
         meter: logger.metrics(),
         policy,

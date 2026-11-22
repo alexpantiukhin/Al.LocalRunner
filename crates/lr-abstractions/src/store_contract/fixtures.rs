@@ -1,8 +1,8 @@
 //! Rows used by the contract cases.
 
 use crate::store::{
-    CodeSource, Intake, JobKey, JobRow, JobSpecRow, Join, JoinCodeRow, MachineKind, MachineRow,
-    OrderRow, RunnerRow, RunnerState, SourceKind, StepRow,
+    Intake, JobKey, JobRow, JobSpecRow, Join, JoinCodeRow, MachineKind, MachineRow, OrderRow,
+    RunnerRow, RunnerState, SourceKind, StepRow,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,12 +41,10 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             profile: profile.to_string(),
             platform: Some("linux".into()),
             runner: None,
-            commit_sha: Some("abc123".into()),
             client_machine: format!("m-{client}"),
             client_label: format!("label-{client}"),
             os_user: "alex".into(),
             secrets: vec!["registry_auth".into()],
-            code_source: CodeSource::Commit,
             queued_at,
             started_at: None,
             finished_at: None,
@@ -60,7 +58,6 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
         steps: vec![step(0, "build"), step(1, "test")],
         spec: JobSpecRow {
             resolved_json: format!("{{\"job\":\"{job}\"}}"),
-            profile_commit: None,
         },
         github: None,
         order: OrderRow {
@@ -68,7 +65,6 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             client_machine: format!("m-{client}"),
             spec_json: format!("{{\"job\":\"{job}\"}}"),
             platform: Some("linux".into()),
-            same_machine: false,
             priority_hint: None,
             enqueued_at: queued_at,
             state: "queued".into(),

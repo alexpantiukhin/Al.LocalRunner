@@ -54,6 +54,11 @@ pub fn policy_template(user: &str) -> String {
          # [networks]\n\
          # home = [\"192.168.1.0/24\", \"127.0.0.1/32\"]\n\
          \n\
+         # Names (client labels and runner names) that can reach one shared disk: the zone\n\
+         # between them is `shared`. Applies at start only.\n\
+         # [[shared]]\n\
+         # members = [\"main-laptop\", \"docker-1\"]\n\
+         \n\
          # [join]\n\
          # code_ttl_min = 60\n\
          \n\

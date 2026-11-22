@@ -10,10 +10,8 @@ async fn a_broker_reconnecting_from_another_network_is_judged_by_its_new_zone() 
     let mut rig = Rig::new();
     let profiles = PROFILES.replace(
         "platforms = [\"linux\"]",
-        "platforms = [\"linux\"]\nzone = \"lan\"",
+        "platforms = [\"linux\"]\nzones = [\"local\", \"shared\", \"lan\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),

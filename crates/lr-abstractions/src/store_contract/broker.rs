@@ -142,7 +142,6 @@ pub async fn spec_is_replaced_only_before_the_run_is_final(store: &dyn BrokerSto
     let key = queued(store, "c1", "j1").await;
     let spec = JobSpecRow {
         resolved_json: "{\"restored\":true}".into(),
-        profile_commit: Some("abc".into()),
     };
     assert_eq!(
         store.replace_spec(&key, spec.clone()).await.unwrap(),
@@ -318,10 +317,9 @@ pub async fn peaks_are_stored_with_the_final_state(store: &dyn BrokerStore) {
 }
 
 /// A granted run that never started goes back to the queue with its runner cleared; the store
-/// rebuilds the order row it stored at accept, `same_machine` and priority hint included.
+/// rebuilds the order row it stored at accept, priority hint included.
 pub async fn unstarted_granted_run_can_be_requeued(store: &dyn BrokerStore) {
     let mut i = intake("c1", "j1", "check", T0);
-    i.order.same_machine = true;
     i.order.priority_hint = Some(5);
     let (key, order) = (i.job.key.clone(), i.order.clone());
     store.accept(i).await.unwrap();

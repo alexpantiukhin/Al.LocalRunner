@@ -285,14 +285,14 @@ async fn same_machine_orders_given_back_count_as_cancelled() {
     let h = Harness::start("");
     let mut r = h.local_runner("alex", "lr", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("s1", same_machine_req())).await;
+    hub.send(&order("s1", local_only_req())).await;
     hub.accepted().await;
     r.assign().await;
-    hub.send(&order("s2", same_machine_req())).await;
+    hub.send(&order("s2", local_only_req())).await;
     hub.accepted().await;
     r.close().await;
     let m = h.meter.clone();
-    let cancelled = [(RESULT, "cancelled"), (PLATFORM, SAME_MACHINE)];
+    let cancelled = [(RESULT, "cancelled"), (PLATFORM, ANY_PLATFORM)];
     until_meter(&m, "both given back", || {
         m.counter(ORDERS_TOTAL, &cancelled) == 2
     })

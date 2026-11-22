@@ -77,30 +77,6 @@ async fn cache_sweep_counts_evictions_by_reason_and_reports_the_fill() {
 }
 
 #[tokio::test]
-async fn workspace_mirrors_are_not_counted_as_cache_evictions() {
-    let mut rig = Rig::new();
-    rig.settings.workspace = Retention {
-        max_size_gb: None,
-        retention_days: Some(1),
-    };
-    let ws = entry(lr_runner::WORKSPACE_CLIENT, "mirror", 5, START - 3 * DAY);
-    rig.files.put(&Path::new(&ws.path).join("f"), b"x");
-    rig.store.upsert_cache(ws).await.unwrap();
-    let (_c, _h) = rig.start();
-    let _b = Broker::accept(&rig).await;
-    assert!(rig.store.cache_entries().await.unwrap().is_empty());
-    let m = &rig.meter;
-    assert_eq!(
-        m.counter(
-            CACHE_EVICTED_TOTAL,
-            &[(RUNNER, "runner-a"), (REASON, "age")]
-        ),
-        0
-    );
-    assert_eq!(m.gauge(CACHE_USED_MB, ME), Some(0.0));
-}
-
-#[tokio::test]
 async fn outbox_is_sampled_at_start_and_every_period() {
     let rig = Rig::new();
     rig.store

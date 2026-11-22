@@ -69,8 +69,8 @@ async fn cancel_of_a_running_job_kills_the_tree_and_frees_the_pool() {
     assert_eq!(view.pool.used_mem_mb, 0, "the pool is free: {view:?}");
     assert!(view.running.is_empty(), "{view:?}");
 
-    guest_hub.stop();
-    roles.stop();
+    guest_hub.stopped().await;
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

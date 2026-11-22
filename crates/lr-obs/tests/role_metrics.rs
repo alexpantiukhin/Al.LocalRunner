@@ -26,7 +26,7 @@ fn updates_as_the_roles_send_them_are_all_accepted() {
     use lr_abstractions::metric::*;
     let m = metrics();
     let load = [(POOL, POOL_VALUE), (RUNNER, "r1")];
-    m.set(QUEUE_LENGTH, &[(PLATFORM, SAME_MACHINE)], 1.0);
+    m.set(QUEUE_LENGTH, &[(PLATFORM, ANY_PLATFORM)], 1.0);
     m.set(QUEUE_LENGTH, &[(PLATFORM, OTHER_PLATFORM)], 0.0);
     m.observe(
         QUEUE_WAIT_SECONDS,

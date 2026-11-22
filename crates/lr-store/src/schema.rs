@@ -32,9 +32,9 @@ pub struct Schema {
 pub static BROKER: Schema = Schema {
     name: "broker.db",
     application_id: 0x4c52_4231,
-    version: 4,
+    version: 5,
     create: include_str!("sql/broker.sql"),
-    migrations: &[broker_v2, broker_v3, broker_v4],
+    migrations: &[broker_v2, broker_v3, broker_v4, broker_v5],
 };
 
 fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -51,6 +51,43 @@ fn broker_v3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 
 fn broker_v4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch("CREATE INDEX IF NOT EXISTS job_finished_at ON job (finished_at);")
+}
+
+fn has_column(tx: &Transaction<'_>, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let n: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+fn broker_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    if has_column(tx, "job", "code_source")? {
+        tx.execute_batch(
+            "UPDATE step SET state = CASE state WHEN 'queued' THEN 'skipped' ELSE 'cancelled' END
+               WHERE state IN ('queued', 'running')
+                 AND (client_key, job_id) IN (SELECT client_key, id FROM job
+                      WHERE code_source = 'commit' AND state IN ('queued', 'running', 'cancelling'));
+             DELETE FROM \"order\"
+               WHERE (client_key, job_id) IN (SELECT client_key, id FROM job
+                      WHERE code_source = 'commit' AND state IN ('queued', 'running', 'cancelling'));
+             UPDATE job SET state = 'failed', finished_at = COALESCE(started_at, queued_at),
+                    cancel_reason = 'commit orders are not supported since protocol 2.0'
+               WHERE code_source = 'commit' AND state IN ('queued', 'running', 'cancelling');
+             ALTER TABLE job DROP COLUMN code_source;",
+        )?;
+    }
+    for (table, column) in [
+        ("job", "commit_sha"),
+        ("order", "same_machine"),
+        ("job_spec", "profile_commit"),
+    ] {
+        if has_column(tx, table, column)? {
+            tx.execute_batch(&format!("ALTER TABLE \"{table}\" DROP COLUMN {column};"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Schema of `hub.db`.

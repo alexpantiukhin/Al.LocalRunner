@@ -164,38 +164,6 @@ fn set<T: Ord>(items: impl IntoIterator<Item = T>) -> BTreeSet<T> {
 }
 
 #[test]
-fn commit_code_without_repository_reads_as_before() {
-    let old: lr_proto::WireCode =
-        serde_json::from_str(r#"{"kind":"commit","sha":"abc1234"}"#).unwrap();
-    assert_eq!(
-        old,
-        lr_proto::WireCode::Commit {
-            sha: "abc1234".into(),
-            repo_url: None,
-            branch: None,
-        }
-    );
-    assert_eq!(
-        serde_json::to_string(&old).unwrap(),
-        r#"{"kind":"commit","sha":"abc1234"}"#
-    );
-    let new = lr_proto::WireCode::Commit {
-        sha: "abc1234".into(),
-        repo_url: Some("https://h/o/r.git".into()),
-        branch: Some("main".into()),
-    };
-    let text = serde_json::to_string(&new).unwrap();
-    assert_eq!(
-        text,
-        r#"{"kind":"commit","sha":"abc1234","repo_url":"https://h/o/r.git","branch":"main"}"#
-    );
-    assert_eq!(
-        serde_json::from_str::<lr_proto::WireCode>(&text).unwrap(),
-        new
-    );
-}
-
-#[test]
 fn denied_cancel_ack_outside_the_outbox_has_seq_zero_and_no_dedup_key() {
     let denied = br#"{"type":"cancel_ack","job":"j1","seq":0,"cancel_seq":2,"outcome":"denied","denial":"unknown job"}"#;
     let msg = lr_proto::decode::<BrokerToHub>(denied).unwrap();

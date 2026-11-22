@@ -51,9 +51,6 @@ pub struct Capabilities {
     pub commands: BTreeSet<String>,
 }
 
-/// The words that mark a refusal naming a runner joined by key.
-pub const JOINED_BY_KEY: &str = "joined by key";
-
 /// One reason a runner does not suit an order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MismatchReason {
@@ -61,13 +58,6 @@ pub enum MismatchReason {
     Platform {
         /// Needed platform.
         needed: String,
-    },
-    /// The order must run on the client's machine.
-    NotSameMachine {
-        /// Name of the runner; empty until the router fills it in.
-        runner: String,
-        /// The runner is connected by key, so it takes only commit orders.
-        joined: bool,
     },
     /// Not enough memory.
     Memory {
@@ -117,13 +107,14 @@ pub enum MismatchReason {
         /// Service name.
         name: String,
     },
-    /// The runner is farther than the order allows.
+    /// The zone of the runner is not among the zones the order allows.
     Zone {
         /// Zone of the runner.
         runner: Zone,
-        /// Farthest allowed zone.
-        allowed: Zone,
+        /// Zones the order allows.
+        allowed: BTreeSet<Zone>,
     },
+
     /// A command name of the order is not declared by the runner.
     CommandMissing {
         /// Command name.
@@ -142,20 +133,6 @@ impl fmt::Display for MismatchReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Platform { needed } => write!(f, "platform {needed} is not declared"),
-            Self::NotSameMachine { runner, .. } if runner.is_empty() => {
-                write!(f, "the runner is not on the client machine")
-            }
-            Self::NotSameMachine {
-                runner,
-                joined: true,
-            } => write!(
-                f,
-                "runner {runner} {JOINED_BY_KEY}: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
-            ),
-            Self::NotSameMachine {
-                runner,
-                joined: false,
-            } => write!(f, "runner {runner} is not on the client machine"),
             Self::Memory { needed, available } => {
                 write!(f, "needs {needed} MB, the runner has {available}")
             }
@@ -168,16 +145,27 @@ impl fmt::Display for MismatchReason {
             Self::Program { name } => write!(f, "{name} not found"),
             Self::Tag { name } => write!(f, "tag {name} is not declared"),
             Self::Timeout { needed, ceiling } => {
-                write!(f, "needs a timeout of {needed} s, the runner ceiling is {ceiling} s")
+                write!(
+                    f,
+                    "needs a timeout of {needed} s, the runner ceiling is {ceiling} s"
+                )
             }
             Self::ServiceMissing { name } => write!(f, "service {name} is not described"),
             Self::ServiceUnavailable { name } => write!(f, "service {name} is unavailable"),
             Self::Zone { runner, allowed } => {
-                write!(f, "the zone of runner {runner} is beyond the allowed {allowed}")
+                let list: Vec<&str> = allowed.iter().map(|z| z.as_str()).collect();
+                write!(
+                    f,
+                    "the zone of runner {runner} is not among the allowed zones {}",
+                    list.join(", ")
+                )
             }
             Self::CommandMissing { name } => write!(f, "command {name} is not described"),
             Self::BelowAccept { needed, min } => {
-                write!(f, "an order of {needed} MB is below the runner minimum of {min} MB")
+                write!(
+                    f,
+                    "an order of {needed} MB is below the runner minimum of {min} MB"
+                )
             }
         }
     }
@@ -209,14 +197,6 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
         if !caps.platforms.contains(platform) {
             reasons.push(MismatchReason::Platform {
                 needed: platform.clone(),
-            });
-        }
-    }
-    if let Some(machine) = &req.same_machine {
-        if caps.machine.as_ref() != Some(machine) {
-            reasons.push(MismatchReason::NotSameMachine {
-                runner: String::new(),
-                joined: false,
             });
         }
     }
@@ -274,11 +254,11 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
             reasons.push(MismatchReason::CommandMissing { name: name.clone() });
         }
     }
-    if let Some(allowed) = req.max_zone {
-        if caps.zone > allowed {
+    if let Some(allowed) = &req.zones {
+        if !allowed.contains(&caps.zone) {
             reasons.push(MismatchReason::Zone {
                 runner: caps.zone,
-                allowed,
+                allowed: allowed.clone(),
             });
         }
     }

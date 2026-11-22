@@ -73,7 +73,7 @@ async fn cancel_sends_soft_signal_then_kills_after_grace_10s() {
     let child = out.pid_of("child").await;
     let grand = out.pid_of("grandchild").await;
     stop.stop_with_reason(Stop::Cancel, "bob at 12:00: stale");
-    out.wait_for("child-got-soft").await;
+    out.wait_for("got-soft-child").await;
     assert!(m1.exists());
     assert_eq!(manual.sleepers(), 2, "the step deadline and the grace wait");
     assert!(!task.is_finished(), "killed before the grace");
@@ -142,7 +142,7 @@ async fn kill_during_grace_kills_at_once() {
     let (task, out, stop) = start(spec, clock);
     let child = out.pid_of("child").await;
     stop.stop(Stop::Cancel);
-    out.wait_for("child-got-soft").await;
+    out.wait_for("got-soft-child").await;
     stop.stop(Stop::Kill);
     let outcome = finish(task).await;
     assert!(!pid_alive(child));

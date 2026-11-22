@@ -98,8 +98,8 @@ async fn a_broker_moved_with_its_state_keeps_its_joined_runner_without_a_new_joi
         "the moved broker has a machine-id of its own"
     );
 
-    remote.stop();
-    hub_role.stop();
-    broker.stop();
+    remote.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     remove(dir).await;
 }

@@ -32,7 +32,7 @@ pub struct ProfileSummary {
     pub cpu: Option<u32>,
     /// Disk in MB.
     pub disk_mb: Option<u64>,
-    /// `"by commit"` when the profile has platforms or platform overrides, else `"by work tree"`.
+    /// `"with platforms"` when the profile has platforms or platform overrides, else `"no platforms"`.
     pub platform_mode: &'static str,
     /// The platforms and the override keys, sorted.
     pub platforms: Vec<String>,
@@ -77,9 +77,9 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
         cpu: p.cpu,
         disk_mb: p.disk_mb,
         platform_mode: if platforms.is_empty() {
-            "by work tree"
+            "no platforms"
         } else {
-            "by commit"
+            "with platforms"
         },
         platforms,
         args: p.args.iter().map(|a| a.name.clone()).collect(),

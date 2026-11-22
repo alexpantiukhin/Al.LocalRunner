@@ -104,8 +104,12 @@ pub(crate) struct Target {
     pub(crate) fingerprint: Option<String>,
 }
 
-pub(crate) fn spawn(target: Target, shared: Arc<Shared>, events: mpsc::Sender<Event>) {
-    tokio::spawn(async move { run(target, shared, events).await });
+pub(crate) fn spawn(
+    target: Target,
+    shared: Arc<Shared>,
+    events: mpsc::Sender<Event>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move { run(target, shared, events).await })
 }
 
 async fn run(target: Target, shared: Arc<Shared>, events: mpsc::Sender<Event>) {

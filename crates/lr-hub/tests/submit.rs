@@ -4,10 +4,7 @@ use common::broker::{OnOrder, Script};
 use common::*;
 use lr_abstractions::OutboxKind;
 use lr_core::{JobState, Zone};
-use lr_proto::{
-    Accepted, BrokerToHub, CliReply, CliRequest, ProtocolErrorCode, ReasonCode, RejectReason,
-    WireCode,
-};
+use lr_proto::{Accepted, BrokerToHub, CliReply, CliRequest, ProtocolErrorCode, WireCode};
 
 #[tokio::test]
 async fn submit_returns_jobid_and_keeps_order_in_outbox_until_accepted() {
@@ -82,7 +79,10 @@ async fn work_tree_order_carries_cwd_profile_and_identity() {
         }
     );
     assert_eq!(spec.requirements.platform, None);
-    assert!(spec.requirements.same_machine.is_some());
+    assert_eq!(
+        spec.requirements.zones,
+        Some([Zone::Local, Zone::Shared].into_iter().collect())
+    );
     assert_eq!(spec.requirements.timeout_s, 600);
     assert_eq!(spec.requirements.mem_mb, 1024);
     assert_eq!(spec.steps[0].command, "make test");
@@ -97,7 +97,7 @@ async fn work_tree_order_carries_cwd_profile_and_identity() {
 }
 
 #[tokio::test]
-async fn platform_order_reads_profile_from_commit_with_repo_url_and_branch() {
+async fn a_platform_order_is_read_from_the_work_tree_and_carries_its_cwd() {
     let mut rig = Rig::new();
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
@@ -117,18 +117,12 @@ async fn platform_order_reads_profile_from_commit_with_repo_url_and_branch() {
     let spec = &lan.orders()[0].spec;
     assert_eq!(
         spec.code,
-        WireCode::Commit {
-            sha: COMMIT.into(),
-            repo_url: Some(ORIGIN.into()),
-            branch: Some("main".into())
+        WireCode::WorkTree {
+            cwd: repo_root().display().to_string()
         }
     );
-    assert_eq!(
-        spec.steps[0].command, "make check",
-        "profile read from the commit"
-    );
+    assert_eq!(spec.steps[0].command, "edited in work tree");
     assert_eq!(spec.requirements.platform.as_deref(), Some("linux"));
-    assert_eq!(spec.requirements.same_machine, None);
 }
 
 #[tokio::test]
@@ -154,74 +148,14 @@ async fn an_identical_order_warns_with_the_existing_job_and_is_queued_anyway() {
         CliReply::Submitted { job, warnings } => {
             assert_ne!(job, first, "the copy is queued too");
             assert_eq!(warnings.len(), 1, "{warnings:?}");
-            let short = &COMMIT[..7];
             assert!(
-                warnings[0].contains(&format!("job {first}"))
-                    && warnings[0].contains(&format!("commit {short}"))
-                    && warnings[0].contains("identical"),
+                warnings[0].contains(&format!("job {first}")) && warnings[0].contains("identical"),
                 "{warnings:?}"
             );
         }
         other => panic!("{other:?}"),
     }
     until(&lan, "both orders sent", || lan.orders().len() == 2).await;
-}
-
-#[tokio::test]
-async fn uncommitted_changes_warn_on_a_commit_order_and_do_not_block_it() {
-    let mut rig = Rig::new();
-    rig.repo.set_uncommitted(&repo_root(), true);
-    rig.join("lan1").await;
-    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
-    rig.start();
-    until(&lan, "connected", || lan.resumed()).await;
-    let cli = rig.cli().await;
-    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
-        .await;
-    let (job, warnings) = match cli.reply().await {
-        CliReply::Submitted { job, warnings } => (job, warnings),
-        other => panic!("{other:?}"),
-    };
-    let warning = format!(
-        "warning: uncommitted changes are ignored: the runner checks out the pushed commit {COMMIT}"
-    );
-    assert_eq!(warnings, vec![warning.clone()]);
-    until(&lan, "order sent", || lan.orders().len() == 1).await;
-    let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
-    assert!(log.contains(&format!("=== {warning} ===\n")), "{log}");
-    rig.repo.set_uncommitted(&repo_root(), false);
-    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
-        .await;
-    match cli.reply().await {
-        CliReply::Submitted { warnings, .. } => assert!(
-            warnings.iter().all(|w| !w.contains("uncommitted")),
-            "{warnings:?}"
-        ),
-        other => panic!("{other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn a_failed_uncommitted_check_is_logged_and_does_not_block_the_order() {
-    let mut rig = Rig::new();
-    rig.repo.fail_uncommitted(Some("git status: broken index"));
-    rig.join("lan1").await;
-    let lan = rig.broker("lan1", Zone::Lan, Script::linux(Zone::Lan));
-    rig.start();
-    until(&lan, "connected", || lan.resumed()).await;
-    let cli = rig.cli().await;
-    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
-        .await;
-    match cli.reply().await {
-        CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
-        other => panic!("{other:?}"),
-    }
-    until(&lan, "order sent", || lan.orders().len() == 1).await;
-    let logs = rig.log_text();
-    assert!(
-        logs.contains("uncommitted changes not checked") && logs.contains("broken index"),
-        "{logs}"
-    );
 }
 
 #[tokio::test]
@@ -237,24 +171,6 @@ async fn single_platform_of_profile_is_used_without_platform_flag() {
         lan.orders()[0].spec.requirements.platform.as_deref(),
         Some("linux")
     );
-}
-
-#[tokio::test]
-async fn unpushed_commit_is_refused_without_jobid() {
-    let mut rig = Rig::new();
-    rig.repo.set_head(&repo_root(), "fff0000", Some(ORIGIN));
-    rig.start();
-    let cli = rig.cli().await;
-    cli.send(CliRequest::Submit(submit("remote", Some("linux"))))
-        .await;
-    match cli.reply().await {
-        CliReply::Rejected { code, detail } => {
-            assert_eq!(code, ReasonCode::Rejected(RejectReason::CommitNotPushed));
-            assert!(detail.contains("fff0000"), "{detail}");
-        }
-        other => panic!("{other:?}"),
-    }
-    assert!(rig.pending().await.is_empty());
 }
 
 #[tokio::test]

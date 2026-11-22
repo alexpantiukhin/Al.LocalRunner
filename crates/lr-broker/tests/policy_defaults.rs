@@ -128,9 +128,9 @@ fn default_limits_have_no_timeout_ceiling_and_spec_ceilings() {
 }
 
 #[test]
-fn default_runner_zone_order_is_local_lan_remote() {
+fn default_runner_zone_order_is_local_shared_lan_remote() {
     let f = ok("");
-    let want = [Zone::Local, Zone::Lan, Zone::Remote];
+    let want = [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote];
     assert_eq!(f.routing.runner_zone_order, want);
     assert_eq!(into_policy(&f, &HOST).runner_zone_order(), want);
 }

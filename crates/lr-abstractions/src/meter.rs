@@ -89,7 +89,7 @@ pub mod metric {
         POLICY_RELOAD_TOTAL,
     ];
 
-    /// Label: platform of an order (`same_machine` for a job bound to the client machine).
+    /// Label: platform of an order (`any` for an order without a platform).
     pub const PLATFORM: &str = "platform";
     /// Label: the pool of the broker.
     pub const POOL: &str = "pool";
@@ -108,8 +108,8 @@ pub mod metric {
 
     /// The `pool` value: a broker serves exactly one pool (spec 2).
     pub const POOL_VALUE: &str = "default";
-    /// The `platform` value of an order without a platform (a same-machine job).
-    pub const SAME_MACHINE: &str = "same_machine";
+    /// The `platform` value of an order without a platform.
+    pub const ANY_PLATFORM: &str = "any";
     /// The `platform` value of a refused order whose platform no known runner offers, so
     /// arbitrary client text never becomes a series.
     pub const OTHER_PLATFORM: &str = "other";

@@ -72,24 +72,13 @@ impl Engine {
     ) -> Option<CliReply> {
         req.identity.os_user = os_user.to_string();
         let now = self.now();
-        let built = match build(&req, self.s.files.as_ref(), self.s.repository.as_ref(), now).await
-        {
+        let built = match build(&req, self.s.files.as_ref(), now).await {
             Ok(b) => b,
             Err(Refusal::Invalid(m)) => return Some(error(ProtocolErrorCode::Malformed, m)),
-            Err(Refusal::Rejected(code, detail)) => {
-                return Some(CliReply::Rejected { code, detail })
-            }
         };
-        let (spec, mut warnings) = (built.spec, built.warnings);
+        let (spec, mut warnings) = (built.spec, Vec::<String>::new());
         warnings.extend(self.duplicate_warning(&spec));
-        if let Some(e) = &built.dirty_check_failed {
-            self.s.diag(
-                Level::Warn,
-                "uncommitted changes not checked; the order goes without the warning",
-                &[("error", e)],
-            );
-        }
-        if spec.requirements.same_machine.is_some() && !self.links.contains_key(LOCAL_BROKER) {
+        if crate::select::local_only(&spec.requirements) && !self.links.contains_key(LOCAL_BROKER) {
             return Some(CliReply::Rejected {
                 code: ReasonCode::Rejected(RejectReason::NoLocalBroker),
                 detail:
@@ -367,7 +356,6 @@ impl Engine {
                 note: None,
                 branch: f.summary.branch.clone(),
                 cwd: f.summary.cwd.clone(),
-                commit: f.summary.commit.clone(),
                 os_user: None,
                 source: f.summary.source,
                 github_run_url: None,

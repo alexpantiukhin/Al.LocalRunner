@@ -192,7 +192,7 @@ ttl_hours = 24                                  # how long an order waits for a 
 on_expire = "fail"                              # fail | keep
 ```
 
-Without the file the defaults apply. "Same machine" orders (a working tree) go only to a broker on that machine. On the broker's machine the hub does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`install` adds you). Commands for working with jobs: see [Usage](#usage).
+Without the file the defaults apply. An order limited to the zone `local` (`zones = ["local"]` in the profile or `--zones local`) goes only to a broker on that machine. On the broker's machine the hub does not join by code: the broker lets local users in by the `[[local_user]]` list in `policy.toml` (`install` adds you). Commands for working with jobs: see [Usage](#usage).
 
 ## Broker
 
@@ -218,6 +218,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 |---|---|
 | `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
 | `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
+| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: client labels and runner names that reach one shared disk; the zone between them is `shared`. The label of a client is unique: `broker add --label` refuses a taken one. Read at start only |
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
@@ -340,10 +341,6 @@ max_size_gb    = 40
 retention_days = 14
 evict          = "lru"
 
-[workspace]
-max_size_gb    = 20
-retention_days = 7
-
 [commands]                     # names for clients with mode = "named"
 build = "make all"
 
@@ -368,14 +365,14 @@ Runner services (a build daemon, an emulator) are described in `[service.<name>]
 | --- | --- | --- |
 | How it connects | Over the local channel of the broker on this computer (any OS user the broker lets in connects this way); it needs no `broker.toml` and no key | By key (`join`), over the network or from a container, even if it is on the same computer |
 | Its name | `local:<name>` | The name it was given when it joined |
-| Work-tree orders (the code is the client's working tree) | Takes them, when it runs as the same OS user as the client | Refused; the broker prints (in Russian) `раннер <name> подключён по ключу: он берёт только заказы по коммиту; заказу по рабочему дереву нужен раннер, подключённый через локальный канал брокера на машине клиента` |
-| Commit orders | Takes them | Takes them |
+| Zone toward the client | `local`, when it runs as the same OS user as the client | `shared`, `lan` or `remote`, never `local` |
+| Steps it runs | The steps of its zone, in the client's directory | The steps of its zone: in the client's directory in `shared`, in a work folder of the job in `lan` and `remote` |
 
 Consequences:
 
-- A joined runner on the same computer as the client takes no work-tree orders, because the broker cannot prove that it sees the client's directory.
-- To make a runner take work-tree orders, run it as a local runner: start it with no `broker.toml` and no key on the client's computer.
-- A work-tree order that no runner can take is rejected at once, not queued. Find it with `localrunner jobs` (`--json` shows the state `rejected_no_matching_runner`); `status <job>` and `history show <job>` do not know a rejected order.
+- A joined runner on the same computer as the client is never in the zone `local`, because the broker cannot prove that it sees the client's directory; the owner may put it in `shared` with a `[[shared]]` block of `policy.toml`.
+- To make a runner work in the client's directory, run it as a local runner: start it with no `broker.toml` and no key on the client's computer.
+- An order that no runner can take is rejected at once, not queued. Find it with `localrunner jobs` (`--json` shows the state `rejected_no_matching_runner`); `status <job>` and `history show <job>` do not know a rejected order.
 - A runner in a container cannot be local: it has no local channel to the broker, so it is always joined.
 - An older broker does not report the kind; the column is then empty.
 
@@ -456,7 +453,7 @@ steps = [
 
 A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `labels` are free-form names the broker policy can match with `label` in a rule (they are not runner requirements and have no command-line flag). `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
 
-**Working tree or commit.** An order without `--platform` runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Only an order for a commit (`--platform`) is isolated from such edits. Do not touch the files of a long run in progress; the dashboard card says where the code comes from (`Directory` for the working tree, `Commit` for a commit).
+**The client's directory.** In the zone `local` a job runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Do not touch the files of a long run in progress. In `shared` the runner sees the same directory through the shared disk. In `lan` and `remote` the runner works in a folder of the job, which it removes at the end, and the steps of the zone bring the code.
 
 ## Logging
 
@@ -579,7 +576,7 @@ All commands:
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `status <job>`, `explain <job>` | the queue with the `stale` and `offline` runners (`--json`: a `runners` array per broker); one job with its record; why an order waits, how long it has waited for a runner to start it, and which job holds the slot |
-| `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "by commit" or "by work tree", arguments), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
+| `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "with platforms" or "no platforms", arguments), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
 | `status --recent [N\|DURATION]` | the orders that left the queue, with the end reason and who ended it |
 | `history [--all]`, `history show <job>` | history; the `REASON` column says who cancelled a run and why |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |

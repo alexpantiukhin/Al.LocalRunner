@@ -49,11 +49,10 @@ pub fn requirements() -> Requirements {
         }],
         tags: ["gradle".to_string()].into(),
         exclusive: ["emulator".to_string()].into(),
-        same_machine: Some(MachineRef("m-1".into())),
         services: vec!["build-daemon".into()],
         secrets: ["registry_auth".to_string()].into(),
         cache: vec!["gradle".into()],
-        max_zone: Some(Zone::Lan),
+        zones: Some(Zone::up_to(Zone::Lan)),
         commands: Default::default(),
     }
 }
@@ -104,15 +103,14 @@ pub fn order_spec() -> OrderSpec {
         steps: steps(),
         enqueued_at: Timestamp(1_700_000_000_000),
         identity: identity(),
-        code: WireCode::Commit {
-            sha: "abc123".into(),
-            repo_url: None,
-            branch: None,
+        code: WireCode::WorkTree {
+            cwd: "/work/app".into(),
         },
         wanted_priority: Some(5),
         overrides: ResourceOverride::default(),
         args: Vec::new(),
         labels: Vec::new(),
+        zone_steps: Default::default(),
     }
 }
 
@@ -160,7 +158,6 @@ pub fn summary() -> JobSummary {
         source: Some(WireSource::Session),
         note: None,
         branch: None,
-        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,

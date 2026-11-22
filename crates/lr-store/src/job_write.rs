@@ -16,7 +16,6 @@ struct Snapshot {
     spec_json: String,
     client_machine: String,
     platform: Option<String>,
-    same_machine: bool,
     priority_hint: Option<i64>,
     enqueued_at: u64,
     state: String,
@@ -27,7 +26,6 @@ fn order_snapshot(o: &OrderRow) -> String {
         spec_json: o.spec_json.clone(),
         client_machine: o.client_machine.clone(),
         platform: o.platform.clone(),
-        same_machine: o.same_machine,
         priority_hint: o.priority_hint,
         enqueued_at: o.enqueued_at.0,
         state: o.state.clone(),
@@ -37,14 +35,13 @@ fn order_snapshot(o: &OrderRow) -> String {
 fn insert_order(tx: &Transaction<'_>, o: &OrderRow) -> R<()> {
     tx.execute(
         "INSERT INTO \"order\" (client_key, job_id, client_machine, spec_json, platform, \
-         same_machine, priority_hint, enqueued_at, state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+         priority_hint, enqueued_at, state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
         params![
             o.key.client,
             o.key.job.0,
             o.client_machine,
             o.spec_json,
             o.platform,
-            o.same_machine,
             o.priority_hint,
             time(o.enqueued_at),
             o.state
@@ -74,10 +71,10 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
         let j = &intake.job;
         tx.execute(
             "INSERT INTO job (client_key, id, project, source, label, note, branch, cwd, profile, \
-             platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, \
-             code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
+             platform, runner_name, client_machine, client_label, os_user, secrets, \
+             queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
              cancel_reason, peak_mem_mb, peak_disk_mb) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,\
-             ?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26)",
+             ?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)",
             params![
                 j.key.client,
                 j.key.job.0,
@@ -90,12 +87,10 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
                 j.profile,
                 j.platform,
                 j.runner,
-                j.commit_sha,
                 j.client_machine,
                 j.client_label,
                 j.os_user,
                 json(&j.secrets),
-                j.code_source.text(),
                 time(j.queued_at),
                 opt_time(j.started_at),
                 opt_time(j.finished_at),
@@ -126,13 +121,12 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
             )?;
         }
         tx.execute(
-            "INSERT INTO job_spec (client_key, job_id, resolved_json, profile_commit, order_json) \
-             VALUES (?1,?2,?3,?4,?5)",
+            "INSERT INTO job_spec (client_key, job_id, resolved_json, order_json) \
+             VALUES (?1,?2,?3,?4)",
             params![
                 c,
                 id,
                 intake.spec.resolved_json,
-                intake.spec.profile_commit,
                 order_snapshot(&intake.order)
             ],
         )?;
@@ -226,7 +220,6 @@ pub(crate) fn requeue(conn: &mut Connection, key: &JobKey) -> R<()> {
             client_machine: v.client_machine,
             spec_json: v.spec_json,
             platform: v.platform,
-            same_machine: v.same_machine,
             priority_hint: v.priority_hint,
             enqueued_at: Timestamp(v.enqueued_at),
             state: v.state,
@@ -330,8 +323,8 @@ pub(crate) fn replace_spec(conn: &mut Connection, key: &JobKey, spec: &JobSpecRo
             return Ok(Applied::Ignored);
         }
         tx.execute(
-            "UPDATE job_spec SET resolved_json = ?3, profile_commit = ?4 \n             WHERE client_key = ?1 AND job_id = ?2",
-            params![key.client, key.job.0, spec.resolved_json, spec.profile_commit],
+            "UPDATE job_spec SET resolved_json = ?3 \n             WHERE client_key = ?1 AND job_id = ?2",
+            params![key.client, key.job.0, spec.resolved_json],
         )?;
         Ok(Applied::Changed)
     })

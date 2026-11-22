@@ -1,7 +1,5 @@
 use crate::policy::HubPolicy;
-use lr_abstractions::{
-    Clock, Dialer, Files, HubStore, Listener, LogSink, Meter, ProcessInspector, Repository,
-};
+use lr_abstractions::{Clock, Dialer, Files, HubStore, Listener, LogSink, Meter, ProcessInspector};
 use std::sync::Arc;
 
 /// What the hub is built from; only `lr-cli` knows the implementations behind them.
@@ -20,8 +18,6 @@ pub struct HubDeps {
     pub inspector: Arc<dyn ProcessInspector>,
     /// Profile files of work trees and job handles.
     pub files: Arc<dyn Files>,
-    /// Commits, push state and committed profiles.
-    pub repository: Arc<dyn Repository>,
     /// Diagnostic events.
     pub log: Arc<dyn LogSink>,
     /// Metrics of spec 12.2.

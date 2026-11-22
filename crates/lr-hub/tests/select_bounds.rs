@@ -8,10 +8,8 @@ use lr_proto::{CliReply, ReasonCode, RejectReason};
 fn limit_profiles_to_lan(rig: &Rig) {
     let profiles = PROFILES.replace(
         "platforms = [\"linux\"]",
-        "platforms = [\"linux\"]\nzone = \"lan\"",
+        "platforms = [\"linux\"]\nzones = [\"local\", \"shared\", \"lan\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),
@@ -26,7 +24,7 @@ async fn connected(brokers: &[&common::broker::FakeBroker]) {
 }
 
 #[tokio::test]
-async fn same_machine_order_waits_while_the_local_broker_is_down() {
+async fn a_local_only_order_waits_while_the_local_broker_is_down() {
     let mut rig = Rig::new();
     rig.join("lan-a").await;
     rig.net.set_reachable(LOCAL_IPC, false);
@@ -35,7 +33,7 @@ async fn same_machine_order_waits_while_the_local_broker_is_down() {
     let lan = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
     connected(&[&lan]).await;
-    let job = rig.cli().await.submit(submit("unit", None)).await;
+    let job = rig.cli().await.submit(submit("local-only", None)).await;
     rig.step(60).await;
     assert!(
         rig.active(&job).await.is_some(),

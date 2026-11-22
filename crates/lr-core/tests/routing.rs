@@ -24,10 +24,10 @@ fn runner_of(p: &Plan, job: &str) -> Option<String> {
         .map(|a| a.runner.clone())
 }
 
-fn same_machine_entry(job: &str, user: &str) -> QueueEntry {
+fn local_only_entry(job: &str, user: &str) -> QueueEntry {
     let mut r = req(1024, 1, 600);
     r.platform = None;
-    r.same_machine = Some(MachineRef(user.into()));
+    r.zones = Some(std::collections::BTreeSet::from([Zone::Local]));
     let mut e = entry_with(job, "agent", 0, r);
     e.client.endpoint = Endpoint::Ipc {
         os_user: user.into(),
@@ -36,13 +36,13 @@ fn same_machine_entry(job: &str, user: &str) -> QueueEntry {
 }
 
 #[test]
-fn same_machine_order_only_matches_that_installation() {
+fn a_local_only_order_matches_only_the_runner_of_that_installation() {
     let runners = [
         runner("lan-free"),
         ipc_runner("bob-runner", "bob"),
         ipc_runner("alex-runner", "alex"),
     ];
-    let e = same_machine_entry("wt", "alex");
+    let e = local_only_entry("wt", "alex");
     let out = plan(&policy(8192, 8), std::slice::from_ref(&e), &runners, &[]);
     assert_eq!(runner_of(&out, "wt").as_deref(), Some("alex-runner"));
     let busy = running(entry("x", "agent", 0), "alex-runner", 0);
@@ -58,100 +58,41 @@ fn same_machine_order_only_matches_that_installation() {
 }
 
 #[test]
-fn same_machine_needs_local_ipc_not_an_equal_machine_ref() {
-    let mut net = runner("net");
-    net.caps.machine = Some(MachineRef("alex".into()));
-    let e = same_machine_entry("wt", "alex");
-    let err = suitable(&e, &net, &site()).unwrap_err();
-    assert!(err.reasons.contains(&MismatchReason::NotSameMachine {
-        runner: "net".into(),
-        joined: true
-    }));
-    assert_eq!(
-        check_runners(&e, &[net], &site()),
-        Err(Reject::NoRunnerOnMachine {
-            joined: vec!["net".into()]
-        })
+fn a_joined_runner_is_not_in_the_local_zone_and_the_reason_names_the_zones() {
+    let e = local_only_entry("wt", "alex");
+    let err = suitable(&e, &runner("office"), &site()).unwrap_err();
+    assert!(
+        err.reasons.iter().any(|r| matches!(
+            r,
+            MismatchReason::Zone {
+                runner: Zone::Lan,
+                ..
+            }
+        )),
+        "{err:?}"
     );
-}
-
-#[test]
-fn a_joined_runner_is_refused_a_work_tree_order_with_a_reason_naming_it() {
-    let mut net = runner("office");
-    net.caps.machine = Some(MachineRef("alex".into()));
-    let e = same_machine_entry("wt", "alex");
-    let err = suitable(&e, &net, &site()).unwrap_err();
-    assert_eq!(
-        err.reasons,
-        [MismatchReason::NotSameMachine {
-            runner: "office".into(),
-            joined: true
-        }]
-    );
-    assert_eq!(
-        err.to_string(),
-        "runner office joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine"
-    );
-}
-
-#[test]
-fn a_local_runner_of_another_user_is_refused_with_the_old_meaning() {
-    let e = same_machine_entry("wt", "alex");
+    assert!(err.to_string().contains("allowed zones local"), "{err}");
     let err = suitable(&e, &ipc_runner("bob-runner", "bob"), &site()).unwrap_err();
-    assert_eq!(
-        err.reasons,
-        [MismatchReason::NotSameMachine {
-            runner: "bob-runner".into(),
-            joined: false
-        }]
-    );
-    assert_eq!(
-        err.to_string(),
-        "runner bob-runner is not on the client machine"
-    );
+    assert!(err.to_string().contains("allowed zones"), "{err}");
 }
 
 #[test]
-fn same_machine_rejected_when_installation_runners_absent_or_offline() {
-    let e = same_machine_entry("wt", "alex");
-    assert_eq!(
-        check_runners(&e, &[runner("lan")], &site()),
-        Err(Reject::NoRunnerOnMachine {
-            joined: vec!["lan".into()]
-        })
-    );
+fn a_local_only_order_with_no_online_local_runner_is_rejected_with_the_start_hint() {
+    let e = local_only_entry("wt", "alex");
     let mut off = ipc_runner("alex-runner", "alex");
     off.online = false;
+    let err = check_runners(&e, &[runner("lan"), runner("office")], &site()).unwrap_err();
+    assert_eq!(err, Reject::NoRunnerOnMachine);
+    assert!(err.to_string().contains("start it"));
     assert_eq!(
         check_runners(&e, &[off], &site()),
-        Err(Reject::NoRunnerOnMachine { joined: Vec::new() })
+        Err(Reject::NoRunnerOnMachine)
     );
-    assert!(Reject::NoRunnerOnMachine { joined: Vec::new() }
-        .to_string()
-        .contains("up"));
 }
 
 #[test]
-fn a_work_tree_order_with_only_joined_runners_is_refused_naming_them() {
-    let e = same_machine_entry("wt", "alex");
-    let mut off = runner("off");
-    off.online = false;
-    let err = check_runners(&e, &[runner("office"), runner("lab"), off], &site()).unwrap_err();
-    assert_eq!(
-        err,
-        Reject::NoRunnerOnMachine {
-            joined: vec!["office".into(), "lab".into()]
-        }
-    );
-    let text = err.to_string();
-    assert!(text.contains("runner office joined by key: it takes only commit orders"));
-    assert!(text.contains("runner lab joined by key"));
-    assert!(!text.contains("start it"));
-}
-
-#[test]
-fn same_machine_with_online_unsuitable_runner_rejected_with_numbers() {
-    let mut e = same_machine_entry("wt", "alex");
+fn a_local_only_order_with_an_online_unsuitable_runner_is_rejected_with_numbers() {
+    let mut e = local_only_entry("wt", "alex");
     e.order.requirements.mem_mb = 32768;
     let err = check_runners(&e, &[ipc_runner("alex-runner", "alex")], &site()).unwrap_err();
     let Reject::NoMatchingRunner { runners } = &err else {
@@ -161,12 +102,6 @@ fn same_machine_with_online_unsuitable_runner_rejected_with_numbers() {
     assert!(err
         .to_string()
         .contains("needs 32768 MB, the runner has 16384"));
-}
-
-#[test]
-fn same_machine_waits_when_its_runner_is_online_but_busy() {
-    let e = same_machine_entry("wt", "alex");
-    assert!(check_runners(&e, &[ipc_runner("alex-runner", "alex")], &site()).is_ok());
 }
 
 #[test]
@@ -260,7 +195,7 @@ fn unsuitable_near_runner_is_skipped_for_a_suitable_far_one() {
 #[test]
 fn order_zone_limit_is_a_hard_boundary() {
     let mut e = local_client("a");
-    e.order.requirements.max_zone = Some(Zone::Lan);
+    e.order.requirements.zones = Some(Zone::up_to(Zone::Lan));
     let runners = zoned_runners();
     let busy = [
         running(entry("x", "agent", 0), "local", 0),
@@ -274,7 +209,7 @@ fn order_zone_limit_is_a_hard_boundary() {
     let err = suitable(&e, &runners[0], &site()).unwrap_err();
     assert!(err.reasons.contains(&MismatchReason::Zone {
         runner: Zone::Remote,
-        allowed: Zone::Lan
+        allowed: Zone::up_to(Zone::Lan)
     }));
 }
 
@@ -283,12 +218,12 @@ fn zone_is_pairwise_per_client_not_from_the_runner_report() {
     let mut office = runner_at("office", "10.1.0.7");
     office.caps.zone = Zone::Local;
     let mut e = entry("a", "agent", 0);
-    e.order.requirements.max_zone = Some(Zone::Lan);
+    e.order.requirements.zones = Some(Zone::up_to(Zone::Lan));
     assert_eq!(
         suitable(&e, &office, &site()).unwrap_err().reasons,
         [MismatchReason::Zone {
             runner: Zone::Remote,
-            allowed: Zone::Lan
+            allowed: Zone::up_to(Zone::Lan)
         }]
     );
     e.client.endpoint = Endpoint::Addr("10.1.3.3".parse().unwrap());

@@ -178,11 +178,12 @@ fn zone_compares_qualified_users() {
     let site = Site {
         broker_addrs: vec!["192.168.1.10".parse().unwrap()],
         networks: Default::default(),
+        shared: Vec::new(),
     };
     let corp = ipc(r"CORP\alex").endpoint;
     let local = ipc(r"PC\alex").endpoint;
-    assert_eq!(site.zone_between(&corp, &corp), Zone::Local);
-    assert_ne!(site.zone_between(&corp, &local), Zone::Local);
+    assert_eq!(site.zone_between(&corp, "", &corp, ""), Zone::Local);
+    assert_ne!(site.zone_between(&corp, "", &local, ""), Zone::Local);
 }
 
 #[cfg(windows)]

@@ -7,17 +7,18 @@ const NO_RUNNER_HINT: &str = "no runner on your installation, start it: up";
 
 impl Engine {
     fn has_live_runner(&self, job: &Job) -> bool {
-        let Some(machine) = &job.entry.order.requirements.same_machine else {
+        if !job.entry.order.requirements.local_only() {
             return true;
-        };
+        }
         let now = self.now();
-        self.runners.values().any(|s| {
+        self.runners.iter().any(|(name, s)| {
             (s.serves(now) || s.holds_orders(now))
-                && s.caps.machine.as_ref() == Some(machine)
-                && self
-                    .site
-                    .zone_between(&job.entry.client.endpoint, &s.endpoint)
-                    == Zone::Local
+                && self.site.zone_between(
+                    &job.entry.client.endpoint,
+                    &job.entry.client.label,
+                    &s.endpoint,
+                    name,
+                ) == Zone::Local
         })
     }
 

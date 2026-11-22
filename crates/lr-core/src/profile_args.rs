@@ -3,9 +3,6 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Names the runner fills in `source` steps; a profile argument may not use them.
-pub const RESERVED_ARG_NAMES: [&str; 5] = ["repo_url", "commit", "branch", "workspace", "job_dir"];
-
 const DEFAULT_JOIN: &str = " ";
 
 /// One `[profile.X.args.<name>]` declaration: a value the submitter fills into the commands.
@@ -61,12 +58,6 @@ fn build_arg(profile: &str, name: String, a: RawArg) -> Result<ArgSpec, ProfileE
     };
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return bad("", "the name must be letters, digits and `_`");
-    }
-    if RESERVED_ARG_NAMES.contains(&name.as_str()) {
-        return bad(
-            "",
-            "the name is reserved for the runner `source` placeholders",
-        );
     }
     if a.one_of.is_some() && a.pattern.is_some() {
         return bad("", "`one_of` and `pattern` are mutually exclusive");

@@ -72,7 +72,7 @@ async fn github_run_killed_by_signal_cancels_its_job() {
         "{}\n{}\n{}",
         held_profile("first", &gate, 120, "mem_mb = 256\n"),
         echo_profile("ordinary", "ordinary-after-ci", 60, "mem_mb = 256\n"),
-        held_profile(
+        held_far_profile(
             "ci",
             &ci_gate,
             120,
@@ -122,8 +122,8 @@ async fn github_run_killed_by_signal_cancels_its_job() {
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("ordinary-after-ci"), "{}", b.output);
 
-    ci_hub.stop();
-    roles.stop();
+    ci_hub.stopped().await;
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

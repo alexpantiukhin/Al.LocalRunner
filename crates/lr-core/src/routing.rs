@@ -1,47 +1,28 @@
-use crate::matching::{satisfies, Mismatch, MismatchReason};
+use crate::matching::{satisfies, Mismatch};
 use crate::model::Zone;
 use crate::queue::{QueueEntry, RunnerView};
 use crate::scheduler::Reject;
-use crate::zone::{Endpoint, Site};
+use crate::zone::Site;
 use std::cmp::Reverse;
 
 /// Checks that `runner` suits `entry` (spec 3.7, 4) and returns the pairwise zone of the
 /// runner relative to the client.
 ///
-/// The zone is computed from the two connections, not taken from the runner report. A
-/// same-machine order additionally needs zone `Local`: both connected over local IPC by the
-/// same OS user.
+/// The zone is computed from the two connections, not taken from the runner report.
 pub fn suitable(entry: &QueueEntry, runner: &RunnerView, site: &Site) -> Result<Zone, Mismatch> {
-    let zone = site.zone_between(&entry.client.endpoint, &runner.endpoint);
+    let zone = site.zone_between(
+        &entry.client.endpoint,
+        &entry.client.label,
+        &runner.endpoint,
+        &runner.name,
+    );
     let mut caps = runner.caps.clone();
     caps.zone = zone;
     let req = &entry.order.requirements;
-    let mut reasons = match satisfies(&caps, req) {
+    let reasons = match satisfies(&caps, req) {
         Ok(()) => Vec::new(),
         Err(m) => m.reasons,
     };
-    if req.same_machine.is_some()
-        && zone != Zone::Local
-        && !reasons
-            .iter()
-            .any(|r| matches!(r, MismatchReason::NotSameMachine { .. }))
-    {
-        reasons.push(MismatchReason::NotSameMachine {
-            runner: String::new(),
-            joined: false,
-        });
-    }
-    let joined = matches!(runner.endpoint, Endpoint::Addr(_));
-    for reason in &mut reasons {
-        if let MismatchReason::NotSameMachine {
-            runner: name,
-            joined: j,
-        } = reason
-        {
-            *name = runner.name.clone();
-            *j = joined;
-        }
-    }
     if reasons.is_empty() {
         Ok(zone)
     } else {
@@ -69,44 +50,34 @@ pub fn sort_by_preference(candidates: &mut [(&RunnerView, Zone)], zone_order: &[
 
 /// Intake check against the registered runners (spec 3.4, 3.7, 4).
 ///
-/// A same-machine order is refused when no runner of the client's installation is online, and
-/// with numbers when they are online but none suits. Any other order is refused with numbers
-/// when no registered runner suits it, online or not; when every suitable runner is offline it
-/// is accepted and waits.
+/// An order limited to the `local` zone is refused when no runner of the client's installation
+/// is online, and with numbers when they are online but none suits. Any other order is refused
+/// with numbers when no registered runner suits it, online or not; when every suitable runner
+/// is offline it is accepted and waits.
 pub fn check_runners(
     entry: &QueueEntry,
     runners: &[RunnerView],
     site: &Site,
 ) -> Result<(), Reject> {
-    let req = &entry.order.requirements;
-    let candidates: Vec<&RunnerView> = match &req.same_machine {
-        Some(machine) => {
-            let own: Vec<&RunnerView> = runners
-                .iter()
-                .filter(|r| r.online && r.caps.machine.as_ref() == Some(machine))
-                .filter(|r| site.zone_between(&entry.client.endpoint, &r.endpoint) == Zone::Local)
-                .collect();
-            if own.is_empty() {
-                let joined = runners
-                    .iter()
-                    .filter(|r| r.online)
-                    .filter(|r| {
-                        suitable(entry, r, site).is_err_and(|m| {
-                            m.reasons.iter().any(|reason| {
-                                matches!(
-                                    reason,
-                                    MismatchReason::NotSameMachine { joined: true, .. }
-                                )
-                            })
-                        })
-                    })
-                    .map(|r| r.name.clone())
-                    .collect();
-                return Err(Reject::NoRunnerOnMachine { joined });
-            }
-            own
+    let candidates: Vec<&RunnerView> = if entry.order.requirements.local_only() {
+        let own: Vec<&RunnerView> = runners
+            .iter()
+            .filter(|r| r.online)
+            .filter(|r| {
+                site.zone_between(
+                    &entry.client.endpoint,
+                    &entry.client.label,
+                    &r.endpoint,
+                    &r.name,
+                ) == Zone::Local
+            })
+            .collect();
+        if own.is_empty() {
+            return Err(Reject::NoRunnerOnMachine);
         }
-        None => runners.iter().collect(),
+        own
+    } else {
+        runners.iter().collect()
     };
     let mut mismatches = Vec::new();
     for runner in candidates {

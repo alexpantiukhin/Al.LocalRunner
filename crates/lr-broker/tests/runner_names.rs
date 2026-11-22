@@ -68,7 +68,7 @@ async fn history_shows_a_local_runner_under_its_local_name() {
     let h = Harness::start("");
     let mut local = h.local_runner("alex", "r1", linux()).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("j1", same_machine_req())).await;
+    hub.send(&order("j1", local_only_req())).await;
     hub.accepted().await;
     assert_eq!(local.assign().await.job, JobId("j1".into()));
     let row = h.job_row("local:alex", "j1").await.unwrap().job;

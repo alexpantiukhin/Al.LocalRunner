@@ -1,20 +1,14 @@
 use crate::handles::checked_dir;
-use lr_abstractions::{Files, Frame, Repository, MAX_FRAME_BYTES};
+use lr_abstractions::{Files, Frame, MAX_FRAME_BYTES};
 use lr_core::{
-    bind_args, parse_profiles, resolve_for_platform, validate_label, JobId, MachineRef, Profile,
-    Requirements, Timestamp,
+    bind_args, parse_profiles, resolve_for_platform, validate_label, JobId, Profile, Requirements,
+    Timestamp,
 };
-use lr_proto::{
-    HubToBroker, Order, OrderSpec, ReasonCode, RejectReason, ResourceOverride, SubmitRequest,
-    WireCode,
-};
-use std::path::{Path, PathBuf};
-
-pub(crate) const PROFILES_PATH: &str = ".localrunner/profiles.toml";
+use lr_proto::{HubToBroker, Order, OrderSpec, ResourceOverride, SubmitRequest, WireCode};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Refusal {
-    Rejected(ReasonCode, String),
     Invalid(String),
 }
 
@@ -24,18 +18,6 @@ fn invalid(text: impl Into<String>) -> Refusal {
 
 pub(crate) struct Built {
     pub(crate) spec: OrderSpec,
-    pub(crate) warnings: Vec<String>,
-    pub(crate) dirty_check_failed: Option<String>,
-}
-
-#[derive(Default)]
-struct Notes {
-    warnings: Vec<String>,
-    dirty_check_failed: Option<String>,
-}
-
-pub(crate) fn local_machine(os_user: &str) -> MachineRef {
-    MachineRef(format!("local:{os_user}"))
 }
 
 fn pick(profiles: Vec<Profile>, wanted: Option<&str>, origin: &str) -> Result<Profile, Refusal> {
@@ -87,46 +69,6 @@ fn platform_of(profile: &Profile, flag: Option<&str>) -> Result<Option<String>, 
     }
 }
 
-fn uncommitted_warning(sha: &str) -> String {
-    format!(
-        "warning: uncommitted changes are ignored: the runner checks out the pushed commit {sha}"
-    )
-}
-
-async fn committed(
-    repo: &dyn Repository,
-    root: &Path,
-    name: &str,
-    notes: &mut Notes,
-) -> Result<(String, Profile, Option<String>), Refusal> {
-    let repo_err = |e: lr_abstractions::RepositoryError| invalid(e.to_string());
-    let sha = repo
-        .head(root)
-        .await
-        .map_err(repo_err)?
-        .ok_or_else(|| invalid(format!("{} has no commit", root.display())))?;
-    if !repo.is_pushed(root, &sha).await.map_err(repo_err)? {
-        return Err(Refusal::Rejected(
-            ReasonCode::Rejected(RejectReason::CommitNotPushed),
-            format!("HEAD {sha} is not pushed: commit and push the branch (no MR is needed)"),
-        ));
-    }
-    match repo.has_uncommitted(root).await {
-        Ok(true) => notes.warnings.push(uncommitted_warning(&sha)),
-        Ok(false) => {}
-        Err(e) => notes.dirty_check_failed = Some(e.to_string()),
-    }
-    let origin = format!("{PROFILES_PATH} of commit {sha}");
-    let bytes = repo
-        .show(root, &sha, PROFILES_PATH)
-        .await
-        .map_err(repo_err)?
-        .ok_or_else(|| invalid(format!("{origin} does not exist")))?;
-    let profile = pick(parse(&bytes, &origin)?, Some(name), &origin)?;
-    let url = repo.origin_url(root).await.map_err(repo_err)?;
-    Ok((sha, profile, url))
-}
-
 fn lower_timeout(
     spec: &mut OrderSpec,
     profile_timeout: u64,
@@ -141,7 +83,11 @@ fn lower_timeout(
         )));
     }
     spec.requirements.timeout_s = t;
-    for step in &mut spec.steps {
+    for step in spec
+        .steps
+        .iter_mut()
+        .chain(spec.zone_steps.values_mut().flatten())
+    {
         step.timeout_s = step.timeout_s.min(t);
     }
     Ok(())
@@ -170,7 +116,6 @@ fn override_resources(spec: &mut OrderSpec, req: &SubmitRequest) -> Result<(), R
 pub(crate) async fn build(
     req: &SubmitRequest,
     files: &dyn Files,
-    repo: &dyn Repository,
     now: Timestamp,
 ) -> Result<Built, Refusal> {
     let id = &req.identity;
@@ -192,42 +137,49 @@ pub(crate) async fn build(
         .ok_or_else(|| invalid(format!("{origin} does not exist")))?;
     let tree_profile = pick(parse(&bytes, &origin)?, req.profile.as_deref(), &origin)?;
     let platform = platform_of(&tree_profile, req.platform.as_deref())?;
-    let mut notes = Notes::default();
-    let (profile, code) = match &platform {
-        None => (
-            tree_profile,
-            WireCode::WorkTree {
-                cwd: id.cwd.display().to_string(),
-            },
-        ),
-        Some(_) => {
-            let (sha, profile, repo_url) =
-                committed(repo, &root, &tree_profile.name, &mut notes).await?;
-            (
-                profile,
-                WireCode::Commit {
-                    sha,
-                    repo_url,
-                    branch: id.branch.clone(),
-                },
-            )
-        }
+    let code = WireCode::WorkTree {
+        cwd: id.cwd.display().to_string(),
     };
-    let requirements = Requirements::from_profile(
-        &profile,
-        platform.as_deref(),
-        Some(local_machine(&id.os_user)),
-    )
-    .map_err(|e| invalid(e.to_string()))?;
+    let mut profile = tree_profile;
+    if let Some(asked) = &req.zones {
+        let names = |z: &std::collections::BTreeSet<lr_core::Zone>| {
+            z.iter().map(|z| z.as_str()).collect::<Vec<_>>().join(", ")
+        };
+        let mut allowed: std::collections::BTreeSet<lr_core::Zone> =
+            profile.zone_steps_effective().keys().copied().collect();
+        if let Some(own) = &profile.zones {
+            allowed.retain(|z| own.contains(z));
+        }
+        let had = names(&allowed);
+        allowed.retain(|z| asked.contains(z));
+        if allowed.is_empty() {
+            return Err(invalid(format!(
+                "--zones {} names no zone that profile `{}` has steps for; it has: {had}",
+                names(asked),
+                profile.name
+            )));
+        }
+        profile.zones = Some(allowed);
+    }
+    let requirements = Requirements::from_profile(&profile, platform.as_deref())
+        .map_err(|e| invalid(e.to_string()))?;
     let mut resolved = match &platform {
         Some(p) => resolve_for_platform(&profile, p).map_err(|e| invalid(e.to_string()))?,
         None => profile.clone(),
     };
+    let mut zone_steps = resolved.zone_steps_effective();
     bind_args(&mut resolved.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
+    for steps in zone_steps.values_mut() {
+        bind_args(steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
+    }
+    if let Some(allowed) = &requirements.zones {
+        zone_steps.retain(|z, _| allowed.contains(z));
+    }
     let mut spec = OrderSpec {
         profile: profile.name.clone(),
         requirements,
         steps: resolved.steps,
+        zone_steps,
         enqueued_at: now,
         identity: id.clone(),
         code,
@@ -242,11 +194,7 @@ pub(crate) async fn build(
     if Frame::json(&probe).map_or(true, |f| f.len() > MAX_FRAME_BYTES / 2) {
         return Err(invalid("the order is too large for one protocol frame"));
     }
-    Ok(Built {
-        spec,
-        warnings: notes.warnings,
-        dirty_check_failed: notes.dirty_check_failed,
-    })
+    Ok(Built { spec })
 }
 
 pub(crate) fn order_payload(job: &JobId, spec: &OrderSpec) -> HubToBroker {

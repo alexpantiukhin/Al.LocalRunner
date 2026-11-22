@@ -6,7 +6,9 @@ use crate::codec::{
 };
 use crate::db::{not_found, write, Fail, R};
 use crate::outbox::{self, RESULTS};
-use lr_abstractions::{Join, JoinCodeRow, MachineRow, Revoked, RunnerRow, RunnerState, StoreError};
+use lr_abstractions::{
+    Join, JoinCodeRow, MachineKind, MachineRow, Revoked, RunnerRow, RunnerState, StoreError,
+};
 use lr_core::Timestamp;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
@@ -72,6 +74,25 @@ fn runner_row(r: &Row<'_>) -> rusqlite::Result<RunnerRow> {
     })
 }
 
+fn hub_label_taken(
+    tx: &rusqlite::Transaction<'_>,
+    label: &str,
+    kind: MachineKind,
+    name: &str,
+) -> rusqlite::Result<bool> {
+    if kind != MachineKind::Hub || label.is_empty() {
+        return Ok(false);
+    }
+    Ok(tx
+        .query_row(
+            "SELECT 1 FROM machine WHERE revoked_at IS NULL AND kind = ?1 AND label = ?2              AND name <> ?3",
+            params![kind.text(), label, name],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 pub(crate) fn issue_code(conn: &mut Connection, c: JoinCodeRow) -> R<()> {
     write(conn, |tx| {
         tx.execute(
@@ -87,6 +108,11 @@ pub(crate) fn issue_code(conn: &mut Connection, c: JoinCodeRow) -> R<()> {
             .optional()?;
         if taken.is_some() {
             return Err(Fail::Store(StoreError::Duplicate("join code".into())));
+        }
+        if let Some(label) = &c.label {
+            if hub_label_taken(tx, label, c.kind, "")? {
+                return Err(Fail::Store(StoreError::Duplicate(format!("label {label}"))));
+            }
         }
         tx.execute(
             &format!("INSERT INTO join_code ({CODE}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"),
@@ -160,6 +186,9 @@ pub(crate) fn redeem(conn: &mut Connection, join: Join) -> R<MachineRow> {
             .optional()?;
         if taken.is_some() {
             return refuse(StoreError::Duplicate(format!("machine {}", m.name)));
+        }
+        if hub_label_taken(tx, &m.label, m.kind, &m.name)? {
+            return refuse(StoreError::Duplicate(format!("label {}", m.label)));
         }
         tx.execute(
             &format!(

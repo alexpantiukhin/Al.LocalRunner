@@ -257,7 +257,7 @@ pub enum TimeoutAboveMax {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct RoutingSection {
-    /// `runner_zone_order`, default local, lan, remote.
+    /// `runner_zone_order`, default local, shared, lan, remote.
     #[serde(deserialize_with = "zone_order")]
     pub runner_zone_order: Vec<Zone>,
 }
@@ -265,7 +265,7 @@ pub struct RoutingSection {
 impl Default for RoutingSection {
     fn default() -> Self {
         RoutingSection {
-            runner_zone_order: vec![Zone::Local, Zone::Lan, Zone::Remote],
+            runner_zone_order: vec![Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote],
         }
     }
 }

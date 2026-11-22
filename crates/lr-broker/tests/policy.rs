@@ -121,7 +121,7 @@ fn spec_example_policy_parses() {
     );
     assert_eq!(
         f.routing.runner_zone_order,
-        [Zone::Local, Zone::Lan, Zone::Remote]
+        [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
     );
     assert_eq!(f.history.keep_days.get(), 180);
     assert_eq!(f.history.logs_max_gb.get(), 2);
@@ -241,4 +241,42 @@ fn every_builtin_strategy_name_loads() {
         let f = ok(&format!("[queue]\nstrategy = \"{name}\"\n"));
         assert_eq!(f.queue.strategy, want);
     }
+}
+
+#[test]
+fn shared_blocks_are_read_as_sets_of_names() {
+    let file = ok("[[shared]]
+members = [\"a\", \"b\", \"c\"]
+
+[[shared]]
+members = [\"d\", \"e\"]
+");
+    let sets = file.shared_sets();
+    assert_eq!(sets.len(), 2);
+    assert!(sets[0].contains("b") && sets[1].contains("e"));
+}
+
+#[test]
+fn a_shared_block_needs_two_different_names() {
+    let e = err("[[shared]]
+members = [\"a\"]
+");
+    assert!(e.to_string().contains("at least two"), "{e}");
+    let e = err("[[shared]]
+members = [\"a\", \"a\"]
+");
+    assert!(e.to_string().contains("at least two"), "{e}");
+    let e = err("[[shared]]
+members = [\"a\", \" \"]
+");
+    assert!(e.to_string().contains("empty"), "{e}");
+}
+
+#[test]
+fn the_zone_order_names_shared_between_local_and_lan_by_default() {
+    let file = ok("");
+    assert_eq!(
+        file.routing.runner_zone_order,
+        [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
+    );
 }

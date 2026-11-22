@@ -67,6 +67,10 @@ pub struct SubmitRequest {
     /// `--arg name=value`, in the order given; absent from older senders.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<(String, String)>,
+    /// `--zones` (or `--max-zone`): the zones a runner may be in relative to the sender; absent
+    /// from older senders and when the order names none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zones: Option<std::collections::BTreeSet<lr_core::Zone>>,
     /// `--detach`: the order outlives the sender.
     pub detach: bool,
     /// `--wait`: stream output and end with the exit code.

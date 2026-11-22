@@ -1,9 +1,9 @@
 use super::broker_jobs::BrokerState;
 use crate::store::{
     compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
-    JobSpecRow, Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry,
-    OutboxKind, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery,
-    StepUpdate, StoreError, Transition,
+    JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow, OutboxBacklog,
+    OutboxEntry, OutboxKind, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats,
+    StatsQuery, StepUpdate, StoreError, Transition,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};
@@ -38,6 +38,17 @@ fn machine_missing(name: &str) -> StoreError {
 }
 
 impl BrokerState {
+    fn hub_label_taken(&self, label: &str, kind: MachineKind, name: &str) -> bool {
+        kind == MachineKind::Hub
+            && !label.is_empty()
+            && self.machines.values().any(|m| {
+                m.revoked_at.is_none()
+                    && m.kind == MachineKind::Hub
+                    && m.label == label
+                    && m.name != name
+            })
+    }
+
     fn redeem(&mut self, join: Join) -> Result<MachineRow, StoreError> {
         let code = self
             .codes
@@ -64,6 +75,9 @@ impl BrokerState {
         });
         if taken {
             return Err(StoreError::Duplicate(format!("machine {}", machine.name)));
+        }
+        if self.hub_label_taken(&machine.label, machine.kind, &machine.name) {
+            return Err(StoreError::Duplicate(format!("label {}", machine.label)));
         }
         let code = self.codes.get_mut(&join.code_hash).unwrap();
         code.uses_left -= 1;
@@ -197,6 +211,11 @@ impl BrokerStore for MemoryBrokerStore {
             .retain(|_, c| c.uses_left > 0 && c.expires_at > code.issued_at);
         if s.codes.contains_key(&code.code_hash) {
             return Err(StoreError::Duplicate("join code".into()));
+        }
+        if let Some(label) = &code.label {
+            if s.hub_label_taken(label, code.kind, "") {
+                return Err(StoreError::Duplicate(format!("label {label}")));
+            }
         }
         s.codes.insert(code.code_hash.clone(), code);
         Ok(())

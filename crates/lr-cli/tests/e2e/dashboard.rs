@@ -94,7 +94,7 @@ async fn dashboard_streams_queue_updates_after_the_token_exchange() {
     let waiting = job_of(&snap, &next).unwrap_or_else(|| panic!("{snap}"));
     assert_eq!(waiting["list"], "queued", "{snap}");
 
-    roles.take_broker().stop();
+    roles.take_broker().stopped().await;
     let stale = page
         .until_check(
             "the last snapshot of the stopped broker, marked stale",
@@ -114,7 +114,7 @@ async fn dashboard_streams_queue_updates_after_the_token_exchange() {
     page.running.shutdown().await;
     busy_client.close().await;
     next_client.close().await;
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

@@ -5,7 +5,7 @@ pub mod broker;
 use broker::{FakeBroker, Script};
 use lr_abstractions::fakes::{
     FakeListener, FakeNetwork, FakeProcessInspector, ManualClock, MemoryFiles, MemoryHubStore,
-    MemoryLogSink, MemoryMeter, MemoryRepository,
+    MemoryLogSink, MemoryMeter,
 };
 use lr_abstractions::{
     BrokerLink, Clock, Dialer, Frame, HubStore, Peer, PeerAccess, ProcessRef, Transport,
@@ -35,11 +35,23 @@ command = "make test"
 timeout_s = 600
 mem_mb = 1024
 
+[profile.local-only]
+command = "make test"
+timeout_s = 600
+mem_mb = 1024
+zones = ["local"]
+
 [profile.remote]
 command = "make check"
 timeout_s = 900
 mem_mb = 2048
 platforms = ["linux"]
+
+[profile.remote.zone.lan]
+command = "make check"
+
+[profile.remote.zone.remote]
+command = "make check"
 
 [profile.targeted]
 command = "cargo test {? -p {pkg}} {target}"
@@ -58,8 +70,28 @@ command = "cargo test {target}"
 timeout_s = 600
 platforms = ["linux"]
 
+[profile.targeted-remote.zone.lan]
+command = "cargo test {target}"
+
+[profile.targeted-remote.zone.remote]
+command = "cargo test {target}"
+
 [profile.targeted-remote.args.target]
 default = "all"
+
+[profile.zoned]
+command = "cargo test {target}"
+timeout_s = 600
+mem_mb = 1024
+
+[profile.zoned.args.target]
+default = "all"
+
+[profile.zoned.zone.shared]
+command = "docker exec b cargo test {target}"
+
+[profile.zoned.zone.lan]
+command = "git fetch origin {target} && cargo test {target}"
 
 [profile.targeted-override]
 command = "cargo test {target}"
@@ -165,6 +197,7 @@ pub fn submit(profile: &str, platform: Option<&str>) -> SubmitRequest {
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach: false,
         wait: false,
     }
@@ -187,7 +220,6 @@ pub struct Rig {
     pub store: Arc<MemoryHubStore>,
     pub inspector: FakeProcessInspector,
     pub files: MemoryFiles,
-    pub repo: MemoryRepository,
     pub log: Arc<MemoryLogSink>,
     pub meter: Arc<MemoryMeter>,
     pub policy: HubPolicy,
@@ -211,10 +243,6 @@ impl Rig {
             &repo_root().join(".localrunner").join("profiles.toml"),
             PROFILES.as_bytes(),
         );
-        let repo = MemoryRepository::new();
-        repo.set_head(&repo_root(), COMMIT, Some(ORIGIN));
-        repo.push(COMMIT);
-        repo.commit_file(COMMIT, ".localrunner/profiles.toml", PROFILES.as_bytes());
         Rig {
             clock,
             net,
@@ -222,7 +250,6 @@ impl Rig {
             store: Arc::new(MemoryHubStore::new()),
             inspector,
             files,
-            repo,
             log: Arc::new(MemoryLogSink::new()),
             meter: Arc::new(MemoryMeter::new()),
             policy: HubPolicy::default(),
@@ -269,7 +296,6 @@ impl Rig {
             local_broker: self.local.then(|| LOCAL_IPC.to_string()),
             inspector: Arc::new(self.inspector.clone()),
             files: Arc::new(self.files.clone()),
-            repository: Arc::new(self.repo.clone()),
             log: self.log.clone(),
             meter: self.meter.clone(),
             policy: self.policy.clone(),

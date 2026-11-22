@@ -84,8 +84,8 @@ async fn single_machine_submit_wait_passes_and_history_has_one_row() {
         "the stored log is masked: {log}"
     );
 
-    runners.stop();
-    hub_role.stop();
-    broker.stop();
+    runners.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     remove(dir).await;
 }

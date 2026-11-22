@@ -26,11 +26,10 @@ pub fn req(mem_mb: u64, cpu: u32) -> Requirements {
         programs: Vec::new(),
         tags: BTreeSet::new(),
         exclusive: BTreeSet::new(),
-        same_machine: None,
         services: Vec::new(),
         secrets: BTreeSet::new(),
         cache: Vec::new(),
-        max_zone: None,
+        zones: None,
         commands: Default::default(),
     }
 }

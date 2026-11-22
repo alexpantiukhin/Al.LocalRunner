@@ -43,15 +43,6 @@ pub enum SourceKind {
     Github,
 }
 
-/// Which code the job runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CodeSource {
-    /// The client's work tree (same machine only).
-    WorkTree,
-    /// A pushed commit.
-    Commit,
-}
-
 /// Row of `job`: one run with everything known about it (spec 8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobRow {
@@ -75,8 +66,6 @@ pub struct JobRow {
     pub platform: Option<String>,
     /// Runner the job was granted to.
     pub runner: Option<String>,
-    /// Commit checked out for a commit job.
-    pub commit_sha: Option<String>,
     /// MachineId of the client, from its key record.
     pub client_machine: String,
     /// Client label, from its key record.
@@ -85,8 +74,6 @@ pub struct JobRow {
     pub os_user: String,
     /// Names (never values) of the secrets requested.
     pub secrets: Vec<String>,
-    /// Code source.
-    pub code_source: CodeSource,
     /// When the hub enqueued it.
     pub queued_at: Timestamp,
     /// `Started` on the broker clock.
@@ -133,8 +120,6 @@ pub struct StepRow {
 pub struct JobSpecRow {
     /// Resolved profile and order as JSON.
     pub resolved_json: String,
-    /// Commit the profile was read from.
-    pub profile_commit: Option<String>,
 }
 
 /// Row of `github_run`.
@@ -178,10 +163,8 @@ pub struct OrderRow {
     pub client_machine: String,
     /// The order as JSON.
     pub spec_json: String,
-    /// Platform; `None` for a same-machine order.
+    /// Platform; `None` when the order names none.
     pub platform: Option<String>,
-    /// Whether it must run on the client's machine.
-    pub same_machine: bool,
     /// Priority the order wishes.
     pub priority_hint: Option<i64>,
     /// When the hub enqueued it; kept on re-brokering.

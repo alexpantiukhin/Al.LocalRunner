@@ -23,7 +23,7 @@ pub const MAX_HEARTBEAT_S: u64 = 3_600;
 
 const MB_PER_GB: u64 = 1024;
 
-/// Size and age limits of the cache or of the workspace (spec 3.10); `None` is no limit.
+/// Size and age limits of the cache (spec 3.10); `None` is no limit.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Retention {
     /// `max_size_gb`: above it the least recently used entries go first (`evict = "lru"`).
@@ -72,8 +72,6 @@ pub struct RunnerSettings {
     pub max_job_timeout_s: Option<u64>,
     /// `[cache]`.
     pub cache: Retention,
-    /// `[workspace]`.
-    pub workspace: Retention,
     /// `[grace] broker_lost_kill_s`: may only shorten the broker's value.
     pub broker_lost_kill_s: Option<u64>,
     /// Directory where the runners of one installation write their disk reservations
@@ -174,8 +172,6 @@ struct File {
     #[serde(default)]
     cache: RetentionFile,
     #[serde(default)]
-    workspace: RetentionFile,
-    #[serde(default)]
     grace: Grace,
     #[serde(default)]
     env: Env,
@@ -220,7 +216,6 @@ impl RunnerSettings {
             accept_min_free_disk_mb: None,
             max_job_timeout_s: None,
             cache: Retention::default(),
-            workspace: Retention::default(),
             broker_lost_kill_s: None,
             disk_ledger: None,
             process: None,
@@ -267,7 +262,6 @@ impl RunnerSettings {
         s.cleanup = cleanup_hooks(f.cleanup)?;
         s.job_env = job_env_table(f.job_env)?;
         s.cache = retention("cache", f.cache)?;
-        s.workspace = retention("workspace", f.workspace)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
         s.job_home = f.job_home;

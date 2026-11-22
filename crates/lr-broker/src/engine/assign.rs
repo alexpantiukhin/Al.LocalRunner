@@ -102,6 +102,17 @@ impl Engine {
             }
         };
         let spec = &job.spec;
+        let (steps, code) = if spec.zone_steps.is_empty() {
+            (spec.steps.clone(), spec.code.clone())
+        } else {
+            let steps = spec.zone_steps.get(&a.zone).unwrap_or(&spec.steps).clone();
+            let code = if matches!(a.zone, lr_core::Zone::Local | lr_core::Zone::Shared) {
+                spec.code.clone()
+            } else {
+                lr_proto::WireCode::Own
+            };
+            (steps, code)
+        };
         let cache_client = (self.policy.file().cache.share == CacheShare::Project)
             .then(|| SHARED_CACHE_CLIENT.to_string());
         let enforce_limit = self
@@ -117,7 +128,7 @@ impl Engine {
                     client: job.key.client.clone(),
                     project: spec.identity.project.clone(),
                     requirements: job.entry.order.requirements.clone(),
-                    steps: spec.steps.clone(),
+                    steps: steps.clone(),
                     secrets: job
                         .entry
                         .order
@@ -126,7 +137,7 @@ impl Engine {
                         .iter()
                         .cloned()
                         .collect(),
-                    code: spec.code.clone(),
+                    code,
                     broker_lost_kill_s: Some(self.lost_kill_s()),
                     named_commands: !job.entry.order.requirements.commands.is_empty(),
                     cache_client,
@@ -144,6 +155,7 @@ impl Engine {
         self.observe_wait(&job, now);
         let group = self.policy.policy().group_of(&job.entry.client);
         self.served.record(&group, now);
+        job.spec.steps = steps;
         job.runner = Some(a.runner);
         job.assigned_at = now;
         self.waits.remove(&job.key);

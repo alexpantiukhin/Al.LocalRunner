@@ -13,15 +13,22 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Zones an order may go to, nearest first: only local for a same-machine order, up to its
-/// `zone` otherwise. The boundary is a hard invariant: no policy widens it.
+/// Whether the order may run only in the zones `local` and `shared`, which only the broker of
+/// this machine serves: every other broker lies in `lan` or `remote` from the hub.
+pub fn local_only(req: &Requirements) -> bool {
+    req.zones
+        .as_ref()
+        .is_some_and(|z| z.iter().all(|z| *z <= Zone::Shared))
+}
+
+/// Zones an order may go to, nearest first: up to the farthest of its zones. The boundary is a hard invariant: no policy widens it.
 pub fn allowed_zones(req: &Requirements) -> Vec<Zone> {
-    let farthest = if req.same_machine.is_some() {
-        Zone::Local
-    } else {
-        req.max_zone.unwrap_or(Zone::Remote)
-    };
-    [Zone::Local, Zone::Lan, Zone::Remote]
+    let farthest = req
+        .zones
+        .as_ref()
+        .and_then(|z| z.iter().max().copied())
+        .unwrap_or(Zone::Remote);
+    [Zone::Local, Zone::Shared, Zone::Lan, Zone::Remote]
         .into_iter()
         .filter(|z| *z <= farthest)
         .collect()

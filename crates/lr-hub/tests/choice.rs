@@ -8,10 +8,8 @@ use lr_proto::{CliRead, CliReply, CliRequest, ReadReply, ReadRequest, ReasonCode
 fn lan_only(rig: &Rig) {
     let profiles = PROFILES.replace(
         "platforms = [\"linux\"]",
-        "platforms = [\"linux\"]\nzone = \"lan\"",
+        "platforms = [\"linux\"]\nzones = [\"local\", \"shared\", \"lan\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),

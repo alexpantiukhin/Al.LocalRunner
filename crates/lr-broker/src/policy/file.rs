@@ -15,6 +15,25 @@ use serde::Deserialize;
 use std::ops::Range;
 use toml::Spanned;
 
+/// One `[[shared]]` block: the client labels and runner names that can reach one shared disk.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SharedBlock {
+    /// `members`: names of clients (their labels) and runners, the relation is transitive
+    /// inside the block.
+    pub members: Vec<String>,
+}
+
+impl PolicyFile {
+    /// The `[[shared]]` blocks as sets of names, for the broker's [`lr_core::Site`].
+    pub fn shared_sets(&self) -> Vec<std::collections::BTreeSet<String>> {
+        self.shared
+            .iter()
+            .map(|b| b.members.iter().cloned().collect())
+            .collect()
+    }
+}
+
 /// What the broker host has, for the parts of `[pool]` the owner leaves out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostResources {
@@ -46,6 +65,8 @@ pub struct PolicyFile {
     pub listen: ListenSection,
     /// `[networks]`: name to ranges, applied only at start; default none.
     pub networks: NamedNetworks,
+    /// `[[shared]]` blocks, applied only at start; default none.
+    pub shared: Vec<SharedBlock>,
     /// `[[local_user]]` in file order; default none (the installer writes the first entry).
     pub local_users: Vec<LocalUserEntry>,
     /// `[cancel]`.
@@ -89,6 +110,7 @@ struct RawFile {
     listen: ListenSection,
     #[serde(deserialize_with = "networks")]
     networks: NamedNetworks,
+    shared: Vec<Spanned<SharedBlock>>,
     local_user: Vec<Spanned<RawLocalUser>>,
     cancel: CancelSection,
     secrets: SecretsSection,
@@ -143,6 +165,29 @@ pub fn load(text: &str) -> Result<PolicyFile, PolicyError> {
         }
         local_users.push(user);
     }
+    let mut shared: Vec<SharedBlock> = Vec::with_capacity(raw.shared.len());
+    for spanned in raw.shared {
+        let line = entry_line(text, spanned.span(), "shared");
+        let block = spanned.into_inner();
+        if block.members.iter().any(|m| m.trim().is_empty()) {
+            return Err(PolicyError::at(
+                "shared",
+                Some("members"),
+                line,
+                "a member name is empty".into(),
+            ));
+        }
+        let distinct: std::collections::BTreeSet<&String> = block.members.iter().collect();
+        if distinct.len() < 2 {
+            return Err(PolicyError::at(
+                "shared",
+                Some("members"),
+                line,
+                "a block names at least two different members".into(),
+            ));
+        }
+        shared.push(block);
+    }
     Ok(PolicyFile {
         queue: raw.queue,
         rules,
@@ -153,6 +198,7 @@ pub fn load(text: &str) -> Result<PolicyFile, PolicyError> {
         results: raw.results,
         listen: raw.listen,
         networks: raw.networks,
+        shared,
         local_users,
         cancel: raw.cancel,
         secrets: raw.secrets,

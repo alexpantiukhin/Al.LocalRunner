@@ -72,9 +72,9 @@ services = [\"svc\"]
         p.gone("the service tree to be gone after the job").await;
     }
 
-    runner.stop();
-    hub_role.stop();
-    broker.stop();
+    runner.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     drop(release);
     remove(dir).await;
 }

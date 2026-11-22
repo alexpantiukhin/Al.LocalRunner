@@ -43,7 +43,7 @@ fn a_queue_item_and_a_dashboard_job_of_an_older_peer_parse_without_the_wait_code
 
     let detail = json!({
         "summary": serde_json::to_value(summary()).unwrap(), "note": null, "branch": null,
-        "cwd": null, "commit": null, "os_user": null, "source": null, "github_run_url": null,
+        "cwd": null, "os_user": null, "source": null, "github_run_url": null,
         "steps": [], "secrets": [], "cancelled_by": null, "wait_reason": null
     });
     let job = json!({"broker": "home", "list": "queued", "detail": detail});

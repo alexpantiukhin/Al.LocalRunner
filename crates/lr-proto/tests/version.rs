@@ -1,9 +1,9 @@
 use lr_proto::*;
 
 #[test]
-fn protocol_version_starts_at_one() {
-    assert_eq!(PROTOCOL_VERSION, Version { major: 1, minor: 0 });
-    assert_eq!(PROTOCOL_VERSION.to_string(), "1.0");
+fn protocol_version_is_two() {
+    assert_eq!(PROTOCOL_VERSION, Version { major: 2, minor: 0 });
+    assert_eq!(PROTOCOL_VERSION.to_string(), "2.0");
 }
 
 #[test]
@@ -13,12 +13,12 @@ fn same_version_is_accepted() {
 
 #[test]
 fn unknown_version_refused() {
-    let peer = Version { major: 2, minor: 0 };
+    let peer = Version { major: 3, minor: 0 };
     let refused = negotiate(peer).unwrap_err();
     assert_eq!(refused.peer, peer);
     assert_eq!(refused.ours, PROTOCOL_VERSION);
     let text = refused.to_string();
-    assert!(text.contains("2.0") && text.contains("1.0"), "{text}");
+    assert!(text.contains("3.0") && text.contains("2.0"), "{text}");
     assert!(text.contains("unsupported"), "{text}");
 }
 

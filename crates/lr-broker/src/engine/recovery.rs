@@ -2,7 +2,7 @@ use super::local::LOCAL_RUNNER_PREFIX;
 use super::runners::RunnerSlot;
 use super::{Cancel, Client, Engine, Job};
 use lr_abstractions::{JobFilter, JobKey, JobRecord, Level, MachineRow, RunnerRow, RunnerState};
-use lr_core::{ClientView, Declared, Endpoint, JobState, MachineRef, QueueEntry};
+use lr_core::{ClientView, Declared, Endpoint, JobState, QueueEntry};
 use lr_proto::{OrderSpec, ReasonCode, WireCapabilities, WireServiceStatus};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr};
@@ -183,10 +183,7 @@ impl Engine {
             return None;
         };
         let key = rec.job.key.clone();
-        let mut requirements = spec.requirements.clone();
-        if requirements.same_machine.is_some() {
-            requirements.same_machine = Some(MachineRef(key.client.clone()));
-        }
+        let requirements = spec.requirements.clone();
         let now = self.now();
         let entry = QueueEntry {
             order: lr_core::Order {

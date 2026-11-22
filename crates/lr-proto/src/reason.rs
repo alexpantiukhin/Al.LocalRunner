@@ -19,7 +19,7 @@ pub enum RejectReason {
     Quota,
     /// No registered runner suits the order.
     NoMatchingRunner,
-    /// Same-machine order and no runner of that installation online.
+    /// An order limited to the `local` zone and no runner of the client's installation is online.
     NoRunnerOnMachine,
     /// A secret is not allowed to the client label.
     SecretNotAllowed,
@@ -37,8 +37,6 @@ pub enum RejectReason {
     QueueLimit,
     /// API rate limit.
     RateLimited,
-    /// A remote order whose commit is not pushed.
-    CommitNotPushed,
     /// The order asks for a service the client label may not use (`[[services.allow]]`).
     ServiceNotAllowed,
     /// The order's commands break the `[commands] mode = "named"` rule.
@@ -51,7 +49,7 @@ pub enum RejectReason {
 
 impl RejectReason {
     /// Every rejection reason.
-    pub const ALL: [RejectReason; 19] = [
+    pub const ALL: [RejectReason; 18] = [
         RejectReason::PoolMemory,
         RejectReason::PoolCpu,
         RejectReason::Timeout,
@@ -67,7 +65,6 @@ impl RejectReason {
         RejectReason::OutboxExpired,
         RejectReason::QueueLimit,
         RejectReason::RateLimited,
-        RejectReason::CommitNotPushed,
         RejectReason::ServiceNotAllowed,
         RejectReason::CommandNotAllowed,
         RejectReason::OverrideAbovePool,
@@ -91,7 +88,6 @@ impl RejectReason {
             RejectReason::OutboxExpired => "rejected_outbox_expired",
             RejectReason::QueueLimit => "rejected_queue_limit",
             RejectReason::RateLimited => "rejected_rate_limited",
-            RejectReason::CommitNotPushed => "rejected_commit_not_pushed",
             RejectReason::ServiceNotAllowed => "rejected_service_not_allowed",
             RejectReason::CommandNotAllowed => "rejected_command_not_allowed",
             RejectReason::OverrideAbovePool => "rejected_override_above_pool",

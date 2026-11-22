@@ -178,7 +178,7 @@ async fn cancel_by_wrong_key_refused() {
     owner.accepted().await;
     owner.send(&order("j2", req(512, 1, 60))).await;
     owner.accepted().await;
-    let mut other = h.member_hub("desk", "agent", "10.0.0.21").await;
+    let mut other = h.member_hub("desk", "desk-pc", "10.0.0.21").await;
     other.send(&cancel_for("j2", 1, "laptop")).await;
     let ack = cancel_ack(&mut other).await;
     assert_eq!(ack.outcome, CancelOutcome::Denied);

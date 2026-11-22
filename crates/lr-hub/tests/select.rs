@@ -109,10 +109,8 @@ async fn zone_limited_order_never_queries_remote() {
     let mut rig = Rig::new();
     let profiles = PROFILES.replace(
         "platforms = [\"linux\"]",
-        "platforms = [\"linux\"]\nzone = \"lan\"",
+        "platforms = [\"linux\"]\nzones = [\"local\", \"shared\", \"lan\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),
@@ -241,23 +239,23 @@ async fn rejection_by_every_broker_reaches_the_waiting_cli() {
 }
 
 #[tokio::test]
-async fn same_machine_rejection_does_not_search_replacement() {
+async fn a_local_only_order_rejected_by_the_local_broker_does_not_search_replacement() {
     let mut rig = Rig::new();
     rig.join("lan-a").await;
     let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Reject(
-        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),
+        ReasonCode::Rejected(RejectReason::NoMatchingRunner),
         "no runner".into(),
     )));
     let lan = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
     rig.start();
     wait_connected(&[&local, &lan]).await;
     let cli = rig.cli().await;
-    let mut req = submit("unit", None);
+    let mut req = submit("local-only", None);
     req.wait = true;
     let job = cli.submit(req).await;
     match cli.reply().await {
         CliReply::Rejected { code, .. } => {
-            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine))
+            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoMatchingRunner))
         }
         other => panic!("{other:?}"),
     }
@@ -268,46 +266,23 @@ async fn same_machine_rejection_does_not_search_replacement() {
 }
 
 #[tokio::test]
-async fn a_joined_runner_refusal_reaches_the_client_without_the_start_it_hint() {
-    let joined = "runner office joined by key: it takes only commit orders; a work-tree order needs a runner connected through the local channel of the broker on the client machine";
-    let mut rig = Rig::new();
-    let local = rig.local_broker(Script::local_runner().on_order(OnOrder::Reject(
-        ReasonCode::Rejected(RejectReason::NoRunnerOnMachine),
-        joined.into(),
-    )));
-    rig.start();
-    wait_connected(&[&local]).await;
-    let cli = rig.cli().await;
-    let mut req = submit("unit", None);
-    req.wait = true;
-    cli.submit(req).await;
-    match cli.reply().await {
-        CliReply::Rejected { code, detail } => {
-            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine));
-            assert_eq!(detail, joined);
-        }
-        other => panic!("{other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn returned_same_machine_order_ends_with_hint() {
+async fn a_returned_local_only_order_ends_with_the_hint() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     rig.start();
     wait_connected(&[&local]).await;
     let cli = rig.cli().await;
-    let mut req = submit("unit", None);
+    let mut req = submit("local-only", None);
     req.wait = true;
     let job = cli.submit(req).await;
     until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     local
-        .returned(&job, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine))
+        .returned(&job, ReasonCode::Rejected(RejectReason::NoMatchingRunner))
         .await;
     match cli.reply().await {
         CliReply::Rejected { code, detail } => {
-            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine));
+            assert_eq!(code, ReasonCode::Rejected(RejectReason::NoMatchingRunner));
             assert!(detail.contains("up"), "{detail}");
         }
         other => panic!("{other:?}"),
@@ -449,11 +424,11 @@ async fn no_broker_answering_keeps_order_waiting_until_connection() {
 }
 
 #[tokio::test]
-async fn same_machine_without_local_broker_is_rejected() {
+async fn a_local_only_order_without_a_local_broker_is_rejected() {
     let mut rig = Rig::new();
     rig.start();
     let cli = rig.cli().await;
-    cli.send(lr_proto::CliRequest::Submit(submit("unit", None)))
+    cli.send(lr_proto::CliRequest::Submit(submit("local-only", None)))
         .await;
     match cli.reply().await {
         CliReply::Rejected { code, .. } => {
@@ -464,7 +439,7 @@ async fn same_machine_without_local_broker_is_rejected() {
 }
 
 #[tokio::test]
-async fn local_user_refused_by_broker_rejects_same_machine_order() {
+async fn local_user_refused_by_broker_rejects_a_local_only_order() {
     let mut rig = Rig::new();
     let mut s = Script::local_runner();
     s.refuse = Some(ProtocolError {
@@ -475,7 +450,7 @@ async fn local_user_refused_by_broker_rejects_same_machine_order() {
     let _local = rig.local_broker(s);
     rig.start();
     let cli = rig.cli().await;
-    let mut req = submit("unit", None);
+    let mut req = submit("local-only", None);
     req.wait = true;
     cli.submit(req).await;
     rig.step(2).await;

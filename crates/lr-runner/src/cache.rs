@@ -9,10 +9,6 @@ use std::path::{Path, PathBuf};
 const DAY_MS: u64 = 86_400_000;
 const MB: u64 = 1024 * 1024;
 
-/// Client part of the index key of workspace mirrors, which belong to no client; a cache
-/// key always names its client.
-pub const WORKSPACE_CLIENT: &str = "";
-
 /// Where named caches live: `<job root>/cache/<client>/<project>/<name>`, each part a safe
 /// directory name made unique by a hash, so two clients never share a directory unless the
 /// broker sends them the same cache client (`[cache] share = "project"`).
@@ -102,10 +98,6 @@ fn plan_evictions(
     doomed
 }
 
-fn is_workspace(e: &CacheEntry) -> bool {
-    e.key.client == WORKSPACE_CLIENT
-}
-
 pub(crate) struct Caches<'a> {
     pub(crate) store: &'a dyn RunnerStore,
     pub(crate) files: &'a dyn Files,
@@ -114,7 +106,6 @@ pub(crate) struct Caches<'a> {
     pub(crate) runner: &'a str,
     pub(crate) layout: CacheLayout,
     pub(crate) cache: Retention,
-    pub(crate) workspace: Retention,
 }
 
 impl Caches<'_> {
@@ -123,53 +114,14 @@ impl Caches<'_> {
             .event(Level::Error, what, &[("error", &e.to_string())]);
     }
 
-    async fn remove_job_copies(&self, mirror: &str) {
-        let Some(jobs) = Path::new(mirror).parent().map(|p| p.join("jobs")) else {
-            return;
-        };
-        if let Err(err) = self.files.remove_dir_all(&jobs).await {
-            self.diag.event(
-                Level::Error,
-                "job checkouts not removed",
-                &[
-                    ("path", &jobs.display().to_string()),
-                    ("error", &err.to_string()),
-                ],
-            );
-        }
-    }
-
-    /// Removes the checkouts of every workspace (spec 3.7): called at start, when no job runs,
-    /// so the copies a crash or a failed removal left behind do not pile up.
-    pub(crate) async fn remove_left_checkouts(&self) {
-        let entries = match self.store.cache_entries().await {
-            Ok(e) => e,
-            Err(e) => return self.store_err("cache index unreadable", &e),
-        };
-        for e in entries.iter().filter(|e| is_workspace(e)) {
-            self.remove_job_copies(&e.path).await;
-        }
-    }
-
     pub(crate) async fn sweep(&self, now: Timestamp, in_use: &[CacheKey]) {
         let entries = match self.store.cache_entries().await {
             Ok(e) => e,
             Err(e) => return self.store_err("cache index unreadable", &e),
         };
-        let (ws, caches): (Vec<CacheEntry>, Vec<CacheEntry>) =
-            entries.into_iter().partition(is_workspace);
-        let mut doomed: Vec<(CacheKey, Option<Eviction>)> =
-            plan_evictions(&caches, now, &self.cache, in_use)
-                .into_iter()
-                .map(|(k, why)| (k, Some(why)))
-                .collect();
-        doomed.extend(
-            plan_sweep(&ws, now, &self.workspace, in_use)
-                .into_iter()
-                .map(|k| (k, None)),
-        );
+        let doomed = plan_evictions(&entries, now, &self.cache, in_use);
         for (key, why) in doomed {
-            let Some(e) = caches.iter().chain(ws.iter()).find(|e| e.key == key) else {
+            let Some(e) = entries.iter().find(|e| e.key == key) else {
                 continue;
             };
             if let Err(err) = self.files.remove_dir_all(Path::new(&e.path)).await {
@@ -180,18 +132,13 @@ impl Caches<'_> {
                 );
                 continue;
             }
-            if why.is_none() {
-                self.remove_job_copies(&e.path).await;
-            }
             if let Err(err) = self.store.remove_cache(&key).await {
                 self.store_err("cache entry not removed", &err);
             }
             self.diag
                 .event(Level::Info, "cache entry removed", &[("path", &e.path)]);
-            if let Some(why) = why {
-                let labels = [(RUNNER, self.runner), (REASON, why.label())];
-                self.meter.add(CACHE_EVICTED_TOTAL, &labels, 1);
-            }
+            let labels = [(RUNNER, self.runner), (REASON, why.label())];
+            self.meter.add(CACHE_EVICTED_TOTAL, &labels, 1);
         }
         self.used_mb().await;
     }
@@ -249,11 +196,7 @@ impl Caches<'_> {
     pub(crate) async fn used_mb(&self) -> Option<u64> {
         match self.store.cache_entries().await {
             Ok(entries) => {
-                let mb = entries
-                    .iter()
-                    .filter(|e| !is_workspace(e))
-                    .fold(0u64, |t, e| t.saturating_add(e.bytes))
-                    / MB;
+                let mb = entries.iter().fold(0u64, |t, e| t.saturating_add(e.bytes)) / MB;
                 self.meter
                     .set(CACHE_USED_MB, &[(RUNNER, self.runner)], mb as f64);
                 Some(mb)

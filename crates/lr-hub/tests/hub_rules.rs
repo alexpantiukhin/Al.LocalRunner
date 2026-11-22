@@ -68,10 +68,8 @@ async fn a_broker_that_reports_no_zone_never_takes_a_lan_limited_order() {
     let mut rig = Rig::new();
     let profiles = PROFILES.replace(
         "platforms = [\"linux\"]",
-        "platforms = [\"linux\"]\nzone = \"lan\"",
+        "platforms = [\"linux\"]\nzones = [\"local\", \"shared\", \"lan\"]",
     );
-    rig.repo
-        .commit_file(COMMIT, ".localrunner/profiles.toml", profiles.as_bytes());
     rig.files.put(
         &repo_root().join(".localrunner").join("profiles.toml"),
         profiles.as_bytes(),

@@ -178,13 +178,13 @@ async fn runner_nearer_to_client_is_preferred_but_not_reserved() {
 }
 
 #[tokio::test]
-async fn same_machine_order_goes_only_to_ipc_runner_of_the_same_os_user() {
+async fn a_local_only_order_goes_only_to_the_ipc_runner_of_the_same_os_user() {
     let h = Harness::start("");
     let mut forged = caps(&["linux"], 16384, 8);
     forged.machine = Some(MachineRef(ALEX.into()));
     let mut fake = h.member_runner("forged", "10.0.0.7", forged).await;
     let mut hub = h.local_hub("alex").await;
-    hub.send(&order("j1", same_machine_req())).await;
+    hub.send(&order("j1", local_only_req())).await;
     let r = hub.rejected().await;
     assert_eq!(
         r.code,
@@ -192,14 +192,11 @@ async fn same_machine_order_goes_only_to_ipc_runner_of_the_same_os_user() {
     );
     let mut bobs = h.local_runner("bob", "r-bob", linux()).await;
     let mut mine = h.local_runner("alex", "r-alex", linux()).await;
-    hub.send(&order("j2", same_machine_req())).await;
+    hub.send(&order("j2", local_only_req())).await;
     hub.accepted().await;
     let a = mine.assign().await;
     assert_eq!(a.job, JobId("j2".into()));
-    assert_eq!(
-        a.spec.requirements.same_machine,
-        Some(MachineRef(ALEX.into()))
-    );
+    assert!(a.spec.requirements.local_only());
     fake.quiet().await;
     bobs.quiet().await;
 }
@@ -308,7 +305,7 @@ async fn project_cache_share_sends_one_cache_client_for_two_clients_of_a_project
     let h = Harness::start("[cache]\nshare = \"project\"\n");
     let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut laptop = h.member_hub("laptop", "agent", "10.0.0.20").await;
-    let mut desk = h.member_hub("desk", "agent", "10.0.0.21").await;
+    let mut desk = h.member_hub("desk", "desk-pc", "10.0.0.21").await;
     laptop.send(&order("j1", req(512, 1, 60))).await;
     laptop.accepted().await;
     let first = r.assign().await;

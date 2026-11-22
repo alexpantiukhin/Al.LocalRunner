@@ -71,7 +71,6 @@ async fn full_visibility_shows_every_field_but_not_the_log() {
     assert_eq!(d.branch.as_deref(), Some("main"));
     assert_eq!(d.cwd.as_deref(), Some("/work/repo"));
     assert_eq!(d.os_user.as_deref(), Some("alex"));
-    assert_eq!(d.commit.as_deref(), Some("abc"));
     assert_eq!(
         d.steps.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
         vec!["build"]

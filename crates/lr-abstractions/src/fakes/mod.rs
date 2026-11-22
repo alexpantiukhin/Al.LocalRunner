@@ -12,7 +12,6 @@ mod load;
 mod misc;
 mod outbox;
 mod process;
-mod repository;
 mod transport;
 
 pub use broker_store::MemoryBrokerStore;
@@ -25,7 +24,6 @@ pub use misc::{FakeDataSource, MemoryLogSink, MemoryMeter, MemorySecrets, MeterU
 pub use process::{
     FakeProcessInspector, FakeProcessRunner, JobScript, RecordingOutput, StepScript, FAKE_STEP_PID,
 };
-pub use repository::MemoryRepository;
 pub use transport::{
     channel_pair, ChannelTransport, FakeConnection, FakeDialer, FakeListener, FakeNetwork, Faults,
 };

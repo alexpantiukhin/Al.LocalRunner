@@ -99,6 +99,7 @@ mem_mb = 256
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach: false,
         wait: true,
     });

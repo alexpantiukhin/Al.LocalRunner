@@ -33,7 +33,7 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     runner_online(&main, "box").await;
 
     let extra = format!("mem_mb = 256\nplatforms = [\"{PLATFORM}\"]\n");
-    let repo = repo(&dir, &held_profile("held", &gate, 120, &extra));
+    let repo = repo(&dir, &held_far_profile("held", &gate, 120, &extra));
     push_origin(&dir, &repo);
     let (client, job) = submit(&main, &repo, "held", Some(PLATFORM)).await;
     let child = gate.started("held", "child").await;
@@ -73,7 +73,7 @@ async fn removed_runner_job_is_lost_and_its_key_is_refused() {
     let left = runners(&main).await.expect("runners");
     assert!(left.is_empty(), "{left:?}");
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -97,8 +97,8 @@ async fn removed_client_waiting_orders_end_client_removed() {
     let profiles = format!(
         "{}\n{}\n{}",
         held_profile("own", &gate, 120, "mem_mb = 256\n"),
-        held_profile("theirs", &gate, 120, &remote),
-        echo_profile("waiting", "never-runs", 60, &remote),
+        held_far_profile("theirs", &gate, 120, &remote),
+        echo_far_profile("waiting", "never-runs", 60, &remote),
     );
     let repo = repo(&dir, &profiles);
     push_origin(&dir, &repo);
@@ -151,8 +151,8 @@ async fn removed_client_waiting_orders_end_client_removed() {
     theirs_client.close().await;
     waiting_client.close().await;
 
-    guest_hub.stop();
-    roles.stop();
+    guest_hub.stopped().await;
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -215,7 +215,7 @@ async fn policy_reload_applies_a_rule_and_a_bad_file_keeps_the_old_one() {
     assert_eq!(b.state, JobState::Passed, "{b:?}");
     assert!(b.output.contains("held-by-the-rule"), "{}", b.output);
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

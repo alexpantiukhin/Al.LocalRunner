@@ -1,16 +1,13 @@
 use crate::agent::Shared;
-use crate::cache::WORKSPACE_CLIENT;
 use crate::hooks_config::apply_owner_env;
 use crate::job::{skip_steps, Final};
 use crate::limits::{exceeded_detail, job_limits};
 use crate::output::Forward;
 use crate::prepare::{job_temp, Prepared};
-use crate::source::{plan_source, SourceInput, SourcePlan, WorkspaceLayout};
+use crate::source::{plan_source, SourcePlan};
 use lr_abstractions::{
-    CacheKey, JobOutcome, JobSpec, JobStep, Level, StepOutcome, StopSignal, Usage,
-    DEFAULT_CANCEL_GRACE,
+    CacheKey, JobOutcome, JobSpec, JobStep, Level, StopSignal, Usage, DEFAULT_CANCEL_GRACE,
 };
-use lr_core::{JobState, StepState};
 use lr_proto::{ReasonCode, WireCode};
 use std::path::{Path, PathBuf};
 
@@ -78,24 +75,8 @@ fn final_of(out: &JobOutcome, peaks: &Usage, detail: Option<String>) -> Final {
     }
 }
 
-fn mirror_key(layout: &WorkspaceLayout, project: &str, url: &str) -> CacheKey {
-    let project = layout
-        .project_dir(project, url)
-        .file_name()
-        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    CacheKey {
-        client: WORKSPACE_CLIENT.to_string(),
-        project,
-        name: "mirror".to_string(),
-    }
-}
-
 fn ord(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(u32::MAX)
-}
-
-fn failed_step(outcome: &JobOutcome) -> Option<&StepOutcome> {
-    outcome.steps.iter().find(|s| s.state == StepState::Failed)
 }
 
 const TEMP_RETRIES: u32 = 8;
@@ -103,22 +84,21 @@ const TEMP_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(2
 
 struct Cleanup<'a> {
     shared: &'a Shared,
-    checkout: Option<PathBuf>,
     temp: PathBuf,
-    mirror: Option<(CacheKey, PathBuf)>,
+    own: Option<PathBuf>,
     caches: Vec<CacheKey>,
 }
 
 impl Cleanup<'_> {
     async fn run(self) {
         let s = self.shared;
-        if let Some(dir) = &self.checkout {
-            if let Err(e) = s.deps.files.remove_dir_all(dir).await {
+        if let Some(own) = &self.own {
+            if let Err(e) = s.deps.files.remove_dir_all(own).await {
                 s.diag.event(
                     Level::Error,
-                    "job checkout not removed",
+                    "job folder not removed",
                     &[
-                        ("path", &dir.display().to_string()),
+                        ("path", &own.display().to_string()),
                         ("error", &e.to_string()),
                     ],
                 );
@@ -145,9 +125,6 @@ impl Cleanup<'_> {
         }
         let caches = s.caches();
         let now = s.now();
-        if let Some((key, path)) = self.mirror {
-            caches.touch(key, &path, now).await;
-        }
         for key in self.caches {
             let path = caches.layout.path(&key);
             caches.touch(key, &path, now).await;
@@ -155,33 +132,15 @@ impl Cleanup<'_> {
     }
 }
 
-async fn plan(shared: &Shared, p: &Prepared<'_>) -> Result<(SourcePlan, Option<PathBuf>), String> {
+async fn plan(shared: &Shared, p: &Prepared<'_>) -> Result<SourcePlan, String> {
     let spec = p.spec;
-    let layout = shared.workspace();
-    let mirror = match &spec.code {
-        WireCode::Commit {
-            repo_url: Some(u), ..
-        } => Some(layout.mirror_dir(&spec.project, u)),
-        _ => None,
-    };
-    let mirror_exists = match &mirror {
-        Some(m) => shared
-            .deps
-            .files
-            .exists(m)
-            .await
-            .map_err(|e| format!("workspace unreadable: {}", e.0))?,
-        None => false,
-    };
-    let input = SourceInput {
-        job: &p.job,
-        client: &spec.client,
-        project: &spec.project,
-        code: &spec.code,
-        steps: &spec.steps,
-        timeout_s: spec.requirements.timeout_s,
-    };
-    let plan = plan_source(&layout, &input, mirror_exists).map_err(|e| e.to_string())?;
+    let plan = plan_source(
+        &shared.workspace(),
+        &spec.code,
+        &spec.project,
+        &spec.client,
+        &p.job.0,
+    );
     if let WireCode::WorkTree { cwd } = &spec.code {
         let there = shared
             .deps
@@ -201,7 +160,7 @@ async fn plan(shared: &Shared, p: &Prepared<'_>) -> Result<(SourcePlan, Option<P
             .await
             .map_err(|e| format!("workspace not created: {}", e.0))?;
     }
-    Ok((plan, mirror))
+    Ok(plan)
 }
 
 pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSignal) -> Final {
@@ -219,17 +178,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             name: name.clone(),
         })
         .collect();
-    let mirror_url = match &spec.code {
-        WireCode::Commit {
-            repo_url: Some(u), ..
-        } => Some(u.as_str()),
-        _ => None,
-    };
-    let layout = shared.workspace();
-    let mirror_key = mirror_url.map(|u| mirror_key(&layout, &spec.project, u));
-    shared
-        .claim(keys.iter().cloned().chain(mirror_key.clone()).collect())
-        .await;
+    shared.claim(keys.clone()).await;
     shared.sweep().await;
     if let Err(detail) = shared.reserve_disk(spec).await {
         skip_steps(shared, &p.job, &spec.steps, 0).await;
@@ -252,7 +201,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
             return Final::failed(detail);
         }
     }
-    let (plan, mirror) = match plan(shared, &p).await {
+    let plan = match plan(shared, &p).await {
         Ok(x) => x,
         Err(detail) => {
             skip_steps(shared, &p.job, &spec.steps, 0).await;
@@ -266,64 +215,16 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     }
     let cleanup = Cleanup {
         shared,
-        checkout: plan.remove_after.clone(),
         temp,
-        mirror: mirror_key.zip(mirror),
+        own: plan.make_dirs.first().cloned(),
         caches: keys,
     };
     let mut peaks = Usage::default();
-    let started = shared.now();
     let total_s = spec.requirements.timeout_s;
-    if !plan.source_steps.is_empty() {
-        let n = plan.source_steps.len();
-        let (steps, ords) = if plan.from_profile {
-            (
-                p.steps(0, &plan.source_steps),
-                (0..n).map(|i| Some(ord(i))).collect(),
-            )
-        } else {
-            (
-                plan.source_steps
-                    .iter()
-                    .cloned()
-                    .map(JobStep::from)
-                    .collect(),
-                vec![None; n],
-            )
-        };
-        let phase = Phase {
-            steps,
-            ords,
-            timeout_s: total_s,
-            cwd: &plan.source_cwd,
-            env: &env,
-        };
-        let out = run_phase(shared, &p, phase, stop.clone()).await;
-        merge_peaks(&mut peaks, &out.usage);
-        if out.state != JobState::Passed {
-            skip_steps(shared, &p.job, &spec.steps, plan.first_ord).await;
-            cleanup.run().await;
-            let detail = match (out.state, plan.from_profile, failed_step(&out)) {
-                (JobState::Failed, false, Some(s)) => {
-                    Some(format!("source step failed: {}", s.name))
-                }
-                _ => None,
-            };
-            return final_of(&out, &peaks, detail);
-        }
-    }
-    let spent_ms = shared.now().millis_since(started);
-    let left_s = total_s
-        .saturating_mul(1000)
-        .saturating_sub(spent_ms)
-        .div_ceil(1000);
-    let rest = &spec.steps[plan.first_ord.min(spec.steps.len())..];
     let phase = Phase {
-        steps: p.steps(plan.first_ord, rest),
-        ords: (plan.first_ord..plan.first_ord + rest.len())
-            .map(|o| Some(ord(o)))
-            .collect(),
-        timeout_s: left_s,
+        steps: p.steps(0, &spec.steps),
+        ords: (0..spec.steps.len()).map(|o| Some(ord(o))).collect(),
+        timeout_s: total_s,
         cwd: &plan.job_cwd,
         env: &env,
     };

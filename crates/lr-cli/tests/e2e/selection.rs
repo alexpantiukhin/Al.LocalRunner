@@ -31,12 +31,14 @@ async fn restart_hub(layout: &Layout, old: Running) -> Running {
 }
 
 fn remote_profile(name: &str, text: &str, extra: &str) -> String {
-    echo_profile(
+    let mut out = echo_profile(
         name,
         text,
         120,
         &format!("platforms = [\"{PLATFORM}\"]\n{extra}"),
-    )
+    );
+    out.push_str(&far_variants(name, &format!("echo {text}")));
+    out
 }
 
 fn profiles() -> String {
@@ -49,7 +51,7 @@ fn profiles() -> String {
             "lan-only",
             "inside-the-lan",
             "mem_mb = 256
-zone = \"lan\"
+zones = [\"local\", \"shared\", \"lan\"]
 "
         ),
         remote_profile(
@@ -104,6 +106,7 @@ async fn refused_at_once(layout: &Layout, repo: &Path, profile: &str) -> (Reason
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach: false,
         wait: true,
     });
@@ -168,8 +171,8 @@ async fn a_hub_only_laptop_refuses_a_lan_order_once_no_admissible_broker_is_left
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 
-    laptop_hub.stop();
-    roles.stop();
+    laptop_hub.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }
 
@@ -230,8 +233,8 @@ async fn a_refusal_gives_the_figures_of_the_brokers_asked_and_never_asks_a_remot
     assert_eq!(ended.state, JobState::Passed, "{ended:?}");
     assert!(ended.output.contains("on-any-network"), "{}", ended.output);
 
-    laptop_hub.stop();
-    laptop_roles.stop();
-    roles.stop();
+    laptop_hub.stopped().await;
+    laptop_roles.stopped().await;
+    roles.stopped().await;
     remove(dir).await;
 }

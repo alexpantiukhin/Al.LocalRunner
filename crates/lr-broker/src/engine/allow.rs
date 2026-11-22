@@ -1,6 +1,6 @@
 use super::Engine;
 use crate::policy::CommandMode;
-use lr_core::{QueueEntry, StepSpec};
+use lr_core::QueueEntry;
 use lr_proto::{OrderSpec, RejectReason};
 use std::collections::BTreeSet;
 
@@ -42,10 +42,10 @@ impl Engine {
         &self,
         key: &str,
         label: &str,
-        steps: &[StepSpec],
+        spec: &OrderSpec,
     ) -> BTreeSet<String> {
         if self.policy.file().command_mode(key, label) == CommandMode::Named {
-            steps.iter().map(|s| s.command.clone()).collect()
+            spec.all_steps().map(|s| s.command.clone()).collect()
         } else {
             BTreeSet::new()
         }
@@ -59,14 +59,19 @@ impl Engine {
                 format!("an order without steps names no commands: {rule}"),
             ));
         }
+        if !spec.zone_steps.is_empty() {
+            return Err((
+                RejectReason::CommandNotAllowed,
+                format!("steps per zone are not available to a client limited to names: {rule}"),
+            ));
+        }
         let known: BTreeSet<&str> = self
             .runners
             .values()
             .flat_map(|slot| slot.wire.commands.iter().map(String::as_str))
             .collect();
         let Some(step) = spec
-            .steps
-            .iter()
+            .all_steps()
             .find(|s| !known.contains(s.command.as_str()))
         else {
             return Ok(());

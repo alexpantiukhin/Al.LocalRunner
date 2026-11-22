@@ -25,12 +25,34 @@ pub struct Site {
     pub broker_addrs: Vec<IpAddr>,
     /// Named networks of the broker.
     pub networks: NamedNetworks,
+    /// The `[[shared]]` blocks: names (client labels and runner names) that can reach one
+    /// shared disk. The relation is transitive inside a block only.
+    pub shared: Vec<BTreeSet<String>>,
 }
 
 impl Site {
-    /// Pairwise zone of `runner` relative to `client`, see [`zone_between`].
-    pub fn zone_between(&self, client: &Endpoint, runner: &Endpoint) -> Zone {
-        zone_between(client, runner, &self.broker_addrs, &self.networks)
+    /// Pairwise zone of the runner `runner_name` relative to the client labelled `client_label`,
+    /// see [`zone_between`]; `Shared` when both names are in one `[[shared]]` block and the
+    /// zone would not be `Local`.
+    pub fn zone_between(
+        &self,
+        client: &Endpoint,
+        client_label: &str,
+        runner: &Endpoint,
+        runner_name: &str,
+    ) -> Zone {
+        let zone = zone_between(client, runner, &self.broker_addrs, &self.networks);
+        if zone != Zone::Local && self.share_a_disk(client_label, runner_name) {
+            return Zone::Shared;
+        }
+        zone
+    }
+
+    /// Whether one `[[shared]]` block holds both names.
+    pub fn share_a_disk(&self, client_label: &str, runner_name: &str) -> bool {
+        self.shared
+            .iter()
+            .any(|block| block.contains(client_label) && block.contains(runner_name))
     }
 }
 

@@ -16,7 +16,7 @@ mod when;
 pub use admission::{AdmissionSection, ForeignLoad};
 pub use error::{PolicyError, PolicyWarning};
 pub use explain::explain_rules;
-pub use file::{load, HostResources, PolicyFile};
+pub use file::{load, HostResources, PolicyFile, SharedBlock};
 pub use listen::{ListenSection, ListenValue};
 pub use reload::{ActivePolicy, Applied, RestartOnly};
 pub use resources::{Headroom, ResourceMode, ResourcesSection, DEFAULT_HEADROOM};

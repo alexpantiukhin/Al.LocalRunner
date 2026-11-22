@@ -4,17 +4,16 @@ use super::hello::peer_kind;
 use super::{Client, Engine, Job};
 use crate::policy::TimeoutAboveMax;
 use lr_abstractions::{
-    CodeSource, GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level,
-    OrderRow, SourceKind, StepRow, StoreError, Transition,
+    GithubRunRow, Inbound, Intake, JobKey, JobRecord, JobRow, JobSpecRow, Level, OrderRow,
+    SourceKind, StepRow, StoreError, Transition,
 };
 use lr_core::{
-    ClientView, Declared, JobState, MachineRef, PoolLimits, QueueEntry, Reject, Requirements,
-    Source, StepState,
+    ClientView, Declared, JobState, PoolLimits, QueueEntry, Reject, Requirements, Source, StepState,
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
     ReadAnswer, ReadReply, ReadRequest, ReasonCode, Received, RejectReason, Rejected,
-    ResourceOverride, Resume, WireCode,
+    ResourceOverride, Resume,
 };
 
 pub(super) fn reject_reason(r: &Reject) -> RejectReason {
@@ -25,7 +24,7 @@ pub(super) fn reject_reason(r: &Reject) -> RejectReason {
         Reject::Reserved { .. } => RejectReason::Reserved,
         Reject::Quota { .. } => RejectReason::Quota,
         Reject::NoMatchingRunner { .. } => RejectReason::NoMatchingRunner,
-        Reject::NoRunnerOnMachine { .. } => RejectReason::NoRunnerOnMachine,
+        Reject::NoRunnerOnMachine => RejectReason::NoRunnerOnMachine,
     }
 }
 
@@ -88,10 +87,6 @@ pub(super) fn overridden(
 fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -> Intake {
     let req = &entry.order.requirements;
     let id = &spec.identity;
-    let (code_source, commit) = match &spec.code {
-        WireCode::WorkTree { .. } => (CodeSource::WorkTree, None),
-        WireCode::Commit { sha, .. } => (CodeSource::Commit, Some(sha.clone())),
-    };
     let (source, github) = match &id.source {
         Source::Session => (SourceKind::Session, None),
         Source::Github(g) => (
@@ -121,12 +116,10 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             profile: spec.profile.clone(),
             platform: req.platform.clone(),
             runner: None,
-            commit_sha: commit.clone(),
             client_machine: client.machine_id.clone(),
             client_label: client.label.clone(),
             os_user: id.os_user.clone(),
             secrets: req.secrets.iter().cloned().collect(),
-            code_source,
             queued_at: spec.enqueued_at,
             started_at: None,
             finished_at: None,
@@ -154,7 +147,6 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             .collect(),
         spec: JobSpecRow {
             resolved_json: json.clone(),
-            profile_commit: commit,
         },
         github,
         order: OrderRow {
@@ -162,7 +154,6 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             client_machine: client.machine_id.clone(),
             spec_json: json,
             platform: req.platform.clone(),
-            same_machine: req.same_machine.is_some(),
             priority_hint: spec.wanted_priority,
             enqueued_at: spec.enqueued_at,
             state: "queued".into(),
@@ -288,16 +279,43 @@ impl Engine {
                 format!("the client has {active} active orders, the limit is {limit}"),
             ));
         }
+        Self::zones_have_steps(spec)?;
         self.allowed(entry, spec)?;
         self.admit_fit(entry, spec)
     }
 
-    fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
-        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec.steps);
-        let mut requirements = spec.requirements.clone();
-        if requirements.same_machine.is_some() {
-            requirements.same_machine = Some(MachineRef(client.key.clone()));
+    /// An order with steps per zone may only allow zones it has steps for.
+    fn zones_have_steps(spec: &OrderSpec) -> Result<(), (RejectReason, String)> {
+        if spec.zone_steps.is_empty() {
+            return Ok(());
         }
+        let missing: Vec<&str> = match &spec.requirements.zones {
+            Some(zones) => zones
+                .iter()
+                .filter(|z| !spec.zone_steps.contains_key(z))
+                .map(|z| z.as_str())
+                .collect(),
+            None => lr_core::Zone::ALL
+                .iter()
+                .filter(|z| !spec.zone_steps.contains_key(z))
+                .map(|z| z.as_str())
+                .collect(),
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err((
+            RejectReason::NoMatchingRunner,
+            format!(
+                "the order allows the zones {} but has no steps for them",
+                missing.join(", ")
+            ),
+        ))
+    }
+
+    fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
+        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
+        let requirements = spec.requirements.clone();
         let entry = QueueEntry {
             order: lr_core::Order {
                 job: self.internal_id(),
@@ -361,7 +379,11 @@ impl Engine {
             return None;
         }
         spec.requirements.timeout_s = max;
-        for step in &mut spec.steps {
+        for step in spec
+            .steps
+            .iter_mut()
+            .chain(spec.zone_steps.values_mut().flatten())
+        {
             step.timeout_s = step.timeout_s.min(max);
         }
         Some(max)

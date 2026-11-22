@@ -46,16 +46,16 @@ fn broker_db_has_the_tables_and_columns_of_the_er_diagram() {
     let path = d.path().join("broker.db");
     SqliteBrokerStore::open(&path).unwrap();
     let want = expect(&[
-        ("job", "client_key, id, project, source, label, note, branch, cwd, profile, platform, runner_name, commit_sha, client_machine, client_label, os_user, secrets, code_source, queued_at, started_at, finished_at, state, exit_code, cancelled_by, cancel_reason, peak_mem_mb, peak_disk_mb, recv_seq_hub, recv_seq_runner, send_seq_runner"),
+        ("job", "client_key, id, project, source, label, note, branch, cwd, profile, platform, runner_name, client_machine, client_label, os_user, secrets, queued_at, started_at, finished_at, state, exit_code, cancelled_by, cancel_reason, peak_mem_mb, peak_disk_mb, recv_seq_hub, recv_seq_runner, send_seq_runner"),
         ("step", "client_key, job_id, ord, name, command, state, exit_code, started_at, finished_at, timeout_s"),
-        ("job_spec", "client_key, job_id, resolved_json, profile_commit, order_json"),
+        ("job_spec", "client_key, job_id, resolved_json, order_json"),
         ("github_run", "client_key, job_id, repository, workflow, job_name, run_id, attempt, ref, actor, run_url"),
         ("job_log", "client_key, job_id, path, bytes, updated_at"),
         ("machine", "name, machine_id, kind, label, public_key, registered_at, last_seen, revoked_at"),
         ("join_code", "code_hash, kind, name, label, uses_left, issued_at, expires_at, redeemed_at, machine_name"),
         ("runner", "name, machine_name, programs, platforms, tags, max_timeout_s, cache_max_mb, cache_used_mb, free_disk_mb, services, accept, last_seen, state, enforcement, version"),
         ("result_outbox", "client_machine, job_id, seq, kind, payload_json, created_at, acked_at"),
-        ("order", "client_key, job_id, client_machine, spec_json, platform, same_machine, priority_hint, enqueued_at, state"),
+        ("order", "client_key, job_id, client_machine, spec_json, platform, priority_hint, enqueued_at, state"),
     ]);
     assert_eq!(columns(&path), want);
 }
@@ -501,4 +501,44 @@ fn a_version_three_broker_database_gets_the_finish_time_index() {
         "{plan:?}"
     );
     assert!(!plan.iter().any(|p| p.contains("TEMP B-TREE")), "{plan:?}");
+}
+
+#[tokio::test]
+async fn unfinished_commit_orders_are_failed_by_the_version_five_migration() {
+    use lr_abstractions::store_contract::fixtures::{intake, T0};
+    use lr_abstractions::BrokerStore;
+    use lr_core::JobState;
+    let d = common::dir();
+    let path = d.path().join("broker.db");
+    let i = intake("c1", "j1", "check", T0);
+    let key = i.job.key.clone();
+    {
+        let store = SqliteBrokerStore::open(&path).unwrap();
+        store.accept(i).await.unwrap();
+    }
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE job ADD COLUMN code_source TEXT NOT NULL DEFAULT 'commit';
+         ALTER TABLE job ADD COLUMN commit_sha TEXT;
+         ALTER TABLE job_spec ADD COLUMN profile_commit TEXT;
+         ALTER TABLE \"order\" ADD COLUMN same_machine INTEGER NOT NULL DEFAULT 0;
+         PRAGMA user_version = 4;",
+    )
+    .unwrap();
+    drop(conn);
+    let store = SqliteBrokerStore::open(&path).unwrap();
+    assert_eq!(version_of(&path), schema::BROKER.version);
+    let record = store.job(&key).await.unwrap().unwrap();
+    assert_eq!(record.job.state, JobState::Failed);
+    assert!(record.job.finished_at.is_some());
+    assert!(!columns(&path)["order"].contains(&"same_machine".to_string()));
+    let job_columns = &columns(&path)["job"];
+    assert!(!job_columns.contains(&"commit_sha".to_string()));
+    assert!(!job_columns.contains(&"code_source".to_string()));
+    assert!(!columns(&path)["job_spec"].contains(&"profile_commit".to_string()));
+    let left: i64 = Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM \"order\"", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 0);
 }

@@ -107,9 +107,6 @@ fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
     if let Some(b) = &s.branch {
         details.push(format!("branch {b}"));
     }
-    if let Some(c) = &s.commit {
-        details.push(format!("commit {}", &c[..c.len().min(7)]));
-    }
     if let Some(d) = &s.cwd {
         details.push(format!("dir {d}"));
     }

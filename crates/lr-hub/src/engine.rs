@@ -8,7 +8,7 @@ use crate::select::Decision;
 use crate::track::{Finished, Link, Stage, Track};
 use lr_abstractions::{
     Clock, Dialer, Files, Frame, HubStore, Level, LogSink, Meter, OutboxKind, ProcessInspector,
-    Record, Repository, Role,
+    Record, Role,
 };
 use lr_core::{JobId, Timestamp, Zone};
 use lr_proto::{
@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot, Notify};
 
 /// Name under which the broker of this machine (reached over local IPC) is listed.
 pub const LOCAL_BROKER: &str = "local";
@@ -33,6 +33,7 @@ pub type ReloadPolicy = Arc<dyn Fn() -> Result<HubPolicy, String> + Send + Sync>
 
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
+const RELEASE_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) struct Shared {
     pub(crate) clock: Arc<dyn Clock>,
@@ -40,7 +41,6 @@ pub(crate) struct Shared {
     pub(crate) dialer: Arc<dyn Dialer>,
     pub(crate) inspector: Arc<dyn ProcessInspector>,
     pub(crate) files: Arc<dyn Files>,
-    pub(crate) repository: Arc<dyn Repository>,
     pub(crate) log: Arc<dyn LogSink>,
     pub(crate) meter: Arc<dyn Meter>,
     pub(crate) name: String,
@@ -50,6 +50,7 @@ pub(crate) struct Shared {
     pub(crate) bus: broadcast::Sender<DashboardEvent>,
     next_req: AtomicU64,
     pub(crate) overflows: Overflows,
+    _released: oneshot::Sender<()>,
 }
 
 impl Shared {
@@ -158,6 +159,7 @@ impl Hub {
     /// Serves until the IPC listener closes or its owner asks it to stop (`down`).
     pub async fn run(self) {
         let d = self.deps;
+        let (released_tx, released_rx) = oneshot::channel::<()>();
         let reload_logging = self.reload_logging;
         let reload_policy = self.reload_policy;
         let shared = Arc::new(Shared {
@@ -168,7 +170,6 @@ impl Hub {
             dialer: d.dialer,
             inspector: d.inspector,
             files: d.files,
-            repository: d.repository,
             log: d.log,
             meter: d.meter,
             name: d.name,
@@ -176,6 +177,7 @@ impl Hub {
             bus: crate::bus::new_bus(),
             next_req: AtomicU64::new(0),
             overflows: Overflows::default(),
+            _released: released_tx,
         });
         let (tx, mut rx) = mpsc::channel(EVENT_QUEUE);
         let mut engine = Engine {
@@ -195,9 +197,10 @@ impl Hub {
         engine.restore().await;
         engine.sample_outbox().await;
         let started = d.clock.now();
+        let mut clients = Vec::new();
         for t in targets {
             engine.links.entry(t.name.clone()).or_default().since = Some(started);
-            client::spawn(t, shared.clone(), tx.clone());
+            clients.push(client::spawn(t, shared.clone(), tx.clone()));
         }
         let (ipc_tx, ipc_shared) = (tx.clone(), shared.clone());
         let ipc =
@@ -229,6 +232,18 @@ impl Hub {
         }
         ipc.abort();
         ticks.abort();
+        for c in &clients {
+            c.abort();
+        }
+        for c in clients {
+            let _ = c.await;
+        }
+        drop(engine);
+        drop(shared);
+        tokio::select! {
+            _ = released_rx => {}
+            _ = tokio::time::sleep(RELEASE_WAIT) => {}
+        }
     }
 }
 

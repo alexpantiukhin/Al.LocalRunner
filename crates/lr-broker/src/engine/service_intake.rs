@@ -65,7 +65,7 @@ impl Engine {
             }
         }
         if mismatches.is_empty() && elsewhere {
-            Err(Reject::NoRunnerOnMachine { joined: Vec::new() })
+            Err(Reject::NoRunnerOnMachine)
         } else {
             Err(Reject::NoMatchingRunner {
                 runners: mismatches,

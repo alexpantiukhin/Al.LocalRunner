@@ -23,7 +23,6 @@ pub mod load;
 pub mod logsink;
 pub mod meter;
 pub mod process;
-pub mod repository;
 pub mod secrets;
 pub mod store;
 pub mod transport;
@@ -46,16 +45,15 @@ pub use process::{
     ResourceLimits, SpawnSpec, StepOutcome, Stop, StopHandle, StopSignal, Usage,
     DEFAULT_CANCEL_GRACE, MASK,
 };
-pub use repository::{Repository, RepositoryError};
 pub use secrets::{SecretError, SecretSource, SecretValue};
 pub use store::{
     outlives_cancel, ActiveOrder, Admission, Applied, BrokerLink, BrokerStore, CacheEntry,
-    CacheKey, ClientUsage, CodeSource, GithubRunRow, HubStore, Inbound, Intake, JobFilter, JobKey,
-    JobLogRow, JobRecord, JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind,
-    MachineRow, MemoryStats, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind, ProfileStats,
-    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, RunnerStore, ServiceRow,
-    ServiceState, SourceKind, Spread, Stats, StatsQuery, StepRow, StepStats, StepUpdate,
-    StoreError, Transition, LOG_TRUNCATED_MARK,
+    CacheKey, ClientUsage, GithubRunRow, HubStore, Inbound, Intake, JobFilter, JobKey, JobLogRow,
+    JobRecord, JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow,
+    MemoryStats, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind, ProfileStats, PruneLimits,
+    PruneReport, Revoked, RunnerRow, RunnerState, RunnerStore, ServiceRow, ServiceState,
+    SourceKind, Spread, Stats, StatsQuery, StepRow, StepStats, StepUpdate, StoreError, Transition,
+    LOG_TRUNCATED_MARK,
 };
 pub use transport::{
     Dialer, Frame, Listener, Peer, PeerAccess, Transport, TransportError, MAX_FRAME_BYTES,

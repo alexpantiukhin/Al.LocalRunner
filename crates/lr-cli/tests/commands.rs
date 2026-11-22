@@ -104,7 +104,6 @@ fn summary(job: &str, state: JobState) -> JobSummary {
         source: Some(WireSource::Session),
         note: None,
         branch: None,
-        commit: None,
         cwd: None,
         timeout_s: None,
         github_run_url: None,
@@ -157,7 +156,6 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     queued.queued_at = Timestamp(10_000);
     queued.note = Some("fix flaky test".into());
     queued.branch = Some("feat/x".into());
-    queued.commit = Some("abcdef0123456789".into());
     queued.cwd = Some("/work/repo".into());
     queued.labels = vec!["release".into(), "work".into()];
     let view = StatusView {
@@ -185,7 +183,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
         "{text}"
     );
     assert!(
-        text.contains("branch feat/x  commit abcdef0  dir /work/repo  note: fix flaky test  labels: release, work"),
+        text.contains("branch feat/x  dir /work/repo  note: fix flaky test  labels: release, work"),
         "{text}"
     );
     let mut json = status_json(&views);
@@ -194,7 +192,6 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     assert_eq!(item["age_s"], 185);
     assert_eq!(item["note"], "fix flaky test");
     assert_eq!(item["branch"], "feat/x");
-    assert_eq!(item["commit"], "abcdef0123456789");
     assert_eq!(item["cwd"], "/work/repo");
     assert_eq!(item["labels"], serde_json::json!(["release", "work"]));
     let bare = serde_json::to_value(summary("j3", JobState::Queued)).unwrap();

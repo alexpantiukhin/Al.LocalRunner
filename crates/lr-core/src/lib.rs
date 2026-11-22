@@ -29,14 +29,12 @@ pub use identity::{
     identity_from_session, may_cancel, normalize_origin, project_name, validate_label,
     validate_note, GithubInfo, Identity, IdentityError, SenderFacts, Source,
 };
-pub use matching::{
-    satisfies, Accept, Capabilities, Mismatch, MismatchReason, ServiceStatus, JOINED_BY_KEY,
-};
+pub use matching::{satisfies, Accept, Capabilities, Mismatch, MismatchReason, ServiceStatus};
 pub use model::{JobId, JobState, StepState, Timestamp, Zone, MAX_FRAME_BYTES};
 pub use policy::{GroupBy, Policy, Quota, Reserve, Rule, RulePolicy, Strategy};
 pub use predict::{earliest_start, pick_next, Plan, QueueState};
-pub use profile::{resolve_for_platform, PlatformOverride, Profile, Program, StepSpec};
-pub use profile_args::{ArgSpec, RESERVED_ARG_NAMES};
+pub use profile::{resolve_for_platform, PlatformOverride, Profile, Program, StepSpec, ZoneSteps};
+pub use profile_args::ArgSpec;
 pub use profile_bind::bind_args;
 pub use profile_parse::{ignored_sections, parse_profiles};
 pub use queue::{

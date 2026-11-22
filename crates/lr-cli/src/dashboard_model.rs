@@ -25,7 +25,6 @@ pub fn detail_of(summary: JobSummary, steps: Vec<StepView>, wait: Option<String>
         note: summary.note.clone(),
         branch: summary.branch.clone(),
         cwd: summary.cwd.clone(),
-        commit: None,
         os_user: None,
         source: summary.source,
         github_run_url: summary.github_run_url.clone(),

@@ -300,7 +300,6 @@ impl Shared {
             runner: &self.fixed.name,
             layout: CacheLayout::new(self.fixed.job_root.clone()),
             cache: live.cache,
-            workspace: live.workspace,
         }
     }
 

@@ -77,7 +77,7 @@ async fn dead_sender_job_is_cancelled_and_detached_job_survives() {
     let u = until_exit(unknown_client, &unknown, HANG).await;
     assert_eq!(u.state, JobState::Passed, "{u:?}");
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -128,7 +128,7 @@ async fn hub_restart_resumes_results_without_duplicates() {
         );
     }
 
-    roles.stop();
+    roles.stopped().await;
     drop(release);
     remove(dir).await;
 }

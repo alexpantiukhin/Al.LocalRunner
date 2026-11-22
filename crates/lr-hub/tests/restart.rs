@@ -48,23 +48,23 @@ async fn after_restart_a_returned_order_goes_to_another_broker_at_seq_one() {
 }
 
 #[tokio::test]
-async fn restored_same_machine_order_returned_ends_with_the_up_hint() {
+async fn restored_local_only_order_returned_ends_with_the_up_hint() {
     let mut rig = Rig::new();
     let local = rig.local_broker(Script::local_runner());
     let hub = rig.start();
-    let job = rig.cli().await.submit(submit("unit", None)).await;
+    let job = rig.cli().await.submit(submit("local-only", None)).await;
     until(&local, "accepted", || local.orders().len() == 1).await;
     settle().await;
     let _hub = rig.restart(hub).await;
     until(&local, "reconnected", || local.hellos() == 2).await;
     settle().await;
     local
-        .returned(&job, ReasonCode::Rejected(RejectReason::NoRunnerOnMachine))
+        .returned(&job, ReasonCode::Rejected(RejectReason::NoMatchingRunner))
         .await;
     settle().await;
     assert!(rig.active(&job).await.is_none());
     let log = log_of(&rig, &job);
-    assert!(log.contains("rejected_no_runner_on_machine"), "{log}");
+    assert!(log.contains("rejected_no_matching_runner"), "{log}");
     assert!(log.contains("localrunner up"), "{log}");
     assert_eq!(local.orders().len(), 1);
 }

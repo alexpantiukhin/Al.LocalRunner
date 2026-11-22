@@ -127,3 +127,17 @@ fn invalid_reload_keeps_listen_networks_and_grace() {
     assert_eq!(active.file().listen.addresses.len(), 1);
     assert!(active.file().networks.contains_key("home"));
 }
+
+#[test]
+fn shared_blocks_change_on_reload_reported_not_applied() {
+    let mut active = started();
+    let text = format!(
+        "{START}
+[[shared]]
+members = [\"a\", \"b\"]
+"
+    );
+    let applied = active.reload(&text).unwrap();
+    assert_eq!(applied.restart_required, [RestartOnly::Shared]);
+    assert!(active.file().shared.is_empty());
+}

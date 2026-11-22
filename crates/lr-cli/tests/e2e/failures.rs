@@ -37,7 +37,7 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
     .await;
     gate.started("held", "child").await;
 
-    runner.stop();
+    runner.stopped().await;
     broker_event(
         &mut events,
         "the killed runner to go offline",
@@ -55,8 +55,8 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
     );
 
     held_client.close().await;
-    hub_role.stop();
-    broker.stop();
+    hub_role.stopped().await;
+    broker.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -91,7 +91,7 @@ async fn broker_restart_keeps_queue() {
     })
     .await;
 
-    broker.stop();
+    broker.stopped().await;
     let broker = start_broker(&layout, false)
         .await
         .expect("the broker starts again on the same state");
@@ -115,9 +115,9 @@ async fn broker_restart_keeps_queue() {
     assert_eq!(rows.len(), 2, "{rows:?}");
     assert!(rows.iter().all(|r| r.state == JobState::Passed), "{rows:?}");
 
-    runner.stop();
-    hub_role.stop();
-    broker.stop();
+    runner.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -174,9 +174,9 @@ async fn cancel_with_a_reason_ends_the_job_and_writes_the_reason_into_its_log() 
     assert_eq!(row.state, JobState::Cancelled);
     assert_eq!(row.reason, Some(ReasonCode::CancelledByUser));
 
-    runner.stop();
-    hub_role.stop();
-    broker.stop();
+    runner.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     drop(release);
     remove(dir).await;
 }
@@ -214,9 +214,9 @@ async fn timeout_kills_grandchildren() {
     child.gone("the child to be killed").await;
     grandchild.gone("the grandchild to be killed").await;
 
-    runner.stop();
-    hub_role.stop();
-    broker.stop();
+    runner.stopped().await;
+    hub_role.stopped().await;
+    broker.stopped().await;
     drop(release);
     remove(dir).await;
 }

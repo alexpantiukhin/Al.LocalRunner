@@ -11,7 +11,6 @@ use lr_proto::{
     CliReply, CliRequest, HistoryFilter, JobSummary, QueueEvent, ReadReply, ReadRequest,
     ReasonCode, RunnerInfo, StatusFilter, StatusView, SubmitRequest,
 };
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::broadcast::{error::RecvError, Receiver};
@@ -108,23 +107,6 @@ pub async fn broker_event<T>(
         .unwrap_or_else(|_| panic!("no broker event for {what}"))
 }
 
-/// Polls `probe` until it gives a value; panics after `limit`. Only for what no role signals:
-/// the files and the port a stopped role's detached tasks let go of.
-pub async fn eventually<T, F, Fut>(what: &str, limit: Duration, mut probe: F) -> T
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Option<T>>,
-{
-    let started = std::time::Instant::now();
-    loop {
-        if let Some(v) = probe().await {
-            return v;
-        }
-        assert!(started.elapsed() < limit, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
 /// Reads the output of `job` on `client` until it holds `text`; the broker stores a chunk,
 /// and the hub writes it to its copy of the log, before passing it on.
 pub async fn until_output(client: &IpcClient, job: &JobId, text: &str) -> String {
@@ -183,6 +165,7 @@ pub async fn submit_as(
         mem_mb: None,
         cpu: None,
         args: Vec::new(),
+        zones: None,
         detach,
         wait: true,
     });
@@ -341,18 +324,17 @@ pub async fn try_history(layout: &Layout, mine: bool) -> Result<Vec<JobSummary>,
     Ok(per.into_iter().flat_map(|(_, jobs)| jobs).collect())
 }
 
-/// Removes the test directory once the stopped roles let go of it. The helpers are released
-/// before, but a stopped hub's detached tasks (its broker links) keep its database open until
-/// they notice and give no signal when they end (Windows refuses to delete open files).
-pub async fn remove(dir: TempDir) {
+/// Removes the directory of a test whose roles ran as separate processes (`up`): their exit
+/// cannot be observed here, so a file they still hold stays for the system to clean.
+pub async fn remove_after_processes(dir: TempDir) {
     let root = dir.path().parent().unwrap().to_path_buf();
-    eventually("the test directory to be removed", HANG, || {
-        let gone = match std::fs::remove_dir_all(&root) {
-            Ok(()) => true,
-            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
-        };
-        async move { gone.then_some(()) }
-    })
-    .await;
+    let _ = std::fs::remove_dir_all(&root);
     drop(dir);
+}
+
+/// Removes the test directory after the roles were stopped with `stopped().await`. A file that
+/// the system still holds (an indexer, a scanner) stays for the system to clean: it is not a
+/// failure of the test.
+pub async fn remove(dir: TempDir) {
+    remove_after_processes(dir).await;
 }

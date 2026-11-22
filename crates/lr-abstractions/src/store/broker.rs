@@ -33,7 +33,7 @@ pub trait BrokerStore: Send + Sync {
 
     /// Puts a granted but not started run back into the queue (its runner vanished before
     /// start, or broker restart): the order row is rebuilt from what `accept` stored (client
-    /// machine, spec JSON, platform, `same_machine`, priority hint, `enqueued_at`, queue state)
+    /// machine, spec JSON, platform, priority hint, `enqueued_at`, queue state)
     /// and the runner cleared. Refused for a started or final run, and while an order row
     /// exists. The next runner gets a new message stream: the seq received from the runner
     /// and the seq given by `next_seq_to_runner` start again from zero; the counter of the

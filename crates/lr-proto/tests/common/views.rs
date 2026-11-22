@@ -96,7 +96,6 @@ pub fn read_replies() -> Vec<ReadReply> {
             note: Some("n".into()),
             branch: Some("main".into()),
             cwd: Some("/w".into()),
-            commit: Some("abc".into()),
             os_user: Some("alex".into()),
             source: Some(WireSource::Github),
             github_run_url: Some("https://example/run/1".into()),

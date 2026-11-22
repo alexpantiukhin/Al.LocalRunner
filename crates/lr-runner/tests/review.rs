@@ -7,7 +7,7 @@ use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{
     decode, BrokerToRunner, Chunk, RunnerToBroker, SettingsUpdate, Welcome, PROTOCOL_VERSION,
 };
-use lr_runner::{Retention, WorkspaceLayout, WORKSPACE_CLIENT};
+use lr_runner::Retention;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -15,7 +15,6 @@ use std::time::Duration;
 const SEC: Duration = Duration::from_secs(1);
 const MS: Duration = Duration::from_millis(1);
 const DAY: u64 = 86_400_000;
-const URL: &str = "https://git.example.com/acme/app.git";
 
 async fn has_result(rig: &Rig) -> bool {
     rig.pending()
@@ -178,43 +177,6 @@ async fn marker_exists_when_the_assign_is_acked() {
     b.until(|m| matches!(m, RunnerToBroker::Ack(_))).await;
     let marker = rig.files.file(&state_dir().join("active-job")).unwrap();
     assert!(marker.starts_with(b"job-1"), "{marker:?}");
-}
-
-#[tokio::test]
-async fn sweep_before_a_job_keeps_the_mirror_it_uses() {
-    let mut rig = Rig::new();
-    rig.settings.workspace = Retention {
-        max_size_gb: None,
-        retention_days: Some(7),
-    };
-    let layout = WorkspaceLayout::new(state_dir());
-    let mirror = layout.mirror_dir("acme/app", URL);
-    rig.files.mkdir(&mirror);
-    let (_c, _h) = rig.start();
-    let b = Broker::accept(&rig).await;
-    let ws = layout.project_dir("acme/app", URL);
-    rig.store
-        .upsert_cache(CacheEntry {
-            key: CacheKey {
-                client: WORKSPACE_CLIENT.into(),
-                project: ws.file_name().unwrap().to_string_lossy().into_owned(),
-                name: "mirror".into(),
-            },
-            path: mirror.display().to_string(),
-            bytes: 0,
-            last_used: Timestamp(START - 8 * DAY),
-        })
-        .await
-        .unwrap();
-    b.assign("job-1", 1, commit_spec(vec![step("b", "make", 60)], 60))
-        .await;
-    b.until_result().await;
-    let cmds: Vec<String> = rig.process.runs()[0]
-        .steps
-        .iter()
-        .map(|s| s.spec.command.clone())
-        .collect();
-    assert!(cmds.iter().all(|c| !c.contains("clone")), "{cmds:?}");
 }
 
 fn cache_entry(client: &str, name: &str, last_used: u64) -> CacheEntry {
@@ -442,21 +404,4 @@ async fn refusal_with_a_failing_store_does_not_block_the_session() {
     b.until(|m| matches!(m, RunnerToBroker::Heartbeat { .. }))
         .await;
     assert!(rig.logs_text().contains("job result not stored"));
-}
-
-#[tokio::test]
-async fn profile_steps_get_the_remaining_time_rounded_up() {
-    let rig = Rig::new();
-    rig.script(
-        "job-1",
-        JobScript::new(vec![StepScript::new(Duration::from_millis(59_100), 0)]),
-    );
-    let (_c, _h) = rig.start();
-    let b = Broker::accept(&rig).await;
-    b.assign("job-1", 1, commit_spec(vec![step("b", "make", 60)], 60))
-        .await;
-    rig.advance(Duration::from_millis(59_100)).await;
-    rig.advance(SEC).await;
-    b.until_result().await;
-    assert_eq!(rig.process.runs()[1].timeout_s, 1);
 }
