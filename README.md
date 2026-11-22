@@ -166,17 +166,13 @@ Say to the agent: "update localrunner" (the `upgrade-runner` skill of the plugin
 
 ### 2. By hand: `localrunner upgrade`
 
-`localrunner upgrade` is the interactive command that does the update. It is run by the NEW binary (the installed one cannot fetch itself), so the usual way is the release script (`install.sh` or `install.ps1`, see "Release scripts"): with `--upgrade` it downloads the new binary, checks the signature and runs `localrunner upgrade` of it. Add `--version X.Y.Z` for a version other than the latest:
+Run `localrunner upgrade` from the installed binary; add `--version X.Y.Z` for a version other than the latest release. It downloads the release for this platform, checks the signature and the SHA-256 itself against the keys built into the binary, and installs nothing on any mismatch. It shows the installed and the new version, the running jobs and the waiting orders, and asks what to do: wait for the jobs, cancel them, or abort. Then it stops the roles, replaces the installed binary and starts the same roles again from it. Finish with `localrunner --version` and `localrunner doctor`.
 
-```
-install.sh --upgrade --version X.Y.Z      # Windows: install.ps1 --upgrade --version X.Y.Z
-```
-
-The command shows the installed and the new version, the running jobs and the waiting orders, and asks what to do: wait for the jobs, cancel them, or abort. Then it stops the roles, copies itself over the installed binary and starts the same roles again. If you already have the new binary unpacked, run `./localrunner upgrade` from it (`--dir DIR` names the directory the old binary lives in). Finish with `localrunner --version` and `localrunner doctor`.
+On a machine without a working binary, take the release script instead (`install.sh --upgrade` or `install.ps1 --upgrade`, see "Release scripts"): it fetches the binary and runs the same `upgrade`.
 
 ### 3. Details and parameters
 
-- **Without a terminal** (a script, an agent, CI): `--yes` skips the question and waits for running jobs; `--yes --cancel` cancels them; `--dry-run` only shows the plan. Ctrl+C while waiting replaces nothing.
+- **Without a terminal** (a script, an agent, CI): `--yes` skips the question and waits for running jobs; `--yes --cancel` cancels them; `--dry-run` only shows the plan; `--wait-timeout 15m` ends the wait with nothing replaced; `--offline ARCHIVE` takes the files from a folder instead of the network. Ctrl+C while waiting replaces nothing.
 - **Broker as an OS service** keeps its own copy of the binary and `upgrade` does not touch it. With administrator rights run `localrunner broker update-service` from the new binary (`--dry-run` shows the plan).
 - **Several machines:** one by one, the broker first; all in the same window when the major protocol version changes. `localrunner runners` marks a runner whose version differs from the binary.
 - **Docker runners:** change the image tag, `docker compose build`, `docker compose up -d` (see "Docker Compose").
