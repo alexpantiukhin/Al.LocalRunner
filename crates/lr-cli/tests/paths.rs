@@ -1,6 +1,6 @@
 use lr_cli::commands::setup::default_bin_dir;
 use lr_cli::paths::{
-    default_root, service_ipc_dir, service_root, Layout, CONFIG_DIR_ENV, STATE_DIR_ENV,
+    default_root, service_ipc_dir, service_root, writable_or, Layout, CONFIG_DIR_ENV, STATE_DIR_ENV,
 };
 use std::path::PathBuf;
 
@@ -122,4 +122,23 @@ fn default_and_service_roots_follow_the_os_table_and_flags_beat_the_environment(
     os_table(&base);
     resolve_order(&base);
     ipc_names(&base);
+}
+
+#[test]
+fn the_socket_directory_falls_back_when_the_preferred_one_is_not_writable() {
+    let base = std::env::temp_dir().join(format!("lr-ipc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let file = base.join("not-a-dir");
+    std::fs::write(&file, b"").unwrap();
+    let fallback = base.join("ipc");
+    assert_eq!(
+        writable_or(file.join("run"), fallback.clone()),
+        fallback,
+        "a directory below a regular file cannot be created"
+    );
+    let good = base.join("run");
+    assert_eq!(writable_or(good.clone(), fallback), good);
+    assert!(good.is_dir());
+    let _ = std::fs::remove_dir_all(&base);
 }

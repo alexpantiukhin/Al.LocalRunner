@@ -27,6 +27,10 @@ services:
     volumes:
       - runner-state:/var/lib/al-localrunner
       - ./runner.toml:/etc/al-localrunner/runner.toml:ro
+      # Tools of jobs (node, java, cargo, ...): a directory with `<tool>/bin`, see `[env] tools_dir`.
+      # - ./tools:/opt/tools:ro
+    tmpfs:
+      - /run/al-localrunner:uid=65532,gid=65532
     networks: [pool]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]

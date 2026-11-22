@@ -36,7 +36,7 @@ fn section_keys(section: &str) -> Option<&'static [&'static str]> {
             "mem_headroom",
             "disk_headroom",
         ]),
-        "env" => Some(&["path"]),
+        "env" => Some(&["path", "tools_dir"]),
         "cache" => Some(&RETENTION),
         "grace" => Some(&["broker_lost_kill_s"]),
         _ => None,

@@ -72,6 +72,22 @@ pub fn service_ipc_dir() -> PathBuf {
     }
 }
 
+/// `preferred` when it can be created and written to by this user, else `fallback`. The check is
+/// the same for every process of the user, so a runner and the commands that talk to it agree on
+/// the socket directory: an image whose `/run/al-localrunner` belongs to another uid still works.
+pub fn writable_or(preferred: PathBuf, fallback: PathBuf) -> PathBuf {
+    let probe = preferred.join(format!(".probe-{}", std::process::id()));
+    let usable = std::fs::create_dir_all(&preferred)
+        .and_then(|()| std::fs::write(&probe, b""))
+        .is_ok();
+    let _ = std::fs::remove_file(&probe);
+    if usable {
+        preferred
+    } else {
+        fallback
+    }
+}
+
 impl Layout {
     /// A layout over explicit directories. The default directory of the user and the service
     /// directory use the fixed IPC names, so a hub finds the broker service by them.
@@ -83,7 +99,11 @@ impl Layout {
             format!("-{:016x}", fnv64(&root.to_string_lossy()))
         };
         let ipc_dir = if service {
-            service_ipc_dir()
+            if cfg!(windows) {
+                service_ipc_dir()
+            } else {
+                writable_or(service_ipc_dir(), root.join("ipc"))
+            }
         } else {
             root.join("ipc")
         };

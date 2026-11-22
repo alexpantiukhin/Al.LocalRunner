@@ -83,3 +83,44 @@ fn inherit_refuses_reserved_names_bad_names_and_other_shapes() {
         assert!(err.contains(reason), "{body}: {err}");
     }
 }
+
+fn tools_tree(name: &str, bins: &[&str]) -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!("lr-tools-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for bin in bins {
+        std::fs::create_dir_all(root.join(bin)).unwrap();
+    }
+    root
+}
+
+#[test]
+fn tools_dir_appends_its_bin_directories_to_path_in_name_order() {
+    let root = tools_tree("order", &["node/bin", "jdk/bin", "bin", "docs/share"]);
+    let dir = root.to_string_lossy().replace('\\', "/");
+    let s = RunnerSettings::from_toml(
+        &format!("name = \"a\"\n[env]\npath = \"/usr/bin\"\ntools_dir = \"{dir}\"\n"),
+        "/s".into(),
+    )
+    .unwrap();
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let parts: Vec<_> = s.path.as_deref().unwrap().split(sep).collect();
+    let tail: Vec<_> = parts[1..]
+        .iter()
+        .map(|p| p.replace('\\', "/").replace(&dir, ""))
+        .collect();
+    assert_eq!(parts[0], "/usr/bin");
+    assert_eq!(tail, ["/bin", "/jdk/bin", "/node/bin"], "{parts:?}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_missing_tools_dir_leaves_path_as_written() {
+    let s = parse("");
+    assert_eq!(s.path.as_deref(), Some("/usr/bin"));
+    let s = RunnerSettings::from_toml(
+        "name = \"a\"\n[env]\npath = \"/usr/bin\"\ntools_dir = \"/no/such/dir\"\n",
+        "/s".into(),
+    )
+    .unwrap();
+    assert_eq!(s.path.as_deref(), Some("/usr/bin"));
+}

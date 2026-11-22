@@ -136,7 +136,7 @@ fn compose_runs_broker_and_runner_from_the_versioned_image_as_non_root() {
 }
 
 #[test]
-fn image_is_built_on_alpine_musl_and_runs_on_distroless_nonroot() {
+fn image_is_built_on_alpine_musl_and_runs_on_distroless_base_with_glibc() {
     let stages = dockerfile_stages();
     let build = stages[0].from.split_whitespace().next().unwrap();
     let (name, tag) = build.split_once(':').unwrap();
@@ -144,7 +144,7 @@ fn image_is_built_on_alpine_musl_and_runs_on_distroless_nonroot() {
     assert!(tag.ends_with("-alpine"), "musl build image: {build}");
     assert_eq!(
         stages.last().unwrap().from,
-        "gcr.io/distroless/static-debian12:nonroot"
+        "gcr.io/distroless/base-debian12:nonroot"
     );
     let dirs: Vec<&str> = instruction(stages.last().unwrap(), "COPY")
         .into_iter()

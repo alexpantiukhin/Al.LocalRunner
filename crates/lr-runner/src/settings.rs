@@ -40,6 +40,29 @@ impl Retention {
     }
 }
 
+/// `path` followed by the `bin` directories of the tools directory `dir`: `dir/bin`, then
+/// `dir/<name>/bin` of every subdirectory in name order. Directories that do not exist are
+/// skipped. The directory is read each time the settings are read, so `reload` picks up a volume
+/// filled after the runner started.
+fn with_tool_bins(path: &str, dir: &std::path::Path) -> String {
+    let mut bins = vec![dir.join("bin")];
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    names.sort();
+    bins.extend(names.into_iter().map(|p| p.join("bin")));
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let mut out = path.to_string();
+    for bin in bins.into_iter().filter(|b| b.is_dir()) {
+        out.push(sep);
+        out.push_str(&bin.to_string_lossy());
+    }
+    out
+}
+
 /// The owner's settings of one runner (`runner.toml`, spec 3.10) plus the machine facts the
 /// assembly detects (memory, CPU, disk, programs found, environment whitelist values).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +180,7 @@ struct Grace {
 #[derive(Deserialize, Default)]
 struct Env {
     path: Option<String>,
+    tools_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -267,7 +291,12 @@ impl RunnerSettings {
         (s.job_env, s.job_env_inherit) = job_env_table(f.job_env)?;
         s.cache = retention("cache", f.cache)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
-        s.path = f.env.path.filter(|p| !p.trim().is_empty());
+        s.path = f.env.path.filter(|p| !p.trim().is_empty()).map(|p| {
+            match f.env.tools_dir.as_deref().map(str::trim) {
+                Some(dir) if !dir.is_empty() => with_tool_bins(&p, std::path::Path::new(dir)),
+                _ => p,
+            }
+        });
         s.job_home = f.job_home;
         s.services = services(f.service)?;
         if let Some(name) = f

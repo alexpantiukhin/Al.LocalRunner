@@ -1,9 +1,12 @@
-# Runner settings in a container (spec 3.10, 10.4). The image has only localrunner: tools of
-# jobs come from an image built FROM it.
+# Runner settings in a container (spec 3.10, 10.4). The image has only localrunner (on a glibc
+# base): tools of jobs come from a mounted directory, see tools_dir.
 platforms = ["linux"]
 
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"
+# Tools of jobs: `bin` of this directory and of every `<name>/bin` below it are appended to path
+# (read again on `localrunner reload`). Mount the directory into the container.
+# tools_dir = "/opt/tools"
 
 # Resource limits (optional). Without them the default is "warn" (peaks, warnings, CPU cap,
 # process limit; nothing is killed). enforce replaces the broker policy mode: "off" (nothing
