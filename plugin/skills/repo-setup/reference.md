@@ -20,7 +20,7 @@ Only `[profile.<name>]` and `[needs.<name>]` are read at the top level; any othe
 - `zone`: the farthest allowed runner zone (`local`, `shared`, `lan`, `remote`); `zones = ["local", "shared"]`: the allowed zones as a list (it also turns on steps per zone).
 - `[profile.<name>.zone.<zone>]` with `command` or `steps`: the steps of that zone, replacing the common ones there and opening it (`shared` is a disk the broker owner lists in `[[shared]]`; `lan` and `remote` get code only from a variant of their own). Variants keep the step names of the common steps. An order picks zones with `--zones local,shared` (or `--max-zone shared`); a branch or commit is an ordinary `--arg`.
 - `needs`: the name of a `[needs.<name>]` set the profile inherits from, with field overrides.
-- `args.<name>`: a named argument filled with `--arg name=value`; keys `one_of` or `pattern`, `default`, `many`, `join`. A command uses `{name}`; `{? text {name}}` is an optional segment.
+- `args.<name>`: a named argument filled with `--arg name=value`; keys `one_of` or `pattern`, `default`, `many`, `join`. A command uses `{name}`; `{? text {name}}` is an optional segment. Spaces at the edges of a segment are dropped, so put the separator outside it: `--no-fail-fast {? -p {pkg}}`, not `--no-fail-fast{? -p {pkg}}` (that glues to `--no-fail-fast-p core`). `profile check` prints the command expanded with every optional argument given and with none given; read it after writing a template.
 
 Step keys: `name`, `command`, `timeout_s`, `continue_on_failure`; also `mem_mb`, `cpu`, `tags`, `secrets`.
 
@@ -39,7 +39,7 @@ There is no `env`, no working directory, no `matrix` and no retry. Several comma
 
 ## Machine files the skill may propose
 
-`runner.toml`: `platforms`, `tags`, `[programs]` (`name = {}` or `{ check = "..." }`), `[secret.<name>]` with `from = "env:VAR"`, `[service.<name>]` with `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
+`runner.toml`: `platforms`, `tags`, `[programs]` (`name = {}` or `{ check = "..." }`), `[secret.<name>]` with `from = "env:VAR"`, `[job_env]` with `NAME = "value"` or `inherit = ["ProgramFiles(x86)"]` (exact names copied from the runner process at the start of each job), `[service.<name>]` with `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
 
 `policy.toml`: `[[secrets.allow]]` with `label` and `names`; `[[services.allow]]` with `label` and `names`.
 

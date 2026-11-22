@@ -130,7 +130,16 @@ impl RunnerConfig {
             .secret
             .iter()
             .map(|(n, e)| Ok((n.clone(), secret_from(n, &e.from)?)))
-            .collect::<Result<_, SettingsError>>()?;
+            .collect::<Result<BTreeMap<String, SecretFrom>, SettingsError>>()?;
+        if let Some(name) = settings
+            .job_env_inherit
+            .iter()
+            .find(|n| secrets.keys().any(|s| s.eq_ignore_ascii_case(n)))
+        {
+            return Err(SettingsError(format!(
+                "[job_env] inherit: {name} is a [secret.{name}] of this runner; secrets are never inherited from the process environment"
+            )));
+        }
         Ok(RunnerConfig {
             settings,
             allow_elevated: extra.allow_elevated,
@@ -139,6 +148,37 @@ impl RunnerConfig {
             secrets,
             warnings,
         })
+    }
+
+    /// Notes for `doctor` about `[job_env]`: inherited names that `lookup` does not find in the
+    /// process environment, and, on Windows, `cargo` in `[programs]` while nothing gives jobs the
+    /// variables the MSVC discovery needs.
+    pub fn env_notes(&self, windows: bool, lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
+        let mut notes = Vec::new();
+        let missing = self.settings.inherited_missing(&lookup);
+        if !missing.is_empty() {
+            notes.push(format!(
+                "[job_env] inherit: not set in the runner process, skipped: {}",
+                missing.join(", ")
+            ));
+        }
+        let msvc = self
+            .settings
+            .job_env_inherit
+            .iter()
+            .chain(self.settings.job_env.keys());
+        if windows
+            && self.programs.contains_key("cargo")
+            && !msvc
+                .into_iter()
+                .any(|n| n.eq_ignore_ascii_case("ProgramFiles(x86)"))
+        {
+            notes.push(
+                "cargo is in [programs] but jobs get a clean environment: a native build fails with `linker link.exe not found` without ProgramFiles(x86); add inherit = [\"ProgramFiles\", \"ProgramFiles(x86)\", \"ProgramData\", \"USERPROFILE\", \"APPDATA\", \"LOCALAPPDATA\", \"SystemDrive\"] to [job_env]"
+                    .to_string(),
+            );
+        }
+        notes
     }
 
     /// Runs the `[programs]` lookups and checks in the `PATH` jobs get (`[env] path`) and keeps

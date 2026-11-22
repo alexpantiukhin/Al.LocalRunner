@@ -85,7 +85,7 @@ pub(crate) async fn run_cleanup(shared: &Shared, job: &JobId, how: CleanupOn) {
     if !vars.iter().any(|(n, _)| n == "LOCALRUNNER_JOB_LABEL") {
         vars.push(("LOCALRUNNER_JOB_LABEL".to_string(), job_label(job)));
     }
-    apply_owner_env(&mut vars, &settings.job_env);
+    apply_owner_env(&mut vars, &settings.owner_env());
     for hook in hooks.iter().filter(|h| h.on.contains(&how)) {
         run_hook(shared, job, hook, &vars).await;
     }

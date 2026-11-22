@@ -335,7 +335,7 @@ A runner keeps what it still has to deliver to the broker in an outbox. If the b
 
 Configuration: `runner.toml`. `[env] path` is mandatory: it is the job's `PATH` and the place where programs are looked up. A runner without it does not start, and the runner process's `PATH` is not passed to jobs. Autostart and services give a poor environment, so set the paths explicitly.
 
-A job gets only these variables: `PATH` (from `[env] path`), `HOME` (from the runner process), `TEMP`, `TMP` and `TMPDIR` (a private directory of the job), `LOCALRUNNER_JOB_ID`, `LOCALRUNNER_CACHE_<NAME>`, the secrets it asked for and everything in `[job_env]`; on Windows also `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`. Nothing else of the runner's environment is inherited. Any other variable the jobs need (`JAVA_HOME`, `CARGO_HOME`, `ANDROID_NDK_HOME`) is written in `[job_env]` as `NAME = "value"`; `HOME` written there replaces the detected one. A native build on Windows may need more than the list above: Rust with the MSVC toolchain finds the linker through `vswhere`, which reads `ProgramFiles(x86)`; if a job fails with `linker link.exe not found` although the tools are installed, write `"ProgramFiles(x86)"`, `ProgramFiles` and `ProgramData` in `[job_env]`. `init` and `runner join` write the `HOME` of the shell they run in into `[job_env]`, so you see it in the file; a runner whose file has no `HOME` takes the home directory of the OS user that runs it, so jobs on different runners may see different settings in it (`.npmrc`, `.gitconfig`); to make them the same, set `HOME` in `[job_env]` to a directory of your own. `PATH` (use `[env] path`), `TEMP`, `TMP`, `TMPDIR` and names starting with `LOCALRUNNER_` are refused. A key that is not a setting of `runner.toml` (a variable written under `[env]`, for example) is a warning at start and in `doctor`. The `[programs]` checks run in exactly the same environment, and each check may take `check_timeout_s` seconds (default 10): a program that starts slowly, such as `pnpm` through `corepack` on a cold cache, needs a larger value or a `HOME` where its cache lives.
+A job gets only these variables: `PATH` (from `[env] path`), `HOME` (from the runner process), `TEMP`, `TMP` and `TMPDIR` (a private directory of the job), `LOCALRUNNER_JOB_ID`, `LOCALRUNNER_CACHE_<NAME>`, the secrets it asked for and everything in `[job_env]`; on Windows also `SystemRoot`, `windir`, `ComSpec`, `PATHEXT`. Nothing else of the runner's environment is inherited. Any other variable the jobs need (`JAVA_HOME`, `CARGO_HOME`, `ANDROID_NDK_HOME`) is written in `[job_env]` as `NAME = "value"`; `HOME` written there replaces the detected one. A native build on Windows may need more than the list above: Rust with the MSVC toolchain finds the linker through `vswhere`, which reads `ProgramFiles(x86)`; if a job fails with `linker link.exe not found` although the tools are installed, list the names in `[job_env] inherit` (below). `init` and `runner join` write that list on Windows. `init` and `runner join` write the `HOME` of the shell they run in into `[job_env]`, so you see it in the file; a runner whose file has no `HOME` takes the home directory of the OS user that runs it, so jobs on different runners may see different settings in it (`.npmrc`, `.gitconfig`); to make them the same, set `HOME` in `[job_env]` to a directory of your own. `PATH` (use `[env] path`), `TEMP`, `TMP`, `TMPDIR` and names starting with `LOCALRUNNER_` are refused. A key that is not a setting of `runner.toml` (a variable written under `[env]`, for example) is a warning at start and in `doctor`. The `[programs]` checks run in exactly the same environment, and each check may take `check_timeout_s` seconds (default 10): a program that starts slowly, such as `pnpm` through `corepack` on a cold cache, needs a larger value or a `HOME` where its cache lives.
 
 ```toml
 name      = "linux-heavy"
@@ -372,6 +372,7 @@ build = "make all"
 [job_env]                     # extra variables for every job, service and cleanup hook
 JAVA_HOME = "/opt/jdk"
 GRADLE_OPTS = "-Dorg.gradle.daemon=false"
+inherit = ["ProgramFiles(x86)", "USERPROFILE"]   # exact names copied from the runner process at the start of each job
 
 [[cleanup]]                    # a command run after every job
 name      = "labelled-containers"
@@ -379,6 +380,8 @@ command   = "sh -c 'docker rm -f $(docker ps -aq --filter label=$LOCALRUNNER_JOB
 timeout_s = 60                 # 1 to 3600, default 60
 on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # default: all
 ```
+
+`[programs]`: `check` is any command, run in the same environment as a job, and its exit code 0 is all that `doctor` and the registration of the runner trust. `cargo --version` proves that the program starts, not that it does what the projects need (a native build can still fail at link time because the clean job environment lacks a variable). An owner whose projects compile native code makes `check` do a step the project needs, for example a link of a tiny crate or `cargo build --offline` of a fixture. The runner and `doctor` know nothing about any toolchain.
 
 Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
 
@@ -414,7 +417,7 @@ Every order that left the queue keeps its end reason and who ended it: the `--as
 - **Mechanisms.** Windows: a Job Object (memory, CPU rate cap, process limit); its memory limit is 10% above the ceiling in `kill` and at the ceiling in `limit`. Linux: a cgroup v2 scope through `systemd-run` (`MemoryMax`, `CPUQuota`, `TasksMax`) when the controllers are delegated to the user; `limit` adds `MemoryHigh` at the ceiling (throttling and reclaim, swap allowed) and keeps `MemoryMax` 10% above it. A runner that is a Linux system service has no user manager, so it makes the job cgroups itself in the cgroup subtree its unit delegates to it (`Delegate=yes`, written by `autostart on runner <name> --service`): it moves itself into a `runner` leaf, enables the memory controller for the children and writes the same values to `memory.high`, `memory.max`, `cpu.max` and `pids.max` of a cgroup per job. This needs the memory controller in the unit's cgroup and Linux 5.14+ (`cgroup.kill`, so a forking tree is killed whole); otherwise the runner reports `watcher`. A unit installed by an earlier version has no `Delegate=yes`: reinstall it (`autostart off runner <name> --service`, then `autostart on runner <name> --service`); until then `limit` runs as `warn` there, and `doctor` says so. Otherwise, and always on macOS, a user-space watcher samples the process tree about every 250 ms and kills it above the ceiling; there `limit` behaves as `warn`; CPU is lowered with the process priority (`nice`), and the process count limit does not apply. The watcher measures RSS on Unix, so the figures are approximate there (on Windows it is the commit). The runner reports `enforcement = os` or `watcher` (see `runners` and the dashboard); a `watcher` runner does not announce `limit`, so the broker sends it `warn`.
 - **Disk.** A watcher sums the files in the job's working directory and in its private temporary directory `<runner state dir>/tmp/lr-<job-id>` about every 2 seconds (symbolic links are not followed; the shared system temp is not measured). `TEMP`, `TMP` and `TMPDIR` of every job point to that directory, which is always used, created before the first step and removed after the job (also after kill or cancel; up to 8 attempts 250 ms apart, since on Windows files of a just-killed process are briefly locked); after a runner crash everything under `<state dir>/tmp` is removed when the runner starts. This changes where jobs write temporary files. Before a job starts the runner checks the free space of the working volume against `disk_mb` times the factor.
 - **Cleanup.** `[[cleanup]]` commands run after every job outcome (`on` defaults to all of `passed`, `failed`, `killed`, `cancelled`, `timeout`) with the environment `LOCALRUNNER_JOB_ID` and `LOCALRUNNER_JOB_LABEL` (`lr-<job id>`). A hook failure never changes the job result: a warning goes to the job log and the diagnostics. A job cut short by a runner crash or restart gets its hooks once, at the next start, as `killed` (before its result `runner_restarted` is sent), so a hook must be idempotent. Hooks do not run for orders rejected at intake. What to clean (labelled containers, build daemons) is up to the owner's command; the core knows no tools.
-- **`[job_env]`** adds variables to every job and hook; `PATH`, `TEMP`, `TMP`, `TMPDIR` and `LOCALRUNNER_*` are forbidden; `HOME` is allowed. `LOCALRUNNER_JOB_LABEL` reaches the job environment only if at least one `[[cleanup]]` exists.
+- **`[job_env]`** adds variables to every job and hook; `PATH`, `TEMP`, `TMP`, `TMPDIR` and `LOCALRUNNER_*` are forbidden; `HOME` is allowed. `inherit` is a list of exact variable names (no patterns) that the runner copies from its own process at the start of each job, so a change of the machine leaves no stale copy in the file; a name that is not set there is skipped and `doctor` lists it, an explicit `NAME = "value"` wins over an inherited one, the same forbidden names apply, and a name that is also a `[secret.<name>]` of this runner is refused when the file is loaded (secrets are never inherited). Only the owner of the runner writes the list: a profile cannot ask for more. `doctor` also warns when `cargo` is in `[programs]` on Windows and neither `inherit` nor `[job_env]` has `ProgramFiles(x86)`. A variable literally named `inherit` cannot be set. `LOCALRUNNER_JOB_LABEL` reaches the job environment only if at least one `[[cleanup]]` exists.
 - **Foreign load.** Runners send the free memory and CPU load of their machine with the heartbeat. With `[admission] foreign_load = "wait"` an order waits while foreign processes leave too little (`занято чужими процессами: CPU 95%, нужно 4 ядер`, visible in `status` and `explain`); running jobs are never paused. The CPU of the broker's own jobs on the same machine is not counted as foreign. macOS reads `vm_stat` and `ps`. Runners that send no load (older ones) are admitted as before.
 - **Not in this version:** disk I/O limits, core pinning, pausing running jobs, a Docker socket proxy, OS disk quotas.
 
@@ -476,7 +479,26 @@ steps = [
 ]
 ```
 
-A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `labels` are free-form names the broker policy can match with `label` in a rule (they are not runner requirements and have no command-line flag). `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
+A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. The fields in one place (section 5 of the architecture document has the reasoning, `localrunner profile check` has the last word):
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `command` or `steps` | one of the two, never both | none | one command, or an ordered list of steps; a zone variant `[profile.X.zone.<zone>]` may replace them |
+| `timeout_s` | yes | none, no unlimited run | job timeout in seconds, above zero; the policy ceiling rejects an order that exceeds it, the runner ceiling makes a runner unsuitable |
+| `mem_mb`, `cpu`, `disk_mb` | no | `0`: nothing is reserved | memory, cores and disk the job holds while it runs |
+| `programs` | no | empty | names, or `{ name = "...", check = "..." }`; the runner must have each (a `check` command must also exit with 0) |
+| `platforms` | no | empty: any platform | platform names the profile runs on; `[profile.X.platform.<P>]` overrides `command`, `steps`, `timeout_s`, `mem_mb`, `cpu`, `disk_mb` for one platform |
+| `tags` | no | empty | resources the job holds for the run |
+| `exclusive` | no | empty | tags that no other running job may hold meanwhile |
+| `labels` | no | empty | free-form names for the broker policy (`label` in a rule); not requirements |
+| `cache` | no | empty | named runner caches kept between runs of the project |
+| `services` | no | empty | runner services the job needs |
+| `secrets` | no | empty | secret names (never values); the policy decides who may request them |
+| `zone` / `zones` | no | every zone | the farthest allowed zone, or the list of allowed zones; never both |
+| `needs` | no | none | name of a `[needs.<name>]` set to inherit from; the profile's own fields win |
+| `args.<name>` | no | none | a named argument filled with `--arg name=value` |
+
+Keys of a step: `name` and `command` and `timeout_s` (required), `continue_on_failure` (default `false`), `mem_mb`, `cpu`, `tags` and `secrets` (optional). Step names are unique, and the step timeout runs inside the job timeout. Resources are taken once for the whole job: the maximum over the steps of `mem_mb` and `cpu` (a step without its own value takes the profile's), and the union of `tags` and `secrets`. `[needs.<name>]` takes the shared requirement keys: `timeout_s`, `mem_mb`, `cpu`, `disk_mb`, `programs`, `tags`, `exclusive`, `cache`, `services`, `secrets`, `zone`, `zones`, `platforms`. An unknown key is rejected with its name. There is no `env`, no working directory and no retry: several commands in one environment are `steps` or one script called from `command`.
 
 **The client's directory.** In the zone `local` a job runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Do not touch the files of a long run in progress. In `shared` the runner sees the same directory through the shared disk. In `lan` and `remote` the runner works in a folder of the job, which it removes at the end, and the steps of the zone bring the code.
 
@@ -508,7 +530,7 @@ localrunner autostart on [hub|broker|runner|all] [--dry-run]
 localrunner autostart on runner <name>
 localrunner autostart on|off runner <name> --service [--dry-run]
 localrunner autostart off [...]
-localrunner down [names] [--drain | --cancel [--yes]]
+localrunner down [names] [--drain | --cancel [--yes]] [--wait [--wait-timeout 90s]]
 localrunner uninstall [--purge] [--yes] [--dry-run]
 ```
 
@@ -596,12 +618,12 @@ All commands:
 |---|---|
 | `submit [profile] --as label` | submit an order, print the id, return at once |
 | `run [profile] --as label` | the same, but show the output and return the exit code |
-| `wait <job>` | follow a job; interrupting cancels nothing |
-| `log <job> [--step name] [--tail N] [-f]` | the job log |
+| `wait <job>... [--as L] [--json]` | follow a job and end with its exit code; interrupting cancels nothing. Several jobs, or `--as L` alone (the active jobs of that label, else its last job), print one line per job when it ends (`<job-id> <profile> <state>`, the profile is `-` without `--as`), no log; the code is the first non-zero one. With ids, `--as` checks that they are jobs of that label |
+| `log <job> [--as L] [--step name] [--tail N] [-f]` | the job log; `--as` is accepted so a session can pass its label to every command, the label is not used |
 | `cancel <job> --as label`, `cancel --mine --as label [--yes]` | cancel |
 | `jobs --mine [--active] [--as label]` | your jobs |
 | `status`, `status <job>`, `explain <job>` | the queue with the `stale` and `offline` runners (`--json`: a `runners` array per broker); one job with its record; why an order waits, how long it has waited for a runner to start it, and which job holds the slot |
-| `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "with platforms" or "no platforms", arguments), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
+| `profile check [profile] [--label L] [--file path] [--json]` | validates the profiles file: a per-profile summary (steps or command, timeout, resources, platform mode "with platforms" or "no platforms", arguments, and for a command with an optional segment `{? ...}` the command expanded with every argument given (a sample value) and with none given), a warning for ignored top-level sections such as `[profiles.x]`, exit 1 for zero profiles or a parse error; before a run: for every secret of the profiles, the job variable it becomes, whether the policy lets the label request it (the label of your `[[local_user]]` entry, not `--as`), whether a runner of this machine has a source for it; exit 1 if something would stop a run |
 | `status --recent [N\|DURATION]` | the orders that left the queue, with the end reason and who ended it |
 | `history [--all]`, `history show <job>` | history; the `REASON` column says who cancelled a run and why |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |

@@ -333,7 +333,8 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Err(e) => out.push(check(label, Status::Fail, e.to_string())),
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
-                if problems.is_empty() && cfg.warnings.is_empty() {
+                let env_notes = cfg.env_notes(cfg!(windows), |n| std::env::var(n).ok());
+                if problems.is_empty() && cfg.warnings.is_empty() && env_notes.is_empty() {
                     out.push(check(label.clone(), Status::Ok, "runner.toml and programs"));
                 }
                 for w in &cfg.warnings {
@@ -342,6 +343,9 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
                         Status::Warn,
                         format!("runner.toml: {w}"),
                     ));
+                }
+                for n in env_notes {
+                    out.push(check(label.clone(), Status::Warn, n));
                 }
                 for p in problems {
                     out.push(check(label.clone(), Status::Warn, p));

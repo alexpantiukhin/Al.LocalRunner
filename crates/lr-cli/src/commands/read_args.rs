@@ -143,6 +143,10 @@ pub enum HistoryAction {
 pub struct LogArgs {
     /// The job.
     pub job: String,
+    /// Accepted like on `submit`, `status` and `jobs` so a session can pass its label to every
+    /// command; the log is read under the broker's visibility policy and the label is not used.
+    #[arg(long = "as", value_name = "LABEL")]
+    pub label: Option<String>,
     /// Only this step.
     #[arg(long)]
     pub step: Option<String>,

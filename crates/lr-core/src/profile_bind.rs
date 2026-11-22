@@ -27,6 +27,33 @@ pub fn bind_args(
     Ok(())
 }
 
+/// Like [`bind_args`] for `profile check`: nothing is given (`all_given` false) or every
+/// argument is given a sample value (the first of `one_of`, else the default, else `<name>`).
+/// Samples are not checked against `one_of` or `pattern`.
+pub fn preview_args(
+    steps: &mut [StepSpec],
+    specs: &[ArgSpec],
+    all_given: bool,
+) -> Result<(), ProfileError> {
+    let values = if all_given {
+        specs
+            .iter()
+            .map(|s| {
+                let v = (s.one_of.as_ref().and_then(|l| l.first().cloned()))
+                    .or_else(|| s.default.clone())
+                    .unwrap_or_else(|| format!("<{}>", s.name));
+                (s.name.clone(), v)
+            })
+            .collect()
+    } else {
+        resolve(specs, &[])?
+    };
+    for step in steps {
+        step.command = render_top(&step.command, specs, &values)?;
+    }
+    Ok(())
+}
+
 fn resolve(specs: &[ArgSpec], given: &[(String, String)]) -> Result<Values, ProfileError> {
     let mut by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (name, value) in given {

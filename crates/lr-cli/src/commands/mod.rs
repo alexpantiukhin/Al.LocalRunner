@@ -118,11 +118,16 @@ pub enum Command {
         #[command(flatten)]
         order: OrderArgs,
     },
-    /// Watch a job; interrupting cancels nothing.
+    /// Watch jobs; interrupting cancels nothing. One job streams its output and ends with its
+    /// exit code; several jobs (or `--as` alone) print one result line per job.
     Wait {
-        /// The job.
-        job: String,
-        /// Print JSON: the output goes to stderr, stdout gets the final state.
+        /// The jobs; with none, the active jobs of `--as` (else its last job).
+        #[arg(required_unless_present = "label")]
+        jobs: Vec<String>,
+        /// Submitter label: with ids, checks that the jobs are its own; alone, selects its jobs.
+        #[arg(long = "as", value_name = "LABEL")]
+        label: Option<String>,
+        /// Print JSON: the output goes to stderr, stdout gets the final state (one line per job).
         #[arg(long)]
         json: bool,
     },
@@ -248,6 +253,12 @@ pub enum Command {
         /// Confirm `--cancel` without asking.
         #[arg(long)]
         yes: bool,
+        /// Return only when the stopped runners have exited; name the ones that did not.
+        #[arg(long)]
+        wait: bool,
+        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
+        #[arg(long, requires = "wait", value_parser = crate::commands::upgrade_cmd::parse_duration)]
+        wait_timeout: Option<std::time::Duration>,
     },
     /// Broker policy.
     Policy {
@@ -379,7 +390,7 @@ pub async fn run(cli: Cli) -> i32 {
     let result = match cli.command {
         Command::Submit { order, wait, json } => jobs::submit(&layout, order, wait, json).await,
         Command::Run { order } => jobs::submit(&layout, order, true, false).await,
-        Command::Wait { job, json } => jobs::wait(&layout, &job, json).await,
+        Command::Wait { jobs, label, json } => jobs::wait_jobs(&layout, jobs, label, json).await,
         Command::Jobs {
             label,
             active,
@@ -433,8 +444,16 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Dashboard => crate::dashboard::run(&layout).await,
         Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,
         Command::Down {
-            names, cancel, yes, ..
-        } => down_cmd::down_cli(&layout, names, cancel, yes).await,
+            names,
+            cancel,
+            yes,
+            wait,
+            wait_timeout,
+            ..
+        } => {
+            let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
+            down_cmd::down_cli(&layout, names, cancel, yes, wait).await
+        }
         Command::Policy { action } => match action {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
             PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,

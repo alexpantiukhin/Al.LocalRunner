@@ -131,28 +131,62 @@ pub(crate) fn cleanup_hooks(raw: Vec<RawCleanup>) -> Result<Vec<CleanupHook>, Se
     Ok(out)
 }
 
+fn check_env_name(place: &str, name: &str) -> Result<(), SettingsError> {
+    let valid = !name.is_empty()
+        && !name.starts_with(|c: char| c.is_ascii_digit() || c == '(' || c == ')')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '(' | ')'));
+    if !valid {
+        return Err(SettingsError(format!(
+            "{place} {name} is not a valid variable name"
+        )));
+    }
+    let upper = name.to_ascii_uppercase();
+    if RESERVED_ENV.contains(&upper.as_str()) || upper.starts_with(RESERVED_PREFIX) {
+        return Err(SettingsError(format!(
+            "{place} {name} is reserved (PATH comes from [env] path; TEMP, TMP, TMPDIR and LOCALRUNNER_* belong to the runner)"
+        )));
+    }
+    Ok(())
+}
+
+/// `[job_env]`: the explicit `NAME = "value"` entries and `inherit`, the names taken from the
+/// environment of the runner process at the start of each job (a list of exact names).
 pub(crate) fn job_env_table(
-    raw: BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, SettingsError> {
-    for name in raw.keys() {
-        let valid = !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit() || c == '(' || c == ')')
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '(' | ')'));
-        if !valid {
-            return Err(SettingsError(format!(
-                "[job_env] {name} is not a valid variable name"
-            )));
+    raw: BTreeMap<String, toml::Value>,
+) -> Result<(BTreeMap<String, String>, Vec<String>), SettingsError> {
+    let mut explicit = BTreeMap::new();
+    let mut inherit = Vec::new();
+    for (name, value) in raw {
+        if name == "inherit" {
+            let list = value.as_array().ok_or_else(|| {
+                SettingsError("[job_env] inherit must be a list of variable names".into())
+            })?;
+            for item in list {
+                let var = item.as_str().ok_or_else(|| {
+                    SettingsError("[job_env] inherit must be a list of variable names".into())
+                })?;
+                check_env_name("[job_env] inherit:", var)?;
+                if !inherit.iter().any(|v: &String| v == var) {
+                    inherit.push(var.to_string());
+                }
+            }
+            continue;
         }
-        let upper = name.to_ascii_uppercase();
-        if RESERVED_ENV.contains(&upper.as_str()) || upper.starts_with(RESERVED_PREFIX) {
-            return Err(SettingsError(format!(
-                "[job_env] {name} is reserved (PATH comes from [env] path; TEMP, TMP, TMPDIR and LOCALRUNNER_* belong to the runner)"
-            )));
+        check_env_name("[job_env]", &name)?;
+        match value {
+            toml::Value::String(s) => {
+                explicit.insert(name, s);
+            }
+            _ => {
+                return Err(SettingsError(format!(
+                    "[job_env] {name} must be a string value"
+                )))
+            }
         }
     }
-    Ok(raw)
+    Ok((explicit, inherit))
 }
 
 /// Puts the owner's `[job_env]` into `env`, replacing a variable of the same name: the machine

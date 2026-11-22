@@ -107,6 +107,9 @@ pub struct RunnerSettings {
     /// there, `HOME` included. `PATH` (use `[env] path`), `TEMP`, `TMP`, `TMPDIR` and
     /// `LOCALRUNNER_*` cannot be set here.
     pub job_env: BTreeMap<String, String>,
+    /// `[job_env] inherit`: exact names copied from the environment of the runner process at the
+    /// start of each job; an explicit `[job_env]` value wins.
+    pub job_env_inherit: Vec<String>,
     /// `os` or `watcher`: what enforces resource limits here; set by the assembly.
     pub enforcement: Option<String>,
     /// The `localrunner` version this runner runs; set by the assembly.
@@ -182,7 +185,7 @@ struct File {
     #[serde(default)]
     cleanup: Vec<RawCleanup>,
     #[serde(default)]
-    job_env: BTreeMap<String, String>,
+    job_env: BTreeMap<String, toml::Value>,
     #[serde(default)]
     job_home: bool,
 }
@@ -230,6 +233,7 @@ impl RunnerSettings {
             disk_headroom_pct: None,
             cleanup: Vec::new(),
             job_env: BTreeMap::new(),
+            job_env_inherit: Vec::new(),
             enforcement: None,
             version: None,
         }
@@ -260,7 +264,7 @@ impl RunnerSettings {
         s.mem_headroom_pct = headroom_pct("mem_headroom", f.limits.mem_headroom)?;
         s.disk_headroom_pct = headroom_pct("disk_headroom", f.limits.disk_headroom)?;
         s.cleanup = cleanup_hooks(f.cleanup)?;
-        s.job_env = job_env_table(f.job_env)?;
+        (s.job_env, s.job_env_inherit) = job_env_table(f.job_env)?;
         s.cache = retention("cache", f.cache)?;
         s.broker_lost_kill_s = f.grace.broker_lost_kill_s;
         s.path = f.env.path.filter(|p| !p.trim().is_empty());
@@ -280,6 +284,37 @@ impl RunnerSettings {
         Ok(s)
     }
 
+    /// The owner's variables for one job: the `[job_env] inherit` names read from the environment
+    /// of this process now, then the explicit `[job_env]` values, which win.
+    pub fn owner_env(&self) -> BTreeMap<String, String> {
+        self.owner_env_from(|name| std::env::var(name).ok())
+    }
+
+    /// [`RunnerSettings::owner_env`] with the process environment given by `lookup`.
+    pub fn owner_env_from(
+        &self,
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> BTreeMap<String, String> {
+        let mut out = BTreeMap::new();
+        for name in &self.job_env_inherit {
+            let shadowed = self.job_env.keys().any(|k| k.eq_ignore_ascii_case(name));
+            if let (false, Some(value)) = (shadowed, lookup(name)) {
+                out.insert(name.clone(), value);
+            }
+        }
+        out.extend(self.job_env.clone());
+        out
+    }
+
+    /// The `[job_env] inherit` names that `lookup` does not find in the process environment.
+    pub fn inherited_missing(&self, lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
+        self.job_env_inherit
+            .iter()
+            .filter(|n| lookup(n).is_none())
+            .cloned()
+            .collect()
+    }
+
     /// The environment every job, service and `[programs]` check gets, before the OS variables
     /// the executor adds: `PATH`, `HOME` and `TEMP`, then the `[job_env]` variables, which
     /// replace a variable of the same name (`HOME` included).
@@ -294,7 +329,7 @@ impl RunnerSettings {
                 env.push((name.to_string(), v.clone()));
             }
         }
-        for (name, value) in &self.job_env {
+        for (name, value) in &self.owner_env() {
             env.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
             env.push((name.clone(), value.clone()));
         }

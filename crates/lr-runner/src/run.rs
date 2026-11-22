@@ -194,7 +194,7 @@ pub(crate) async fn run_phases(shared: &Shared, p: Prepared<'_>, stop: StopSigna
     {
         Ok((_, cache_env)) => {
             env.extend(cache_env);
-            apply_owner_env(&mut env, &shared.job_settings().job_env);
+            apply_owner_env(&mut env, &shared.job_settings().owner_env());
         }
         Err(detail) => {
             skip_steps(shared, &p.job, &spec.steps, 0).await;

@@ -85,3 +85,61 @@ fn labels_are_listed_and_serialized() {
     let v = serde_json::to_value(summarize(&parse_profiles(text).unwrap()[0])).unwrap();
     assert_eq!(v["labels"], serde_json::json!(["release", "work"]));
 }
+
+const GLUED: &str = "[profile.t]
+command = \"cargo test --no-fail-fast{? -p {pkg}}\"
+timeout_s = 60
+[profile.t.args.pkg]
+one_of = [\"core\", \"cli\"]
+";
+
+#[test]
+fn an_optional_segment_is_shown_expanded_with_every_argument_and_with_none() {
+    let l = lines(GLUED);
+    assert!(
+        l.contains(
+            &"  expanded, all arguments given: cargo test --no-fail-fast-p core".to_string()
+        ),
+        "{l:?}"
+    );
+    assert!(
+        l.contains(&"  expanded, no argument given: cargo test --no-fail-fast".to_string()),
+        "{l:?}"
+    );
+}
+
+#[test]
+fn a_required_argument_that_is_missing_is_reported_in_the_no_argument_case() {
+    let text = "[profile.t]
+command = \"cargo test {pkg}{? -- {filter}}\"
+timeout_s = 60
+[profile.t.args.pkg]
+pattern = \"[a-z]+\"
+[profile.t.args.filter]
+pattern = \"[a-z]+\"
+";
+    let l = lines(text);
+    assert!(
+        l.contains(&"  expanded, all arguments given: cargo test <pkg>-- <filter>".to_string()),
+        "{l:?}"
+    );
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("  expanded, no argument given: ")),
+        "{l:?}"
+    );
+}
+
+#[test]
+fn a_profile_without_an_optional_segment_has_no_expansions() {
+    let text = "[profile.t]
+command = \"cargo test {pkg}\"
+timeout_s = 60
+[profile.t.args.pkg]
+default = \"core\"
+";
+    assert!(summarize(&parse_profiles(text).unwrap()[0])
+        .expansions
+        .is_empty());
+    assert!(!lines(text).iter().any(|x| x.contains("expanded")));
+}

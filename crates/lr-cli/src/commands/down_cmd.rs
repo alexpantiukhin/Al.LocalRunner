@@ -471,12 +471,20 @@ pub async fn down_cli(
     names: Vec<String>,
     cancel: bool,
     yes: bool,
+    wait: Option<Duration>,
 ) -> Result<i32, String> {
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();
-    down_asked(layout, names, cancel, yes, &roles, ctrl_c(), &mut console).await
+    if !cancel_confirmed(cancel, yes, &mut console)? {
+        return Ok(1);
+    }
+    let code = down_with(layout, names.clone(), cancel, &roles, ctrl_c()).await?;
+    match wait {
+        Some(within) => Ok(wait_for_exit(layout, names, code, within, &roles).await),
+        None => Ok(code),
+    }
 }
 
 /// [`down_with`] that, with `cancel`, first asks (`yes` answers it) because running jobs are
@@ -491,17 +499,24 @@ pub async fn down_asked(
     interrupt: impl Future<Output = ()>,
     console: &mut Console<'_>,
 ) -> Result<i32, String> {
-    if cancel
-        && !proceed(
-            "down --cancel kills the running jobs",
-            "cancel the running jobs and stop the roles? The jobs are lost.",
-            yes,
-            console,
-        )?
-    {
+    if !cancel_confirmed(cancel, yes, console)? {
         return Ok(1);
     }
     down_with(layout, names, cancel, roles, interrupt).await
+}
+
+/// Whether `down` may go on: always without `cancel`; with it the user (or `yes`) confirms
+/// that the running jobs are killed.
+fn cancel_confirmed(cancel: bool, yes: bool, console: &mut Console<'_>) -> Result<bool, String> {
+    if !cancel {
+        return Ok(true);
+    }
+    proceed(
+        "down --cancel kills the running jobs",
+        "cancel the running jobs and stop the roles? The jobs are lost.",
+        yes,
+        console,
+    )
 }
 
 /// `down` of the roles `roles` reaches; `interrupt` (Ctrl+C) ends the wait for the runners.
@@ -519,6 +534,71 @@ pub async fn down_with(
     down_for(layout, names, cancel, None, roles, interrupt).await
 }
 
+/// The names as `down` takes them: a runner printed as `local:<name>` by `runners` is `<name>`.
+fn normalized(names: Vec<String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|n| match n.strip_prefix("local:") {
+            Some(rest) if !rest.is_empty() => rest.to_string(),
+            _ => n,
+        })
+        .collect()
+}
+
+/// How long `down --wait` waits for the stopped runners to exit when `--wait-timeout` is not given.
+pub const DEFAULT_EXIT_WAIT: Duration = Duration::from_secs(60);
+
+/// Polls until none of the runners `names` answers on its control channel any more; the runners
+/// that still answered when `within` had passed (empty when all have exited).
+pub async fn runners_still_answering(
+    roles: &dyn Roles,
+    names: &[String],
+    within: Duration,
+) -> Vec<String> {
+    let start = tokio::time::Instant::now();
+    loop {
+        let mut left = Vec::new();
+        for n in names {
+            if roles.runner_answers(n).await {
+                left.push(n.clone());
+            }
+        }
+        if left.is_empty() || start.elapsed() >= within {
+            return left;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// `down --wait`: after [`down_asked`], waits up to `within` until the runners it stopped have
+/// exited and names the ones that did not (exit code 1). The hub and the broker are already
+/// waited for by `down` itself.
+pub async fn wait_for_exit(
+    layout: &Layout,
+    names: Vec<String>,
+    code: i32,
+    within: Duration,
+    roles: &dyn Roles,
+) -> i32 {
+    let runners: Vec<String> = down_targets(layout, &normalized(names))
+        .into_iter()
+        .filter_map(|t| match t {
+            Target::Runner(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    let left = runners_still_answering(roles, &runners, within).await;
+    if left.is_empty() {
+        return code;
+    }
+    roles.say_err(&format!(
+        "did not exit within {} s: {}",
+        within.as_secs(),
+        left.join(", ")
+    ));
+    1
+}
+
 /// [`down_with`] whose drain tells the runners why (`upgrade` says [`DrainReason::Upgrade`]).
 pub async fn down_for(
     layout: &Layout,
@@ -528,6 +608,7 @@ pub async fn down_for(
     roles: &dyn Roles,
     interrupt: impl Future<Output = ()>,
 ) -> Result<i32, String> {
+    let names = normalized(names);
     let explicit = !names.is_empty();
     let known = layout.runner_names();
     let unknown: Vec<&str> = names
@@ -541,8 +622,13 @@ pub async fn down_for(
         } else {
             known.join(", ")
         };
+        let hint = if unknown.iter().any(|n| n.contains(':')) {
+            "; `down` stops the runners of this machine by their own name (`runners` prints `local:<name>`, the prefix is the broker's)"
+        } else {
+            ""
+        };
         return Err(format!(
-            "no runner with this name: {}; available: {available}",
+            "no runner with this name: {}; available: {available}{hint}",
             unknown.join(", ")
         ));
     }
