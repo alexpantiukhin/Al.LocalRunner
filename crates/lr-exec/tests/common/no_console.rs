@@ -34,7 +34,7 @@ pub fn run(hosted: bool) -> ! {
             .unwrap()
             .unwrap();
         let reported = out.text().contains(SOFT_STOP_NOT_DELIVERED);
-        let got = out.text().contains("child-got-soft");
+        let got = out.text().contains("got-soft-child");
         say(&format!(
             "outcome={:?} soft-not-delivered={reported} got-soft={got} report-end\n",
             outcome.state

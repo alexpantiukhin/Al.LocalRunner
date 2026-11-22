@@ -256,7 +256,7 @@ fn ignore_loop(role: &str) -> ! {
             if let Some(path) = &marker {
                 std::fs::write(path, b"soft").unwrap();
             }
-            say(&format!("{role}-got-soft\n"));
+            say(&format!("got-soft-{role}\n"));
         }
     }
     std::process::exit(0);

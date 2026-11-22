@@ -332,12 +332,9 @@ pub async fn remove_after_processes(dir: TempDir) {
     drop(dir);
 }
 
-/// Removes the test directory. The roles are stopped with `stopped().await` before, so
-/// nothing holds its files any more.
+/// Removes the test directory after the roles were stopped with `stopped().await`. A file that
+/// the system still holds (an indexer, a scanner) stays for the system to clean: it is not a
+/// failure of the test.
 pub async fn remove(dir: TempDir) {
-    let root = dir.path().parent().unwrap().to_path_buf();
-    if let Err(e) = std::fs::remove_dir_all(&root) {
-        assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "{root:?}: {e}");
-    }
-    drop(dir);
+    remove_after_processes(dir).await;
 }
