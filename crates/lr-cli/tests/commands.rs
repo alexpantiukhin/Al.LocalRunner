@@ -570,6 +570,17 @@ fn a_failed_wait_is_one_line_with_code_1_and_does_not_end_the_others() {
     );
 }
 
+#[test]
+fn the_end_notice_of_a_followed_job_is_silent_inside_a_wait_over_several_jobs() {
+    use lr_cli::commands::jobs::exit_notice;
+    let job = JobId("j1".into());
+    assert_eq!(
+        exit_notice(&job, JobState::Passed, None, true).as_deref(),
+        Some("job j1: Passed")
+    );
+    assert_eq!(exit_notice(&job, JobState::Passed, None, false), None);
+}
+
 #[cfg(unix)]
 #[test]
 fn prepare_ipc_failure_names_the_directory() {

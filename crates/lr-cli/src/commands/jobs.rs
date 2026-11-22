@@ -108,6 +108,28 @@ pub async fn follow_to_end(
     redactor: &Arc<Redactor>,
     out: &mut dyn FnMut(&str),
 ) -> Result<Ended, String> {
+    follow_to_end_with(client, job, redactor, out, true).await
+}
+
+/// The line on stderr when a followed job ends, `None` when `announce` is off (a `wait` over
+/// several jobs prints its own result line on stdout).
+pub fn exit_notice(
+    job: &JobId,
+    state: JobState,
+    reason: Option<&ReasonCode>,
+    announce: bool,
+) -> Option<String> {
+    let why = reason.map(|r| format!(", {r}")).unwrap_or_default();
+    announce.then(|| format!("job {job}: {state:?}{why}"))
+}
+
+async fn follow_to_end_with(
+    client: &IpcClient,
+    job: &JobId,
+    redactor: &Arc<Redactor>,
+    out: &mut dyn FnMut(&str),
+    announce: bool,
+) -> Result<Ended, String> {
     let mut printer = LogPrinter::new(redactor.clone());
     loop {
         let reply = client.recv::<CliReply>().await;
@@ -130,11 +152,9 @@ pub async fn follow_to_end(
                 exit_code,
                 reason,
             } if &j == job => {
-                let why = reason
-                    .as_ref()
-                    .map(|r| format!(", {r}"))
-                    .unwrap_or_default();
-                eprintln!("job {job}: {state:?}{why}");
+                if let Some(line) = exit_notice(job, state, reason.as_ref(), announce) {
+                    eprintln!("{line}");
+                }
                 return Ok(Ended::Exit {
                     state,
                     exit_code,
@@ -410,7 +430,9 @@ pub async fn wait_jobs(
                 let redactor = redactor.clone();
                 set.spawn_local(async move {
                     let ended = match client.send(&CliRequest::Wait { job: job.clone() }).await {
-                        Ok(()) => follow_to_end(&client, &job, &redactor, &mut |_| {}).await,
+                        Ok(()) => {
+                            follow_to_end_with(&client, &job, &redactor, &mut |_| {}, false).await
+                        }
                         Err(e) => Err(e),
                     };
                     (job, profile, ended)
