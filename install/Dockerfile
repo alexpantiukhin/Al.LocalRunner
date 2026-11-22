@@ -7,7 +7,10 @@ RUN cargo build --release --locked -p lr-cli --bin localrunner \
     && mkdir -p /out/empty \
     && cp target/release/localrunner /out/localrunner
 
-FROM gcr.io/distroless/base-debian12:nonroot
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/localrunner /usr/local/bin/localrunner
 COPY --from=build --chown=65532:65532 /out/empty /var/lib/al-localrunner
 COPY --from=build --chown=65532:65532 /out/empty /etc/al-localrunner

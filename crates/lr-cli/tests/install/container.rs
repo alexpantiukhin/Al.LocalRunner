@@ -136,16 +136,13 @@ fn compose_runs_broker_and_runner_from_the_versioned_image_as_non_root() {
 }
 
 #[test]
-fn image_is_built_on_alpine_musl_and_runs_on_distroless_base_with_glibc() {
+fn image_is_built_on_alpine_musl_and_runs_on_debian_slim_with_a_shell_and_glibc() {
     let stages = dockerfile_stages();
     let build = stages[0].from.split_whitespace().next().unwrap();
     let (name, tag) = build.split_once(':').unwrap();
     assert_eq!(name, "rust");
     assert!(tag.ends_with("-alpine"), "musl build image: {build}");
-    assert_eq!(
-        stages.last().unwrap().from,
-        "gcr.io/distroless/base-debian12:nonroot"
-    );
+    assert_eq!(stages.last().unwrap().from, "debian:bookworm-slim");
     let dirs: Vec<&str> = instruction(stages.last().unwrap(), "COPY")
         .into_iter()
         .filter(|c| c.contains("/out/empty"))
@@ -190,9 +187,12 @@ fn image_is_multi_stage_with_only_the_binary_and_a_non_root_user() {
         .unwrap()
         .to_string();
     let last = stages.last().unwrap();
+    let runs = instruction(last, "RUN");
+    assert_eq!(runs.len(), 1, "one RUN in the runtime image: {runs:?}");
     assert!(
-        instruction(last, "RUN").is_empty(),
-        "no RUN in the runtime image"
+        runs[0].contains("apt-get install -y --no-install-recommends ca-certificates"),
+        "the only package is ca-certificates: {}",
+        runs[0]
     );
     let user = instruction(last, "USER");
     assert_eq!(user.len(), 1, "one USER in the runtime stage");
