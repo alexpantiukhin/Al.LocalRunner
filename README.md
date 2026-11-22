@@ -476,7 +476,26 @@ steps = [
 ]
 ```
 
-A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. `exclusive` lists tags held by one job at a time. `labels` are free-form names the broker policy can match with `label` in a rule (they are not runner requirements and have no command-line flag). `cache` names runner caches. The other fields are described in sections 4 and 5 of the architecture document.
+A profile has either `command` or `steps`. A failed step stops the job; `continue_on_failure = true` lets it go on. The fields in one place (section 5 of the architecture document has the reasoning, `localrunner profile check` has the last word):
+
+| Field | Required | Default | Meaning |
+|---|---|---|---|
+| `command` or `steps` | one of the two, never both | none | one command, or an ordered list of steps; a zone variant `[profile.X.zone.<zone>]` may replace them |
+| `timeout_s` | yes | none, no unlimited run | job timeout in seconds, above zero; the policy ceiling rejects an order that exceeds it, the runner ceiling makes a runner unsuitable |
+| `mem_mb`, `cpu`, `disk_mb` | no | `0`: nothing is reserved | memory, cores and disk the job holds while it runs |
+| `programs` | no | empty | names, or `{ name = "...", check = "..." }`; the runner must have each (a `check` command must also exit with 0) |
+| `platforms` | no | empty: any platform | platform names the profile runs on; `[profile.X.platform.<P>]` overrides `command`, `steps`, `timeout_s`, `mem_mb`, `cpu`, `disk_mb` for one platform |
+| `tags` | no | empty | resources the job holds for the run |
+| `exclusive` | no | empty | tags that no other running job may hold meanwhile |
+| `labels` | no | empty | free-form names for the broker policy (`label` in a rule); not requirements |
+| `cache` | no | empty | named runner caches kept between runs of the project |
+| `services` | no | empty | runner services the job needs |
+| `secrets` | no | empty | secret names (never values); the policy decides who may request them |
+| `zone` / `zones` | no | every zone | the farthest allowed zone, or the list of allowed zones; never both |
+| `needs` | no | none | name of a `[needs.<name>]` set to inherit from; the profile's own fields win |
+| `args.<name>` | no | none | a named argument filled with `--arg name=value` |
+
+Keys of a step: `name` and `command` and `timeout_s` (required), `continue_on_failure` (default `false`), `mem_mb`, `cpu`, `tags` and `secrets` (optional). Step names are unique, and the step timeout runs inside the job timeout. Resources are taken once for the whole job: the maximum over the steps of `mem_mb` and `cpu` (a step without its own value takes the profile's), and the union of `tags` and `secrets`. `[needs.<name>]` takes the shared requirement keys: `timeout_s`, `mem_mb`, `cpu`, `disk_mb`, `programs`, `tags`, `exclusive`, `cache`, `services`, `secrets`, `zone`, `zones`, `platforms`. An unknown key is rejected with its name. There is no `env`, no working directory and no retry: several commands in one environment are `steps` or one script called from `command`.
 
 **The client's directory.** In the zone `local` a job runs in the live working directory of the client, not on a snapshot: any edit of the files while the job runs reaches it (a `bash` script edited under a running job fails with a `syntax error` that the file does not contain). Do not touch the files of a long run in progress. In `shared` the runner sees the same directory through the shared disk. In `lan` and `remote` the runner works in a folder of the job, which it removes at the end, and the steps of the zone bring the code.
 
