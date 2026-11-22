@@ -547,6 +547,29 @@ fn a_wait_line_names_the_job_the_profile_and_the_state() {
     assert_eq!(wait_line(&job, None, &Ended::Rejected), "j1 - Rejected");
 }
 
+#[test]
+fn a_failed_wait_is_one_line_with_code_1_and_does_not_end_the_others() {
+    use lr_cli::commands::jobs::{wait_result, Ended};
+    let job = JobId("j1".into());
+    let (line, code) = wait_result(&job, Some("unit"), Err("not found".into()), false);
+    assert_eq!((line.as_str(), code), ("j1 unit Error: not found", 1));
+    let (json, code) = wait_result(&job, None, Err("not found".into()), true);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        (v["job"].as_str(), v["error"].as_str(), code),
+        (Some("j1"), Some("not found"), 1)
+    );
+    let ok = Ended::Exit {
+        state: JobState::Passed,
+        exit_code: Some(0),
+        reason: None,
+    };
+    assert_eq!(
+        wait_result(&job, Some("unit"), Ok(ok), false),
+        ("j1 unit Passed".to_string(), 0)
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn prepare_ipc_failure_names_the_directory() {

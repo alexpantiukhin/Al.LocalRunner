@@ -477,16 +477,10 @@ pub async fn down_cli(
     let roles = IpcRoles { layout, principal };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();
-    let code = down_asked(
-        layout,
-        names.clone(),
-        cancel,
-        yes,
-        &roles,
-        ctrl_c(),
-        &mut console,
-    )
-    .await?;
+    if !cancel_confirmed(cancel, yes, &mut console)? {
+        return Ok(1);
+    }
+    let code = down_with(layout, names.clone(), cancel, &roles, ctrl_c()).await?;
     match wait {
         Some(within) => Ok(wait_for_exit(layout, names, code, within, &roles).await),
         None => Ok(code),
@@ -505,17 +499,24 @@ pub async fn down_asked(
     interrupt: impl Future<Output = ()>,
     console: &mut Console<'_>,
 ) -> Result<i32, String> {
-    if cancel
-        && !proceed(
-            "down --cancel kills the running jobs",
-            "cancel the running jobs and stop the roles? The jobs are lost.",
-            yes,
-            console,
-        )?
-    {
+    if !cancel_confirmed(cancel, yes, console)? {
         return Ok(1);
     }
     down_with(layout, names, cancel, roles, interrupt).await
+}
+
+/// Whether `down` may go on: always without `cancel`; with it the user (or `yes`) confirms
+/// that the running jobs are killed.
+fn cancel_confirmed(cancel: bool, yes: bool, console: &mut Console<'_>) -> Result<bool, String> {
+    if !cancel {
+        return Ok(true);
+    }
+    proceed(
+        "down --cancel kills the running jobs",
+        "cancel the running jobs and stop the roles? The jobs are lost.",
+        yes,
+        console,
+    )
 }
 
 /// `down` of the roles `roles` reaches; `interrupt` (Ctrl+C) ends the wait for the runners.

@@ -356,6 +356,27 @@ pub fn wait_line(job: &JobId, profile: Option<&str>, ended: &Ended) -> String {
     format!("{job} {} {state}", profile.unwrap_or("-"))
 }
 
+/// The line and the exit code of one job of a `wait` over several jobs. A job whose wait failed
+/// (the hub dropped it, the job is unknown) is reported as such with code 1 and does not stop
+/// the wait for the others.
+pub fn wait_result(
+    job: &JobId,
+    profile: Option<&str>,
+    ended: Result<Ended, String>,
+    json: bool,
+) -> (String, i32) {
+    match (ended, json) {
+        (Ok(e), true) => (ended_json(job, &e).to_string(), e.process_code()),
+        (Ok(e), false) => (wait_line(job, profile, &e), e.process_code()),
+        (Err(why), true) => (
+            serde_json::json!({ "job": job, "state": null, "exit_code": null, "reason": null, "error": why })
+                .to_string(),
+            1,
+        ),
+        (Err(why), false) => (format!("{job} {} Error: {why}", profile.unwrap_or("-")), 1),
+    }
+}
+
 /// `wait [jobs...] [--as LABEL] [--json]`. One job: [`wait`] (its output, its exit code).
 /// Several: waits for all of them at once and prints a line per job when it ends, without the
 /// log (`log <job>` has it); the code is the first non-zero one, else 0.
@@ -398,14 +419,10 @@ pub async fn wait_jobs(
             let mut code = 0;
             while let Some(done) = set.join_next().await {
                 let (job, profile, ended) = done.map_err(|e| e.to_string())?;
-                let ended = ended?;
-                if json {
-                    println!("{}", ended_json(&job, &ended));
-                } else {
-                    println!("{}", wait_line(&job, profile.as_deref(), &ended));
-                }
+                let (line, job_code) = wait_result(&job, profile.as_deref(), ended, json);
+                println!("{line}");
                 if code == 0 {
-                    code = ended.process_code();
+                    code = job_code;
                 }
             }
             Ok(code)
