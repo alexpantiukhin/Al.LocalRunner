@@ -1,6 +1,6 @@
 //! `profile check`: the per-profile summary and its rendering.
 
-use lr_core::{Profile, StepSpec};
+use lr_core::{preview_args, Profile, StepSpec};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -40,6 +40,47 @@ pub struct ProfileSummary {
     pub args: Vec<String>,
     /// Labels of the profile, sorted; the policy can match them.
     pub labels: Vec<String>,
+    /// The commands the profile expands to with every argument given and with none given;
+    /// empty unless a command has an optional segment `{? ...}`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub expansions: Vec<Expansion>,
+}
+
+/// The commands of a profile for one set of argument values.
+#[derive(Debug, Clone, Serialize)]
+pub struct Expansion {
+    /// Which values were given: `"all arguments given"` or `"no argument given"`.
+    pub case: &'static str,
+    /// The expanded steps; empty when the values do not bind.
+    pub steps: Vec<StepSummary>,
+    /// Why the values do not bind, for example a required argument that is missing.
+    pub error: Option<String>,
+}
+
+fn expand(p: &Profile, case: &'static str, all_given: bool) -> Expansion {
+    let mut steps = p.steps.clone();
+    match preview_args(&mut steps, &p.args, all_given) {
+        Ok(()) => Expansion {
+            case,
+            steps: steps.iter().map(step).collect(),
+            error: None,
+        },
+        Err(e) => Expansion {
+            case,
+            steps: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+fn expansions(p: &Profile) -> Vec<Expansion> {
+    if p.args.is_empty() || !p.steps.iter().any(|s| s.command.contains("{?")) {
+        return Vec::new();
+    }
+    vec![
+        expand(p, "all arguments given", true),
+        expand(p, "no argument given", false),
+    ]
 }
 
 fn step(s: &StepSpec) -> StepSummary {
@@ -84,6 +125,7 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
         platforms,
         args: p.args.iter().map(|a| a.name.clone()).collect(),
         labels: p.labels.clone(),
+        expansions: expansions(p),
     }
 }
 
@@ -127,6 +169,19 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
         }
         if !p.labels.is_empty() {
             out.push(format!("  labels: {}", p.labels.join(", ")));
+        }
+        for e in &p.expansions {
+            if let Some(err) = &e.error {
+                out.push(format!("  expanded, {}: {err}", e.case));
+            }
+            for s in &e.steps {
+                let name = if p.command.is_some() {
+                    String::new()
+                } else {
+                    format!(", step {}", s.name)
+                };
+                out.push(format!("  expanded, {}{name}: {}", e.case, s.command));
+            }
         }
     }
     out
