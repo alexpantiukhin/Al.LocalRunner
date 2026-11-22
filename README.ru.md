@@ -532,7 +532,7 @@ localrunner autostart on [hub|broker|runner|all] [--dry-run]
 localrunner autostart on runner <имя>
 localrunner autostart on|off runner <имя> --service [--dry-run]
 localrunner autostart off [...]
-localrunner down [имена] [--drain | --cancel [--yes]]
+localrunner down [имена] [--drain | --cancel [--yes]] [--wait [--wait-timeout 90s]]
 localrunner uninstall [--purge] [--yes] [--dry-run]
 ```
 

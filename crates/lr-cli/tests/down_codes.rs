@@ -2,7 +2,9 @@ mod common;
 
 use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
-use lr_cli::commands::down_cmd::{down, down_with, service_state, ServiceState};
+use lr_cli::commands::down_cmd::{
+    down, down_with, runners_still_answering, service_state, wait_for_exit, ServiceState,
+};
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
 use lr_cli::os_service::{
@@ -435,5 +437,38 @@ async fn down_accepts_the_runner_name_as_runners_prints_it_and_explains_other_pr
         err.starts_with("no runner with this name: lab:r1; available: r1;")
             && err.contains("`local:<name>`"),
         "{err}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_wait_returns_when_the_runners_have_exited_and_names_those_that_did_not() {
+    let dir = TempDir::new("down-wait");
+    let layout = with_runner(&dir);
+    let gone = FakeRoles::new(true, 3);
+    let left = runners_still_answering(&gone, &["r1".to_string()], Duration::from_secs(60)).await;
+    assert!(left.is_empty(), "{left:?}");
+    assert_eq!(
+        wait_for_exit(&layout, Vec::new(), 0, Duration::from_secs(60), &gone).await,
+        0
+    );
+    let stuck = FakeRoles::new(true, usize::MAX);
+    let start = tokio::time::Instant::now();
+    let code = wait_for_exit(
+        &layout,
+        vec!["local:r1".into()],
+        0,
+        Duration::from_secs(5),
+        &stuck,
+    )
+    .await;
+    assert_eq!(code, 1);
+    assert!(start.elapsed() >= Duration::from_secs(5));
+    assert!(
+        stuck
+            .said_err()
+            .iter()
+            .any(|l| l == "did not exit within 5 s: r1"),
+        "{:?}",
+        stuck.said_err()
     );
 }

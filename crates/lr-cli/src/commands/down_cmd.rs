@@ -471,12 +471,26 @@ pub async fn down_cli(
     names: Vec<String>,
     cancel: bool,
     yes: bool,
+    wait: Option<Duration>,
 ) -> Result<i32, String> {
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();
-    down_asked(layout, names, cancel, yes, &roles, ctrl_c(), &mut console).await
+    let code = down_asked(
+        layout,
+        names.clone(),
+        cancel,
+        yes,
+        &roles,
+        ctrl_c(),
+        &mut console,
+    )
+    .await?;
+    match wait {
+        Some(within) => Ok(wait_for_exit(layout, names, code, within, &roles).await),
+        None => Ok(code),
+    }
 }
 
 /// [`down_with`] that, with `cancel`, first asks (`yes` answers it) because running jobs are
@@ -519,6 +533,71 @@ pub async fn down_with(
     down_for(layout, names, cancel, None, roles, interrupt).await
 }
 
+/// The names as `down` takes them: a runner printed as `local:<name>` by `runners` is `<name>`.
+fn normalized(names: Vec<String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|n| match n.strip_prefix("local:") {
+            Some(rest) if !rest.is_empty() => rest.to_string(),
+            _ => n,
+        })
+        .collect()
+}
+
+/// How long `down --wait` waits for the stopped runners to exit when `--wait-timeout` is not given.
+pub const DEFAULT_EXIT_WAIT: Duration = Duration::from_secs(60);
+
+/// Polls until none of the runners `names` answers on its control channel any more; the runners
+/// that still answered when `within` had passed (empty when all have exited).
+pub async fn runners_still_answering(
+    roles: &dyn Roles,
+    names: &[String],
+    within: Duration,
+) -> Vec<String> {
+    let start = tokio::time::Instant::now();
+    loop {
+        let mut left = Vec::new();
+        for n in names {
+            if roles.runner_answers(n).await {
+                left.push(n.clone());
+            }
+        }
+        if left.is_empty() || start.elapsed() >= within {
+            return left;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// `down --wait`: after [`down_asked`], waits up to `within` until the runners it stopped have
+/// exited and names the ones that did not (exit code 1). The hub and the broker are already
+/// waited for by `down` itself.
+pub async fn wait_for_exit(
+    layout: &Layout,
+    names: Vec<String>,
+    code: i32,
+    within: Duration,
+    roles: &dyn Roles,
+) -> i32 {
+    let runners: Vec<String> = down_targets(layout, &normalized(names))
+        .into_iter()
+        .filter_map(|t| match t {
+            Target::Runner(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    let left = runners_still_answering(roles, &runners, within).await;
+    if left.is_empty() {
+        return code;
+    }
+    roles.say_err(&format!(
+        "did not exit within {} s: {}",
+        within.as_secs(),
+        left.join(", ")
+    ));
+    1
+}
+
 /// [`down_with`] whose drain tells the runners why (`upgrade` says [`DrainReason::Upgrade`]).
 pub async fn down_for(
     layout: &Layout,
@@ -528,13 +607,7 @@ pub async fn down_for(
     roles: &dyn Roles,
     interrupt: impl Future<Output = ()>,
 ) -> Result<i32, String> {
-    let names: Vec<String> = names
-        .into_iter()
-        .map(|n| match n.strip_prefix("local:") {
-            Some(rest) if !rest.is_empty() => rest.to_string(),
-            _ => n,
-        })
-        .collect();
+    let names = normalized(names);
     let explicit = !names.is_empty();
     let known = layout.runner_names();
     let unknown: Vec<&str> = names

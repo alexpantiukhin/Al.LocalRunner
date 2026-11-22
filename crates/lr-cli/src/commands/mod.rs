@@ -248,6 +248,12 @@ pub enum Command {
         /// Confirm `--cancel` without asking.
         #[arg(long)]
         yes: bool,
+        /// Return only when the stopped runners have exited; name the ones that did not.
+        #[arg(long)]
+        wait: bool,
+        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
+        #[arg(long, requires = "wait", value_parser = crate::commands::upgrade_cmd::parse_duration)]
+        wait_timeout: Option<std::time::Duration>,
     },
     /// Broker policy.
     Policy {
@@ -433,8 +439,16 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Dashboard => crate::dashboard::run(&layout).await,
         Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,
         Command::Down {
-            names, cancel, yes, ..
-        } => down_cmd::down_cli(&layout, names, cancel, yes).await,
+            names,
+            cancel,
+            yes,
+            wait,
+            wait_timeout,
+            ..
+        } => {
+            let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
+            down_cmd::down_cli(&layout, names, cancel, yes, wait).await
+        }
         Command::Policy { action } => match action {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
             PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,
