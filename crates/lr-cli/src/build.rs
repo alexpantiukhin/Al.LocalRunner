@@ -272,7 +272,7 @@ pub fn local_broker_configured(layout: &Layout) -> bool {
 /// real git, files and process inspector.
 pub async fn hub(layout: &Layout, foreground: bool) -> Result<HubParts, String> {
     crate::init::ensure_state_dir(&layout.root)?;
-    layout.prepare_ipc().map_err(|e| e.to_string())?;
+    layout.prepare_own_ipc().map_err(|e| e.to_string())?;
     let clock = clock();
     let logger = logger(layout, &layout.root, Role::Hub, clock.clone(), foreground)?;
     let text = read_optional(&layout.config_file("hub-policy.toml"))?.unwrap_or_default();
@@ -401,7 +401,7 @@ pub async fn runner(
     if let Some(root) = &layout.job_root {
         std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     }
-    layout.prepare_ipc().map_err(|e| e.to_string())?;
+    layout.prepare_own_ipc().map_err(|e| e.to_string())?;
     let text = match runner_config_path(layout, name, config) {
         Some(p) => read_optional(&p)?.ok_or_else(|| format!("{} does not exist", p.display()))?,
         None => String::new(),

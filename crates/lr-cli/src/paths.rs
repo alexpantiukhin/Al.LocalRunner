@@ -1,7 +1,7 @@
 //! Where a node keeps its state and configuration (spec 10.3) and the local IPC addresses of
 //! its roles (spec 10, table "IPC").
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Environment variable naming the state directory.
 pub const STATE_DIR_ENV: &str = "LOCALRUNNER_STATE_DIR";
@@ -25,6 +25,7 @@ pub struct Layout {
     pub job_root: Option<PathBuf>,
     suffix: String,
     ipc_dir: PathBuf,
+    own_ipc_dir: PathBuf,
 }
 
 fn fnv64(text: &str) -> u64 {
@@ -99,13 +100,14 @@ impl Layout {
             format!("-{:016x}", fnv64(&root.to_string_lossy()))
         };
         let ipc_dir = if service {
-            if cfg!(windows) {
-                service_ipc_dir()
-            } else {
-                writable_or(service_ipc_dir(), root.join("ipc"))
-            }
+            service_ipc_dir()
         } else {
             root.join("ipc")
+        };
+        let own_ipc_dir = if service && !cfg!(windows) {
+            writable_or(ipc_dir.clone(), root.join("ipc"))
+        } else {
+            ipc_dir.clone()
         };
         Layout {
             root,
@@ -113,6 +115,7 @@ impl Layout {
             job_root: None,
             suffix,
             ipc_dir,
+            own_ipc_dir,
         }
     }
 
@@ -176,11 +179,14 @@ impl Layout {
     }
 
     fn ipc(&self, name: &str) -> String {
+        self.ipc_in(&self.ipc_dir, name)
+    }
+
+    fn ipc_in(&self, dir: &Path, name: &str) -> String {
         if cfg!(windows) {
             format!("{PIPE_PREFIX}-{name}{}", self.suffix)
         } else {
-            self.ipc_dir
-                .join(format!("{name}.sock"))
+            dir.join(format!("{name}.sock"))
                 .to_string_lossy()
                 .into_owned()
         }
@@ -198,7 +204,7 @@ impl Layout {
 
     /// The CLI channel of the hub of OS principal `principal` (SID on Windows).
     pub fn hub_ipc(&self, principal: &str) -> String {
-        self.ipc(&format!("hub-{principal}"))
+        self.ipc_in(&self.own_ipc_dir, &format!("hub-{principal}"))
     }
 
     /// The broker's IPC for hubs and runners of this machine; for the default layout of a
@@ -215,27 +221,38 @@ impl Layout {
 
     /// The control channel of runner `name` of OS principal `principal`.
     pub fn runner_ipc(&self, principal: &str, name: &str) -> String {
-        self.ipc(&format!("runner-{principal}-{name}"))
+        self.ipc_in(&self.own_ipc_dir, &format!("runner-{principal}-{name}"))
     }
 
-    /// Creates the directory of Unix sockets, if this OS uses them.
+    /// Creates the directory of the broker's Unix sockets, if this OS uses them.
     pub fn prepare_ipc(&self) -> std::io::Result<()> {
-        if cfg!(windows) {
-            return Ok(());
-        }
-        std::fs::create_dir_all(&self.ipc_dir).map_err(|e| {
-            let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
-                format!(
-                    "; the directory must exist and be writable by the user running localrunner (for the official image: `mkdir -p {0} && chown <user> {0}` in the Dockerfile)",
-                    self.ipc_dir.display()
-                )
-            } else {
-                String::new()
-            };
-            std::io::Error::new(
-                e.kind(),
-                format!("cannot create {}: {e}{hint}", self.ipc_dir.display()),
-            )
-        })
+        prepare_dir(&self.ipc_dir)
     }
+
+    /// Creates the directory of the sockets of the hub and the runners of this user: the
+    /// broker's one, or `ipc/` of the state directory when the broker's is not writable by this
+    /// user (a container that runs as another uid than the image).
+    pub fn prepare_own_ipc(&self) -> std::io::Result<()> {
+        prepare_dir(&self.own_ipc_dir)
+    }
+}
+
+fn prepare_dir(dir: &Path) -> std::io::Result<()> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| {
+        let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
+            format!(
+                "; the directory must exist and be writable by the user running localrunner (for the official image: `mkdir -p {0} && chown <user> {0}` in the Dockerfile)",
+                dir.display()
+            )
+        } else {
+            String::new()
+        };
+        std::io::Error::new(
+            e.kind(),
+            format!("cannot create {}: {e}{hint}", dir.display()),
+        )
+    })
 }
