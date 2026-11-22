@@ -380,6 +380,8 @@ timeout_s = 60                 # 1 to 3600, default 60
 on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # default: all
 ```
 
+`[programs]`: `check` is any command, run in the same environment as a job, and its exit code 0 is all that `doctor` and the registration of the runner trust. `cargo --version` proves that the program starts, not that it does what the projects need (a native build can still fail at link time because the clean job environment lacks a variable). An owner whose projects compile native code makes `check` do a step the project needs, for example a link of a tiny crate or `cargo build --offline` of a fixture. The runner and `doctor` know nothing about any toolchain.
+
 Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
 
 ### Local and joined runners
