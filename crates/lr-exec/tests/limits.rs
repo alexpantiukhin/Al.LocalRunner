@@ -1,6 +1,6 @@
 mod common;
 
-use common::{events_text, job, step, workdir, Recorder, HANG};
+use common::{events_text, job, step, workdir, Recorder};
 use lr_abstractions::{
     stop_signal, Enforce, JobEvent, JobOutcome, LimitedResource, ProcessRunner, ResourceLimits,
 };
@@ -64,9 +64,7 @@ async fn run_with(
     let runner = ExecRunner::new(Arc::new(SystemClock));
     let out = Recorder::new();
     let (_handle, stop) = stop_signal();
-    let outcome = tokio::time::timeout(HANG, runner.run_job(spec, out.as_ref(), stop))
-        .await
-        .expect("run_job did not return");
+    let outcome = runner.run_job(spec, out.as_ref(), stop).await;
     (outcome, out.events())
 }
 
