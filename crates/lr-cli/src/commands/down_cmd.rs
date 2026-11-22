@@ -528,6 +528,13 @@ pub async fn down_for(
     roles: &dyn Roles,
     interrupt: impl Future<Output = ()>,
 ) -> Result<i32, String> {
+    let names: Vec<String> = names
+        .into_iter()
+        .map(|n| match n.strip_prefix("local:") {
+            Some(rest) if !rest.is_empty() => rest.to_string(),
+            _ => n,
+        })
+        .collect();
     let explicit = !names.is_empty();
     let known = layout.runner_names();
     let unknown: Vec<&str> = names
@@ -541,8 +548,13 @@ pub async fn down_for(
         } else {
             known.join(", ")
         };
+        let hint = if unknown.iter().any(|n| n.contains(':')) {
+            "; `down` stops the runners of this machine by their own name (`runners` prints `local:<name>`, the prefix is the broker's)"
+        } else {
+            ""
+        };
         return Err(format!(
-            "no runner with this name: {}; available: {available}",
+            "no runner with this name: {}; available: {available}{hint}",
             unknown.join(", ")
         ));
     }

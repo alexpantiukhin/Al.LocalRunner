@@ -7,7 +7,7 @@ description: >-
 
 # down-runner
 
-Inputs: runner names (or `hub`, `broker`), `--drain` or `--cancel`.
+Inputs: runner names (or `hub`, `broker`), `--drain` or `--cancel`. A runner is named as `localrunner runners` prints it: `<name>` or `local:<name>` (the prefix is the broker's).
 
 1. Ask only if jobs are active and the mode is not given: `--drain` (default: running jobs finish, then the runner stops) or `--cancel` (running jobs are cancelled; waiting for the runners to exit is limited to 30 seconds).
 2. `localrunner down [names] [--drain|--cancel --yes]`. `--cancel` asks for confirmation and is refused without a terminal: the user chose it in step 1, so add `--yes`. Without names it stops every role of this installation, the broker last so the results reach it. Ctrl+C interrupts only the waiting: runners keep draining, the broker stays up, the code is 1.

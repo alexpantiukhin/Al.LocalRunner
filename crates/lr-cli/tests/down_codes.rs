@@ -399,3 +399,41 @@ fn an_unreadable_service_manager_is_told_apart_from_a_stopped_service() {
         ServiceState::NotInstalled
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn down_accepts_the_runner_name_as_runners_prints_it_and_explains_other_prefixes() {
+    let dir = TempDir::new("down-local-prefix");
+    let layout = with_runner(&dir);
+    let roles = FakeRoles::new(true, 0);
+    let code = down_with(
+        &layout,
+        vec!["local:r1".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await;
+    assert_eq!(code, Ok(0));
+    let told: Vec<String> = roles
+        .told
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(n, _)| n.clone())
+        .collect();
+    assert_eq!(told, vec!["r1".to_string()]);
+    let err = down_with(
+        &layout,
+        vec!["lab:r1".into()],
+        false,
+        &roles,
+        pending::<()>(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.starts_with("no runner with this name: lab:r1; available: r1;")
+            && err.contains("`local:<name>`"),
+        "{err}"
+    );
+}
