@@ -793,7 +793,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lr-abstractions"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "lr-core",
@@ -804,7 +804,7 @@ dependencies = [
 
 [[package]]
 name = "lr-broker"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "ipnet",
@@ -820,7 +820,7 @@ dependencies = [
 
 [[package]]
 name = "lr-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "lr-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ipnet",
  "regex",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "lr-dashboard"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "base64",
@@ -883,7 +883,7 @@ dependencies = [
 
 [[package]]
 name = "lr-exec"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "libc",
@@ -895,7 +895,7 @@ dependencies = [
 
 [[package]]
 name = "lr-hub"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "lr-abstractions",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "lr-net"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "lr-obs"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aho-corasick",
  "async-trait",
@@ -950,7 +950,7 @@ dependencies = [
 
 [[package]]
 name = "lr-proto"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "lr-core",
  "serde",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "lr-runner"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "lr-abstractions",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "lr-store"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "lr-abstractions",
