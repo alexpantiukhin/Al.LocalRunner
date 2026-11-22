@@ -313,3 +313,20 @@ fn a_foreign_open_state_directory_refuses_and_others_warn() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn the_windows_template_inherits_the_variables_the_msvc_discovery_needs() {
+    use lr_cli::runner_config::RunnerConfig;
+    let text = init::runner_template_for(Some("C:\\bin"), None, true);
+    let cfg = RunnerConfig::parse(&text, None, "box", std::path::PathBuf::from("/s"), host())
+        .expect("the template parses");
+    assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    for name in ["ProgramFiles(x86)", "USERPROFILE", "LOCALAPPDATA"] {
+        assert!(
+            cfg.settings.job_env_inherit.iter().any(|n| n == name),
+            "{name}"
+        );
+    }
+    let linux = init::runner_template_for(Some("/usr/bin"), Some("/home/ci"), false);
+    assert!(!linux.contains("\ninherit"), "{linux}");
+}

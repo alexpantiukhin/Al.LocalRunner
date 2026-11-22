@@ -39,7 +39,7 @@ There is no `env`, no working directory, no `matrix` and no retry. Several comma
 
 ## Machine files the skill may propose
 
-`runner.toml`: `platforms`, `tags`, `[programs]` (`name = {}` or `{ check = "..." }`), `[secret.<name>]` with `from = "env:VAR"`, `[service.<name>]` with `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
+`runner.toml`: `platforms`, `tags`, `[programs]` (`name = {}` or `{ check = "..." }`), `[secret.<name>]` with `from = "env:VAR"`, `[job_env]` with `NAME = "value"` or `inherit = ["ProgramFiles(x86)"]` (exact names copied from the runner process at the start of each job), `[service.<name>]` with `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
 
 `policy.toml`: `[[secrets.allow]]` with `label` and `names`; `[[services.allow]]` with `label` and `names`.
 

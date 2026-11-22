@@ -406,3 +406,53 @@ fn the_limit_mode_survives_the_assembly_parse_and_a_typo_is_refused() {
     );
     assert!(typo.is_err(), "{typo:?}");
 }
+
+#[test]
+fn a_secret_name_cannot_be_inherited_from_the_process() {
+    let text = "[job_env]\ninherit = [\"registry_auth\"]\n[secret.registry_auth]\nfrom = \"env:REGISTRY_AUTH\"\n";
+    let err = RunnerConfig::parse(
+        &with_path(text),
+        Some("r"),
+        "box",
+        PathBuf::from("/s"),
+        HOST,
+    )
+    .err()
+    .expect("refused")
+    .to_string();
+    assert!(
+        err.contains("[secret.registry_auth]") && err.contains("never inherited"),
+        "{err}"
+    );
+}
+
+#[test]
+fn doctor_notes_name_missing_inherited_variables_and_cargo_on_windows_without_msvc_variables() {
+    let none = |_: &str| None::<String>;
+    let cfg = parse(
+        "[job_env]\ninherit = [\"USERPROFILE\", \"NOT_SET\"]\n[programs]\ncargo = {}\n",
+        Some("r"),
+    );
+    let notes = cfg.env_notes(true, |n| (n == "USERPROFILE").then(|| "x".to_string()));
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(
+        notes[0].contains("NOT_SET") && !notes[0].contains("USERPROFILE"),
+        "{notes:?}"
+    );
+    assert!(
+        notes[1].contains("ProgramFiles(x86)") && notes[1].contains("[job_env]"),
+        "{notes:?}"
+    );
+    assert_eq!(
+        cfg.env_notes(false, none).len(),
+        1,
+        "no cargo note outside Windows"
+    );
+    let ok = parse(
+        "[job_env]\ninherit = [\"ProgramFiles(x86)\"]\n[programs]\ncargo = {}\n",
+        Some("r"),
+    );
+    assert!(ok.env_notes(true, |_| Some("v".to_string())).is_empty());
+    let plain = parse("", Some("r"));
+    assert!(plain.env_notes(true, none).is_empty());
+}

@@ -86,26 +86,60 @@ pub const HUB_POLICY_TEMPLATE: &str =
 /// `home` is written as `HOME` under `[job_env]`, so the value jobs see is in the file and does
 /// not depend on who starts the runner process later.
 pub fn runner_template(path: Option<&str>, home: Option<&str>) -> String {
+    runner_template_for(path, home, cfg!(windows))
+}
+
+/// The names a Windows runner takes from its own process for every job, so that `cargo` finds
+/// MSVC through the queue out of the box (`[job_env] inherit`).
+pub const WINDOWS_INHERIT: [&str; 9] = [
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramData",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "SystemDrive",
+    "USERNAME",
+    "USERDOMAIN",
+];
+
+/// [`runner_template`] for a given OS: on Windows `[job_env]` carries the `inherit` preset.
+pub fn runner_template_for(path: Option<&str>, home: Option<&str>, windows: bool) -> String {
     let quoted = |v: &str| toml::Value::String(v.to_string());
-    let env = match path {
+    let inherit = || {
+        format!(
+            "inherit = [{}]\n",
+            WINDOWS_INHERIT
+                .iter()
+                .map(|n| quoted(n).to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let section = match path {
         Some(p) => {
-            let mut env = format!(
+            let mut out = format!(
                 "[env]                            # PATH of every job (spec 13.4)\npath = {}\n",
                 quoted(p)
             );
-            if let Some(h) = home {
-                env.push_str(&format!(
-                    "\n[job_env]                        # variables of every job (spec 13.4)\nHOME = {}\n",
-                    quoted(h)
-                ));
+            if home.is_some() || windows {
+                out.push_str("\n[job_env]                        # variables of every job (spec 13.4)\n");
+                if let Some(h) = home {
+                    out.push_str(&format!("HOME = {}\n", quoted(h)));
+                }
+                if windows {
+                    out.push_str("# names copied from the runner process at the start of each job\n");
+                    out.push_str(&inherit());
+                }
             }
-            env
+            out
         }
         None => "# [env]                          # required: PATH of every job (spec 13.4)\n\
                  # path = \"/usr/local/bin:/usr/bin:/bin\"\n\
                  \n\
                  # [job_env]                      # optional: variables of every job\n\
-                 # HOME = \"/home/ci\"             # default: the home of the runner's OS user\n"
+                 # HOME = \"/home/ci\"             # default: the home of the runner's OS user\n\
+                 # inherit = [\"ProgramFiles(x86)\"]  # names copied from the runner process at the start of each job\n"
             .to_string(),
     };
     format!(
@@ -128,7 +162,7 @@ pub fn runner_template(path: Option<&str>, home: Option<&str>) -> String {
          # [limits]\n\
          # max_job_timeout_s = 3600\n\
          \n\
-         {env}"
+         {section}"
     )
 }
 
