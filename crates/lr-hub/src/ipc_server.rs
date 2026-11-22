@@ -118,6 +118,7 @@ async fn connection(
     tokio::spawn(async move {
         loop {
             let reply = tokio::select! {
+                biased;
                 r = rx.recv() => match r {
                     Some(r) => r,
                     None => break,

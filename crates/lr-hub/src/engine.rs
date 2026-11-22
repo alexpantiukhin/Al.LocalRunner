@@ -159,7 +159,6 @@ impl Hub {
     /// Serves until the IPC listener closes or its owner asks it to stop (`down`).
     pub async fn run(self) {
         let d = self.deps;
-        let release_clock = d.clock.clone();
         let (released_tx, released_rx) = oneshot::channel::<()>();
         let reload_logging = self.reload_logging;
         let reload_policy = self.reload_policy;
@@ -243,7 +242,7 @@ impl Hub {
         drop(shared);
         tokio::select! {
             _ = released_rx => {}
-            _ = release_clock.sleep(RELEASE_WAIT) => {}
+            _ = tokio::time::sleep(RELEASE_WAIT) => {}
         }
     }
 }
