@@ -196,7 +196,7 @@ async fn remove_says_how_many_were_removed() {
     )
     .await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert!(r.out.contains("2 occurrences removed"), "{}", r.out);
+    assert!(r.out.contains("removed 2 occurrences"), "{}", r.out);
     let after = std::fs::read_to_string(policy(&layout)).unwrap();
     assert_eq!(loaded(&after).secrets_allowed("ci"), ["b".to_string()]);
 }
@@ -586,4 +586,36 @@ fn policy_verbs_parse_on_the_command_line() {
         std::fs::read_to_string(policy(&layout)).unwrap(),
         TWO_SECRETS
     );
+}
+
+#[tokio::test]
+async fn remove_reports_nothing_removed_when_the_apply_fails() {
+    let start = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\", \"a\", \"b\"]\n";
+    let dir = TempDir::new("records-remove-refused");
+    let layout = layout_with(&dir, start);
+    let remove = || {
+        args(Record::RemoveSecret {
+            name: "a".into(),
+            label: "ci".into(),
+        })
+    };
+    let roles = FakeControl::new(true, true);
+    let refused = FakeElevator::new(Err("the elevation was refused".into()));
+    let r = run_with(&layout, remove(), &roles, &refused).await;
+    assert_ne!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(!r.out.contains("removed"), "{}", r.out);
+    assert_eq!(std::fs::read_to_string(policy(&layout)).unwrap(), start);
+
+    let failed_child = FakeElevator::new(Ok(1));
+    let r = run_with(&layout, remove(), &roles, &failed_child).await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert!(!r.out.contains("removed"), "{}", r.out);
+
+    let mut dry = remove();
+    dry.dry_run = true;
+    let r = run_with(&layout, dry, &roles, &FakeElevator::new(Ok(0))).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("would remove 2 occurrences"), "{}", r.out);
+    assert!(!r.out.contains(": removed"), "{}", r.out);
+    assert_eq!(std::fs::read_to_string(policy(&layout)).unwrap(), start);
 }

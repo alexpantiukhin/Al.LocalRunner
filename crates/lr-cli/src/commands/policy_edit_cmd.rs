@@ -225,21 +225,21 @@ pub async fn edit_with(
     err: &mut dyn Write,
 ) -> Result<i32, String> {
     let (change, count) = plan_record(layout, &args)?;
-    if !elevated_child {
-        let what = args.record.describe();
-        let _ = match (args.record.is_add(), count) {
-            (true, 0) => writeln!(out, "{what} is already present"),
-            (true, _) => Ok(()),
-            (false, n) => {
-                let verb = if args.dry_run {
-                    "would be removed"
-                } else {
-                    "removed"
-                };
-                let times = if n == 1 { "occurrence" } else { "occurrences" };
-                writeln!(out, "{what}: {n} {times} {verb}")
-            }
+    let what = args.record.describe();
+    let removal = (!args.record.is_add() && !elevated_child).then(|| {
+        let times = if count == 1 {
+            "occurrence"
+        } else {
+            "occurrences"
         };
+        (
+            format!("{count} {times}"),
+            change.path.clone(),
+            change.after.clone(),
+        )
+    });
+    if args.record.is_add() && count == 0 && !elevated_child {
+        let _ = writeln!(out, "{what} is already present");
     }
     let opts = ApplyOpts {
         dry_run: args.dry_run,
@@ -248,7 +248,7 @@ pub async fn edit_with(
         args: child_command(layout, &args, &change),
         keys: vec![args.record.key().to_string()],
     };
-    run_change_with(
+    let result = run_change_with(
         layout,
         &Target::Broker,
         change,
@@ -258,5 +258,13 @@ pub async fn edit_with(
         out,
         err,
     )
-    .await
+    .await;
+    if let (Ok(_), Some((times, path, after))) = (&result, removal) {
+        if args.dry_run {
+            let _ = writeln!(out, "{what}: would remove {times}");
+        } else if std::fs::read_to_string(&path).is_ok_and(|text| text == after) {
+            let _ = writeln!(out, "{what}: removed {times}");
+        }
+    }
+    result
 }
