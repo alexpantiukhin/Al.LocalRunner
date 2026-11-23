@@ -1,6 +1,6 @@
 use super::document::ConfigDoc;
 use std::collections::BTreeSet;
-use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, TableLike, Value};
+use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 const OPEN_WHEN_EMPTY: &[&str] = &["services.allow"];
 
@@ -63,70 +63,135 @@ fn rows(doc: &DocumentMut, path: &str) -> Result<Vec<Row>, String> {
     }
 }
 
-fn tables_mut<'a>(doc: &'a mut DocumentMut, path: &str) -> Result<&'a mut ArrayOfTables, String> {
+enum List<'a> {
+    Tables(&'a mut ArrayOfTables),
+    Inline(&'a mut Array),
+}
+
+impl<'a> List<'a> {
+    fn push(self, fields: &[(&str, Value)]) {
+        match self {
+            List::Tables(tables) => {
+                let mut entry = Table::new();
+                for (key, v) in fields {
+                    entry.insert(key, Item::Value(v.clone()));
+                }
+                tables.push(entry);
+            }
+            List::Inline(array) => {
+                let mut entry = InlineTable::new();
+                for (key, v) in fields {
+                    entry.insert(*key, v.clone());
+                }
+                entry.fmt();
+                array.push(entry);
+            }
+        }
+    }
+
+    fn remove(self, index: usize) {
+        match self {
+            List::Tables(tables) => tables.remove(index),
+            List::Inline(array) => remove_at(array, index),
+        }
+    }
+
+    fn entry(self, index: usize) -> Option<&'a mut dyn TableLike> {
+        match self {
+            List::Tables(tables) => tables.get_mut(index).map(|t| t as &mut dyn TableLike),
+            List::Inline(array) => array
+                .get_mut(index)
+                .and_then(Value::as_inline_table_mut)
+                .map(|t| t as &mut dyn TableLike),
+        }
+    }
+}
+
+fn list_mut<'a>(doc: &'a mut DocumentMut, path: &str) -> Result<List<'a>, String> {
     let parts: Vec<&str> = path.split('.').collect();
     let (last, parents) = parts
         .split_last()
         .ok_or_else(|| format!("empty key `{path}`"))?;
-    let mut table: &mut Table = doc.as_table_mut();
+    let mut table: &mut dyn TableLike = doc.as_table_mut();
+    let mut inline = false;
     for part in parents {
-        let mut created = Table::new();
-        created.set_implicit(true);
-        table = table
-            .entry(part)
-            .or_insert(Item::Table(created))
-            .as_table_mut()
+        if !table.contains_key(part) {
+            let created = match inline {
+                true => Item::Value(Value::InlineTable(InlineTable::new())),
+                false => {
+                    let mut created = Table::new();
+                    created.set_implicit(true);
+                    Item::Table(created)
+                }
+            };
+            table.insert(part, created);
+        }
+        let item = table
+            .get_mut(part)
+            .ok_or_else(|| format!("`{part}` in `{path}` cannot be created"))?;
+        inline = item.is_inline_table();
+        table = item
+            .as_table_like_mut()
             .ok_or_else(|| format!("`{part}` in `{path}` is not a table"))?;
     }
-    let item = table
-        .entry(last)
-        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
-    let inline = match &*item {
-        Item::Value(Value::Array(array)) => Some(
-            array
-                .iter()
-                .map(|v| v.as_inline_table().map(|t| t.clone().into_table()))
-                .collect::<Option<Vec<Table>>>()
-                .ok_or_else(|| not_tables(path))?,
-        ),
-        _ => None,
-    };
-    if let Some(converted) = inline {
-        let mut tables = ArrayOfTables::new();
-        for t in converted {
-            tables.push(t);
-        }
-        *item = Item::ArrayOfTables(tables);
+    if !table.contains_key(last) {
+        let created = match inline {
+            true => Item::Value(Value::Array(Array::new())),
+            false => Item::ArrayOfTables(ArrayOfTables::new()),
+        };
+        table.insert(last, created);
     }
-    item.as_array_of_tables_mut()
+    match table.get_mut(last) {
+        Some(Item::ArrayOfTables(tables)) => Ok(List::Tables(tables)),
+        Some(Item::Value(Value::Array(array))) if array.iter().all(Value::is_inline_table) => {
+            Ok(List::Inline(array))
+        }
+        _ => Err(not_tables(path)),
+    }
+}
+
+fn entry_mut<'a>(
+    doc: &'a mut DocumentMut,
+    path: &str,
+    index: usize,
+) -> Result<&'a mut dyn TableLike, String> {
+    list_mut(doc, path)?
+        .entry(index)
         .ok_or_else(|| not_tables(path))
 }
 
-fn list_mut<'a>(table: &'a mut Table, key: &str) -> Result<&'a mut Array, String> {
-    table
-        .entry(key)
-        .or_insert(Item::Value(Value::Array(Array::new())))
-        .as_array_mut()
+fn names_mut<'a>(entry: &'a mut dyn TableLike, key: &str) -> Result<&'a mut Array, String> {
+    entry
+        .get_mut(key)
+        .and_then(Item::as_array_mut)
         .ok_or_else(|| format!("`{key}` is not a list"))
 }
 
-fn remove_from(array: &mut Array, text: &str) {
-    let Some(index) = array.iter().position(|v| v.as_str() == Some(text)) else {
+fn keeps_own_prefix(v: &Value) -> bool {
+    v.decor()
+        .prefix()
+        .and_then(|p| p.as_str())
+        .is_some_and(|p| p.contains('\n') || p.contains('#'))
+}
+
+fn remove_at(array: &mut Array, index: usize) {
+    let removed = array.remove(index);
+    if index != 0 {
+        return;
+    }
+    let Some(first) = array.get_mut(0) else {
         return;
     };
-    let removed = array.remove(index);
-    if index == 0 {
-        if let Some(first) = array.get_mut(0) {
-            let prefix = removed.decor().prefix().cloned().unwrap_or_default();
-            first.decor_mut().set_prefix(prefix);
-        }
+    if !keeps_own_prefix(first) {
+        let prefix = removed.decor().prefix().cloned().unwrap_or_default();
+        first.decor_mut().set_prefix(prefix);
     }
 }
 
 /// Adds `name` to the entry of `label` in the list of tables at the dotted `path`
 /// (`secrets.allow`, `services.allow`): the first entry of the label decides, so the name goes
-/// there, and an entry is created when the label has none. False when the name is already
-/// allowed for the label.
+/// there, and an entry is created when the label has none. The list keeps its form: an inline
+/// list stays inline. False when the name is already allowed for the label.
 pub fn add_name(doc: &mut ConfigDoc, path: &str, label: &str, name: &str) -> Result<bool, String> {
     let doc = doc.inner_mut();
     let found = rows(doc, path)?
@@ -140,51 +205,53 @@ pub fn add_name(doc: &mut ConfigDoc, path: &str, label: &str, name: &str) -> Res
         return Ok(false);
     }
     let Some((index, _)) = found else {
-        let mut entry = Table::new();
-        entry.insert("label", value(label));
-        entry.insert("names", Item::Value(Value::Array(Array::from_iter([name]))));
-        tables_mut(doc, path)?.push(entry);
+        list_mut(doc, path)?.push(&[
+            ("label", Value::from(label)),
+            ("names", Value::Array(Array::from_iter([name]))),
+        ]);
         return Ok(true);
     };
-    let entry = tables_mut(doc, path)?
-        .get_mut(index)
-        .ok_or_else(|| not_tables(path))?;
-    list_mut(entry, "names")?.push(name);
+    names_mut(entry_mut(doc, path, index)?, "names")?.push(name);
     Ok(true)
 }
 
-/// Removes `name` from the entry of `label` that decides; the entry goes when no name is left,
-/// unless removing it would change what is allowed (a later entry of the label would decide, or
-/// an empty `services.allow` would allow every service). False when the label's entry does not
-/// list the name.
+/// Removes every `name` from the entry of `label` that decides and returns how many were
+/// removed (0: the entry does not list the name). The entry goes when no name is left, unless
+/// removing it would change what is allowed (a later entry of the label would decide, or an
+/// empty `services.allow` would allow every service). Comments of the other names stay.
 pub fn remove_name(
     doc: &mut ConfigDoc,
     path: &str,
     label: &str,
     name: &str,
-) -> Result<bool, String> {
+) -> Result<usize, String> {
     let doc = doc.inner_mut();
     let all = rows(doc, path)?;
     let Some(index) = all.iter().position(|r| r.label.as_deref() == Some(label)) else {
-        return Ok(false);
+        return Ok(0);
     };
     let names = &all[index].names;
-    if !names.iter().any(|n| n == name) {
-        return Ok(false);
+    let count = names.iter().filter(|n| *n == name).count();
+    if count == 0 {
+        return Ok(0);
     }
     let later = all[index + 1..]
         .iter()
         .any(|r| r.label.as_deref() == Some(label));
     let opens = all.len() == 1 && OPEN_WHEN_EMPTY.contains(&path);
-    let drop = names.iter().all(|n| n == name) && !later && !opens;
-    let tables = tables_mut(doc, path)?;
-    if drop {
-        tables.remove(index);
-        return Ok(true);
+    if names.len() == count && !later && !opens {
+        list_mut(doc, path)?.remove(index);
+        return Ok(count);
     }
-    let entry = tables.get_mut(index).ok_or_else(|| not_tables(path))?;
-    remove_from(list_mut(entry, "names")?, name);
-    Ok(true)
+    let array = names_mut(entry_mut(doc, path, index)?, "names")?;
+    loop {
+        let found = array.iter().position(|v| v.as_str() == Some(name));
+        let Some(i) = found else {
+            break;
+        };
+        remove_at(array, i);
+    }
+    Ok(count)
 }
 
 /// Adds a `[[local_user]]` entry for the OS user `name` with `label` (none: the default empty
@@ -209,12 +276,11 @@ pub fn add_local_user(
             )),
         };
     }
-    let mut entry = Table::new();
-    entry.insert("name", value(name));
+    let mut fields = vec![("name", Value::from(name))];
     if let Some(label) = label {
-        entry.insert("label", value(label));
+        fields.push(("label", Value::from(label)));
     }
-    tables_mut(doc, "local_user")?.push(entry);
+    list_mut(doc, "local_user")?.push(&fields);
     Ok(true)
 }
 
@@ -227,7 +293,7 @@ pub fn remove_local_user(doc: &mut ConfigDoc, name: &str) -> Result<bool, String
     let Some(index) = found else {
         return Ok(false);
     };
-    tables_mut(doc, "local_user")?.remove(index);
+    list_mut(doc, "local_user")?.remove(index);
     Ok(true)
 }
 
@@ -255,9 +321,7 @@ pub fn add_shared(doc: &mut ConfigDoc, members: &[String]) -> Result<bool, Strin
         .filter(|m| seen.insert(m.as_str()))
         .map(String::as_str)
         .collect();
-    let mut block = Table::new();
-    block.insert("members", Item::Value(Value::Array(unique)));
-    tables_mut(doc, "shared")?.push(block);
+    list_mut(doc, "shared")?.push(&[("members", Value::Array(unique))]);
     Ok(true)
 }
 
@@ -267,6 +331,6 @@ pub fn remove_shared(doc: &mut ConfigDoc, members: &[String]) -> Result<bool, St
     let Some(index) = shared_index(doc, members)? else {
         return Ok(false);
     };
-    tables_mut(doc, "shared")?.remove(index);
+    list_mut(doc, "shared")?.remove(index);
     Ok(true)
 }

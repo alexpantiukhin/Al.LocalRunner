@@ -134,18 +134,21 @@ impl Record {
         }
     }
 
-    fn apply(&self, doc: &mut ConfigDoc) -> Result<bool, String> {
+    fn apply(&self, doc: &mut ConfigDoc) -> Result<usize, String> {
+        let one = |done: bool| usize::from(done);
         match self {
             Record::AllowSecret { name, label } | Record::AllowService { name, label } => {
-                add_name(doc, self.key(), label, name)
+                add_name(doc, self.key(), label, name).map(one)
             }
             Record::RemoveSecret { name, label } | Record::RemoveService { name, label } => {
                 remove_name(doc, self.key(), label, name)
             }
-            Record::AddLocalUser { name, label } => add_local_user(doc, name, label.as_deref()),
-            Record::RemoveLocalUser { name } => remove_local_user(doc, name),
-            Record::AddShared { members } => add_shared(doc, members),
-            Record::RemoveShared { members } => remove_shared(doc, members),
+            Record::AddLocalUser { name, label } => {
+                add_local_user(doc, name, label.as_deref()).map(one)
+            }
+            Record::RemoveLocalUser { name } => remove_local_user(doc, name).map(one),
+            Record::AddShared { members } => add_shared(doc, members).map(one),
+            Record::RemoveShared { members } => remove_shared(doc, members).map(one),
         }
     }
 }
@@ -174,14 +177,15 @@ pub fn child_command(layout: &Layout, args: &RecordArgs, change: &Change) -> Vec
 }
 
 /// Reads the broker policy, applies the record and validates the result; nothing is written.
-/// The flag is false when an add found the record already there. A remove of a record the
-/// file does not have is an error that names the file.
-pub fn plan_record(layout: &Layout, args: &RecordArgs) -> Result<(Change, bool), String> {
+/// The count is how many records or names the command added or removed: 0 when an add found
+/// the record already there. A remove of a record the file does not have is an error that names
+/// the file.
+pub fn plan_record(layout: &Layout, args: &RecordArgs) -> Result<(Change, usize), String> {
     let path = resolve(layout, &Target::Broker)?;
-    let mut changed = false;
+    let mut count = 0;
     let change = plan(layout, &Target::Broker, |doc| {
-        changed = args.record.apply(doc)?;
-        match changed || args.record.is_add() {
+        count = args.record.apply(doc)?;
+        match count > 0 || args.record.is_add() {
             true => Ok(()),
             false => Err(format!(
                 "{} is not in {}",
@@ -190,7 +194,7 @@ pub fn plan_record(layout: &Layout, args: &RecordArgs) -> Result<(Change, bool),
             )),
         }
     })?;
-    Ok((change, changed))
+    Ok((change, count))
 }
 
 /// A record command on this machine, with the elevation of this OS.
@@ -220,9 +224,22 @@ pub async fn edit_with(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<i32, String> {
-    let (change, changed) = plan_record(layout, &args)?;
-    if !changed && !elevated_child {
-        let _ = writeln!(out, "{} is already present", args.record.describe());
+    let (change, count) = plan_record(layout, &args)?;
+    if !elevated_child {
+        let what = args.record.describe();
+        let _ = match (args.record.is_add(), count) {
+            (true, 0) => writeln!(out, "{what} is already present"),
+            (true, _) => Ok(()),
+            (false, n) => {
+                let verb = if args.dry_run {
+                    "would be removed"
+                } else {
+                    "removed"
+                };
+                let times = if n == 1 { "occurrence" } else { "occurrences" };
+                writeln!(out, "{what}: {n} {times} {verb}")
+            }
+        };
     }
     let opts = ApplyOpts {
         dry_run: args.dry_run,

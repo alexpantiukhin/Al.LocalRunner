@@ -54,7 +54,7 @@ async fn run(layout: &Layout, record: Record, roles: &FakeControl) -> Run {
     run_with(layout, args(record), roles, &FakeElevator::new(Ok(0))).await
 }
 
-fn edited(text: &str, edit: impl FnOnce(&mut ConfigDoc) -> Result<bool, String>) -> (bool, String) {
+fn edited<T>(text: &str, edit: impl FnOnce(&mut ConfigDoc) -> Result<T, String>) -> (T, String) {
     let mut doc = ConfigDoc::parse(text).unwrap();
     let changed = edit(&mut doc).unwrap();
     (changed, doc.render())
@@ -102,16 +102,137 @@ fn allow_secret_creates_entry() {
 }
 
 #[test]
-fn allow_secret_in_an_inline_list_converts_it_only_when_it_changes() {
-    let start = "[secrets]\nallow = [{ label = \"ci\", names = [\"a\"] }]\n";
+fn an_inline_list_stays_inline() {
+    let start = "[secrets]\nallow = [{ label = \"ci\", names = [\"a\"] }] # keep\n\n[queue]\nstrategy = \"fair-share\"\n";
     let (changed, text) = edited(start, |d| add_name(d, "secrets.allow", "ci", "a"));
     assert!(!changed);
     assert_eq!(text, start);
     let (changed, text) = edited(start, |d| add_name(d, "secrets.allow", "ci", "b"));
     assert!(changed);
+    assert_eq!(text, start.replace("[\"a\"]", "[\"a\", \"b\"]"));
+    let (changed, two) = edited(start, |d| add_name(d, "secrets.allow", "dev", "x"));
+    assert!(changed);
+    let both = "[{ label = \"ci\", names = [\"a\"] }, { label = \"dev\", names = [\"x\"] }]";
     assert_eq!(
-        loaded(&text).secrets_allowed("ci"),
-        ["a".to_string(), "b".to_string()]
+        two,
+        start.replace("[{ label = \"ci\", names = [\"a\"] }]", both)
+    );
+    assert_eq!(loaded(&two).secrets_allowed("dev"), ["x".to_string()]);
+    let (removed, text) = edited(&two, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 1);
+    assert_eq!(
+        text,
+        start.replace(
+            "{ label = \"ci\", names = [\"a\"] }",
+            "{ label = \"dev\", names = [\"x\"] }"
+        )
+    );
+    let (removed, text) = edited(&two, |d| remove_name(d, "secrets.allow", "dev", "x"));
+    assert_eq!(removed, 1);
+    assert_eq!(text, start);
+}
+
+#[test]
+fn an_inline_parent_table_stays_inline() {
+    let start = "secrets = { allow = [{ label = \"ci\", names = [\"a\"] }] }\n";
+    let (changed, text) = edited(start, |d| add_name(d, "secrets.allow", "ci", "b"));
+    assert!(changed);
+    assert_eq!(text, start.replace("[\"a\"]", "[\"a\", \"b\"]"));
+    let (changed, text) = edited("services = { evict_idle = true }\n", |d| {
+        add_name(d, "services.allow", "ci", "db")
+    });
+    assert!(changed);
+    assert!(text.starts_with("services = { evict_idle = true"), "{text}");
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(loaded(&text).service_allowed("ci", "db"), "{text}");
+}
+
+#[test]
+fn remove_takes_every_duplicate_of_the_name() {
+    let start = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\", \"a\", \"b\"]\n";
+    let (removed, text) = edited(start, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 2);
+    assert_eq!(loaded(&text).secrets_allowed("ci"), ["b".to_string()]);
+    assert_eq!(text, start.replace("[\"a\", \"a\", \"b\"]", "[\"b\"]"));
+
+    let only = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\", \"a\"]\n\n[[secrets.allow]]\nlabel = \"dev\"\nnames = [\"b\"]\n";
+    let (removed, text) = edited(only, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 2);
+    let file = loaded(&text);
+    assert_eq!(file.secrets.allow.len(), 1);
+    assert!(file.secrets_allowed("ci").is_empty());
+
+    let later = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\", \"a\"]\n\n[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"b\"]\n";
+    let (removed, text) = edited(later, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 2);
+    let file = loaded(&text);
+    assert_eq!(file.secrets.allow.len(), 2);
+    assert!(file.secrets_allowed("ci").is_empty(), "{text}");
+
+    let services = "[[services.allow]]\nlabel = \"ci\"\nnames = [\"db\", \"db\"]\n";
+    let (removed, text) = edited(services, |d| remove_name(d, "services.allow", "ci", "db"));
+    assert_eq!(removed, 2);
+    let file = loaded(&text);
+    assert_eq!(file.services.allow.len(), 1, "{text}");
+    assert!(!file.service_allowed("ci", "db"));
+    assert!(!file.service_allowed("dev", "db"));
+}
+
+#[tokio::test]
+async fn remove_says_how_many_were_removed() {
+    let dir = TempDir::new("records-remove-count");
+    let layout = layout_with(
+        &dir,
+        "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\", \"a\", \"b\"]\n",
+    );
+    let roles = FakeControl::new(false, true);
+    let r = run(
+        &layout,
+        Record::RemoveSecret {
+            name: "a".into(),
+            label: "ci".into(),
+        },
+        &roles,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("2 occurrences removed"), "{}", r.out);
+    let after = std::fs::read_to_string(policy(&layout)).unwrap();
+    assert_eq!(loaded(&after).secrets_allowed("ci"), ["b".to_string()]);
+}
+
+const MULTILINE: &str = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\n    # first\n    \"a\",\n    # second\n    \"b\",\n]\n";
+
+#[test]
+fn removing_a_name_keeps_the_comments_of_the_others() {
+    let (removed, text) = edited(MULTILINE, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 1);
+    assert_eq!(
+        text,
+        "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\n    # second\n    \"b\",\n]\n"
+    );
+    let (removed, text) = edited(MULTILINE, |d| remove_name(d, "secrets.allow", "ci", "b"));
+    assert_eq!(removed, 1);
+    assert_eq!(
+        text,
+        "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\n    # first\n    \"a\",\n]\n"
+    );
+}
+
+#[test]
+fn removing_a_table_keeps_the_comment_above_the_next_header() {
+    let start = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\"]\n\n# dev entry\n[[secrets.allow]]\nlabel = \"dev\"\nnames = [\"b\"]\n\n# queue settings\n[queue]\nstrategy = \"fair-share\"\n";
+    let (removed, text) = edited(start, |d| remove_name(d, "secrets.allow", "dev", "b"));
+    assert_eq!(removed, 1);
+    assert_eq!(
+        text,
+        "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\"]\n\n# queue settings\n[queue]\nstrategy = \"fair-share\"\n"
+    );
+    let (removed, text) = edited(start, |d| remove_name(d, "secrets.allow", "ci", "a"));
+    assert_eq!(removed, 1);
+    assert_eq!(
+        text,
+        "\n# dev entry\n[[secrets.allow]]\nlabel = \"dev\"\nnames = [\"b\"]\n\n# queue settings\n[queue]\nstrategy = \"fair-share\"\n"
     );
 }
 
@@ -135,14 +256,14 @@ async fn allow_secret_twice_is_noop() {
 #[test]
 fn remove_secret_drops_empty_entry() {
     let (changed, text) = edited(TWO_SECRETS, |d| remove_name(d, "secrets.allow", "dev", "b"));
-    assert!(changed);
+    assert_eq!(changed, 1);
     let file = loaded(&text);
     assert_eq!(file.secrets.allow.len(), 1);
     assert!(file.secrets_allowed("dev").is_empty());
     assert!(text.contains("# ci entry"), "{text}");
     let (_, two) = edited(TWO_SECRETS, |d| add_name(d, "secrets.allow", "dev", "c"));
     let (changed, text) = edited(&two, |d| remove_name(d, "secrets.allow", "dev", "b"));
-    assert!(changed);
+    assert_eq!(changed, 1);
     assert!(text.contains("names = [\"c\"]"), "{text}");
 }
 
@@ -150,7 +271,7 @@ fn remove_secret_drops_empty_entry() {
 fn remove_secret_keeps_an_empty_entry_when_a_later_entry_of_the_label_would_decide() {
     let start = "[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"a\"]\n\n[[secrets.allow]]\nlabel = \"ci\"\nnames = [\"b\"]\n";
     let (changed, text) = edited(start, |d| remove_name(d, "secrets.allow", "ci", "a"));
-    assert!(changed);
+    assert_eq!(changed, 1);
     let file = loaded(&text);
     assert_eq!(file.secrets.allow.len(), 2);
     assert!(file.secrets_allowed("ci").is_empty(), "{text}");
@@ -254,7 +375,7 @@ async fn allow_service_twice_is_noop() {
 fn remove_service_drops_empty_entry() {
     let start = TWO_SECRETS.replace("secrets", "services");
     let (changed, text) = edited(&start, |d| remove_name(d, "services.allow", "dev", "b"));
-    assert!(changed);
+    assert_eq!(changed, 1);
     let file = loaded(&text);
     assert_eq!(file.services.allow.len(), 1);
     assert!(!file.service_allowed("dev", "b"));
@@ -264,7 +385,7 @@ fn remove_service_drops_empty_entry() {
 fn remove_last_service_name_keeps_the_list_closed() {
     let (_, start) = edited("", |d| add_name(d, "services.allow", "ci", "db"));
     let (changed, text) = edited(&start, |d| remove_name(d, "services.allow", "ci", "db"));
-    assert!(changed);
+    assert_eq!(changed, 1);
     let file = loaded(&text);
     assert_eq!(file.services.allow.len(), 1, "{text}");
     assert!(!file.service_allowed("ci", "db"));
