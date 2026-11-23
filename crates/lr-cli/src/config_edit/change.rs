@@ -3,7 +3,10 @@ use super::target::{resolve, Target};
 use super::validate::validate;
 use crate::paths::Layout;
 use lr_abstractions::Clock;
+use std::fs::{File, OpenOptions};
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const WIDENING_KEYS: [&str; 2] = ["allow_elevated", "allow_same_user_as_broker"];
 const CONTEXT: usize = 3;
@@ -78,8 +81,8 @@ impl Change {
 
     /// A unified diff with three lines of context; the header names the file.
     pub fn diff(&self) -> String {
-        let old: Vec<&str> = self.before.lines().collect();
-        let new: Vec<&str> = self.after.lines().collect();
+        let old: Vec<&str> = self.before.split_inclusive('\n').collect();
+        let new: Vec<&str> = self.after.split_inclusive('\n').collect();
         let ops = script(&old, &new);
         let changed: Vec<usize> = ops
             .iter()
@@ -124,8 +127,11 @@ impl Change {
                     Op::Add => '+',
                 };
                 out.push(mark);
-                out.push_str(line);
+                out.push_str(line.strip_suffix('\n').unwrap_or(line));
                 out.push('\n');
+                if !line.ends_with('\n') {
+                    out.push_str("\\ No newline at end of file\n");
+                }
             }
         }
         out
@@ -171,6 +177,20 @@ pub fn plan(
     })
 }
 
+static UNIQUE: AtomicU64 = AtomicU64::new(0);
+
+fn unique() -> String {
+    format!(
+        "{}-{}",
+        std::process::id(),
+        UNIQUE.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn create_exclusive(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
 /// True when this user cannot create a file in the directory of `path`, so writing needs administrator or root rights.
 pub fn needs_rights(path: &Path) -> bool {
     let Some(mut dir) = path.parent() else {
@@ -182,10 +202,15 @@ pub fn needs_rights(path: &Path) -> bool {
             None => return true,
         }
     }
-    let probe = dir.join(format!(".probe-{}", std::process::id()));
-    let usable = std::fs::write(&probe, b"").is_ok();
-    let _ = std::fs::remove_file(&probe);
-    !usable
+    let probe = dir.join(format!(".probe-{}", unique()));
+    match create_exclusive(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = std::fs::remove_file(&probe);
+            false
+        }
+        Err(_) => true,
+    }
 }
 
 fn stamp(clock: &dyn Clock) -> String {
@@ -207,20 +232,62 @@ fn sibling(path: &Path, suffix: &str) -> Result<PathBuf, String> {
     Ok(path.with_file_name(format!("{name}{suffix}")))
 }
 
-/// Writes `change.after` over the file through a temporary file and a rename; an existing file is copied to `<name>.bak-<UTC yyyymmddThhmmss>` first. Returns the backup path, or the file itself when there was nothing to back up.
+fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
+    let stamp = stamp(clock);
+    let fail = |e: std::io::Error| format!("cannot back up {}: {e}", path.display());
+    for n in 1u32.. {
+        let suffix = if n == 1 {
+            format!(".bak-{stamp}")
+        } else {
+            format!(".bak-{stamp}-{n}")
+        };
+        let backup = sibling(path, &suffix)?;
+        match create_exclusive(&backup) {
+            Ok(mut out) => {
+                let mut source = File::open(path).map_err(fail)?;
+                if let Err(e) = std::io::copy(&mut source, &mut out) {
+                    drop(out);
+                    let _ = std::fs::remove_file(&backup);
+                    return Err(fail(e));
+                }
+                return Ok(backup);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(fail(e)),
+        }
+    }
+    unreachable!()
+}
+
+fn write_temp(path: &Path, temp: &Path, text: &str) -> Result<(), String> {
+    let fail = |e: std::io::Error| format!("cannot write {}: {e}", temp.display());
+    let mut file = create_exclusive(temp).map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)?;
+    drop(file);
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.is_file() {
+            std::fs::set_permissions(temp, meta.permissions()).map_err(fail)?;
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// Writes `change.after` over the file through a unique temporary file and a rename; an existing file is copied to `<name>.bak-<UTC yyyymmddThhmmss>` first (a numeric suffix keeps an older backup of the same second) and keeps its permissions. Returns the backup path, or the file itself when there was nothing to back up.
 pub fn write(change: &Change, clock: &dyn Clock) -> Result<PathBuf, String> {
     let path = &change.path;
     let backup = if path.is_file() {
-        let backup = sibling(path, &format!(".bak-{}", stamp(clock)))?;
-        std::fs::copy(path, &backup)
-            .map_err(|e| format!("cannot back up {}: {e}", path.display()))?;
-        Some(backup)
+        Some(back_up(path, clock)?)
     } else {
         None
     };
-    let temp = sibling(path, &format!(".tmp-{}", std::process::id()))?;
-    std::fs::write(&temp, &change.after)
-        .map_err(|e| format!("cannot write {}: {e}", temp.display()))?;
+    let temp = sibling(path, &format!(".tmp-{}", unique()))?;
+    if let Err(e) = write_temp(path, &temp, &change.after) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
     if let Err(e) = std::fs::rename(&temp, path) {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("cannot replace {}: {e}", path.display()));

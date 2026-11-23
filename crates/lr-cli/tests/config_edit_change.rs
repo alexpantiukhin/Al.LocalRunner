@@ -141,3 +141,90 @@ fn needs_rights_is_false_for_a_writable_directory() {
     assert!(!needs_rights(&dir.join("sub").join("f.toml")));
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
 }
+
+#[test]
+fn needs_rights_keeps_a_foreign_probe_file() {
+    let (_, dir) = scratch("probe");
+    let foreign = dir.join(format!(".probe-{}", std::process::id()));
+    std::fs::write(&foreign, "mine").unwrap();
+    assert!(!needs_rights(&dir.join("f.toml")));
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "mine");
+}
+
+#[test]
+fn second_write_in_the_same_second_keeps_the_older_backup() {
+    let (_, dir) = scratch("twice");
+    let path = dir.join("hub-policy.toml");
+    std::fs::write(&path, "one\n").unwrap();
+    let clock = ManualClock::new(Timestamp(1_795_459_151_000));
+    let first = write(&change(path.clone(), "one\n", "two\n"), &clock).unwrap();
+    let second = write(&change(path.clone(), "two\n", "three\n"), &clock).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(second, dir.join("hub-policy.toml.bak-20261123T183911-2"));
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), "one\n");
+    assert_eq!(std::fs::read_to_string(&second).unwrap(), "two\n");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "three\n");
+}
+
+#[test]
+fn a_foreign_file_with_the_old_temp_name_is_not_truncated() {
+    let (_, dir) = scratch("foreigntemp");
+    let path = dir.join("logging.toml");
+    std::fs::write(&path, "old\n").unwrap();
+    let foreign = dir.join(format!("logging.toml.tmp-{}", std::process::id()));
+    std::fs::write(&foreign, "mine").unwrap();
+    let clock = ManualClock::new(Timestamp(1_795_459_151_000));
+    write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
+    assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "mine");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+}
+
+#[test]
+fn diff_shows_a_missing_trailing_newline() {
+    let c = change(PathBuf::from("x"), "a = 1\n", "a = 1");
+    assert!(!c.is_noop());
+    let diff = c.diff();
+    assert!(
+        diff.contains("-a = 1\n+a = 1\n\\ No newline at end of file\n"),
+        "{diff}"
+    );
+}
+
+#[test]
+fn diff_shows_line_ending_changes() {
+    let c = change(PathBuf::from("x"), "a = 1\r\nb = 2\r\n", "a = 1\nb = 2\n");
+    assert!(!c.is_noop());
+    let diff = c.diff();
+    assert!(diff.contains("-a = 1\r\n"), "{diff}");
+    assert!(diff.contains("+a = 1\n"), "{diff}");
+}
+
+#[test]
+fn widens_lists_same_user_and_skips_already_true() {
+    let (layout, dir) = scratch("widens2");
+    std::fs::write(
+        dir.join("runner.toml"),
+        "name = \"ci\"\nallow_elevated = true\n[env]\npath = \"/bin\"\n",
+    )
+    .unwrap();
+    let c = plan(&layout, &Target::Runner("ci".into()), |d| {
+        d.set("allow_elevated", "true", false)?;
+        d.set("allow_same_user_as_broker", "true", false)
+    })
+    .unwrap();
+    assert_eq!(c.widens, vec!["allow_same_user_as_broker".to_string()]);
+}
+
+#[cfg(unix)]
+#[test]
+fn write_keeps_the_permissions_of_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_, dir) = scratch("mode");
+    let path = dir.join("logging.toml");
+    std::fs::write(&path, "old\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let clock = ManualClock::new(Timestamp(1_795_459_151_000));
+    write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
