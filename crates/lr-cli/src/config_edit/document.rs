@@ -1,5 +1,5 @@
 use super::value::parse_value;
-use toml_edit::{DocumentMut, Item, Key, Table};
+use toml_edit::{DocumentMut, Item, Key, Table, TableLike};
 
 /// A TOML document edited in place: comments, order and formatting survive a change.
 pub struct ConfigDoc {
@@ -11,27 +11,40 @@ fn split_key(key: &str) -> Result<Vec<String>, String> {
     Ok(keys.iter().map(|k| k.get().to_string()).collect())
 }
 
-fn find<'a>(table: &'a Table, path: &[String]) -> Option<&'a Item> {
+fn find<'a>(table: &'a dyn TableLike, path: &[String]) -> Option<&'a Item> {
     let (first, rest) = path.split_first()?;
     let item = table.get(first)?;
     if rest.is_empty() {
         return Some(item);
     }
-    find(item.as_table()?, rest)
+    find(item.as_table_like()?, rest)
 }
 
-fn remove(table: &mut Table, path: &[String]) -> bool {
+fn has_comment(item: &Item) -> bool {
+    let Some(table) = item.as_table() else {
+        return false;
+    };
+    let decor = table.decor();
+    [decor.prefix(), decor.suffix()]
+        .into_iter()
+        .flatten()
+        .filter_map(|raw| raw.as_str())
+        .any(|text| text.contains('#'))
+}
+
+fn remove(table: &mut dyn TableLike, path: &[String]) -> bool {
     let Some((first, rest)) = path.split_first() else {
         return false;
     };
     if rest.is_empty() {
         return table.remove(first).is_some();
     }
-    let Some(child) = table.get_mut(first).and_then(Item::as_table_mut) else {
+    let Some(child) = table.get_mut(first).and_then(Item::as_table_like_mut) else {
         return false;
     };
     let removed = remove(child, rest);
-    if removed && child.is_empty() {
+    let prune = removed && child.is_empty() && !table.get(first).is_some_and(has_comment);
+    if prune {
         table.remove(first);
     }
     removed
@@ -71,7 +84,7 @@ impl ConfigDoc {
         let (last, parents) = path
             .split_last()
             .ok_or_else(|| format!("empty key `{key}`"))?;
-        let mut table = self.doc.as_table_mut();
+        let mut table: &mut dyn TableLike = self.doc.as_table_mut();
         for segment in parents {
             if !table.contains_key(segment) {
                 let mut created = Table::new();
@@ -80,22 +93,23 @@ impl ConfigDoc {
             }
             table = table
                 .get_mut(segment)
-                .and_then(Item::as_table_mut)
+                .and_then(Item::as_table_like_mut)
                 .ok_or_else(|| format!("`{segment}` in `{key}` is not a table"))?;
         }
-        let existing = table.get(last).and_then(Item::as_value);
         if table.get(last).is_some_and(|i| !i.is_value()) {
             return Err(format!("`{key}` is a table, not a value"));
         }
-        let mut new = parse_value(value, existing, force_string);
-        if let Some(old) = existing {
+        let existing = table.get(last).and_then(Item::as_value).cloned();
+        let mut new = parse_value(value, existing.as_ref(), force_string)
+            .map_err(|expected| format!("`{key}` expects {expected}, got `{value}`"))?;
+        if let Some(old) = &existing {
             *new.decor_mut() = old.decor().clone();
         }
         table.insert(last, Item::Value(new));
         Ok(())
     }
 
-    /// Removes the key and the tables it leaves empty. True when something was removed.
+    /// Removes the key and the tables it leaves empty, except a table with a comment of its own. True when something was removed.
     pub fn unset(&mut self, key: &str) -> Result<bool, String> {
         let path = split_key(key)?;
         Ok(remove(self.doc.as_table_mut(), &path))
