@@ -1,10 +1,12 @@
 //! Comment-preserving editing of the TOML configuration files.
 
+mod change;
 mod document;
 mod target;
 mod validate;
 mod value;
 
+pub use change::{needs_rights, plan, write, Change};
 pub use document::ConfigDoc;
 pub use target::{resolve, resolve_with, Target};
 pub use validate::validate;
