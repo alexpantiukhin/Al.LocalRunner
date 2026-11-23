@@ -1,5 +1,7 @@
+use lr_cli::commands::admin_cmd::read_broker_policy;
 use lr_cli::config_edit::{resolve_with, validate, Target};
 use lr_cli::paths::{default_root, service_root, Layout};
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 fn scratch(name: &str) -> PathBuf {
@@ -57,10 +59,43 @@ fn runner_prefers_own_copy() {
 #[test]
 fn policy_check_without_file_uses_resolved_path() {
     let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
-    let appdata = layout.config_file("policy.toml");
-    let resolved = resolve_with(&layout, &Target::Broker, true).unwrap();
-    assert_ne!(resolved, appdata);
-    assert_eq!(resolved, service_root().join("policy.toml"));
+    let asked = RefCell::new(Vec::new());
+    let (path, text) = read_broker_policy(&layout, true, |p| {
+        asked.borrow_mut().push(p.to_path_buf());
+        Ok("# service".into())
+    })
+    .unwrap();
+    assert_eq!(path, service_root().join("policy.toml"));
+    assert_eq!(text, "# service");
+    assert_eq!(*asked.borrow(), vec![service_root().join("policy.toml")]);
+    assert_ne!(path, layout.config_file("policy.toml"));
+}
+
+#[test]
+fn policy_check_without_service_reads_the_config_copy() {
+    let (layout, _) = custom("nosvc");
+    let (path, _) = read_broker_policy(&layout, false, |_| Ok(String::new())).unwrap();
+    assert_eq!(path, layout.config_file("policy.toml"));
+}
+
+#[test]
+fn policy_check_missing_file_is_an_empty_policy() {
+    let (layout, _) = custom("missing");
+    let (_, text) =
+        read_broker_policy(&layout, false, |_| Err(std::io::ErrorKind::NotFound.into())).unwrap();
+    assert_eq!(text, "");
+}
+
+#[test]
+fn policy_check_access_denied_names_the_path_and_the_rights() {
+    let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
+    let err = read_broker_policy(&layout, true, |_| {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    })
+    .unwrap_err();
+    assert!(err.contains(&service_root().join("policy.toml").display().to_string()));
+    assert!(err.contains("administrator rights"));
+    assert!(err.contains("sudo"));
 }
 
 #[test]
@@ -108,7 +143,16 @@ fn validate_runner_keeps_old_unknown_key_warning() {
     let old = format!("{RUNNER}misspelled = 1\n");
     std::fs::write(dir.join("runner.toml"), &old).unwrap();
     let target = Target::Runner("a".into());
-    let edited = format!("{old}[queue]\n").replace("[queue]\n", "");
+    let edited = format!("mem_mb = 512\n{old}");
     let warnings = validate(&target, &edited, &layout).unwrap();
     assert_eq!(warnings.len(), 1);
+}
+
+#[test]
+fn validate_runner_refuses_swapping_one_unknown_key_for_another() {
+    let (layout, dir) = custom("swap");
+    std::fs::write(dir.join("runner.toml"), format!("{RUNNER}misspelled = 1\n")).unwrap();
+    let target = Target::Runner("a".into());
+    let edited = format!("{RUNNER}another_typo = 1\n");
+    assert!(validate(&target, &edited, &layout).is_err());
 }

@@ -56,13 +56,7 @@ pub fn resolve_with(
         Target::Broker => layout.config_file("policy.toml"),
         Target::Hub => layout.config_file("hub-policy.toml"),
         Target::Logging => layout.config_file("logging.toml"),
-        Target::Runner(name) => {
-            let own = layout.runner_dir(name).join("runner.toml");
-            if own.exists() {
-                own
-            } else {
-                layout.config_file("runner.toml")
-            }
-        }
+        Target::Runner(name) => crate::build::runner_config_path(layout, name, None)
+            .unwrap_or_else(|| layout.config_file("runner.toml")),
     })
 }

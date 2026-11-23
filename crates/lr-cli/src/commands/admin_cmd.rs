@@ -75,6 +75,38 @@ pub fn service_policy_note(layout: &Layout) -> Option<String> {
     })
 }
 
+/// The warning for a broker service that cannot be asked: the file it loads is checked instead
+/// of the user's own `policy.toml`.
+pub fn service_file_note() -> String {
+    format!(
+        "the broker service cannot be asked (it is stopped, or its admin channel is closed to this user), so the file it loads is checked: {}",
+        crate::paths::service_root().join("policy.toml").display()
+    )
+}
+
+/// The file `policy check` reads without an argument and its text, read with `read`; a missing
+/// file is an empty policy, a refused read of the service file names the rights it needs.
+pub fn read_broker_policy(
+    layout: &Layout,
+    service_installed: bool,
+    read: impl Fn(&Path) -> std::io::Result<String>,
+) -> Result<(PathBuf, String), String> {
+    let path = crate::config_edit::resolve_with(
+        layout,
+        &crate::config_edit::Target::Broker,
+        service_installed,
+    )?;
+    match read(&path) {
+        Ok(text) => Ok((path, text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((path, String::new())),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Err(format!(
+            "{}: {e}; this file of the broker service needs administrator rights to read: run `localrunner policy check` elevated (an administrator terminal on Windows, sudo on Linux and macOS)",
+            path.display()
+        )),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// `policy check [file]`: errors stop the file, shadowed rules and the like are warnings.
 /// Without a file the running broker is asked which `policy.toml` it uses and checks that one.
 pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32, String> {
@@ -101,18 +133,19 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
                 }
             };
         }
-        if let Some(note) = service_policy_note(layout) {
-            println!("warning: {note}");
+        if layout.broker_is_service() {
+            println!("warning: {}", service_file_note());
         }
     }
-    let path = match file {
-        Some(f) => f,
-        None => crate::config_edit::resolve(layout, &crate::config_edit::Target::Broker)?,
-    };
-    let text = match std::fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("{}: {e}", path.display())),
+    let (path, text) = match file {
+        Some(f) => match std::fs::read_to_string(&f) {
+            Ok(t) => (f, t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (f, String::new()),
+            Err(e) => return Err(format!("{}: {e}", f.display())),
+        },
+        None => read_broker_policy(layout, layout.broker_is_service(), |p| {
+            std::fs::read_to_string(p)
+        })?,
     };
     match load(&text) {
         Err(e) => {

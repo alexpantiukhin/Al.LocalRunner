@@ -41,11 +41,14 @@ pub fn validate(target: &Target, text: &str, layout: &Layout) -> Result<Vec<Stri
                 .and_then(|p| std::fs::read_to_string(p).ok())
                 .and_then(|old| runner_warnings(name, &old).ok())
                 .unwrap_or_default();
-            if warnings.len() > before.len() {
-                return Err(warnings
-                    .into_iter()
-                    .find(|w| !before.contains(w))
-                    .unwrap_or_else(|| "unknown key".into()));
+            let mut old = before;
+            for w in &warnings {
+                match old.iter().position(|o| o == w) {
+                    Some(i) => {
+                        old.swap_remove(i);
+                    }
+                    None => return Err(w.clone()),
+                }
             }
             Ok(warnings)
         }
