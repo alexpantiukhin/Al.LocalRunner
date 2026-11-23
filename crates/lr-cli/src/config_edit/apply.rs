@@ -535,6 +535,15 @@ pub async fn run_change_with(
     let noop = change.is_noop();
     if !opts.elevated_child {
         let _ = writeln!(out, "file: {path}");
+        if let Target::Runner(name) = target {
+            let own = layout.runner_dir(name).join("runner.toml");
+            let kind = if change.path == own {
+                "its own copy; edits of the template do not reach it"
+            } else {
+                "edits the template: every runner without an own copy reads it"
+            };
+            let _ = writeln!(out, "runner {name}: {kind}");
+        }
         match noop {
             true => {
                 let _ = writeln!(out, "no change in {path}");

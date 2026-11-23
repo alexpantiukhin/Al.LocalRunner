@@ -667,3 +667,162 @@ async fn a_restarted_service_that_never_answers_is_not_reported_restarted() {
         assert_eq!(outcome, RestartOutcome::Restarted, "{role:?}");
     }
 }
+
+fn template_file(layout: &Layout) -> PathBuf {
+    layout.config_file("runner.toml")
+}
+
+fn read(path: &std::path::Path) -> String {
+    std::fs::read_to_string(path).unwrap()
+}
+
+#[tokio::test]
+async fn hub_edit_writes_hub_policy_and_reloads_the_hub() {
+    let dir = TempDir::new("config-hub");
+    let layout = with_runner(&dir);
+    let file = layout.config_file("hub-policy.toml");
+    std::fs::write(&file, "[brokers]\nquery_timeout_s = 3\n").unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(Target::Hub, "brokers.query_timeout_s", "5"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert_eq!(read(&file), "[brokers]\nquery_timeout_s = 5\n");
+    assert!(r.out.contains(&file.display().to_string()), "{}", r.out);
+    assert!(r.out.contains("hub: reloaded"), "{}", r.out);
+    assert_eq!(roles.reloads(), [Role::Hub]);
+    assert!(!r.out.contains("applies at the next start"), "{}", r.out);
+}
+
+#[tokio::test]
+async fn a_runner_with_an_own_copy_edits_it_and_says_so() {
+    let dir = TempDir::new("config-own-copy");
+    let layout = runner_layout(&dir, RUNNER);
+    std::fs::write(template_file(&layout), RUNNER).unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(read(&runner_file(&layout)).contains("cpu = 4"));
+    assert_eq!(read(&template_file(&layout)), RUNNER);
+    assert!(
+        r.out
+            .contains("runner r1: its own copy; edits of the template do not reach it"),
+        "{}",
+        r.out
+    );
+    assert!(!r.out.contains("edits the template"), "{}", r.out);
+}
+
+#[tokio::test]
+async fn a_runner_without_an_own_copy_edits_the_template_and_says_so() {
+    let dir = TempDir::new("config-template");
+    let layout = with_runner(&dir);
+    std::fs::write(template_file(&layout), RUNNER).unwrap();
+    assert!(!runner_file(&layout).exists());
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(read(&template_file(&layout)).contains("cpu = 4"));
+    assert!(!runner_file(&layout).exists());
+    assert!(
+        r.out
+            .contains("edits the template: every runner without an own copy reads it"),
+        "{}",
+        r.out
+    );
+    assert!(!r.out.contains("its own copy"), "{}", r.out);
+    assert_eq!(roles.reloads(), [Role::Runner("r1".into())]);
+
+    let unset = EditArgs {
+        target: r1(),
+        edit: Edit::Unset { key: "cpu".into() },
+        dry_run: false,
+        restart: false,
+    };
+    let r = run(&layout, unset, false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("edits the template"), "{}", r.out);
+    assert!(!read(&template_file(&layout)).contains("cpu"));
+}
+
+#[tokio::test]
+async fn logging_edit_writes_logging_toml_and_reloads_every_role() {
+    let dir = TempDir::new("config-logging");
+    let layout = with_runner(&dir);
+    let file = layout.config_file("logging.toml");
+    std::fs::write(&file, "[logging]\nlevel = \"info\"\n").unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "debug"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert_eq!(read(&file), "[logging]\nlevel = \"debug\"\n");
+    let reloads = roles.reloads();
+    for role in [Role::Runner("r1".into()), Role::Hub, Role::Broker] {
+        assert!(reloads.contains(&role), "{role:?} in {reloads:?}");
+    }
+    assert_eq!(reloads.len(), 3, "{reloads:?}");
+    assert!(r.out.contains("r1: reloaded"), "{}", r.out);
+    assert!(r.out.contains("hub: reloaded"), "{}", r.out);
+    assert!(r.out.contains("broker: reloaded"), "{}", r.out);
+    assert!(roles.restarts().is_empty());
+}
+
+#[tokio::test]
+async fn a_typo_key_in_runner_toml_is_refused_and_nothing_changes() {
+    let dir = TempDir::new("config-typo");
+    let layout = runner_layout(&dir, RUNNER);
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpuu", "2"), false, &roles, &elevator).await;
+    assert!(r.code.is_err(), "{:?} {} {}", r.code, r.out, r.err);
+    assert_eq!(read(&runner_file(&layout)), RUNNER);
+    assert!(roles.reloads().is_empty());
+    assert!(elevator.calls().is_empty());
+}
+
+#[tokio::test]
+async fn allow_same_user_as_broker_prints_the_widens_line() {
+    let dir = TempDir::new("config-widens-same-user");
+    let layout = runner_layout(&dir, RUNNER);
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(r1(), "allow_same_user_as_broker", "true"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(
+        r.out
+            .contains("widens privileges: allow_same_user_as_broker"),
+        "{}",
+        r.out
+    );
+    let off = run(
+        &layout,
+        set(r1(), "allow_same_user_as_broker", "false"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert!(!off.out.contains("widens privileges"), "{}", off.out);
+}
