@@ -251,12 +251,7 @@ impl RoleControl for LiveRoles {
     async fn restart(&self, layout: &Layout, role: &Role, err: &mut dyn Write) -> RestartOutcome {
         match restart_plan(role, service_of(layout, role)) {
             RestartPlan::Service(line) => {
-                match tokio::task::spawn_blocking(move || run_shell_line(&line)).await {
-                    Ok(Ok(0)) => RestartOutcome::Restarted,
-                    Ok(Ok(c)) => RestartOutcome::Failed(format!("exit code {c}")),
-                    Ok(Err(e)) => RestartOutcome::Failed(e),
-                    Err(e) => RestartOutcome::Failed(e.to_string()),
-                }
+                restart_service(&LiveProcesses, layout, role, &line, up_cmd::STARTED_WITHIN).await
             }
             RestartPlan::Process { stop, start } => {
                 restart_process(
@@ -280,6 +275,8 @@ pub enum RestartOutcome {
     Restarted,
     /// The role was started again but did not answer within the wait.
     NotAnswering,
+    /// The service manager restarted the service but the role did not answer within the wait.
+    ServiceNotAnswering,
     /// The start was refused before anything was stopped, with `up`'s reason.
     Refused(String),
     /// Stopping or starting failed.
@@ -297,6 +294,8 @@ pub trait RoleProcesses {
     fn start(&self, layout: &Layout, argv: &[String]) -> Result<(), String>;
     /// Whether `role` answers on its channel.
     async fn answers(&self, layout: &Layout, role: &Role) -> bool;
+    /// Runs the service manager's restart command `line`; its exit code.
+    async fn run_service_restart(&self, line: &str) -> Result<i32, String>;
 }
 
 /// The processes of this machine: `up`'s same-user check and readiness probe, `down` of one
@@ -326,6 +325,34 @@ impl RoleProcesses for LiveProcesses {
 
     async fn answers(&self, layout: &Layout, role: &Role) -> bool {
         up_cmd::role_answers(layout, role).await
+    }
+
+    async fn run_service_restart(&self, line: &str) -> Result<i32, String> {
+        let line = line.to_string();
+        tokio::task::spawn_blocking(move || run_shell_line(&line))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+}
+
+/// Restarts a role that runs as an OS service with the service manager's command `line`, then
+/// waits as `up` does, at most `within`, until the role answers on its channel.
+pub async fn restart_service(
+    procs: &dyn RoleProcesses,
+    layout: &Layout,
+    role: &Role,
+    line: &str,
+    within: std::time::Duration,
+) -> RestartOutcome {
+    match procs.run_service_restart(line).await {
+        Ok(0) => {}
+        Ok(c) => return RestartOutcome::Failed(format!("exit code {c}")),
+        Err(e) => return RestartOutcome::Failed(e),
+    }
+    let answered = up_cmd::poll_until(|| procs.answers(layout, role), |a: &bool| *a, within).await;
+    match answered {
+        true => RestartOutcome::Restarted,
+        false => RestartOutcome::ServiceNotAnswering,
     }
 }
 
@@ -645,6 +672,10 @@ pub async fn after_write(
                 "{name}: started but not answering within {} s; see logs/ in {}",
                 up_cmd::STARTED_WITHIN.as_secs(),
                 layout.root.display()
+            ),
+            RestartOutcome::ServiceNotAnswering => format!(
+                "{name}: service restarted but not answering within {} s; check it: {command}",
+                up_cmd::STARTED_WITHIN.as_secs()
             ),
             RestartOutcome::Refused(why) => format!("runner {name}: not started: {why}"),
             RestartOutcome::Failed(e) => {

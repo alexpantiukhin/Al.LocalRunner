@@ -6,8 +6,8 @@ use lr_cli::commands::config_cmd::{edit_with, get, show, Edit, EditArgs};
 use lr_cli::commands::down_cmd::stop_one_with;
 use lr_cli::commands::down_cmd::Target as Role;
 use lr_cli::config_edit::{
-    restart_line, restart_plan, restart_process, RestartOutcome, RestartPlan, Target,
-    EXIT_WRITTEN_STEP_FAILED,
+    restart_line, restart_plan, restart_process, restart_service, RestartOutcome, RestartPlan,
+    Target, EXIT_WRITTEN_STEP_FAILED,
 };
 use lr_cli::os_service::Os;
 use lr_cli::paths::Layout;
@@ -644,4 +644,26 @@ async fn a_runner_named_like_a_role_is_stopped_alone() {
     assert_eq!(stop_one_with(Role::Broker, wait, &roles).await, Ok(0));
     assert_eq!(roles.broker_stops(), 1);
     assert!(roles.told.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restarted_service_that_never_answers_is_not_reported_restarted() {
+    let dir = TempDir::new("config-service-silent");
+    let layout = with_runner(&dir);
+    let within = std::time::Duration::from_secs(15);
+    for role in [Role::Broker, Role::Runner("r1".into())] {
+        let silent = FakeProcesses::new(Ok(None), false);
+        let outcome = restart_service(&silent, &layout, &role, "Restart-Service X", within).await;
+        assert_eq!(outcome, RestartOutcome::ServiceNotAnswering, "{role:?}");
+        assert_eq!(
+            *silent.service_restarts.lock().unwrap(),
+            ["Restart-Service X"]
+        );
+        assert!(silent.probes.load(std::sync::atomic::Ordering::SeqCst) > 1);
+
+        let answering = FakeProcesses::new(Ok(None), true);
+        let outcome =
+            restart_service(&answering, &layout, &role, "Restart-Service X", within).await;
+        assert_eq!(outcome, RestartOutcome::Restarted, "{role:?}");
+    }
 }

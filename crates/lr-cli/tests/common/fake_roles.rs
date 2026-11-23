@@ -290,6 +290,7 @@ pub struct FakeProcesses {
     pub stopped: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
     pub started: Mutex<Vec<Vec<String>>>,
     pub probes: AtomicUsize,
+    pub service_restarts: Mutex<Vec<String>>,
 }
 
 impl FakeProcesses {
@@ -300,6 +301,7 @@ impl FakeProcesses {
             stopped: Mutex::new(Vec::new()),
             started: Mutex::new(Vec::new()),
             probes: AtomicUsize::new(0),
+            service_restarts: Mutex::new(Vec::new()),
         }
     }
 }
@@ -331,5 +333,10 @@ impl lr_cli::config_edit::RoleProcesses for FakeProcesses {
     async fn answers(&self, _layout: &Layout, _role: &lr_cli::commands::down_cmd::Target) -> bool {
         self.probes.fetch_add(1, Ordering::SeqCst);
         self.answers
+    }
+
+    async fn run_service_restart(&self, line: &str) -> Result<i32, String> {
+        self.service_restarts.lock().unwrap().push(line.to_string());
+        Ok(0)
     }
 }
