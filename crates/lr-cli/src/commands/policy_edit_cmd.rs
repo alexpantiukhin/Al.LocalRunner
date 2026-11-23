@@ -232,11 +232,7 @@ pub async fn edit_with(
         } else {
             "occurrences"
         };
-        (
-            format!("{count} {times}"),
-            change.path.clone(),
-            change.after.clone(),
-        )
+        format!("{count} {times}")
     });
     if args.record.is_add() && count == 0 && !elevated_child {
         let _ = writeln!(out, "{what} is already present");
@@ -259,12 +255,11 @@ pub async fn edit_with(
         err,
     )
     .await;
-    if let (Ok(_), Some((times, path, after))) = (&result, removal) {
-        if args.dry_run {
-            let _ = writeln!(out, "{what}: would remove {times}");
-        } else if std::fs::read_to_string(&path).is_ok_and(|text| text == after) {
-            let _ = writeln!(out, "{what}: removed {times}");
-        }
+    if let (Ok(0), Some(times)) = (&result, removal) {
+        let _ = match args.dry_run {
+            true => writeln!(out, "{what}: would remove {times}"),
+            false => writeln!(out, "{what}: removed {times}"),
+        };
     }
     result
 }

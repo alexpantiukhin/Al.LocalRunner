@@ -611,6 +611,17 @@ async fn remove_reports_nothing_removed_when_the_apply_fails() {
     assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
     assert!(!r.out.contains("removed"), "{}", r.out);
 
+    let mut failing = FakeControl::new(false, true);
+    failing.reload_error = Some("the broker did not answer".into());
+    let r = run_with(&layout, remove(), &failing, &FakeElevator::new(Ok(0))).await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert_eq!(
+        std::fs::read_to_string(policy(&layout)).unwrap(),
+        start.replace("[\"a\", \"a\", \"b\"]", "[\"b\"]")
+    );
+    assert!(!r.out.contains("removed"), "{}", r.out);
+    std::fs::write(policy(&layout), start).unwrap();
+
     let mut dry = remove();
     dry.dry_run = true;
     let r = run_with(&layout, dry, &roles, &FakeElevator::new(Ok(0))).await;
