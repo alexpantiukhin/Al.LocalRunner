@@ -380,6 +380,27 @@ mod windows {
     }
 
     #[test]
+    fn output_of_a_child_that_exited_before_the_parent_looked_is_kept() {
+        let dir = scratch("late");
+        let (out, err) = (Sink::default(), Sink::default());
+        let (channel, pipes) = channel_with(&out, &err);
+        let mut spawned = None;
+        let code = pipes
+            .serve_after_exit(|| {
+                let process = child(&dir, &channel);
+                let handle = process.as_raw_handle();
+                spawned = Some(process);
+                handle
+            })
+            .unwrap();
+        let own = spawned.unwrap().wait_with_output().unwrap();
+        assert_eq!(Some(code), own.status.code());
+        assert!(own.stderr.is_empty(), "{:?}", own.stderr);
+        assert!(err.text().contains("profiles.toml"), "{}", err.text());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_foreign_client_that_connects_first_is_dropped_and_the_child_is_served() {
         let dir = scratch("foreign");
         let (out, err) = (Sink::default(), Sink::default());

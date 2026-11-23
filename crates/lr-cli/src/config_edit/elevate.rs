@@ -207,7 +207,11 @@ fn printable(c: char) -> bool {
 
 /// In the elevated child: checks that the pipes of `channel` are served by the process the
 /// channel names, then sends standard output and standard error there; nothing is sent to a
-/// pipe served by another process. Only on Windows; elsewhere the child inherits the
+/// pipe served by another process. The process id comes from the channel and is not checked
+/// against the real parent: after `runas` the parent of the elevated process is the
+/// consent service, not the caller. Whoever starts an elevated copy with a forged channel
+/// needs the user to approve UAC and already holds the user's rights, so the residual risk is
+/// disclosure of this output only. Only on Windows; elsewhere the child inherits the
 /// terminal and a channel is refused.
 pub fn attach_elevated_output(channel: &str) -> Result<(), String> {
     #[cfg(windows)]
@@ -269,7 +273,7 @@ mod windows {
     };
     use windows_sys::Win32::System::Threading::{
         CreateEventW, GetExitCodeProcess, GetProcessId, ResetEvent, WaitForMultipleObjects,
-        INFINITE,
+        WaitForSingleObject, INFINITE,
     };
     use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
     use windows_sys::Win32::UI::Shell::{
@@ -499,6 +503,10 @@ mod windows {
             }
         }
 
+        fn signaled(&self) -> bool {
+            self.pending && unsafe { WaitForSingleObject(self.event.0, 0) } == WAIT_OBJECT_0
+        }
+
         fn client_is(&self, child: u32) -> bool {
             let mut pid = 0u32;
             let known = unsafe { GetNamedPipeClientProcessId(self.handle(), &mut pid) } != 0;
@@ -589,16 +597,35 @@ mod windows {
         /// wrote is read; after the exit what is already in the pipes is drained (bounded) and
         /// every pending operation is cancelled, so this never waits on a client.
         pub fn serve(mut self, process: RawHandle) -> Result<i32, String> {
-            let process = process as HANDLE;
+            for pipe in &mut self.pipes {
+                pipe.start();
+            }
+            self.run(process as HANDLE)
+        }
+
+        /// Test hook of [`OutputChannel::serve`]: listens, lets `spawn` start the process,
+        /// waits until that process has exited and only then handles the pipe events, so a
+        /// child that connected, wrote and exited before the parent looked is reproduced.
+        #[doc(hidden)]
+        pub fn serve_after_exit(
+            mut self,
+            spawn: impl FnOnce() -> RawHandle,
+        ) -> Result<i32, String> {
+            for pipe in &mut self.pipes {
+                pipe.start();
+            }
+            let process = spawn() as HANDLE;
+            unsafe { WaitForSingleObject(process, INFINITE) };
+            self.run(process)
+        }
+
+        fn run(&mut self, process: HANDLE) -> Result<i32, String> {
             let child = unsafe { GetProcessId(process) };
             if child == 0 {
                 return Err(format!(
                     "no id of the elevated process: {}",
                     std::io::Error::last_os_error()
                 ));
-            }
-            for pipe in &mut self.pipes {
-                pipe.start();
             }
             loop {
                 self.settle(child);
@@ -645,6 +672,9 @@ mod windows {
 
         fn drain(&mut self, child: u32) {
             for pipe in &mut self.pipes {
+                if pipe.state == State::Listening && (pipe.ready() || pipe.signaled()) {
+                    pipe.advance(child);
+                }
                 if pipe.state == State::Listening {
                     pipe.stop();
                 }
