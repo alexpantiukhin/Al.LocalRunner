@@ -235,6 +235,7 @@ fn sibling(path: &Path, suffix: &str) -> Result<PathBuf, String> {
 fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
     let stamp = stamp(clock);
     let fail = |e: std::io::Error| format!("cannot back up {}: {e}", path.display());
+    let mut source = File::open(path).map_err(fail)?;
     for n in 1u32.. {
         let suffix = if n == 1 {
             format!(".bak-{stamp}")
@@ -244,7 +245,6 @@ fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
         let backup = sibling(path, &suffix)?;
         match create_exclusive(&backup) {
             Ok(mut out) => {
-                let mut source = File::open(path).map_err(fail)?;
                 if let Err(e) = std::io::copy(&mut source, &mut out) {
                     drop(out);
                     let _ = std::fs::remove_file(&backup);
@@ -259,32 +259,61 @@ fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
     unreachable!()
 }
 
-fn write_temp(path: &Path, temp: &Path, text: &str) -> Result<(), String> {
+const TEMP_ATTEMPTS: u32 = 100;
+
+fn create_temp(path: &Path) -> Result<(PathBuf, File), String> {
+    let mut last = None;
+    for _ in 0..TEMP_ATTEMPTS {
+        let temp = sibling(path, &format!(".tmp-{}", unique()))?;
+        match create_exclusive(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(format!("cannot write {}: {e}", temp.display())),
+        }
+    }
+    Err(format!(
+        "cannot create a temporary file beside {}: {}",
+        path.display(),
+        last.map(|e| e.to_string()).unwrap_or_default()
+    ))
+}
+
+fn fill_temp(
+    temp: &Path,
+    mut file: File,
+    text: &str,
+    original: Option<&std::fs::Permissions>,
+) -> Result<(), String> {
     let fail = |e: std::io::Error| format!("cannot write {}: {e}", temp.display());
-    let mut file = create_exclusive(temp).map_err(fail)?;
     file.write_all(text.as_bytes()).map_err(fail)?;
     drop(file);
     #[cfg(unix)]
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.is_file() {
-            std::fs::set_permissions(temp, meta.permissions()).map_err(fail)?;
-        }
+    if let Some(permissions) = original {
+        std::fs::set_permissions(temp, permissions.clone()).map_err(fail)?;
     }
     #[cfg(not(unix))]
-    let _ = path;
+    let _ = original;
     Ok(())
 }
 
-/// Writes `change.after` over the file through a unique temporary file and a rename; an existing file is copied to `<name>.bak-<UTC yyyymmddThhmmss>` first (a numeric suffix keeps an older backup of the same second) and keeps its permissions. Returns the backup path, or the file itself when there was nothing to back up.
+/// Writes `change.after` over the file through a unique temporary file and a rename; an existing file is copied to `<name>.bak-<UTC yyyymmddThhmmss>` first (a numeric suffix keeps an older backup of the same second) and keeps its permissions. A file whose state cannot be read is an error and stays untouched. Returns the backup path, or the file itself when there was nothing to back up.
 pub fn write(change: &Change, clock: &dyn Clock) -> Result<PathBuf, String> {
     let path = &change.path;
-    let backup = if path.is_file() {
-        Some(back_up(path, clock)?)
-    } else {
-        None
+    let original = match std::fs::metadata(path) {
+        Ok(meta) => Some(meta),
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("cannot read the state of {}: {e}", path.display())),
     };
-    let temp = sibling(path, &format!(".tmp-{}", unique()))?;
-    if let Err(e) = write_temp(path, &temp, &change.after) {
+    let backup = match &original {
+        Some(meta) if meta.is_file() => Some(back_up(path, clock)?),
+        _ => None,
+    };
+    let permissions = original
+        .as_ref()
+        .filter(|m| m.is_file())
+        .map(|m| m.permissions());
+    let (temp, file) = create_temp(path)?;
+    if let Err(e) = fill_temp(&temp, file, &change.after, permissions.as_ref()) {
         let _ = std::fs::remove_file(&temp);
         return Err(e);
     }

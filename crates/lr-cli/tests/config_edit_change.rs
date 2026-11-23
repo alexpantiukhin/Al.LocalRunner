@@ -228,3 +228,23 @@ fn write_keeps_the_permissions_of_the_file() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[test]
+fn existing_files_at_candidate_temp_names_survive() {
+    let (_, dir) = scratch("candidates");
+    let path = dir.join("logging.toml");
+    std::fs::write(&path, "old\n").unwrap();
+    let pid = std::process::id();
+    let foreign: Vec<PathBuf> = (0..60)
+        .map(|n| dir.join(format!("logging.toml.tmp-{pid}-{n}")))
+        .collect();
+    for f in &foreign {
+        std::fs::write(f, "mine").unwrap();
+    }
+    let clock = ManualClock::new(Timestamp(1_795_459_151_000));
+    write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
+    for f in &foreign {
+        assert_eq!(std::fs::read_to_string(f).unwrap(), "mine");
+    }
+}
