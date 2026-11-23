@@ -1,10 +1,10 @@
 use super::change::{needs_rights, write, Change};
-use super::elevate::{rerun_elevated, Elevator};
+use super::elevate::{command_words, rerun_elevated, Elevator};
 use super::target::Target;
 use crate::commands::down_cmd::{self, Target as Role};
 use crate::commands::logging_cmd::{self, Reload};
 use crate::commands::reload_cmd::{self, Outcome};
-use crate::commands::{up_cmd, RoleArg};
+use crate::commands::up_cmd;
 use crate::os_service::{runner_service, state, Os};
 use crate::paths::Layout;
 use async_trait::async_trait;
@@ -73,6 +73,9 @@ pub struct ApplyOpts {
     pub elevated_child: bool,
     /// The arguments of the elevated re-run after the program, without the child marker.
     pub args: Vec<String>,
+    /// The dotted keys the command edits; a restart-only key among them counts even when the
+    /// file already had the value.
+    pub keys: Vec<String>,
 }
 
 /// The roles a change reaches and the file system it is written to.
@@ -82,12 +85,13 @@ pub trait RoleControl {
     fn needs_rights(&self, path: &Path) -> bool;
     /// The clock that names the backup.
     fn clock(&self) -> &dyn Clock;
-    /// Makes the roles that read the file of `target` reread it; one answer per role.
+    /// Makes `role` reread the file of `target`.
     async fn reload(
         &self,
         layout: &Layout,
         target: &Target,
-    ) -> Result<Vec<(String, Outcome)>, String>;
+        role: &Role,
+    ) -> Result<Outcome, String>;
     /// The command a user runs to restart `role`.
     fn restart_command(&self, layout: &Layout, role: &Role) -> String;
     /// Restarts `role`; the exit code of the restart.
@@ -95,8 +99,82 @@ pub trait RoleControl {
 }
 
 /// The roles of this machine: the reload channels of the roles, the OS service manager for a
-/// role that runs as a service, `down` and `up` for a role that runs as a user process.
+/// role that runs as a service, `down` and a start of that one role for a user process.
 pub struct LiveRoles;
+
+/// How a role is restarted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartPlan {
+    /// The role is an OS service: this command of the service manager restarts it.
+    Service(String),
+    /// The role is a user process: `down` of these names, then a start with these arguments
+    /// (without the directories).
+    Process {
+        /// The names given to `down`.
+        stop: Vec<String>,
+        /// The arguments that start this one role again.
+        start: Vec<String>,
+    },
+}
+
+/// The restart of `role`: `service` is the service manager's restart command when the role
+/// runs as an OS service; otherwise the role is stopped and started by its own name.
+pub fn restart_plan(role: &Role, service: Option<String>) -> RestartPlan {
+    if let Some(line) = service {
+        return RestartPlan::Service(line);
+    }
+    let start: Vec<String> = match role {
+        Role::Broker => vec!["broker".into(), "run".into()],
+        Role::Hub => vec!["hub".into(), "run".into()],
+        Role::Runner(name) => vec!["runner".into(), "run".into(), "--name".into(), name.clone()],
+    };
+    RestartPlan::Process {
+        stop: vec![role_name(role)],
+        start: start
+            .into_iter()
+            .chain(std::iter::once("--background".to_string()))
+            .collect(),
+    }
+}
+
+/// `--state-dir` and `--config-dir` of `layout` when they differ from the defaults.
+pub fn explicit_dirs(layout: &Layout) -> Vec<String> {
+    let default = crate::paths::default_root();
+    let mut out = Vec::new();
+    if default.as_ref() != Some(&layout.root) || layout.config != layout.root {
+        out.extend(["--state-dir".to_string(), layout.root.display().to_string()]);
+    }
+    if layout.config != layout.root {
+        out.extend([
+            "--config-dir".to_string(),
+            layout.config.display().to_string(),
+        ]);
+    }
+    out
+}
+
+/// The command a user types for `plan`, every word quoted for the shell of `os` when needed.
+pub fn restart_line(os: Os, layout: &Layout, plan: &RestartPlan) -> String {
+    match plan {
+        RestartPlan::Service(line) => line.clone(),
+        RestartPlan::Process { stop, start } => {
+            let dirs = explicit_dirs(layout);
+            let program = std::iter::once("localrunner".to_string());
+            let down: Vec<String> = program
+                .clone()
+                .chain(dirs.iter().cloned())
+                .chain(std::iter::once("down".to_string()))
+                .chain(stop.iter().cloned())
+                .chain(std::iter::once("--wait".to_string()))
+                .collect();
+            let up: Vec<String> = program
+                .chain(dirs.iter().cloned())
+                .chain(start.iter().cloned())
+                .collect();
+            format!("{}; {}", command_words(os, &down), command_words(os, &up))
+        }
+    }
+}
 
 fn service_of(layout: &Layout, role: &Role) -> Option<String> {
     let os = Os::current();
@@ -106,14 +184,6 @@ fn service_of(layout: &Layout, role: &Role) -> Option<String> {
             state::named_restart_command(os, &runner_service::service_name(os, name)),
         ),
         _ => None,
-    }
-}
-
-fn process_restart(role: &Role) -> (Vec<String>, RoleArg) {
-    match role {
-        Role::Broker => (vec!["broker".into()], RoleArg::Broker),
-        Role::Hub => (vec!["hub".into()], RoleArg::Hub),
-        Role::Runner(name) => (vec![name.clone()], RoleArg::Runner),
     }
 }
 
@@ -160,49 +230,45 @@ impl RoleControl for LiveRoles {
         &self,
         layout: &Layout,
         target: &Target,
-    ) -> Result<Vec<(String, Outcome)>, String> {
-        if let Target::Logging = target {
-            return Ok(logging_cmd::reload_all(layout)
-                .await?
-                .into_iter()
-                .map(|(who, answer)| (who, from_logging(answer)))
-                .collect());
+        role: &Role,
+    ) -> Result<Outcome, String> {
+        match target {
+            Target::Logging => logging_cmd::reload_one(layout, role)
+                .await
+                .map(from_logging),
+            _ => reload_cmd::reload_one(layout, role).await,
         }
-        let Some(role) = role_of(target) else {
-            return Ok(Vec::new());
-        };
-        let answer = reload_cmd::reload_one(layout, &role).await?;
-        Ok(vec![(role_name(&role), answer)])
     }
 
     fn restart_command(&self, layout: &Layout, role: &Role) -> String {
-        service_of(layout, role).unwrap_or_else(|| {
-            let (names, up) = process_restart(role);
-            let up = match up {
-                RoleArg::Broker => "broker",
-                RoleArg::Hub => "hub",
-                _ => "runner",
-            };
-            format!(
-                "localrunner down {} --wait; localrunner up {up}",
-                names.join(" ")
-            )
-        })
+        restart_line(
+            Os::current(),
+            layout,
+            &restart_plan(role, service_of(layout, role)),
+        )
     }
 
     async fn restart(&self, layout: &Layout, role: &Role) -> Result<i32, String> {
-        if let Some(line) = service_of(layout, role) {
-            return tokio::task::spawn_blocking(move || run_shell_line(&line))
-                .await
-                .map_err(|e| e.to_string())?;
+        match restart_plan(role, service_of(layout, role)) {
+            RestartPlan::Service(line) => {
+                tokio::task::spawn_blocking(move || run_shell_line(&line))
+                    .await
+                    .map_err(|e| e.to_string())?
+            }
+            RestartPlan::Process { stop, start } => {
+                let wait = Some(down_cmd::DEFAULT_EXIT_WAIT);
+                let code = down_cmd::down_cli(layout, stop, false, true, wait).await?;
+                if code != 0 {
+                    return Ok(code);
+                }
+                let exe =
+                    std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+                let argv: Vec<String> = start.into_iter().chain(up_cmd::dirs(layout)).collect();
+                up_cmd::starter(exe)(&argv)
+                    .map(|_| 0)
+                    .map_err(|e| format!("cannot start {}: {e}", role_name(role)))
+            }
         }
-        let (names, up) = process_restart(role);
-        let wait = Some(down_cmd::DEFAULT_EXIT_WAIT);
-        let code = down_cmd::down_cli(layout, names, false, true, wait).await?;
-        if code != 0 {
-            return Ok(code);
-        }
-        up_cmd::up(layout, Some(up)).await
     }
 }
 
@@ -212,6 +278,15 @@ fn role_of(target: &Target) -> Option<Role> {
         Target::Hub => Some(Role::Hub),
         Target::Runner(name) => Some(Role::Runner(name.clone())),
         Target::Logging => None,
+    }
+}
+
+/// The roles that read the file of `target`: its own role, or for `logging` every role of the
+/// installation (runners, the hub, the broker).
+pub fn roles_of(layout: &Layout, target: &Target) -> Vec<Role> {
+    match role_of(target) {
+        Some(role) => vec![role],
+        None => down_cmd::down_targets(layout, &[]),
     }
 }
 
@@ -236,11 +311,19 @@ fn lookup<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
     Some(value)
 }
 
-/// The restart-only keys of [`RESTART_ONLY`] whose value differs between the text before and
-/// after the change, each with its reason and the value written (`None`: removed).
+fn touches(edited: &str, prefix: &str) -> bool {
+    edited == prefix
+        || edited.starts_with(&format!("{prefix}."))
+        || prefix.starts_with(&format!("{edited}."))
+}
+
+/// The keys of [`RESTART_ONLY`] that the change touches: their value differs between the
+/// text before and after, or one of `keys` lies in them. Each comes with its reason and the
+/// value in the file after the change (`None`: absent).
 pub fn restart_only_changes(
     target: &Target,
     change: &Change,
+    keys: &[String],
 ) -> Vec<(&'static str, &'static str, Option<String>)> {
     let kind = TargetKind::of(target);
     let (before, after) = (table(&change.before), table(&change.after));
@@ -250,8 +333,9 @@ pub fn restart_only_changes(
         .filter_map(|(_, key, reason)| {
             let old = before.as_ref().and_then(|t| lookup(t, key));
             let new = after.as_ref().and_then(|t| lookup(t, key));
-            (before.is_none() || after.is_none() || old != new)
-                .then(|| (*key, *reason, new.map(ToString::to_string)))
+            let differs = before.is_none() || after.is_none() || old != new;
+            let edited = keys.iter().any(|k| touches(k, key));
+            (differs || edited).then(|| (*key, *reason, new.map(ToString::to_string)))
         })
         .collect()
 }
@@ -271,26 +355,50 @@ pub async fn run_change(
     .await
 }
 
-fn show(out: &mut dyn Write, change: &Change) -> std::io::Result<()> {
-    write!(out, "{}", change.diff())?;
+fn show(out: &mut dyn Write, change: &Change) {
+    let _ = write!(out, "{}", change.diff());
     for w in &change.warnings {
-        writeln!(out, "warning: {w}")?;
+        let _ = writeln!(out, "warning: {w}");
     }
     for key in &change.widens {
-        writeln!(
+        let _ = writeln!(
             out,
             "widens privileges: {key} = true; the role allows more than before"
-        )?;
+        );
     }
-    Ok(())
 }
 
-/// Applies a planned change: prints the file and, outside the elevated child, the diff, the
-/// warnings and a `widens privileges` line per widening key; `dry_run` stops there. A file
-/// that needs rights is left to the elevated re-run of the command, whose exit code is
-/// returned. Otherwise the file is written, the roles that read it reload it and print their
-/// answer, and a key that applies only at the next start names the restart command, which
-/// runs with `restart`. The exit code is 1 when a role refused the file or a restart failed.
+/// Which roles a process reloads and restarts after the write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Every role: the process wrote the file with its own rights.
+    All,
+    /// Only the broker, whose admin channel has fixed names: the elevated child.
+    Elevated,
+    /// Every role but the broker, with the user's own layout: the parent after its elevated
+    /// child succeeded.
+    User,
+}
+
+impl Phase {
+    /// Whether this phase reloads and restarts `role`.
+    pub fn covers(self, role: &Role) -> bool {
+        match self {
+            Phase::All => true,
+            Phase::Elevated => *role == Role::Broker,
+            Phase::User => *role != Role::Broker,
+        }
+    }
+}
+
+/// Applies a planned change. Outside the elevated child it prints the file and the diff, the
+/// warnings and a `widens privileges` line per widening key, or `no change in <path>`;
+/// `dry_run` stops there. A file that needs rights is written by the elevated re-run of the
+/// command, which also reloads and restarts the broker; when it exits 0 this process reloads
+/// and restarts the other roles ([`Phase::User`]), otherwise its exit code is returned and
+/// nothing else happens. Without rights the file is written here and every role is handled.
+/// After the write nothing aborts: every role's answer, the restart-only notes and the restart
+/// commands are printed, and the exit code is 1 when a reload or a restart failed.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_change_with(
     layout: &Layout,
@@ -302,78 +410,103 @@ pub async fn run_change_with(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<i32, String> {
-    let io = |e: std::io::Error| e.to_string();
     let path = change.path.display().to_string();
+    let noop = change.is_noop();
     if !opts.elevated_child {
-        writeln!(out, "file: {path}").map_err(io)?;
-    }
-    if change.is_noop() {
-        writeln!(out, "no change: {path} already has this value").map_err(io)?;
-        return Ok(0);
-    }
-    if !opts.elevated_child {
-        show(out, &change).map_err(io)?;
+        let _ = writeln!(out, "file: {path}");
+        match noop {
+            true => {
+                let _ = writeln!(out, "no change in {path}");
+            }
+            false => show(out, &change),
+        }
     }
     if opts.dry_run {
-        writeln!(out, "dry run: nothing written").map_err(io)?;
+        let _ = writeln!(out, "dry run: nothing written");
         return Ok(0);
     }
     if !opts.elevated_child && roles.needs_rights(&change.path) {
-        writeln!(
+        let _ = writeln!(
             out,
             "writing {path} needs administrator rights: running the command elevated"
-        )
-        .map_err(io)?;
+        );
         let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-        return Ok(rerun_elevated(
-            elevator,
-            Os::current(),
-            &exe,
-            &opts.args,
-            err,
-        ));
+        let code = rerun_elevated(elevator, Os::current(), &exe, &opts.args, err);
+        if code != 0 {
+            return Ok(code);
+        }
+        return Ok(after_write(Phase::User, layout, target, &change, &opts, roles, out, err).await);
     }
-    let backup = write(&change, roles.clock())?;
-    if backup == change.path {
-        writeln!(out, "written: {path}").map_err(io)?;
-    } else {
-        writeln!(out, "written: {path} (backup: {})", backup.display()).map_err(io)?;
+    if !noop {
+        let backup = write(&change, roles.clock())?;
+        let _ = match backup == change.path {
+            true => writeln!(out, "written: {path}"),
+            false => writeln!(out, "written: {path} (backup: {})", backup.display()),
+        };
     }
+    let phase = match opts.elevated_child {
+        true => Phase::Elevated,
+        false => Phase::All,
+    };
+    Ok(after_write(phase, layout, target, &change, &opts, roles, out, err).await)
+}
+
+/// The reload and restart phase after the file is written: reloads the roles of `target` that
+/// `phase` covers, prints each answer, the restart-only notes and the restart commands, and
+/// restarts with `opts.restart`. Nothing aborts it; the result is 1 when anything failed.
+#[allow(clippy::too_many_arguments)]
+pub async fn after_write(
+    phase: Phase,
+    layout: &Layout,
+    target: &Target,
+    change: &Change,
+    opts: &ApplyOpts,
+    roles: &dyn RoleControl,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
     let mut code = 0;
     let mut to_restart: Vec<Role> = Vec::new();
-    for (who, answer) in roles.reload(layout, target).await? {
-        match answer {
-            Outcome::NotRunning => writeln!(out, "{who}: not running").map_err(io)?,
-            Outcome::Reloaded { restart_required } => {
-                writeln!(out, "{who}: reloaded").map_err(io)?;
+    for role in roles_of(layout, target)
+        .into_iter()
+        .filter(|r| phase.covers(r))
+    {
+        let who = role_name(&role);
+        match roles.reload(layout, target, &role).await {
+            Ok(Outcome::NotRunning) => {
+                let _ = writeln!(out, "{who}: not running");
+            }
+            Ok(Outcome::Reloaded { restart_required }) => {
+                let _ = writeln!(out, "{who}: reloaded");
                 for setting in &restart_required {
-                    writeln!(out, "{who}: needs a restart: {setting}").map_err(io)?;
+                    let _ = writeln!(out, "{who}: needs a restart: {setting}");
                 }
-                if !restart_required.is_empty() {
-                    if let Target::Runner(name) = target {
-                        to_restart.push(Role::Runner(name.clone()));
-                    }
+                if !restart_required.is_empty() && role_of(target).as_ref() == Some(&role) {
+                    to_restart.push(role);
                 }
             }
-            Outcome::Refused(why) => {
+            Ok(Outcome::Refused(why)) => {
                 code = 1;
-                writeln!(err, "{who}: {why}").map_err(io)?;
+                let _ = writeln!(err, "{who}: {why}");
+            }
+            Err(e) => {
+                code = 1;
+                let _ = writeln!(err, "{who}: cannot reload: {e}");
             }
         }
     }
-    let pending = restart_only_changes(target, &change);
-    if let Some(role) = role_of(target) {
+    if let Some(role) = role_of(target).filter(|r| phase.covers(r)) {
         let name = role_name(&role);
+        let pending = restart_only_changes(target, change, &opts.keys);
         for (key, reason, value) in &pending {
             let value = match value {
-                Some(v) => format!("{key} = {v} written"),
-                None => format!("{key} removed"),
+                Some(v) => format!("{key} = {v}"),
+                None => format!("{key} unset"),
             };
-            writeln!(
+            let _ = writeln!(
                 out,
-                "{value}; it applies at the next start of {name}: {reason}"
-            )
-            .map_err(io)?;
+                "{value}: it applies at the next start of {name}: {reason}"
+            );
         }
         if !pending.is_empty() && !to_restart.contains(&role) {
             to_restart.push(role);
@@ -383,37 +516,35 @@ pub async fn run_change_with(
         let name = role_name(&role);
         let command = roles.restart_command(layout, &role);
         if !opts.restart {
-            writeln!(
+            let _ = writeln!(
                 out,
                 "restart {name} to apply it (its connections drop): {command}"
-            )
-            .map_err(io)?;
+            );
             continue;
         }
-        writeln!(
+        let _ = writeln!(
             out,
             "restarting {name}: its connections drop and reconnect ({command})"
-        )
-        .map_err(io)?;
+        );
         match roles.restart(layout, &role).await {
-            Ok(0) => writeln!(out, "{name}: restarted").map_err(io)?,
+            Ok(0) => {
+                let _ = writeln!(out, "{name}: restarted");
+            }
             Ok(c) => {
                 code = 1;
-                writeln!(
+                let _ = writeln!(
                     err,
                     "{name}: the restart ended with exit code {c}; run it by hand: {command}"
-                )
-                .map_err(io)?;
+                );
             }
             Err(e) => {
                 code = 1;
-                writeln!(
+                let _ = writeln!(
                     err,
                     "{name}: cannot restart ({e}); run it by hand: {command}"
-                )
-                .map_err(io)?;
+                );
             }
         }
     }
-    Ok(code)
+    code
 }

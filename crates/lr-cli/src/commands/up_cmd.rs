@@ -80,7 +80,8 @@ pub async fn running_roles(layout: &Layout) -> RunningRoles {
     out
 }
 
-fn dirs(layout: &Layout) -> Vec<String> {
+/// `--state-dir` (and `--config-dir` when it differs) of `layout`, as the started roles get them.
+pub fn dirs(layout: &Layout) -> Vec<String> {
     let mut out = vec![
         "--state-dir".to_string(),
         layout.root.to_string_lossy().into_owned(),

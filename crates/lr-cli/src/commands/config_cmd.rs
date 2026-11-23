@@ -132,6 +132,9 @@ pub async fn edit_with(
         restart: args.restart,
         elevated_child,
         args: child_command(layout, &args, &change),
+        keys: vec![match &args.edit {
+            Edit::Set { key, .. } | Edit::Unset { key } => key.clone(),
+        }],
     };
     run_change_with(
         layout,

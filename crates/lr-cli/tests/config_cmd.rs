@@ -4,7 +4,8 @@ use common::fake_roles::{with_runner, FakeControl, FakeElevator};
 use common::TempDir;
 use lr_cli::commands::config_cmd::{edit_with, get, show, Edit, EditArgs};
 use lr_cli::commands::down_cmd::Target as Role;
-use lr_cli::config_edit::Target;
+use lr_cli::config_edit::{restart_line, restart_plan, RestartPlan, Target};
+use lr_cli::os_service::Os;
 use lr_cli::paths::Layout;
 use std::path::PathBuf;
 
@@ -79,7 +80,7 @@ async fn set_writes_file_and_reloads_running_role() {
     );
     assert!(r.out.contains("-cpu = 1\n+cpu = 2"), "{}", r.out);
     assert!(r.out.contains("r1: reloaded"), "{}", r.out);
-    assert_eq!(roles.reloads(), [r1()]);
+    assert_eq!(roles.reloads(), [Role::Runner("r1".into())]);
     assert!(roles.restarts().is_empty());
     assert!(elevator.calls().is_empty());
 }
@@ -256,7 +257,12 @@ async fn needs_rights_goes_through_the_elevator() {
         std::fs::read_to_string(runner_file(&layout)).unwrap(),
         RUNNER
     );
-    assert!(roles.reloads().is_empty(), "the elevated child reloads");
+    assert_eq!(
+        roles.reloads(),
+        [Role::Runner("r1".into())],
+        "the parent reloads the user roles after the child exits 0"
+    );
+    assert_eq!(roles.restarts(), Vec::<Role>::new());
     let calls = elevator.calls();
     assert_eq!(calls.len(), 1);
     let root = layout.root.display().to_string();
@@ -288,7 +294,7 @@ async fn needs_rights_goes_through_the_elevator() {
     assert!(std::fs::read_to_string(runner_file(&layout))
         .unwrap()
         .contains("cpu = 2"));
-    assert_eq!(roles.reloads(), [r1()]);
+    assert_eq!(roles.reloads(), [Role::Runner("r1".into())]);
 
     let refused = FakeElevator::new(Err("the administrator prompt was refused".into()));
     let r = run(&layout, set(r1(), "cpu", "1"), false, &roles, &refused).await;
@@ -297,4 +303,170 @@ async fn needs_rights_goes_through_the_elevator() {
     assert!(std::fs::read_to_string(runner_file(&layout))
         .unwrap()
         .contains("cpu = 2"));
+}
+
+#[tokio::test]
+async fn the_elevated_child_handles_only_the_broker_and_the_parent_the_rest() {
+    let dir = TempDir::new("config-phases");
+    let layout = runner_layout(&dir, RUNNER);
+    std::fs::write(
+        layout.config_file("policy.toml"),
+        "[listen]\naddress = []\n",
+    )
+    .unwrap();
+    let elevator = FakeElevator::new(Ok(0));
+    let child = FakeControl::new(true, true);
+    let r = run(&layout, set(r1(), "cpu", "2"), true, &child, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(
+        child.reloads().is_empty(),
+        "a runner is reloaded by the parent"
+    );
+
+    let mut listen = set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
+    listen.restart = true;
+    let r = run(&layout, listen.clone(), true, &child, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert_eq!(child.reloads(), [Role::Broker]);
+    assert_eq!(child.restarts(), [Role::Broker]);
+
+    let parent = FakeControl::new(true, true);
+    let mut listen = set(Target::Broker, "listen.address", "[\"127.0.0.1:7342\"]");
+    listen.restart = true;
+    let r = run(&layout, listen, false, &parent, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(parent.reloads().is_empty(), "the child reloaded the broker");
+    assert!(
+        parent.restarts().is_empty(),
+        "the child restarted the broker"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_child_exit_code_is_the_commands_and_nothing_follows() {
+    let dir = TempDir::new("config-child-fails");
+    let layout = runner_layout(&dir, RUNNER);
+    let roles = FakeControl::new(true, true);
+    let elevator = FakeElevator::new(Ok(3));
+    let mut args = set(r1(), "allow_elevated", "true");
+    args.restart = true;
+    let r = run(&layout, args, false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(3), "{} {}", r.out, r.err);
+    assert!(roles.reloads().is_empty());
+    assert!(roles.restarts().is_empty());
+    assert!(!r.out.contains("applies at the next start"), "{}", r.out);
+}
+
+#[tokio::test]
+async fn a_reload_error_after_the_write_still_names_the_restart() {
+    let dir = TempDir::new("config-reload-error");
+    let layout = runner_layout(&dir, RUNNER);
+    let mut roles = FakeControl::new(false, true);
+    roles.reload_error = Some("no principal".into());
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(r1(), "allow_elevated", "true"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert!(r.out.contains("written:"), "{}", r.out);
+    assert!(
+        r.err.contains("r1: cannot reload: no principal"),
+        "{}",
+        r.err
+    );
+    assert!(r.out.contains("applies at the next start"), "{}", r.out);
+    assert!(r.out.contains("restart-command-of-r1"), "{}", r.out);
+    assert!(std::fs::read_to_string(runner_file(&layout))
+        .unwrap()
+        .contains("allow_elevated = true"));
+}
+
+#[tokio::test]
+async fn a_refused_reload_keeps_the_file_and_exits_one() {
+    let dir = TempDir::new("config-refused");
+    let layout = runner_layout(&dir, RUNNER);
+    let mut roles = FakeControl::new(false, true);
+    roles.refuse = Some("runner.toml: bad cpu".into());
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpu", "2"), false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert!(r.err.contains("r1: runner.toml: bad cpu"), "{}", r.err);
+    assert!(std::fs::read_to_string(runner_file(&layout))
+        .unwrap()
+        .contains("cpu = 2"));
+}
+
+#[tokio::test]
+async fn a_repeated_command_reloads_and_restarts_again() {
+    let dir = TempDir::new("config-repeat");
+    let layout = runner_layout(&dir, RUNNER);
+    std::fs::write(
+        layout.config_file("policy.toml"),
+        "[listen]\naddress = [\"127.0.0.1:7341\"]\n",
+    )
+    .unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpu", "1"), false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("no change in"), "{}", r.out);
+    assert!(!r.out.contains("written:"), "{}", r.out);
+    assert_eq!(roles.reloads(), [Role::Runner("r1".into())]);
+    assert_eq!(
+        std::fs::read_to_string(runner_file(&layout)).unwrap(),
+        RUNNER
+    );
+
+    let mut again = set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
+    again.restart = true;
+    let r = run(&layout, again, false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("no change in"), "{}", r.out);
+    assert_eq!(roles.restarts(), [Role::Broker]);
+}
+
+#[test]
+fn a_runner_restart_stops_and_starts_only_that_runner() {
+    let dir = TempDir::new("config-restart-plan");
+    let layout = with_runner(&dir);
+    std::fs::create_dir_all(layout.root.join("runner").join("r2")).unwrap();
+    let role = Role::Runner("my box".into());
+    let plan = restart_plan(&role, None);
+    assert_eq!(
+        plan,
+        RestartPlan::Process {
+            stop: vec!["my box".into()],
+            start: ["runner", "run", "--name", "my box", "--background"]
+                .map(String::from)
+                .to_vec(),
+        }
+    );
+    let line = restart_line(Os::Linux, &layout, &plan);
+    let root = layout.root.display().to_string();
+    assert!(line.contains("down 'my box' --wait"), "{line}");
+    assert!(
+        line.contains("runner run --name 'my box' --background"),
+        "{line}"
+    );
+    assert!(line.contains("--state-dir"), "{line}");
+    assert!(
+        line.contains(&root) || line.contains(&format!("'{root}'")),
+        "{line}"
+    );
+    assert!(
+        !line.contains("r2") && !line.contains("up runner"),
+        "{line}"
+    );
+    let windows = restart_line(Os::Windows, &layout, &plan);
+    assert!(windows.contains("--name 'my box'"), "{windows}");
+    let service = restart_plan(&role, Some("Restart-Service AlLocalRunner-x".into()));
+    assert_eq!(
+        restart_line(Os::Windows, &layout, &service),
+        "Restart-Service AlLocalRunner-x"
+    );
 }

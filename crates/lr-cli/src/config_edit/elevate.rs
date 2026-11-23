@@ -226,6 +226,31 @@ pub fn attach_elevated_output(channel: &str) -> Result<(), String> {
     }
 }
 
+fn plain_word(word: &str) -> bool {
+    !word.is_empty()
+        && word.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/' | '\\' | '=')
+        })
+}
+
+/// `words` as one command line for the shell of `os` (PowerShell on Windows, a POSIX shell
+/// elsewhere), with the quoting of [`elevated_command_line`] for every word that needs it.
+pub fn command_words(os: Os, words: &[String]) -> String {
+    let quoted: Vec<String> = words
+        .iter()
+        .map(|w| match (plain_word(w), os) {
+            (true, _) => w.clone(),
+            (false, Os::Windows) => ps_literal(w),
+            (false, _) => shell_word(w),
+        })
+        .collect();
+    let line = quoted.join(" ");
+    match (os, words.first()) {
+        (Os::Windows, Some(first)) if !plain_word(first) => format!("& {line}"),
+        _ => line,
+    }
+}
+
 fn ps_literal(text: &str) -> String {
     let mut out = String::from("'");
     for c in text.chars() {

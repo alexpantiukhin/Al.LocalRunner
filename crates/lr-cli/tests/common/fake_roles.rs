@@ -161,11 +161,14 @@ impl Roles for FakeRoles {
 }
 
 /// The role side of `config` commands: whether writing needs rights, which roles were reloaded
-/// (running ones answer `reloaded`) and restarted, and a restart command named after the role.
+/// (running ones answer `reloaded`, `refuse` makes them refuse, `reload_error` makes the call
+/// fail) and restarted, and a restart command named after the role.
 pub struct FakeControl {
     pub rights: bool,
     pub running: bool,
-    reloads: Mutex<Vec<lr_cli::config_edit::Target>>,
+    pub refuse: Option<String>,
+    pub reload_error: Option<String>,
+    reloads: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
     restarts: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
 }
 
@@ -174,12 +177,14 @@ impl FakeControl {
         FakeControl {
             rights,
             running,
+            refuse: None,
+            reload_error: None,
             reloads: Mutex::new(Vec::new()),
             restarts: Mutex::new(Vec::new()),
         }
     }
 
-    pub fn reloads(&self) -> Vec<lr_cli::config_edit::Target> {
+    pub fn reloads(&self) -> Vec<lr_cli::commands::down_cmd::Target> {
         self.reloads.lock().unwrap().clone()
     }
 
@@ -210,23 +215,23 @@ impl lr_cli::config_edit::RoleControl for FakeControl {
     async fn reload(
         &self,
         _layout: &Layout,
-        target: &lr_cli::config_edit::Target,
-    ) -> Result<Vec<(String, lr_cli::commands::reload_cmd::Outcome)>, String> {
+        _target: &lr_cli::config_edit::Target,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<lr_cli::commands::reload_cmd::Outcome, String> {
         use lr_cli::commands::reload_cmd::Outcome;
-        use lr_cli::config_edit::Target;
-        self.reloads.lock().unwrap().push(target.clone());
-        let who = match target {
-            Target::Runner(n) => n.clone(),
-            Target::Broker => "broker".into(),
-            Target::Hub | Target::Logging => "hub".into(),
-        };
-        let answer = match self.running {
+        self.reloads.lock().unwrap().push(role.clone());
+        if let Some(e) = &self.reload_error {
+            return Err(e.clone());
+        }
+        if let Some(why) = &self.refuse {
+            return Ok(Outcome::Refused(why.clone()));
+        }
+        Ok(match self.running {
             true => Outcome::Reloaded {
                 restart_required: Vec::new(),
             },
             false => Outcome::NotRunning,
-        };
-        Ok(vec![(who, answer)])
+        })
     }
 
     fn restart_command(
