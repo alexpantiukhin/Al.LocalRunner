@@ -1,5 +1,6 @@
 //! Comment-preserving editing of the TOML configuration files.
 
+mod apply;
 mod change;
 mod document;
 mod elevate;
@@ -7,6 +8,10 @@ mod target;
 mod validate;
 mod value;
 
+pub use apply::{
+    restart_only_changes, run_change, run_change_with, ApplyOpts, LiveRoles, RoleControl,
+    TargetKind, RESTART_ONLY,
+};
 pub use change::{backup_failure, needs_rights, plan, write, write_with_counter, Change};
 pub use document::ConfigDoc;
 #[cfg(windows)]

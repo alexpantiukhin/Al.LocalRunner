@@ -92,6 +92,20 @@ fn wanted(target: &Target, role: Option<RoleArg>) -> bool {
     )
 }
 
+/// Sends `reload` to one role of `layout` and returns its answer.
+pub async fn reload_one(layout: &Layout, target: &Target) -> Result<Outcome, String> {
+    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
+    Ok(reload_with(layout, &principal, target).await)
+}
+
+async fn reload_with(layout: &Layout, principal: &str, target: &Target) -> Outcome {
+    match target {
+        Target::Runner(n) => runner(layout, principal, n).await,
+        Target::Hub => hub(layout, principal).await,
+        Target::Broker => broker(layout).await,
+    }
+}
+
 /// Sends `reload` to the roles selected by `role` and `name` (a runner, or `hub` or `broker`);
 /// without them every role of `layout`. One answer per role.
 pub async fn reload_all(
@@ -106,11 +120,12 @@ pub async fn reload_all(
         .into_iter()
         .filter(|t| wanted(t, role))
     {
-        out.push(match &t {
-            Target::Runner(n) => (n.clone(), runner(layout, &principal, n).await),
-            Target::Hub => ("hub".into(), hub(layout, &principal).await),
-            Target::Broker => ("broker".into(), broker(layout).await),
-        });
+        let who = match &t {
+            Target::Runner(n) => n.clone(),
+            Target::Hub => "hub".into(),
+            Target::Broker => "broker".into(),
+        };
+        out.push((who, reload_with(layout, &principal, &t).await));
     }
     Ok(out)
 }

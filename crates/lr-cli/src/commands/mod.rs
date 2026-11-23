@@ -2,6 +2,7 @@
 
 pub mod admin_cmd;
 pub mod args;
+pub mod config_cmd;
 pub mod confirm;
 pub mod down_cmd;
 pub mod history_cmd;
@@ -277,6 +278,13 @@ pub enum Command {
         #[command(subcommand)]
         action: PolicyAction,
     },
+    /// Change one setting of the file a role reads: `broker`, `hub`, `runner:<name>`,
+    /// `logging`.
+    Config {
+        /// What to do.
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Diagnostics configuration.
     Logging {
         /// What to do.
@@ -397,8 +405,52 @@ impl Cli {
     }
 }
 
+async fn config(
+    layout: &Layout,
+    action: ConfigAction,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    use config_cmd::{Edit, EditArgs};
+    let print = |text: String| {
+        println!("{text}");
+        0
+    };
+    let args = match action {
+        ConfigAction::Get { target, key } => {
+            return config_cmd::get(layout, &target, &key).map(print)
+        }
+        ConfigAction::Show { target } => return config_cmd::show(layout, &target).map(print),
+        ConfigAction::Set {
+            target,
+            key,
+            value,
+            string,
+            dry_run,
+            restart,
+        } => EditArgs {
+            target,
+            edit: Edit::Set { key, value, string },
+            dry_run,
+            restart,
+        },
+        ConfigAction::Unset {
+            target,
+            key,
+            dry_run,
+            restart,
+        } => EditArgs {
+            target,
+            edit: Edit::Unset { key },
+            dry_run,
+            restart,
+        },
+    };
+    config_cmd::edit(layout, args, elevated_child).await
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
+    let elevated_child = cli.is_elevated_child();
     if let Some(channel) = cli.elevated_child.as_deref().filter(|c| !c.is_empty()) {
         if let Err(e) = crate::config_edit::attach_elevated_output(channel) {
             eprintln!("error: {e}");
@@ -483,6 +535,7 @@ pub async fn run(cli: Cli) -> i32 {
             PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
             PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,
         },
+        Command::Config { action } => config(&layout, action, elevated_child).await,
         Command::Logging {
             action: LoggingAction::Reload,
         } => logging_cmd::logging_reload(&layout).await,

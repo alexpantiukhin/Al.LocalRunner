@@ -55,6 +55,65 @@ pub enum PolicyAction {
     Reload,
 }
 
+/// Parses the target of `config`: `broker`, `hub`, `runner:<name>` or `logging`.
+pub fn parse_target(text: &str) -> Result<crate::config_edit::Target, String> {
+    text.parse()
+}
+
+/// `config ...`.
+#[derive(Subcommand, Debug)]
+pub enum ConfigAction {
+    /// Set one key in the file the role reads, show the diff, write it with a backup and reload
+    /// the role.
+    Set {
+        /// `broker`, `hub`, `runner:<name>` or `logging`.
+        #[arg(value_parser = parse_target)]
+        target: crate::config_edit::Target,
+        /// The dotted key, such as `queue.strategy`.
+        key: String,
+        /// The value as TOML (`5`, `true`, `["a", "b"]`); other text is a string.
+        #[arg(allow_hyphen_values = true)]
+        value: String,
+        /// Store the value as a string.
+        #[arg(long)]
+        string: bool,
+        /// Show the change and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Restart the role when the key applies only at its next start (connections drop).
+        #[arg(long)]
+        restart: bool,
+    },
+    /// Remove one key from the file the role reads; the role uses its default.
+    Unset {
+        /// `broker`, `hub`, `runner:<name>` or `logging`.
+        #[arg(value_parser = parse_target)]
+        target: crate::config_edit::Target,
+        /// The dotted key.
+        key: String,
+        /// Show the change and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Restart the role when the key applies only at its next start (connections drop).
+        #[arg(long)]
+        restart: bool,
+    },
+    /// Print the value of one key.
+    Get {
+        /// `broker`, `hub`, `runner:<name>` or `logging`.
+        #[arg(value_parser = parse_target)]
+        target: crate::config_edit::Target,
+        /// The dotted key.
+        key: String,
+    },
+    /// Print the path and the text of the file the role reads.
+    Show {
+        /// `broker`, `hub`, `runner:<name>` or `logging`.
+        #[arg(value_parser = parse_target)]
+        target: crate::config_edit::Target,
+    },
+}
+
 /// `logging ...`.
 #[derive(Subcommand, Debug)]
 pub enum LoggingAction {

@@ -131,3 +131,28 @@ fn wait_json_names_the_final_state_exit_code_and_reason() {
         serde_json::Value::Null
     );
 }
+
+#[test]
+fn cli_surface_lists_config() {
+    let root = command();
+    for (path, flags) in [
+        (
+            &["config", "set"][..],
+            &["string", "dry-run", "restart"][..],
+        ),
+        (&["config", "unset"], &["dry-run", "restart"]),
+        (&["config", "get"], &[]),
+        (&["config", "show"], &[]),
+    ] {
+        let c = find(&root, path);
+        for flag in flags {
+            assert!(has_long(c, flag), "{path:?} has no --{flag}");
+        }
+    }
+    for target in ["broker", "hub", "runner:r1", "logging"] {
+        Cli::try_parse_from(["localrunner", "config", "set", target, "cpu", "-1"])
+            .unwrap_or_else(|e| panic!("{target}: {e}"));
+    }
+    assert!(Cli::try_parse_from(["localrunner", "config", "show", "nobody"]).is_err());
+    assert!(Cli::try_parse_from(["localrunner", "config", "show", "runner:"]).is_err());
+}

@@ -159,3 +159,119 @@ impl Roles for FakeRoles {
         self.after_restart.lock().unwrap().clone()
     }
 }
+
+/// The role side of `config` commands: whether writing needs rights, which roles were reloaded
+/// (running ones answer `reloaded`) and restarted, and a restart command named after the role.
+pub struct FakeControl {
+    pub rights: bool,
+    pub running: bool,
+    reloads: Mutex<Vec<lr_cli::config_edit::Target>>,
+    restarts: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
+}
+
+impl FakeControl {
+    pub fn new(rights: bool, running: bool) -> FakeControl {
+        FakeControl {
+            rights,
+            running,
+            reloads: Mutex::new(Vec::new()),
+            restarts: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn reloads(&self) -> Vec<lr_cli::config_edit::Target> {
+        self.reloads.lock().unwrap().clone()
+    }
+
+    pub fn restarts(&self) -> Vec<lr_cli::commands::down_cmd::Target> {
+        self.restarts.lock().unwrap().clone()
+    }
+}
+
+fn role_name(role: &lr_cli::commands::down_cmd::Target) -> String {
+    use lr_cli::commands::down_cmd::Target;
+    match role {
+        Target::Runner(n) => n.clone(),
+        Target::Hub => "hub".into(),
+        Target::Broker => "broker".into(),
+    }
+}
+
+#[async_trait(?Send)]
+impl lr_cli::config_edit::RoleControl for FakeControl {
+    fn needs_rights(&self, _path: &std::path::Path) -> bool {
+        self.rights
+    }
+
+    fn clock(&self) -> &dyn lr_abstractions::Clock {
+        &lr_exec::SystemClock
+    }
+
+    async fn reload(
+        &self,
+        _layout: &Layout,
+        target: &lr_cli::config_edit::Target,
+    ) -> Result<Vec<(String, lr_cli::commands::reload_cmd::Outcome)>, String> {
+        use lr_cli::commands::reload_cmd::Outcome;
+        use lr_cli::config_edit::Target;
+        self.reloads.lock().unwrap().push(target.clone());
+        let who = match target {
+            Target::Runner(n) => n.clone(),
+            Target::Broker => "broker".into(),
+            Target::Hub | Target::Logging => "hub".into(),
+        };
+        let answer = match self.running {
+            true => Outcome::Reloaded {
+                restart_required: Vec::new(),
+            },
+            false => Outcome::NotRunning,
+        };
+        Ok(vec![(who, answer)])
+    }
+
+    fn restart_command(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> String {
+        format!("restart-command-of-{}", role_name(role))
+    }
+
+    async fn restart(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<i32, String> {
+        self.restarts.lock().unwrap().push(role.clone());
+        Ok(0)
+    }
+}
+
+/// An elevator that records each call and gives `answer`; nothing is started.
+pub struct FakeElevator {
+    answer: Result<i32, String>,
+    calls: Mutex<Vec<(PathBuf, Vec<String>)>>,
+}
+
+impl FakeElevator {
+    pub fn new(answer: Result<i32, String>) -> FakeElevator {
+        FakeElevator {
+            answer,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn calls(&self) -> Vec<(PathBuf, Vec<String>)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl lr_cli::config_edit::Elevator for FakeElevator {
+    fn run_elevated(&self, exe: &std::path::Path, args: &[String]) -> Result<i32, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((exe.to_path_buf(), args.to_vec()));
+        self.answer.clone()
+    }
+}
