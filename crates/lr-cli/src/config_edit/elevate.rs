@@ -103,54 +103,111 @@ pub fn rerun_elevated(
     }
 }
 
+/// What a probe of `sudo -n -l <command>` found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SudoProbe {
+    /// The command may run without a password.
+    Allowed,
+    /// A password would be needed, or the command is not allowed.
+    NeedsPassword,
+    /// `sudo` is not installed.
+    Missing,
+}
+
 /// How `sudo` is run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SudoRoute {
     /// Standard input is a terminal: `sudo` may ask for the password.
     Prompt,
-    /// No terminal, but `sudo -n` needs no password.
+    /// No terminal, but sudoers lets this very command run without a password: `sudo -n`.
     NoPassword,
     /// No terminal and a password is needed: the command is left to a human.
     ByHand,
+    /// `sudo` is not installed.
+    Missing,
 }
 
-/// The route of `sudo` for a session whose standard input is a terminal or not;
-/// `passwordless` is asked only without a terminal.
-pub fn sudo_route(stdin_is_terminal: bool, passwordless: impl FnOnce() -> bool) -> SudoRoute {
+/// The arguments of `sudo` that check, without asking for a password, whether sudoers lets
+/// `exe` with `args` run without one: `-n -l <exe> <args>`.
+pub fn sudo_probe_args(exe: &Path, args: &[String]) -> Vec<String> {
+    [
+        "-n".to_string(),
+        "-l".to_string(),
+        exe.display().to_string(),
+    ]
+    .into_iter()
+    .chain(args.iter().cloned())
+    .collect()
+}
+
+/// The route of `sudo` for `exe` with `args`: with a terminal `sudo` asks; without one
+/// `probe` runs `sudo` with [`sudo_probe_args`] of the real command.
+pub fn sudo_route(
+    stdin_is_terminal: bool,
+    exe: &Path,
+    args: &[String],
+    probe: impl FnOnce(&[String]) -> SudoProbe,
+) -> SudoRoute {
     if stdin_is_terminal {
-        SudoRoute::Prompt
-    } else if passwordless() {
-        SudoRoute::NoPassword
-    } else {
-        SudoRoute::ByHand
+        return SudoRoute::Prompt;
+    }
+    match probe(&sudo_probe_args(exe, args)) {
+        SudoProbe::Allowed => SudoRoute::NoPassword,
+        SudoProbe::NeedsPassword => SudoRoute::ByHand,
+        SudoProbe::Missing => SudoRoute::Missing,
     }
 }
 
-/// A fresh output channel of an elevated child: 128 random bits as 32 lowercase hex digits.
+/// A fresh output channel of an elevated child: 128 random bits as 32 lowercase hex digits,
+/// a dash and the id of this process, which serves the pipes.
 pub fn new_channel() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     getrandom::getrandom(&mut bytes).map_err(|e| format!("no random bytes for a channel: {e}"))?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("{hex}-{}", std::process::id()))
 }
 
-/// The named pipes of an output channel, standard output then standard error; refuses a
-/// channel that is not 32 lowercase hex digits, so the child never opens a path it was given.
-pub fn channel_pipes(channel: &str) -> Result<[String; 2], String> {
-    let valid = channel.len() == 32
-        && channel
+/// The named pipes of an output channel (standard output, then standard error) and the id of
+/// the process that must serve them. Refuses anything but 32 lowercase hex digits, a dash and
+/// a decimal process id, so the child never opens a path it was given.
+pub fn channel_pipes(channel: &str) -> Result<([String; 2], u32), String> {
+    let refused = || {
+        format!("{ELEVATED_CHILD}: the channel must be 32 lowercase hex digits, a dash and a process id")
+    };
+    let (hex, pid) = channel.split_once('-').ok_or_else(refused)?;
+    let hex_ok = hex.len() == 32
+        && hex
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    if !valid {
-        return Err(format!(
-            "{ELEVATED_CHILD}: the channel must be 32 lowercase hex digits"
-        ));
+    let pid_ok = !pid.is_empty() && pid.len() <= 10 && pid.bytes().all(|b| b.is_ascii_digit());
+    if !hex_ok || !pid_ok {
+        return Err(refused());
     }
-    let pipe = |stream: &str| format!(r"\\.\pipe\localrunner-elevate-{channel}-{stream}");
-    Ok([pipe("out"), pipe("err")])
+    let parent: u32 = pid.parse().map_err(|_| refused())?;
+    let pipe = |stream: &str| format!(r"\\.\pipe\localrunner-elevate-{hex}-{stream}");
+    Ok(([pipe("out"), pipe("err")], parent))
 }
 
-/// In the elevated child: sends standard output and standard error to the pipes of
-/// `channel`, which the parent created. Only on Windows; elsewhere the child inherits the
+/// Text from an untrusted source made safe to print: invalid UTF-8 becomes U+FFFD, and
+/// control characters (escape sequences included, `\r` too) and bidirectional overrides are
+/// dropped; line feeds and tabs stay.
+pub fn untrusted_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|&c| printable(c))
+        .collect()
+}
+
+fn printable(c: char) -> bool {
+    if c == '\n' || c == '\t' {
+        return true;
+    }
+    !c.is_control() && !matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// In the elevated child: checks that the pipes of `channel` are served by the process the
+/// channel names, then sends standard output and standard error there; nothing is sent to a
+/// pipe served by another process. Only on Windows; elsewhere the child inherits the
 /// terminal and a channel is refused.
 pub fn attach_elevated_output(channel: &str) -> Result<(), String> {
     #[cfg(windows)]
@@ -182,7 +239,7 @@ pub use windows::OutputChannel;
 
 #[cfg(windows)]
 mod windows {
-    use super::{channel_pipes, child_args, elevated_command_line, new_channel};
+    use super::{channel_pipes, child_args, elevated_command_line, new_channel, printable};
     use crate::os_service::quote::windows_command_line;
     use crate::os_service::Os;
     use std::fs::File;
@@ -190,27 +247,31 @@ mod windows {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
     use std::path::Path;
     use std::ptr::{null, null_mut};
-    use std::thread::JoinHandle;
+    use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, LocalFree, ERROR_CANCELLED, ERROR_NO_DATA, ERROR_PIPE_CONNECTED,
-        GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, GetLastError, LocalFree, ERROR_CANCELLED, ERROR_IO_PENDING, ERROR_NO_DATA,
+        ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_FIRST_PIPE_INSTANCE, OPEN_EXISTING, PIPE_ACCESS_INBOUND,
-        SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+        CreateFileW, ReadFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+        PIPE_ACCESS_INBOUND, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
     };
     use windows_sys::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
     use windows_sys::Win32::System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-        PIPE_TYPE_BYTE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+        GetNamedPipeServerProcessId, WaitNamedPipeW, PIPE_READMODE_BYTE,
+        PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
     };
     use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, WaitForSingleObject, INFINITE,
+        CreateEventW, GetExitCodeProcess, GetProcessId, ResetEvent, WaitForMultipleObjects,
+        INFINITE,
     };
+    use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
     use windows_sys::Win32::UI::Shell::{
         ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS,
         SHELLEXECUTEINFOW,
@@ -218,9 +279,20 @@ mod windows {
 
     const SW_HIDE: i32 = 0;
     const PIPE_BUFFER: u32 = 64 * 1024;
+    const DRAIN_LIMIT: usize = 4 * 1024 * 1024;
+    const DRAIN_ROUNDS: usize = 4096;
+    const CONNECT_DEADLINE: Duration = Duration::from_secs(20);
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    struct Owned(HANDLE);
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
     }
 
     struct Descriptor(PSECURITY_DESCRIPTOR);
@@ -252,89 +324,373 @@ mod windows {
         Ok(Descriptor(sd))
     }
 
-    fn create_pipe(name: &str, sd: &Descriptor) -> Result<File, String> {
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: sd.0,
-            bInheritHandle: 0,
-        };
-        let handle = unsafe {
-            CreateNamedPipeW(
-                wide(name).as_ptr(),
-                PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1,
-                0,
-                PIPE_BUFFER,
-                0,
-                &attributes,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(format!("{name}: {}", std::io::Error::last_os_error()));
-        }
-        Ok(unsafe { File::from_raw_handle(handle as RawHandle) })
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Listening,
+        Reading,
+        Done,
     }
 
-    fn forward(mut pipe: File, mut sink: Box<dyn Write + Send>) {
-        let connected = unsafe { ConnectNamedPipe(pipe.as_raw_handle() as HANDLE, null_mut()) };
-        if connected == 0 {
-            let error = unsafe { GetLastError() };
-            if error != ERROR_PIPE_CONNECTED && error != ERROR_NO_DATA {
-                return;
+    struct Text {
+        sink: Box<dyn Write>,
+        pending: Vec<u8>,
+    }
+
+    impl Text {
+        fn push(&mut self, bytes: &[u8]) {
+            self.pending.extend_from_slice(bytes);
+            let mut out = String::new();
+            loop {
+                match std::str::from_utf8(&self.pending) {
+                    Ok(text) => {
+                        out.extend(text.chars().filter(|&c| printable(c)));
+                        self.pending.clear();
+                        break;
+                    }
+                    Err(e) => {
+                        let valid = e.valid_up_to();
+                        let text = std::str::from_utf8(&self.pending[..valid]).unwrap_or_default();
+                        out.extend(text.chars().filter(|&c| printable(c)));
+                        match e.error_len() {
+                            Some(bad) => {
+                                out.push('\u{FFFD}');
+                                self.pending.drain(..valid + bad);
+                            }
+                            None => {
+                                self.pending.drain(..valid);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = self.sink.write_all(out.as_bytes());
+        }
+
+        fn finish(&mut self) {
+            if !self.pending.is_empty() {
+                let rest = std::mem::take(&mut self.pending);
+                let _ = self.sink.write_all(super::untrusted_text(&rest).as_bytes());
+            }
+            let _ = self.sink.flush();
+        }
+    }
+
+    struct Pipe {
+        file: File,
+        event: Owned,
+        overlapped: Box<OVERLAPPED>,
+        buffer: Vec<u8>,
+        state: State,
+        pending: bool,
+        immediate: Option<Result<u32, u32>>,
+        text: Text,
+    }
+
+    impl Pipe {
+        fn create(name: &str, sd: &Descriptor, sink: Box<dyn Write>) -> Result<Pipe, String> {
+            let attributes = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: sd.0,
+                bInheritHandle: 0,
+            };
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    wide(name).as_ptr(),
+                    PIPE_ACCESS_INBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    1,
+                    0,
+                    PIPE_BUFFER,
+                    0,
+                    &attributes,
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(format!("{name}: {}", std::io::Error::last_os_error()));
+            }
+            let file = unsafe { File::from_raw_handle(handle as RawHandle) };
+            let event = unsafe { CreateEventW(null(), 1, 0, null()) };
+            if event.is_null() {
+                return Err(format!(
+                    "event of {name}: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(Pipe {
+                file,
+                event: Owned(event),
+                overlapped: Box::new(unsafe { std::mem::zeroed() }),
+                buffer: vec![0; PIPE_BUFFER as usize],
+                state: State::Listening,
+                pending: false,
+                immediate: None,
+                text: Text {
+                    sink,
+                    pending: Vec::new(),
+                },
+            })
+        }
+
+        fn handle(&self) -> HANDLE {
+            self.file.as_raw_handle() as HANDLE
+        }
+
+        fn active(&self) -> bool {
+            self.state != State::Done
+        }
+
+        fn ready(&self) -> bool {
+            self.immediate.is_some()
+        }
+
+        fn fresh_overlapped(&mut self) {
+            unsafe { ResetEvent(self.event.0) };
+            *self.overlapped = unsafe { std::mem::zeroed() };
+            self.overlapped.hEvent = self.event.0;
+        }
+
+        fn start(&mut self) {
+            self.immediate = None;
+            self.pending = false;
+            match self.state {
+                State::Done => {}
+                State::Listening => {
+                    self.fresh_overlapped();
+                    let ok = unsafe { ConnectNamedPipe(self.handle(), &mut *self.overlapped) };
+                    let error = unsafe { GetLastError() };
+                    match (ok, error) {
+                        (0, ERROR_IO_PENDING) => self.pending = true,
+                        (0, ERROR_PIPE_CONNECTED | ERROR_NO_DATA) => self.immediate = Some(Ok(0)),
+                        (0, _) => self.state = State::Done,
+                        _ => self.immediate = Some(Ok(0)),
+                    }
+                }
+                State::Reading => {
+                    self.fresh_overlapped();
+                    let ok = unsafe {
+                        ReadFile(
+                            self.handle(),
+                            self.buffer.as_mut_ptr(),
+                            self.buffer.len() as u32,
+                            null_mut(),
+                            &mut *self.overlapped,
+                        )
+                    };
+                    let error = unsafe { GetLastError() };
+                    match (ok, error) {
+                        (0, ERROR_IO_PENDING) => self.pending = true,
+                        (0, e) => self.immediate = Some(Err(e)),
+                        _ => self.immediate = Some(self.result(false)),
+                    }
+                }
             }
         }
-        let _ = std::io::copy(&mut pipe, &mut sink);
-        let _ = sink.flush();
+
+        fn result(&self, wait: bool) -> Result<u32, u32> {
+            let mut n = 0u32;
+            let ok = unsafe {
+                GetOverlappedResult(self.handle(), &*self.overlapped, &mut n, wait as i32)
+            };
+            if ok != 0 {
+                Ok(n)
+            } else {
+                Err(unsafe { GetLastError() })
+            }
+        }
+
+        fn client_is(&self, child: u32) -> bool {
+            let mut pid = 0u32;
+            let known = unsafe { GetNamedPipeClientProcessId(self.handle(), &mut pid) } != 0;
+            known && pid == child
+        }
+
+        fn advance(&mut self, child: u32) -> usize {
+            let result = match self.immediate.take() {
+                Some(r) => r,
+                None => self.result(false),
+            };
+            self.pending = false;
+            let mut read = 0;
+            match self.state {
+                State::Done => return 0,
+                State::Listening => match result {
+                    Ok(_) | Err(ERROR_PIPE_CONNECTED | ERROR_NO_DATA) => {
+                        if self.client_is(child) {
+                            self.state = State::Reading;
+                        } else {
+                            unsafe { DisconnectNamedPipe(self.handle()) };
+                        }
+                    }
+                    Err(_) => self.state = State::Done,
+                },
+                State::Reading => match result {
+                    Ok(n) => {
+                        read = n as usize;
+                        let bytes = self.buffer[..read].to_vec();
+                        self.text.push(&bytes);
+                    }
+                    Err(_) => self.state = State::Done,
+                },
+            }
+            if self.state == State::Done {
+                self.text.finish();
+            } else {
+                self.start();
+            }
+            read
+        }
+
+        fn stop(&mut self) {
+            if self.pending {
+                unsafe { CancelIoEx(self.handle(), &*self.overlapped) };
+                if let Ok(n) = self.result(true) {
+                    if self.state == State::Reading && n > 0 {
+                        let bytes = self.buffer[..n as usize].to_vec();
+                        self.text.push(&bytes);
+                    }
+                }
+                self.pending = false;
+            }
+            if self.state != State::Done {
+                self.state = State::Done;
+                self.text.finish();
+            }
+        }
     }
 
     /// The parent end of an output channel: two named pipes, one instance each, created
     /// first (`FILE_FLAG_FIRST_PIPE_INSTANCE`), local clients only, open to this user, SYSTEM
-    /// and Administrators. Whatever the child writes is copied to the sinks as it comes.
+    /// and Administrators. [`OutputChannel::serve`] accepts on each pipe only the process it
+    /// serves, prints what it writes as untrusted text and stops when that process exits.
     pub struct OutputChannel {
-        names: [String; 2],
-        readers: Vec<JoinHandle<()>>,
+        pipes: [Pipe; 2],
     }
 
     impl OutputChannel {
-        /// Creates the pipes of `channel` and starts copying them to `out` and `err`; fails
-        /// when a pipe of that name exists already.
+        /// Creates the pipes of `channel`, copied to `out` and `err`; fails when a pipe of
+        /// that name exists already.
         pub fn open(
             channel: &str,
-            out: Box<dyn Write + Send>,
-            err: Box<dyn Write + Send>,
+            out: Box<dyn Write>,
+            err: Box<dyn Write>,
         ) -> Result<OutputChannel, String> {
-            let names = channel_pipes(channel)?;
+            let (names, _) = channel_pipes(channel)?;
             let sd = pipe_descriptor()?;
-            let pipes = [create_pipe(&names[0], &sd)?, create_pipe(&names[1], &sd)?];
-            let readers = pipes
-                .into_iter()
-                .zip([out, err])
-                .map(|(pipe, sink)| std::thread::spawn(move || forward(pipe, sink)))
-                .collect();
-            Ok(OutputChannel { names, readers })
+            let pipes = [
+                Pipe::create(&names[0], &sd, out)?,
+                Pipe::create(&names[1], &sd, err)?,
+            ];
+            Ok(OutputChannel { pipes })
         }
 
-        /// Call after the child has exited: releases a pipe the child never opened and waits
-        /// until everything it wrote has reached the sinks.
-        pub fn finish(self) {
-            for name in &self.names {
-                let _ = std::fs::OpenOptions::new().write(true).open(name);
+        /// Serves the pipes until `process` exits and returns its exit code, read from the
+        /// process handle. A client that is not `process` is disconnected before anything it
+        /// wrote is read; after the exit what is already in the pipes is drained (bounded) and
+        /// every pending operation is cancelled, so this never waits on a client.
+        pub fn serve(mut self, process: RawHandle) -> Result<i32, String> {
+            let process = process as HANDLE;
+            let child = unsafe { GetProcessId(process) };
+            if child == 0 {
+                return Err(format!(
+                    "no id of the elevated process: {}",
+                    std::io::Error::last_os_error()
+                ));
             }
-            for reader in self.readers {
-                let _ = reader.join();
+            for pipe in &mut self.pipes {
+                pipe.start();
+            }
+            loop {
+                self.settle(child);
+                let (handles, index) = self.waits(Some(process));
+                let woke = unsafe {
+                    WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, INFINITE)
+                };
+                let k = woke.wrapping_sub(WAIT_OBJECT_0) as usize;
+                if k == 0 || k >= handles.len() {
+                    break;
+                }
+                self.pipes[index[k - 1]].advance(child);
+            }
+            self.drain(child);
+            let mut code = 0u32;
+            if unsafe { GetExitCodeProcess(process, &mut code) } == 0 {
+                return Err(format!(
+                    "no exit code of the elevated command: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(code as i32)
+        }
+
+        fn settle(&mut self, child: u32) {
+            for pipe in &mut self.pipes {
+                while pipe.active() && pipe.ready() {
+                    pipe.advance(child);
+                }
+            }
+        }
+
+        fn waits(&self, process: Option<HANDLE>) -> (Vec<HANDLE>, Vec<usize>) {
+            let mut handles: Vec<HANDLE> = process.into_iter().collect();
+            let mut index = Vec::new();
+            for (i, pipe) in self.pipes.iter().enumerate() {
+                if pipe.active() && pipe.pending {
+                    handles.push(pipe.event.0);
+                    index.push(i);
+                }
+            }
+            (handles, index)
+        }
+
+        fn drain(&mut self, child: u32) {
+            for pipe in &mut self.pipes {
+                if pipe.state == State::Listening {
+                    pipe.stop();
+                }
+            }
+            let mut drained = 0usize;
+            let mut rounds = 0usize;
+            while drained < DRAIN_LIMIT && rounds < DRAIN_ROUNDS {
+                rounds += 1;
+                for pipe in &mut self.pipes {
+                    while pipe.state == State::Reading
+                        && pipe.ready()
+                        && drained < DRAIN_LIMIT
+                        && rounds < DRAIN_ROUNDS
+                    {
+                        rounds += 1;
+                        drained += pipe.advance(child);
+                    }
+                }
+                let (handles, index) = self.waits(None);
+                if handles.is_empty() {
+                    break;
+                }
+                let woke =
+                    unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 0, 0) };
+                if woke == WAIT_TIMEOUT {
+                    break;
+                }
+                let k = woke.wrapping_sub(WAIT_OBJECT_0) as usize;
+                if k >= handles.len() {
+                    break;
+                }
+                drained += self.pipes[index[k]].advance(child);
+            }
+            for pipe in &mut self.pipes {
+                pipe.stop();
             }
         }
     }
 
-    pub(super) fn attach(channel: &str) -> Result<(), String> {
-        let names = channel_pipes(channel)?;
-        let _ = std::io::stdout().flush();
-        let _ = std::io::stderr().flush();
-        for (name, which) in names.iter().zip([STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]) {
+    fn open_client(name: &str) -> Result<HANDLE, String> {
+        let deadline = Instant::now() + CONNECT_DEADLINE;
+        let wide_name = wide(name);
+        loop {
             let handle = unsafe {
                 CreateFileW(
-                    wide(name).as_ptr(),
+                    wide_name.as_ptr(),
                     GENERIC_WRITE,
                     0,
                     null(),
@@ -343,18 +699,45 @@ mod windows {
                     null_mut(),
                 )
             };
-            if handle == INVALID_HANDLE_VALUE {
+            if handle != INVALID_HANDLE_VALUE {
+                return Ok(handle);
+            }
+            let error = std::io::Error::last_os_error();
+            let left = deadline.saturating_duration_since(Instant::now());
+            if error.raw_os_error() != Some(ERROR_PIPE_BUSY as i32) || left.is_zero() {
+                return Err(format!("cannot open the output channel {name}: {error}"));
+            }
+            unsafe { WaitNamedPipeW(wide_name.as_ptr(), left.as_millis().min(5000) as u32) };
+        }
+    }
+
+    pub(super) fn attach(channel: &str) -> Result<(), String> {
+        let (names, parent) = channel_pipes(channel)?;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        let mut opened = Vec::new();
+        for name in &names {
+            let handle = Owned(open_client(name)?);
+            let mut server = 0u32;
+            let known = unsafe { GetNamedPipeServerProcessId(handle.0, &mut server) } != 0;
+            if !known || server != parent {
                 return Err(format!(
-                    "cannot open the output channel {name}: {}",
+                    "the output channel {name} is not served by process {parent}: nothing was sent"
+                ));
+            }
+            opened.push(handle);
+        }
+        for (handle, which) in opened
+            .into_iter()
+            .zip([STD_OUTPUT_HANDLE, STD_ERROR_HANDLE])
+        {
+            if unsafe { SetStdHandle(which, handle.0) } == 0 {
+                return Err(format!(
+                    "cannot redirect the output: {}",
                     std::io::Error::last_os_error()
                 ));
             }
-            if unsafe { SetStdHandle(which, handle) } == 0 {
-                return Err(format!(
-                    "cannot redirect the output to {name}: {}",
-                    std::io::Error::last_os_error()
-                ));
-            }
+            std::mem::forget(handle);
         }
         Ok(())
     }
@@ -364,7 +747,7 @@ mod windows {
         Failed(String),
     }
 
-    fn run_as_admin(exe: &Path, parameters: &str) -> Result<i32, Launch> {
+    fn run_as_admin(exe: &Path, parameters: &str) -> Result<Owned, Launch> {
         let verb = wide("runas");
         let file = wide(&exe.display().to_string());
         let parameters = wide(parameters);
@@ -391,19 +774,7 @@ mod windows {
         if info.hProcess.is_null() {
             return Err(Launch::Failed("no process handle".into()));
         }
-        let mut code = 0u32;
-        let read = unsafe {
-            WaitForSingleObject(info.hProcess, INFINITE);
-            let read = GetExitCodeProcess(info.hProcess, &mut code);
-            CloseHandle(info.hProcess);
-            read
-        };
-        if read == 0 {
-            return Err(Launch::Failed(
-                "no exit code of the elevated command".into(),
-            ));
-        }
-        Ok(code as i32)
+        Ok(Owned(info.hProcess))
     }
 
     pub(super) fn run_elevated(exe: &Path, args: &[String]) -> Result<i32, String> {
@@ -415,54 +786,48 @@ mod windows {
             Box::new(std::io::stderr()),
         )?;
         let parameters = windows_command_line(&child_args(args, Some(&channel)));
-        let result = run_as_admin(exe, &parameters);
-        output.finish();
-        result.map_err(|e| match e {
-            Launch::Refused => {
-                format!("the administrator prompt was refused: run it by hand: {line}")
-            }
-            Launch::Failed(why) => {
-                format!("cannot start the elevated command ({why}): run it by hand: {line}")
-            }
-        })
+        match run_as_admin(exe, &parameters) {
+            Ok(process) => output.serve(process.0 as RawHandle),
+            Err(Launch::Refused) => Err(format!(
+                "the administrator prompt was refused: run it by hand: {line}"
+            )),
+            Err(Launch::Failed(why)) => Err(format!(
+                "cannot start the elevated command ({why}): run it by hand: {line}"
+            )),
+        }
     }
 }
 
 #[cfg(not(windows))]
 mod unix {
-    use super::{child_args, elevated_command_line, sudo_route, SudoRoute};
+    use super::{child_args, elevated_command_line, sudo_route, SudoProbe, SudoRoute};
     use crate::os_service::Os;
     use std::io::IsTerminal;
     use std::path::Path;
     use std::process::{Command, Stdio};
 
-    fn not_installed(line: &str) -> String {
-        format!("sudo is not installed: run the command as root: {line}")
+    fn probe(args: &[String]) -> SudoProbe {
+        match Command::new("sudo")
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) if status.success() => SudoProbe::Allowed,
+            Ok(_) => SudoProbe::NeedsPassword,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => SudoProbe::Missing,
+            Err(_) => SudoProbe::NeedsPassword,
+        }
     }
 
     pub(super) fn run_elevated(exe: &Path, args: &[String]) -> Result<i32, String> {
         let line = elevated_command_line(Os::current(), exe, args);
-        let mut missing = false;
-        let route = sudo_route(std::io::stdin().is_terminal(), || {
-            match Command::new("sudo")
-                .args(["-n", "true"])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-            {
-                Ok(status) => status.success(),
-                Err(e) => {
-                    missing = e.kind() == std::io::ErrorKind::NotFound;
-                    false
-                }
-            }
-        });
-        if missing {
-            return Err(not_installed(&line));
-        }
+        let marked = child_args(args, None);
+        let not_installed = || format!("sudo is not installed: run the command as root: {line}");
         let mut sudo = Command::new("sudo");
-        match route {
+        match sudo_route(std::io::stdin().is_terminal(), exe, &marked, probe) {
+            SudoRoute::Missing => return Err(not_installed()),
             SudoRoute::ByHand => {
                 return Err(format!(
                     "sudo needs a password and there is no terminal to ask for it: run it by hand: {line}"
@@ -473,8 +838,8 @@ mod unix {
             }
             SudoRoute::Prompt => {}
         }
-        match sudo.arg(exe).args(child_args(args, None)).status() {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(not_installed(&line)),
+        match sudo.arg(exe).args(&marked).status() {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(not_installed()),
             Err(e) => Err(format!("cannot start sudo ({e}): run it by hand: {line}")),
             Ok(status) => status
                 .code()

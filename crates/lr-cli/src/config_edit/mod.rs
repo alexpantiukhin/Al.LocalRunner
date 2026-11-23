@@ -13,7 +13,8 @@ pub use document::ConfigDoc;
 pub use elevate::OutputChannel;
 pub use elevate::{
     attach_elevated_output, channel_pipes, child_args, elevated_command_line, new_channel,
-    rerun_elevated, sudo_route, Elevator, OsElevator, SudoRoute, ELEVATED_CHILD,
+    rerun_elevated, sudo_probe_args, sudo_route, untrusted_text, Elevator, OsElevator, SudoProbe,
+    SudoRoute, ELEVATED_CHILD,
 };
 pub use target::{resolve, resolve_with, Target};
 pub use validate::validate;

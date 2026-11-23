@@ -1,8 +1,8 @@
 use clap::{CommandFactory, Parser};
 use lr_cli::commands::Cli;
 use lr_cli::config_edit::{
-    channel_pipes, child_args, elevated_command_line, new_channel, rerun_elevated, sudo_route,
-    Elevator, SudoRoute, ELEVATED_CHILD,
+    channel_pipes, child_args, elevated_command_line, new_channel, rerun_elevated, sudo_probe_args,
+    sudo_route, untrusted_text, Elevator, SudoProbe, SudoRoute, ELEVATED_CHILD,
 };
 use lr_cli::os_service::Os;
 use std::cell::RefCell;
@@ -196,33 +196,113 @@ fn a_refusal_that_names_the_command_is_not_repeated() {
 }
 
 #[test]
-fn sudo_asks_only_with_a_terminal_or_without_a_password() {
+fn sudo_asks_only_with_a_terminal() {
+    let exe = Path::new("/usr/bin/localrunner");
     assert_eq!(
-        sudo_route(true, || panic!("not asked with a terminal")),
+        sudo_route(true, exe, &args(&["a"]), |_| panic!(
+            "not probed with a terminal"
+        )),
         SudoRoute::Prompt
     );
-    assert_eq!(sudo_route(false, || true), SudoRoute::NoPassword);
-    assert_eq!(sudo_route(false, || false), SudoRoute::ByHand);
 }
 
 #[test]
-fn a_channel_is_128_random_bits_and_nothing_else_is_accepted() {
+fn sudo_without_a_terminal_probes_the_real_command() {
+    let exe = Path::new("/usr/bin/localrunner");
+    let marked = child_args(&args(&["config", "set", "a", "1"]), None);
+    let mut seen = Vec::new();
+    let route = sudo_route(false, exe, &marked, |argv| {
+        seen = argv.to_vec();
+        SudoProbe::Allowed
+    });
+    assert_eq!(route, SudoRoute::NoPassword);
+    assert_eq!(
+        seen,
+        args(&[
+            "-n",
+            "-l",
+            "/usr/bin/localrunner",
+            ELEVATED_CHILD,
+            "config",
+            "set",
+            "a",
+            "1"
+        ])
+    );
+    assert_eq!(sudo_probe_args(exe, &marked), seen);
+}
+
+fn sudoers_nopasswd_for(command: &'static str) -> impl Fn(&[String]) -> SudoProbe {
+    move |argv: &[String]| {
+        if argv.len() >= 3 && argv[0] == "-n" && argv[1] == "-l" && argv[2] == command {
+            SudoProbe::Allowed
+        } else {
+            SudoProbe::NeedsPassword
+        }
+    }
+}
+
+#[test]
+fn sudoers_that_lets_only_localrunner_run_without_a_password_is_used() {
+    let probe = sudoers_nopasswd_for("/usr/bin/localrunner");
+    let exe = Path::new("/usr/bin/localrunner");
+    assert_eq!(
+        sudo_route(false, exe, &args(&["config"]), &probe),
+        SudoRoute::NoPassword
+    );
+}
+
+#[test]
+fn sudoers_that_lets_another_command_run_without_a_password_leaves_it_to_a_human() {
+    let probe = sudoers_nopasswd_for("/usr/bin/true");
+    let exe = Path::new("/usr/bin/localrunner");
+    assert_eq!(
+        sudo_route(false, exe, &args(&["config"]), &probe),
+        SudoRoute::ByHand
+    );
+    assert_eq!(
+        sudo_route(false, exe, &args(&["config"]), |_| SudoProbe::Missing),
+        SudoRoute::Missing
+    );
+}
+
+#[test]
+fn a_channel_is_128_random_bits_and_this_process_and_nothing_else_is_accepted() {
     let a = new_channel().unwrap();
     let b = new_channel().unwrap();
     assert_ne!(a, b);
-    let [out, err] = channel_pipes(&a).unwrap();
-    assert_eq!(out, format!(r"\\.\pipe\localrunner-elevate-{a}-out"));
-    assert_eq!(err, format!(r"\\.\pipe\localrunner-elevate-{a}-err"));
+    let (hex, pid) = a.split_once('-').unwrap();
+    assert_eq!(hex.len(), 32);
+    assert_eq!(pid, std::process::id().to_string());
+    let ([out, err], parent) = channel_pipes(&a).unwrap();
+    assert_eq!(parent, std::process::id());
+    assert_eq!(out, format!(r"\\.\pipe\localrunner-elevate-{hex}-out"));
+    assert_eq!(err, format!(r"\\.\pipe\localrunner-elevate-{hex}-err"));
     for bad in [
         "",
-        "0123456789ABCDEF0123456789abcdef",
-        "0123456789abcdef0123456789abcde",
-        "0123456789abcdef0123456789abcdef0",
-        r"..\..\C:\Windows\x",
-        "0123456789abcdef/123456789abcdef",
+        "0123456789abcdef0123456789abcdef",
+        "0123456789ABCDEF0123456789abcdef-1",
+        "0123456789abcdef0123456789abcde-1",
+        "0123456789abcdef0123456789abcdef0-1",
+        "0123456789abcdef0123456789abcdef-",
+        "0123456789abcdef0123456789abcdef-x1",
+        "0123456789abcdef0123456789abcdef-99999999999",
+        "0123456789abcdef0123456789abcdef-4294967296",
+        r"..\..\C:\Windows\x-1",
+        "0123456789abcdef/123456789abcdef-1",
     ] {
         assert!(channel_pipes(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn untrusted_text_drops_control_and_escape_sequences() {
+    assert_eq!(
+        untrusted_text(b"ok\x1b[2J\x1b]0;title\x07 line\r\n\tnext\x00\x7f\xc2\x9b"),
+        "ok[2J]0;title line\n\tnext"
+    );
+    assert_eq!(untrusted_text("a\u{202E}b\u{2066}c".as_bytes()), "abc");
+    assert_eq!(untrusted_text(b"bad \xff byte"), "bad \u{FFFD} byte");
 }
 
 #[cfg(windows)]
@@ -231,8 +311,9 @@ mod windows {
     use lr_cli::config_edit::OutputChannel;
     use lr_cli::os_service::quote::windows_command_line;
     use std::io::Write;
+    use std::os::windows::io::AsRawHandle;
     use std::os::windows::process::CommandExt;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
@@ -262,26 +343,112 @@ mod windows {
         dir
     }
 
+    fn channel_with(out: &Sink, err: &Sink) -> (String, OutputChannel) {
+        let channel = new_channel().unwrap();
+        let pipes =
+            OutputChannel::open(&channel, Box::new(out.clone()), Box::new(err.clone())).unwrap();
+        (channel, pipes)
+    }
+
+    fn child(dir: &Path, channel: &str) -> std::process::Child {
+        Command::new(env!("CARGO_BIN_EXE_localrunner"))
+            .arg(format!("{ELEVATED_CHILD}={channel}"))
+            .arg("--state-dir")
+            .arg(dir)
+            .args(["profile", "check"])
+            .current_dir(dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
     #[test]
     fn the_child_output_arrives_through_the_channel_and_not_its_console() {
         let dir = scratch("channel");
-        let channel = new_channel().unwrap();
         let (out, err) = (Sink::default(), Sink::default());
-        let pipes =
-            OutputChannel::open(&channel, Box::new(out.clone()), Box::new(err.clone())).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_localrunner"))
-            .arg(format!("{ELEVATED_CHILD}={channel}"))
-            .arg("--state-dir")
-            .arg(&dir)
-            .args(["profile", "check"])
-            .current_dir(&dir)
-            .output()
-            .unwrap();
-        pipes.finish();
-        assert!(child.stdout.is_empty(), "{:?}", child.stdout);
-        assert!(child.stderr.is_empty(), "{:?}", child.stderr);
-        assert_ne!(child.status.code(), Some(0));
+        let (channel, pipes) = channel_with(&out, &err);
+        let process = child(&dir, &channel);
+        let code = pipes.serve(process.as_raw_handle()).unwrap();
+        let own = process.wait_with_output().unwrap();
+        assert!(own.stdout.is_empty(), "{:?}", own.stdout);
+        assert!(own.stderr.is_empty(), "{:?}", own.stderr);
+        assert_ne!(code, 0);
+        assert_eq!(Some(code), own.status.code());
         assert!(err.text().contains("profiles.toml"), "{}", err.text());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_foreign_client_that_connects_first_is_dropped_and_the_child_is_served() {
+        let dir = scratch("foreign");
+        let (out, err) = (Sink::default(), Sink::default());
+        let (channel, pipes) = channel_with(&out, &err);
+        let ([out_name, err_name], _) = channel_pipes(&channel).unwrap();
+        let mut foreign_out = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&out_name)
+            .unwrap();
+        let mut foreign_err = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&err_name)
+            .unwrap();
+        foreign_out.write_all(b"forged out\n").unwrap();
+        foreign_err.write_all(b"forged err\n").unwrap();
+        let process = child(&dir, &channel);
+        let code = pipes.serve(process.as_raw_handle()).unwrap();
+        let own = process.wait_with_output().unwrap();
+        assert_eq!(Some(code), own.status.code());
+        assert!(!out.text().contains("forged"), "{}", out.text());
+        assert!(!err.text().contains("forged"), "{}", err.text());
+        assert!(err.text().contains("profiles.toml"), "{}", err.text());
+        drop((foreign_out, foreign_err));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_foreign_client_holding_the_pipes_does_not_hang_the_parent() {
+        let (out, err) = (Sink::default(), Sink::default());
+        let (channel, pipes) = channel_with(&out, &err);
+        let ([out_name, err_name], _) = channel_pipes(&channel).unwrap();
+        let mut foreign_out = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&out_name)
+            .unwrap();
+        let foreign_err = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&err_name)
+            .unwrap();
+        foreign_out.write_all(b"forged\n").unwrap();
+        let process = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+            .arg("--version")
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        let code = pipes.serve(process.as_raw_handle()).unwrap();
+        assert_eq!(code, 0);
+        assert!(out.text().is_empty(), "{}", out.text());
+        assert!(err.text().is_empty(), "{}", err.text());
+        drop((foreign_out, foreign_err));
+    }
+
+    #[test]
+    fn a_child_sends_nothing_to_pipes_another_process_serves() {
+        let dir = scratch("server");
+        let (out, err) = (Sink::default(), Sink::default());
+        let real = new_channel().unwrap();
+        let pipes =
+            OutputChannel::open(&real, Box::new(out.clone()), Box::new(err.clone())).unwrap();
+        let (hex, _) = real.split_once('-').unwrap();
+        let claimed = format!("{hex}-4");
+        let process = child(&dir, &claimed);
+        let code = pipes.serve(process.as_raw_handle()).unwrap();
+        let own = process.wait_with_output().unwrap();
+        assert_eq!(code, 2);
+        assert!(out.text().is_empty(), "{}", out.text());
+        assert!(err.text().is_empty(), "{}", err.text());
+        let text = String::from_utf8_lossy(&own.stderr);
+        assert!(text.contains("not served by process 4"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -300,7 +467,7 @@ mod windows {
             Box::new(Sink::default())
         )
         .is_err());
-        first.finish();
+        drop(first);
     }
 
     #[test]
