@@ -1,0 +1,114 @@
+use lr_cli::config_edit::{resolve_with, validate, Target};
+use lr_cli::paths::{default_root, service_root, Layout};
+use std::path::PathBuf;
+
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("lr-cfg-target-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn custom(name: &str) -> (Layout, PathBuf) {
+    let dir = scratch(name);
+    (Layout::new(dir.clone(), dir.clone()), dir)
+}
+
+#[test]
+fn targets_parse() {
+    assert_eq!("broker".parse::<Target>().unwrap(), Target::Broker);
+    assert_eq!("hub".parse::<Target>().unwrap(), Target::Hub);
+    assert_eq!("logging".parse::<Target>().unwrap(), Target::Logging);
+    assert_eq!(
+        "runner:ci".parse::<Target>().unwrap(),
+        Target::Runner("ci".into())
+    );
+    assert!("runner:".parse::<Target>().is_err());
+    assert!("nope".parse::<Target>().is_err());
+}
+
+#[test]
+fn broker_resolves_to_the_service_file_when_the_service_is_installed() {
+    let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
+    let with = resolve_with(&layout, &Target::Broker, true).unwrap();
+    let without = resolve_with(&layout, &Target::Broker, false).unwrap();
+    assert_eq!(with, service_root().join("policy.toml"));
+    assert_eq!(without, layout.config_file("policy.toml"));
+}
+
+#[test]
+fn custom_state_dir_ignores_the_installed_service() {
+    let (layout, _) = custom("custom");
+    let path = resolve_with(&layout, &Target::Broker, true).unwrap();
+    assert_eq!(path, layout.config_file("policy.toml"));
+}
+
+#[test]
+fn runner_prefers_own_copy() {
+    let (layout, _) = custom("runner");
+    let template = resolve_with(&layout, &Target::Runner("a".into()), false).unwrap();
+    assert_eq!(template, layout.config_file("runner.toml"));
+    std::fs::create_dir_all(layout.runner_dir("a")).unwrap();
+    std::fs::write(layout.runner_dir("a").join("runner.toml"), "").unwrap();
+    let own = resolve_with(&layout, &Target::Runner("a".into()), false).unwrap();
+    assert_eq!(own, layout.runner_dir("a").join("runner.toml"));
+}
+
+#[test]
+fn policy_check_without_file_uses_resolved_path() {
+    let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
+    let appdata = layout.config_file("policy.toml");
+    let resolved = resolve_with(&layout, &Target::Broker, true).unwrap();
+    assert_ne!(resolved, appdata);
+    assert_eq!(resolved, service_root().join("policy.toml"));
+}
+
+#[test]
+fn hub_and_logging_resolve_to_the_config_dir() {
+    let (layout, _) = custom("files");
+    assert_eq!(
+        resolve_with(&layout, &Target::Hub, false).unwrap(),
+        layout.config_file("hub-policy.toml")
+    );
+    assert_eq!(
+        resolve_with(&layout, &Target::Logging, false).unwrap(),
+        layout.config_file("logging.toml")
+    );
+}
+
+#[test]
+fn validate_policy_rejects_unknown_key() {
+    let (layout, _) = custom("policy");
+    assert!(validate(&Target::Broker, "", &layout).is_ok());
+    assert!(validate(&Target::Broker, "no_such_key = 1\n", &layout).is_err());
+}
+
+#[test]
+fn validate_hub_and_logging_reject_garbage() {
+    let (layout, _) = custom("hubl");
+    assert!(validate(&Target::Hub, "no_such_key = 1\n", &layout).is_err());
+    assert!(validate(&Target::Logging, "no_such_key = 1\n", &layout).is_err());
+}
+
+const RUNNER: &str = "[env]\npath = \"/usr/bin\"\n";
+
+#[test]
+fn validate_runner_refuses_a_new_unknown_key() {
+    let (layout, dir) = custom("newkey");
+    std::fs::write(dir.join("runner.toml"), RUNNER).unwrap();
+    let target = Target::Runner("a".into());
+    let edited = format!("{RUNNER}misspelled = 1\n");
+    assert!(validate(&target, &edited, &layout).is_err());
+    assert!(validate(&target, RUNNER, &layout).unwrap().is_empty());
+}
+
+#[test]
+fn validate_runner_keeps_old_unknown_key_warning() {
+    let (layout, dir) = custom("oldkey");
+    let old = format!("{RUNNER}misspelled = 1\n");
+    std::fs::write(dir.join("runner.toml"), &old).unwrap();
+    let target = Target::Runner("a".into());
+    let edited = format!("{old}[queue]\n").replace("[queue]\n", "");
+    let warnings = validate(&target, &edited, &layout).unwrap();
+    assert_eq!(warnings.len(), 1);
+}

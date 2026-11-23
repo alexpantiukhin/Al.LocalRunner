@@ -133,9 +133,16 @@ impl Layout {
     /// the default layout of a user (which uses the service's IPC names) on a machine where
     /// the broker service is installed.
     pub fn broker_is_service(&self) -> bool {
-        self.is_service()
-            || (self.suffix.is_empty()
-                && crate::os_service::service_installed(crate::os_service::Os::current()))
+        self.broker_is_service_with(
+            self.suffix.is_empty()
+                && crate::os_service::service_installed(crate::os_service::Os::current()),
+        )
+    }
+
+    /// [`Layout::broker_is_service`] with the answer to "is the service installed" given by the
+    /// caller; it only counts for the layouts that use the fixed IPC names.
+    pub fn broker_is_service_with(&self, service_installed: bool) -> bool {
+        self.is_service() || (self.suffix.is_empty() && service_installed)
     }
 
     /// The layout from flags, then [`STATE_DIR_ENV`] and [`CONFIG_DIR_ENV`], then the default.

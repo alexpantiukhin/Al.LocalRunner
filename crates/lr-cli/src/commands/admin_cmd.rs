@@ -105,7 +105,10 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
             println!("warning: {note}");
         }
     }
-    let path = file.unwrap_or_else(|| layout.config_file("policy.toml"));
+    let path = match file {
+        Some(f) => f,
+        None => crate::config_edit::resolve(layout, &crate::config_edit::Target::Broker)?,
+    };
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
