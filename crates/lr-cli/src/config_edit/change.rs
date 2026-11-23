@@ -247,8 +247,13 @@ fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
             Ok(mut out) => {
                 if let Err(e) = std::io::copy(&mut source, &mut out) {
                     drop(out);
-                    let _ = std::fs::remove_file(&backup);
-                    return Err(fail(e));
+                    let removed = std::fs::remove_file(&backup);
+                    return Err(backup_failure(
+                        path,
+                        &e.to_string(),
+                        &backup,
+                        removed.err().map(|r| r.to_string()).as_deref(),
+                    ));
                 }
                 return Ok(backup);
             }
@@ -259,12 +264,29 @@ fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
     unreachable!()
 }
 
-const TEMP_ATTEMPTS: u32 = 100;
+/// The error text for a backup whose copy failed: names the copy error and, when the partial backup could not be removed, that file and why.
+pub fn backup_failure(
+    path: &Path,
+    copy_error: &str,
+    partial: &Path,
+    remove_error: Option<&str>,
+) -> String {
+    let mut message = format!("cannot back up {}: {copy_error}", path.display());
+    if let Some(e) = remove_error {
+        message.push_str(&format!(
+            "; the partial backup {} could not be removed: {e}",
+            partial.display()
+        ));
+    }
+    message
+}
 
-fn create_temp(path: &Path) -> Result<(PathBuf, File), String> {
+const TEMP_ATTEMPTS: u64 = 100;
+
+fn create_temp(path: &Path, first: u64) -> Result<(PathBuf, File), String> {
     let mut last = None;
-    for _ in 0..TEMP_ATTEMPTS {
-        let temp = sibling(path, &format!(".tmp-{}", unique()))?;
+    for n in first..first + TEMP_ATTEMPTS {
+        let temp = sibling(path, &format!(".tmp-{}-{n}", std::process::id()))?;
         match create_exclusive(&temp) {
             Ok(file) => return Ok((temp, file)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => last = Some(e),
@@ -298,6 +320,19 @@ fn fill_temp(
 
 /// Writes `change.after` over the file through a unique temporary file and a rename; an existing file is copied to `<name>.bak-<UTC yyyymmddThhmmss>` first (a numeric suffix keeps an older backup of the same second) and keeps its permissions. A file whose state cannot be read is an error and stays untouched. Returns the backup path, or the file itself when there was nothing to back up.
 pub fn write(change: &Change, clock: &dyn Clock) -> Result<PathBuf, String> {
+    write_with_counter(
+        change,
+        clock,
+        UNIQUE.fetch_add(TEMP_ATTEMPTS, Ordering::Relaxed),
+    )
+}
+
+/// [`write`] with the first number of the temporary file name `<name>.tmp-<pid>-<n>` given by the caller; a taken name makes it try the next number.
+pub fn write_with_counter(
+    change: &Change,
+    clock: &dyn Clock,
+    first: u64,
+) -> Result<PathBuf, String> {
     let path = &change.path;
     let original = match std::fs::metadata(path) {
         Ok(meta) => Some(meta),
@@ -312,7 +347,7 @@ pub fn write(change: &Change, clock: &dyn Clock) -> Result<PathBuf, String> {
         .as_ref()
         .filter(|m| m.is_file())
         .map(|m| m.permissions());
-    let (temp, file) = create_temp(path)?;
+    let (temp, file) = create_temp(path, first)?;
     if let Err(e) = fill_temp(&temp, file, &change.after, permissions.as_ref()) {
         let _ = std::fs::remove_file(&temp);
         return Err(e);

@@ -1,5 +1,7 @@
 use lr_abstractions::fakes::ManualClock;
-use lr_cli::config_edit::{needs_rights, plan, write, Change, Target};
+use lr_cli::config_edit::{
+    backup_failure, needs_rights, plan, write, write_with_counter, Change, Target,
+};
 use lr_cli::paths::Layout;
 use lr_core::Timestamp;
 use std::path::PathBuf;
@@ -230,21 +232,35 @@ fn write_keeps_the_permissions_of_the_file() {
 }
 
 #[test]
-fn existing_files_at_candidate_temp_names_survive() {
+fn a_taken_first_temp_name_is_skipped_and_left_alone() {
     let (_, dir) = scratch("candidates");
     let path = dir.join("logging.toml");
     std::fs::write(&path, "old\n").unwrap();
-    let pid = std::process::id();
-    let foreign: Vec<PathBuf> = (0..60)
-        .map(|n| dir.join(format!("logging.toml.tmp-{pid}-{n}")))
-        .collect();
-    for f in &foreign {
-        std::fs::write(f, "mine").unwrap();
-    }
+    let first = dir.join(format!("logging.toml.tmp-{}-7", std::process::id()));
+    std::fs::write(&first, [0u8, 1, 2, 255]).unwrap();
     let clock = ManualClock::new(Timestamp(1_795_459_151_000));
-    write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
+    write_with_counter(&change(path.clone(), "old\n", "new\n"), &clock, 7).unwrap();
+    assert_eq!(std::fs::read(&first).unwrap(), vec![0u8, 1, 2, 255]);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
-    for f in &foreign {
-        assert_eq!(std::fs::read_to_string(f).unwrap(), "mine");
-    }
+    assert!(!dir
+        .join(format!("logging.toml.tmp-{}-8", std::process::id()))
+        .exists());
+}
+
+#[test]
+fn backup_failure_names_the_partial_file_that_stayed() {
+    let partial = PathBuf::from("x.toml.bak-1");
+    let kept = backup_failure(
+        &PathBuf::from("x.toml"),
+        "disk full",
+        &partial,
+        Some("access denied"),
+    );
+    assert!(kept.contains("cannot back up x.toml: disk full"), "{kept}");
+    assert!(
+        kept.contains("partial backup x.toml.bak-1 could not be removed: access denied"),
+        "{kept}"
+    );
+    let clean = backup_failure(&PathBuf::from("x.toml"), "disk full", &partial, None);
+    assert!(!clean.contains("partial"), "{clean}");
 }
