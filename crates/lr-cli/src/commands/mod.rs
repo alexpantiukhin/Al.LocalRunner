@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod policy_edit_cmd;
 pub mod profile_cmd;
 pub mod profile_summary;
 pub mod read_args;
@@ -448,6 +449,42 @@ async fn config(
     config_cmd::edit(layout, args, elevated_child).await
 }
 
+async fn policy(
+    layout: &Layout,
+    action: PolicyAction,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    use policy_edit_cmd::{Record, RecordArgs};
+    let (record, flags) = match action {
+        PolicyAction::Check { file } => return admin_cmd::policy_check(layout, file).await,
+        PolicyAction::Reload => return admin_cmd::policy_reload(layout).await,
+        PolicyAction::AllowSecret { name, label, flags } => {
+            (Record::AllowSecret { name, label }, flags)
+        }
+        PolicyAction::RemoveSecret { name, label, flags } => {
+            (Record::RemoveSecret { name, label }, flags)
+        }
+        PolicyAction::AllowService { name, label, flags } => {
+            (Record::AllowService { name, label }, flags)
+        }
+        PolicyAction::RemoveService { name, label, flags } => {
+            (Record::RemoveService { name, label }, flags)
+        }
+        PolicyAction::AddLocalUser { name, label, flags } => {
+            (Record::AddLocalUser { name, label }, flags)
+        }
+        PolicyAction::RemoveLocalUser { name, flags } => (Record::RemoveLocalUser { name }, flags),
+        PolicyAction::AddShared { members, flags } => (Record::AddShared { members }, flags),
+        PolicyAction::RemoveShared { members, flags } => (Record::RemoveShared { members }, flags),
+    };
+    let args = RecordArgs {
+        record,
+        dry_run: flags.dry_run,
+        restart: flags.restart,
+    };
+    policy_edit_cmd::edit(layout, args, elevated_child).await
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let elevated_child = cli.is_elevated_child();
@@ -531,10 +568,7 @@ pub async fn run(cli: Cli) -> i32 {
             let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
             down_cmd::down_cli(&layout, names, cancel, yes, wait).await
         }
-        Command::Policy { action } => match action {
-            PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
-            PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,
-        },
+        Command::Policy { action } => policy(&layout, action, elevated_child).await,
         Command::Config { action } => config(&layout, action, elevated_child).await,
         Command::Logging {
             action: LoggingAction::Reload,

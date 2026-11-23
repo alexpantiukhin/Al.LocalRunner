@@ -49,23 +49,29 @@ pub fn target_word(target: &Target) -> String {
     }
 }
 
-/// The arguments of the elevated re-run of `args`: the state and configuration directories
-/// given explicitly (the elevated process starts with a fresh environment; for the broker
-/// service's file the service's own directories), then the same command without `--dry-run`.
-pub fn child_command(layout: &Layout, args: &EditArgs, change: &Change) -> Vec<String> {
+/// The directories the elevated re-run of a command that writes `change` is given
+/// explicitly (the elevated process starts with a fresh environment): for the broker service's
+/// file the service's own directories, else those of `layout`.
+pub fn elevated_dirs(layout: &Layout, change: &Change) -> Vec<String> {
     let service = service_root();
     let (root, config) = if change.path.starts_with(&service) {
         (service.clone(), service)
     } else {
         (layout.root.clone(), layout.config.clone())
     };
-    let mut out = vec![
+    vec![
         "--state-dir".to_string(),
         root.display().to_string(),
         "--config-dir".to_string(),
         config.display().to_string(),
-        "config".to_string(),
-    ];
+    ]
+}
+
+/// The arguments of the elevated re-run of `args`: [`elevated_dirs`], then the same command
+/// without `--dry-run`.
+pub fn child_command(layout: &Layout, args: &EditArgs, change: &Change) -> Vec<String> {
+    let mut out = elevated_dirs(layout, change);
+    out.push("config".to_string());
     match &args.edit {
         Edit::Set { key, value, string } => {
             out.extend([

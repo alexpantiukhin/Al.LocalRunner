@@ -1,6 +1,6 @@
 //! Arguments of the grouped commands (spec 11.1).
 
-use clap::{Subcommand, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Parses `--mem`: megabytes (`6144`) or a number with `m` or `g` (`512m`, `6g`, `g` = 1024 MB).
@@ -53,6 +53,92 @@ pub enum PolicyAction {
     },
     /// Check and apply `policy.toml` (local channel only).
     Reload,
+    /// Allow a secret for a client label in `[[secrets.allow]]`, then reload the broker.
+    AllowSecret {
+        /// The secret name.
+        name: String,
+        /// The client label (the label of its `[[local_user]]` or client key).
+        #[arg(long, allow_hyphen_values = true)]
+        label: String,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Take a secret from a client label in `[[secrets.allow]]`.
+    RemoveSecret {
+        /// The secret name.
+        name: String,
+        /// The client label.
+        #[arg(long, allow_hyphen_values = true)]
+        label: String,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Allow a service for a client label in `[[services.allow]]`.
+    AllowService {
+        /// The service name.
+        name: String,
+        /// The client label.
+        #[arg(long, allow_hyphen_values = true)]
+        label: String,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Take a service from a client label in `[[services.allow]]`.
+    RemoveService {
+        /// The service name.
+        name: String,
+        /// The client label.
+        #[arg(long, allow_hyphen_values = true)]
+        label: String,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Allow an OS user on the local channel with a `[[local_user]]` entry.
+    AddLocalUser {
+        /// The OS account name.
+        #[arg(value_name = "OS_USER")]
+        name: String,
+        /// The client label of that user; empty when omitted.
+        #[arg(long, allow_hyphen_values = true)]
+        label: Option<String>,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Remove the `[[local_user]]` entry of an OS user.
+    RemoveLocalUser {
+        /// The OS account name.
+        #[arg(value_name = "OS_USER")]
+        name: String,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Add a `[[shared]]` block: client labels and runner names that reach one shared disk.
+    AddShared {
+        /// The members (at least two different names).
+        #[arg(required = true, value_name = "MEMBER")]
+        members: Vec<String>,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+    /// Remove the `[[shared]]` block with exactly these members, in any order.
+    RemoveShared {
+        /// The members.
+        #[arg(required = true, value_name = "MEMBER")]
+        members: Vec<String>,
+        #[command(flatten)]
+        flags: RecordFlags,
+    },
+}
+
+/// The flags of every `policy` command that changes a record.
+#[derive(Args, Debug, Clone, Copy)]
+pub struct RecordFlags {
+    /// Show the change and write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Restart the broker when the list applies only at its next start (connections drop).
+    #[arg(long)]
+    pub restart: bool,
 }
 
 /// Parses the target of `config`: `broker`, `hub`, `runner:<name>` or `logging`.
