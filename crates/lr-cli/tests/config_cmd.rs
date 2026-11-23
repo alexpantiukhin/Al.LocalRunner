@@ -1,10 +1,14 @@
 mod common;
 
-use common::fake_roles::{with_runner, FakeControl, FakeElevator};
+use common::fake_roles::{with_runner, FakeControl, FakeElevator, FakeProcesses, FakeRoles};
 use common::TempDir;
 use lr_cli::commands::config_cmd::{edit_with, get, show, Edit, EditArgs};
+use lr_cli::commands::down_cmd::stop_one_with;
 use lr_cli::commands::down_cmd::Target as Role;
-use lr_cli::config_edit::{restart_line, restart_plan, RestartPlan, Target};
+use lr_cli::config_edit::{
+    restart_line, restart_plan, restart_process, RestartOutcome, RestartPlan, Target,
+    EXIT_WRITTEN_STEP_FAILED,
+};
 use lr_cli::os_service::Os;
 use lr_cli::paths::Layout;
 use std::path::PathBuf;
@@ -440,7 +444,7 @@ fn a_runner_restart_stops_and_starts_only_that_runner() {
     assert_eq!(
         plan,
         RestartPlan::Process {
-            stop: vec!["my box".into()],
+            stop: Role::Runner("my box".into()),
             start: ["runner", "run", "--name", "my box", "--background"]
                 .map(String::from)
                 .to_vec(),
@@ -469,4 +473,175 @@ fn a_runner_restart_stops_and_starts_only_that_runner() {
         restart_line(Os::Windows, &layout, &service),
         "Restart-Service AlLocalRunner-x"
     );
+}
+
+#[tokio::test]
+async fn a_child_that_wrote_but_failed_after_still_lets_the_parent_reload() {
+    let dir = TempDir::new("config-child-partial");
+    let layout = runner_layout(&dir, RUNNER);
+    let roles = FakeControl::new(true, true);
+    let partial = FakeElevator::new(Ok(EXIT_WRITTEN_STEP_FAILED));
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "\"debug\""),
+        false,
+        &roles,
+        &partial,
+    )
+    .await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert_eq!(
+        roles.reloads(),
+        [Role::Runner("r1".into()), Role::Hub],
+        "the user roles are reloaded after a written file"
+    );
+
+    let roles = FakeControl::new(true, true);
+    let nothing = FakeElevator::new(Ok(1));
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "\"debug\""),
+        false,
+        &roles,
+        &nothing,
+    )
+    .await;
+    assert_eq!(r.code, Ok(1), "{} {}", r.out, r.err);
+    assert!(roles.reloads().is_empty(), "nothing was written");
+}
+
+#[tokio::test]
+async fn the_child_says_written_but_failed_when_the_broker_refuses() {
+    let dir = TempDir::new("config-child-refused");
+    let layout = runner_layout(&dir, RUNNER);
+    std::fs::write(
+        layout.config_file("policy.toml"),
+        "[listen]\naddress = []\n",
+    )
+    .unwrap();
+    let mut roles = FakeControl::new(true, true);
+    roles.refuse = Some("policy.toml: no".into());
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "\"debug\""),
+        true,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(EXIT_WRITTEN_STEP_FAILED), "{} {}", r.out, r.err);
+    assert_eq!(roles.reloads(), [Role::Broker]);
+    assert!(std::fs::read_to_string(layout.config_file("logging.toml"))
+        .unwrap()
+        .contains("debug"));
+
+    let roles = FakeControl::new(true, true);
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "info"),
+        true,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+}
+
+fn start_args(name: &str) -> Vec<String> {
+    ["runner", "run", "--name", name, "--background"]
+        .map(String::from)
+        .to_vec()
+}
+
+#[tokio::test]
+async fn a_restart_refused_by_ups_check_stops_nothing() {
+    let dir = TempDir::new("config-restart-refused");
+    let layout = with_runner(&dir);
+    let procs = FakeProcesses::new(Err("the runner refuses to start: same user".into()), true);
+    let mut err = Vec::new();
+    let role = Role::Runner("r1".into());
+    let outcome = restart_process(
+        &procs,
+        &layout,
+        &role,
+        &start_args("r1"),
+        std::time::Duration::from_secs(15),
+        &mut err,
+    )
+    .await;
+    assert_eq!(
+        outcome,
+        RestartOutcome::Refused("the runner refuses to start: same user".into())
+    );
+    assert!(procs.stopped.lock().unwrap().is_empty());
+    assert!(procs.started.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restarted_role_that_never_answers_is_not_reported_restarted() {
+    let dir = TempDir::new("config-restart-silent");
+    let layout = with_runner(&dir);
+    let procs = FakeProcesses::new(Ok(Some("same user".into())), false);
+    let mut err = Vec::new();
+    let role = Role::Runner("runner".into());
+    let outcome = restart_process(
+        &procs,
+        &layout,
+        &role,
+        &start_args("runner"),
+        std::time::Duration::from_secs(15),
+        &mut err,
+    )
+    .await;
+    assert_eq!(outcome, RestartOutcome::NotAnswering);
+    assert_eq!(
+        *procs.stopped.lock().unwrap(),
+        [Role::Runner("runner".into())]
+    );
+    assert_eq!(*procs.started.lock().unwrap(), [start_args("runner")]);
+    assert!(String::from_utf8(err)
+        .unwrap()
+        .contains("warning: same user"));
+    assert!(procs.probes.load(std::sync::atomic::Ordering::SeqCst) > 1);
+
+    let answering = FakeProcesses::new(Ok(None), true);
+    let outcome = restart_process(
+        &answering,
+        &layout,
+        &role,
+        &start_args("runner"),
+        std::time::Duration::from_secs(15),
+        &mut Vec::new(),
+    )
+    .await;
+    assert_eq!(outcome, RestartOutcome::Restarted);
+}
+
+#[tokio::test]
+async fn a_runner_named_like_a_role_is_stopped_alone() {
+    let wait = std::time::Duration::from_secs(1);
+    for name in ["runner", "hub", "broker"] {
+        let roles = FakeRoles::new(false, 0);
+        let code = stop_one_with(Role::Runner(name.into()), wait, &roles).await;
+        assert_eq!(code, Ok(0), "{name}");
+        let told: Vec<String> = roles
+            .told
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
+        assert_eq!(told, [name], "{name}");
+        assert_eq!(roles.hub_stops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(roles.broker_stops(), 0);
+    }
+    let roles = FakeRoles::new(false, 0);
+    assert_eq!(stop_one_with(Role::Hub, wait, &roles).await, Ok(0));
+    assert!(roles.told.lock().unwrap().is_empty());
+    assert_eq!(roles.hub_stops.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let roles = FakeRoles::new(false, 0);
+    assert_eq!(stop_one_with(Role::Broker, wait, &roles).await, Ok(0));
+    assert_eq!(roles.broker_stops(), 1);
+    assert!(roles.told.lock().unwrap().is_empty());
 }

@@ -94,8 +94,8 @@ pub trait RoleControl {
     ) -> Result<Outcome, String>;
     /// The command a user runs to restart `role`.
     fn restart_command(&self, layout: &Layout, role: &Role) -> String;
-    /// Restarts `role`; the exit code of the restart.
-    async fn restart(&self, layout: &Layout, role: &Role) -> Result<i32, String>;
+    /// Restarts `role`; a warning goes to `err`.
+    async fn restart(&self, layout: &Layout, role: &Role, err: &mut dyn Write) -> RestartOutcome;
 }
 
 /// The roles of this machine: the reload channels of the roles, the OS service manager for a
@@ -110,8 +110,8 @@ pub enum RestartPlan {
     /// The role is a user process: `down` of these names, then a start with these arguments
     /// (without the directories).
     Process {
-        /// The names given to `down`.
-        stop: Vec<String>,
+        /// The role stopped, typed: a runner named `runner`, `hub` or `broker` is that runner.
+        stop: Role,
         /// The arguments that start this one role again.
         start: Vec<String>,
     },
@@ -129,7 +129,7 @@ pub fn restart_plan(role: &Role, service: Option<String>) -> RestartPlan {
         Role::Runner(name) => vec!["runner".into(), "run".into(), "--name".into(), name.clone()],
     };
     RestartPlan::Process {
-        stop: vec![role_name(role)],
+        stop: role.clone(),
         start: start
             .into_iter()
             .chain(std::iter::once("--background".to_string()))
@@ -164,7 +164,7 @@ pub fn restart_line(os: Os, layout: &Layout, plan: &RestartPlan) -> String {
                 .clone()
                 .chain(dirs.iter().cloned())
                 .chain(std::iter::once("down".to_string()))
-                .chain(stop.iter().cloned())
+                .chain(std::iter::once(role_name(stop)))
                 .chain(std::iter::once("--wait".to_string()))
                 .collect();
             let up: Vec<String> = program
@@ -248,27 +248,117 @@ impl RoleControl for LiveRoles {
         )
     }
 
-    async fn restart(&self, layout: &Layout, role: &Role) -> Result<i32, String> {
+    async fn restart(&self, layout: &Layout, role: &Role, err: &mut dyn Write) -> RestartOutcome {
         match restart_plan(role, service_of(layout, role)) {
             RestartPlan::Service(line) => {
-                tokio::task::spawn_blocking(move || run_shell_line(&line))
-                    .await
-                    .map_err(|e| e.to_string())?
+                match tokio::task::spawn_blocking(move || run_shell_line(&line)).await {
+                    Ok(Ok(0)) => RestartOutcome::Restarted,
+                    Ok(Ok(c)) => RestartOutcome::Failed(format!("exit code {c}")),
+                    Ok(Err(e)) => RestartOutcome::Failed(e),
+                    Err(e) => RestartOutcome::Failed(e.to_string()),
+                }
             }
             RestartPlan::Process { stop, start } => {
-                let wait = Some(down_cmd::DEFAULT_EXIT_WAIT);
-                let code = down_cmd::down_cli(layout, stop, false, true, wait).await?;
-                if code != 0 {
-                    return Ok(code);
-                }
-                let exe =
-                    std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-                let argv: Vec<String> = start.into_iter().chain(up_cmd::dirs(layout)).collect();
-                up_cmd::starter(exe)(&argv)
-                    .map(|_| 0)
-                    .map_err(|e| format!("cannot start {}: {e}", role_name(role)))
+                restart_process(
+                    &LiveProcesses,
+                    layout,
+                    &stop,
+                    &start,
+                    up_cmd::STARTED_WITHIN,
+                    err,
+                )
+                .await
             }
         }
+    }
+}
+
+/// What a restart came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartOutcome {
+    /// The role was started again and answers on its channel.
+    Restarted,
+    /// The role was started again but did not answer within the wait.
+    NotAnswering,
+    /// The start was refused before anything was stopped, with `up`'s reason.
+    Refused(String),
+    /// Stopping or starting failed.
+    Failed(String),
+}
+
+/// Stopping, starting and probing one role that runs as a user process.
+#[async_trait(?Send)]
+pub trait RoleProcesses {
+    /// The check `up` makes before it starts `role`: `Ok(Some(risk))` warns, `Err` refuses.
+    fn start_verdict(&self, layout: &Layout, role: &Role) -> Result<Option<String>, String>;
+    /// Stops exactly `role` and waits until it has exited; the exit code of that stop.
+    async fn stop(&self, layout: &Layout, role: &Role) -> Result<i32, String>;
+    /// Starts the role with `argv` (without the directories) in the background.
+    fn start(&self, layout: &Layout, argv: &[String]) -> Result<(), String>;
+    /// Whether `role` answers on its channel.
+    async fn answers(&self, layout: &Layout, role: &Role) -> bool;
+}
+
+/// The processes of this machine: `up`'s same-user check and readiness probe, `down` of one
+/// typed role, and a background start of this binary.
+pub struct LiveProcesses;
+
+#[async_trait(?Send)]
+impl RoleProcesses for LiveProcesses {
+    fn start_verdict(&self, layout: &Layout, role: &Role) -> Result<Option<String>, String> {
+        match role {
+            Role::Runner(name) => up_cmd::runner_start_verdict(layout, name),
+            _ => Ok(None),
+        }
+    }
+
+    async fn stop(&self, layout: &Layout, role: &Role) -> Result<i32, String> {
+        down_cmd::stop_one(layout, role.clone(), down_cmd::DEFAULT_EXIT_WAIT).await
+    }
+
+    fn start(&self, layout: &Layout, argv: &[String]) -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
+        let argv: Vec<String> = argv.iter().cloned().chain(up_cmd::dirs(layout)).collect();
+        up_cmd::starter(exe)(&argv)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    async fn answers(&self, layout: &Layout, role: &Role) -> bool {
+        up_cmd::role_answers(layout, role).await
+    }
+}
+
+/// Restarts one user-process role: `up`'s start check first (a refusal stops nothing), then a
+/// stop of exactly that role, a start with `start`, and `up`'s wait of at most `within` for
+/// the role to answer. A warning of the check goes to `err`.
+pub async fn restart_process(
+    procs: &dyn RoleProcesses,
+    layout: &Layout,
+    role: &Role,
+    start: &[String],
+    within: std::time::Duration,
+    err: &mut dyn Write,
+) -> RestartOutcome {
+    match procs.start_verdict(layout, role) {
+        Ok(None) => {}
+        Ok(Some(risk)) => {
+            let _ = writeln!(err, "warning: {risk}");
+        }
+        Err(refusal) => return RestartOutcome::Refused(refusal),
+    }
+    match procs.stop(layout, role).await {
+        Ok(0) => {}
+        Ok(c) => return RestartOutcome::Failed(format!("the stop ended with exit code {c}")),
+        Err(e) => return RestartOutcome::Failed(e),
+    }
+    if let Err(e) = procs.start(layout, start) {
+        return RestartOutcome::Failed(format!("cannot start it: {e}"));
+    }
+    let answered = up_cmd::poll_until(|| procs.answers(layout, role), |a: &bool| *a, within).await;
+    match answered {
+        true => RestartOutcome::Restarted,
+        false => RestartOutcome::NotAnswering,
     }
 }
 
@@ -368,6 +458,10 @@ fn show(out: &mut dyn Write, change: &Change) {
     }
 }
 
+/// The exit code of an elevated child that wrote the file but whose reload or restart of the
+/// broker failed; any other non-zero code of the child means nothing was written.
+pub const EXIT_WRITTEN_STEP_FAILED: i32 = 75;
+
 /// Which roles a process reloads and restarts after the write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -432,10 +526,11 @@ pub async fn run_change_with(
         );
         let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
         let code = rerun_elevated(elevator, Os::current(), &exe, &opts.args, err);
-        if code != 0 {
+        if code != 0 && code != EXIT_WRITTEN_STEP_FAILED {
             return Ok(code);
         }
-        return Ok(after_write(Phase::User, layout, target, &change, &opts, roles, out, err).await);
+        let user = after_write(Phase::User, layout, target, &change, &opts, roles, out, err).await;
+        return Ok(if code == 0 { user } else { 1 });
     }
     if !noop {
         let backup = write(&change, roles.clock())?;
@@ -444,11 +539,25 @@ pub async fn run_change_with(
             false => writeln!(out, "written: {path} (backup: {})", backup.display()),
         };
     }
-    let phase = match opts.elevated_child {
-        true => Phase::Elevated,
-        false => Phase::All,
-    };
-    Ok(after_write(phase, layout, target, &change, &opts, roles, out, err).await)
+    if opts.elevated_child {
+        let code = after_write(
+            Phase::Elevated,
+            layout,
+            target,
+            &change,
+            &opts,
+            roles,
+            out,
+            err,
+        )
+        .await;
+        return Ok(if code == 0 {
+            0
+        } else {
+            EXIT_WRITTEN_STEP_FAILED
+        });
+    }
+    Ok(after_write(Phase::All, layout, target, &change, &opts, roles, out, err).await)
 }
 
 /// The reload and restart phase after the file is written: reloads the roles of `target` that
@@ -526,25 +635,24 @@ pub async fn after_write(
             out,
             "restarting {name}: its connections drop and reconnect ({command})"
         );
-        match roles.restart(layout, &role).await {
-            Ok(0) => {
+        let outcome = roles.restart(layout, &role, err).await;
+        let line = match outcome {
+            RestartOutcome::Restarted => {
                 let _ = writeln!(out, "{name}: restarted");
+                continue;
             }
-            Ok(c) => {
-                code = 1;
-                let _ = writeln!(
-                    err,
-                    "{name}: the restart ended with exit code {c}; run it by hand: {command}"
-                );
+            RestartOutcome::NotAnswering => format!(
+                "{name}: started but not answering within {} s; see logs/ in {}",
+                up_cmd::STARTED_WITHIN.as_secs(),
+                layout.root.display()
+            ),
+            RestartOutcome::Refused(why) => format!("runner {name}: not started: {why}"),
+            RestartOutcome::Failed(e) => {
+                format!("{name}: cannot restart ({e}); run it by hand: {command}")
             }
-            Err(e) => {
-                code = 1;
-                let _ = writeln!(
-                    err,
-                    "{name}: cannot restart ({e}); run it by hand: {command}"
-                );
-            }
-        }
+        };
+        code = 1;
+        let _ = writeln!(err, "{line}");
     }
     code
 }

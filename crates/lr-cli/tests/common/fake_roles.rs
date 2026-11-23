@@ -246,9 +246,10 @@ impl lr_cli::config_edit::RoleControl for FakeControl {
         &self,
         _layout: &Layout,
         role: &lr_cli::commands::down_cmd::Target,
-    ) -> Result<i32, String> {
+        _err: &mut dyn std::io::Write,
+    ) -> lr_cli::config_edit::RestartOutcome {
         self.restarts.lock().unwrap().push(role.clone());
-        Ok(0)
+        lr_cli::config_edit::RestartOutcome::Restarted
     }
 }
 
@@ -278,5 +279,57 @@ impl lr_cli::config_edit::Elevator for FakeElevator {
             .unwrap()
             .push((exe.to_path_buf(), args.to_vec()));
         self.answer.clone()
+    }
+}
+
+/// User-process roles for a restart: `verdict` is `up`'s start check, `answers` whether the
+/// started role ever answers; stops and starts are recorded.
+pub struct FakeProcesses {
+    pub verdict: Result<Option<String>, String>,
+    pub answers: bool,
+    pub stopped: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
+    pub started: Mutex<Vec<Vec<String>>>,
+    pub probes: AtomicUsize,
+}
+
+impl FakeProcesses {
+    pub fn new(verdict: Result<Option<String>, String>, answers: bool) -> FakeProcesses {
+        FakeProcesses {
+            verdict,
+            answers,
+            stopped: Mutex::new(Vec::new()),
+            started: Mutex::new(Vec::new()),
+            probes: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl lr_cli::config_edit::RoleProcesses for FakeProcesses {
+    fn start_verdict(
+        &self,
+        _layout: &Layout,
+        _role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<Option<String>, String> {
+        self.verdict.clone()
+    }
+
+    async fn stop(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<i32, String> {
+        self.stopped.lock().unwrap().push(role.clone());
+        Ok(0)
+    }
+
+    fn start(&self, _layout: &Layout, argv: &[String]) -> Result<(), String> {
+        self.started.lock().unwrap().push(argv.to_vec());
+        Ok(())
+    }
+
+    async fn answers(&self, _layout: &Layout, _role: &lr_cli::commands::down_cmd::Target) -> bool {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+        self.answers
     }
 }

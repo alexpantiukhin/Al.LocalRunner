@@ -9,8 +9,9 @@ mod validate;
 mod value;
 
 pub use apply::{
-    after_write, explicit_dirs, restart_line, restart_only_changes, restart_plan, roles_of,
-    run_change, run_change_with, ApplyOpts, LiveRoles, Phase, RestartPlan, RoleControl, TargetKind,
+    after_write, explicit_dirs, restart_line, restart_only_changes, restart_plan, restart_process,
+    roles_of, run_change, run_change_with, ApplyOpts, LiveProcesses, LiveRoles, Phase,
+    RestartOutcome, RestartPlan, RoleControl, RoleProcesses, TargetKind, EXIT_WRITTEN_STEP_FAILED,
     RESTART_ONLY,
 };
 pub use change::{backup_failure, needs_rights, plan, write, write_with_counter, Change};
