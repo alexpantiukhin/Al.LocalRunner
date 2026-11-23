@@ -85,20 +85,24 @@ pub fn service_file_note() -> String {
 }
 
 /// The file `policy check` reads without an argument and its text, read with `read`; a missing
-/// file is an empty policy, a refused read of the service file names the rights it needs.
+/// file is an empty policy, a refused read of the service file names the rights it needs. The
+/// third value is the warning that the service's file is checked; it exists only when the read
+/// succeeded.
 pub fn read_broker_policy(
     layout: &Layout,
     service_installed: bool,
     read: impl Fn(&Path) -> std::io::Result<String>,
-) -> Result<(PathBuf, String), String> {
+) -> Result<(PathBuf, String, Option<String>), String> {
     let path = crate::config_edit::resolve_with(
         layout,
         &crate::config_edit::Target::Broker,
         service_installed,
     )?;
     match read(&path) {
-        Ok(text) => Ok((path, text)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((path, String::new())),
+        Ok(text) => Ok((path, text, service_installed.then(service_file_note))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok((path, String::new(), service_installed.then(service_file_note)))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => Err(format!(
             "{}: {e}; this file of the broker service needs administrator rights to read: run `localrunner policy check` elevated (an administrator terminal on Windows, sudo on Linux and macOS)",
             path.display()
@@ -133,9 +137,6 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
                 }
             };
         }
-        if layout.broker_is_service() {
-            println!("warning: {}", service_file_note());
-        }
     }
     let (path, text) = match file {
         Some(f) => match std::fs::read_to_string(&f) {
@@ -143,9 +144,15 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (f, String::new()),
             Err(e) => return Err(format!("{}: {e}", f.display())),
         },
-        None => read_broker_policy(layout, layout.broker_is_service(), |p| {
-            std::fs::read_to_string(p)
-        })?,
+        None => {
+            let (path, text, note) = read_broker_policy(layout, layout.broker_is_service(), |p| {
+                std::fs::read_to_string(p)
+            })?;
+            if let Some(note) = note {
+                println!("warning: {note}");
+            }
+            (path, text)
+        }
     };
     match load(&text) {
         Err(e) => {

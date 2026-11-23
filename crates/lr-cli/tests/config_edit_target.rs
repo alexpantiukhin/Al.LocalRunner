@@ -60,13 +60,14 @@ fn runner_prefers_own_copy() {
 fn policy_check_without_file_uses_resolved_path() {
     let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
     let asked = RefCell::new(Vec::new());
-    let (path, text) = read_broker_policy(&layout, true, |p| {
+    let (path, text, note) = read_broker_policy(&layout, true, |p| {
         asked.borrow_mut().push(p.to_path_buf());
         Ok("# service".into())
     })
     .unwrap();
     assert_eq!(path, service_root().join("policy.toml"));
     assert_eq!(text, "# service");
+    assert!(note.unwrap().contains("the file it loads is checked"));
     assert_eq!(*asked.borrow(), vec![service_root().join("policy.toml")]);
     assert_ne!(path, layout.config_file("policy.toml"));
 }
@@ -74,14 +75,15 @@ fn policy_check_without_file_uses_resolved_path() {
 #[test]
 fn policy_check_without_service_reads_the_config_copy() {
     let (layout, _) = custom("nosvc");
-    let (path, _) = read_broker_policy(&layout, false, |_| Ok(String::new())).unwrap();
+    let (path, _, note) = read_broker_policy(&layout, false, |_| Ok(String::new())).unwrap();
+    assert!(note.is_none());
     assert_eq!(path, layout.config_file("policy.toml"));
 }
 
 #[test]
 fn policy_check_missing_file_is_an_empty_policy() {
     let (layout, _) = custom("missing");
-    let (_, text) =
+    let (_, text, _) =
         read_broker_policy(&layout, false, |_| Err(std::io::ErrorKind::NotFound.into())).unwrap();
     assert_eq!(text, "");
 }
@@ -96,6 +98,7 @@ fn policy_check_access_denied_names_the_path_and_the_rights() {
     assert!(err.contains(&service_root().join("policy.toml").display().to_string()));
     assert!(err.contains("administrator rights"));
     assert!(err.contains("sudo"));
+    assert!(!err.contains("is checked"));
 }
 
 #[test]
