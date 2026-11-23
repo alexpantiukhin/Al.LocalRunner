@@ -45,6 +45,17 @@ pub struct Cli {
     /// Configuration directory (default: the state directory; LOCALRUNNER_CONFIG_DIR).
     #[arg(long, global = true)]
     pub config_dir: Option<PathBuf>,
+    /// Marks the elevated re-run of a command that needs administrator rights; on Windows the
+    /// value names the output channel. Hidden, accepted only before the subcommand.
+    #[arg(
+        long,
+        hide = true,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "",
+        value_name = "CHANNEL"
+    )]
+    pub elevated_child: Option<String>,
     /// The command.
     #[command(subcommand)]
     pub command: Command,
@@ -378,8 +389,22 @@ pub fn version_text() -> String {
     )
 }
 
+impl Cli {
+    /// Whether this process is the elevated re-run of a command (`--elevated-child`): it must
+    /// not elevate again nor show the diff the parent already showed.
+    pub fn is_elevated_child(&self) -> bool {
+        self.elevated_child.is_some()
+    }
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
+    if let Some(channel) = cli.elevated_child.as_deref().filter(|c| !c.is_empty()) {
+        if let Err(e) = crate::config_edit::attach_elevated_output(channel) {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    }
     let layout = match Layout::resolve(cli.state_dir, cli.config_dir) {
         Ok(l) => l,
         Err(e) => {
