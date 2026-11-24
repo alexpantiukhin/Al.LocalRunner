@@ -480,6 +480,7 @@ async fn add_local_user_and_shared_run_through_the_change_flow() {
     )
     .await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(!r.out.contains("applies at the next start"), "{}", r.out);
     let r = run(
         &layout,
         Record::AddShared {

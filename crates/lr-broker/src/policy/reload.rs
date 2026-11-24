@@ -10,10 +10,6 @@ use lr_proto::SettingsUpdate;
 pub enum RestartOnly {
     /// `[listen]`.
     Listen,
-    /// `[networks]`.
-    Networks,
-    /// `[[shared]]`.
-    Shared,
 }
 
 /// What a successful `policy reload` did.
@@ -44,7 +40,7 @@ impl std::fmt::Debug for ActivePolicy {
 }
 
 impl ActivePolicy {
-    /// Loads the file at service start; `[listen]` and `[networks]` take effect now.
+    /// Loads the file at service start; `[listen]`, `[networks]` and `[[shared]]` take effect now.
     /// `in_container` tells whether the service runs inside a container, where alone
     /// `address = "container"` is accepted.
     pub fn start(
@@ -59,7 +55,7 @@ impl ActivePolicy {
         Ok((ActivePolicy { file, policy, host }, warnings))
     }
 
-    /// The applied file. Its `[listen]` and `[networks]` are those of the start.
+    /// The applied file. Its `[listen]` is that of the start.
     pub fn file(&self) -> &PolicyFile {
         &self.file
     }
@@ -70,8 +66,8 @@ impl ActivePolicy {
     }
 
     /// `policy reload`: an invalid file is refused and the previous policy stays. A valid one
-    /// applies at once, except `[listen]` and `[networks]`, which keep their start values and
-    /// are reported while the file differs from them.
+    /// applies at once, `[networks]` and `[[shared]]` included, except `[listen]`, which keeps
+    /// its start value and is reported while the file differs from it.
     pub fn reload(&mut self, text: &str) -> Result<Applied, PolicyError> {
         let mut file = load(text)?;
         let warnings = check(&file, &self.host);
@@ -79,15 +75,7 @@ impl ActivePolicy {
         if file.listen != self.file.listen {
             restart_required.push(RestartOnly::Listen);
         }
-        if file.networks != self.file.networks {
-            restart_required.push(RestartOnly::Networks);
-        }
-        if file.shared != self.file.shared {
-            restart_required.push(RestartOnly::Shared);
-        }
         file.listen = self.file.listen.clone();
-        file.networks = self.file.networks.clone();
-        file.shared = self.file.shared.clone();
         let settings_update = (file.grace != self.file.grace).then(|| file.settings_update());
         self.policy = into_policy(&file, &self.host);
         self.file = file;

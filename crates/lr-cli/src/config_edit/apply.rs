@@ -50,16 +50,6 @@ pub const RESTART_ONLY: &[(TargetKind, &str, &str)] = &[
         "listen",
         "the broker binds its addresses when it starts",
     ),
-    (
-        TargetKind::Broker,
-        "networks",
-        "the broker reads its networks when it starts",
-    ),
-    (
-        TargetKind::Broker,
-        "shared",
-        "the broker reads its shared sets when it starts",
-    ),
 ];
 
 /// How [`run_change`] runs.

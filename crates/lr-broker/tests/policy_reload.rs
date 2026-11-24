@@ -49,16 +49,26 @@ fn reload_applies_rules_and_queue() {
 }
 
 #[test]
-fn networks_change_on_reload_reported_not_applied() {
+fn reload_no_longer_reports_networks_and_shared_as_restart_required() {
     let mut active = started();
-    let text = START.replace("192.168.1.0/24", "10.0.0.0/24");
+    let text = format!(
+        "{}
+[[shared]]
+members = [\"a\", \"b\"]
+",
+        START.replace("192.168.1.0/24", "10.0.0.0/24")
+    );
     let applied = active.reload(&text).unwrap();
-    assert_eq!(applied.restart_required, [RestartOnly::Networks]);
+    assert!(applied.restart_required.is_empty(), "{applied:?}");
     let home: Vec<String> = active.file().networks["home"]
         .iter()
         .map(|n| n.to_string())
         .collect();
-    assert_eq!(home, ["192.168.1.0/24"]);
+    assert_eq!(home, ["10.0.0.0/24"]);
+    assert_eq!(active.file().shared.len(), 1);
+    assert_eq!(active.file().shared[0].members, ["a", "b"]);
+    assert!(active.reload(START).unwrap().restart_required.is_empty());
+    assert!(active.file().shared.is_empty());
 }
 
 #[test]
@@ -126,18 +136,4 @@ fn invalid_reload_keeps_listen_networks_and_grace() {
     assert_eq!(active.file().grace.lost_min.get(), 3);
     assert_eq!(active.file().listen.addresses.len(), 1);
     assert!(active.file().networks.contains_key("home"));
-}
-
-#[test]
-fn shared_blocks_change_on_reload_reported_not_applied() {
-    let mut active = started();
-    let text = format!(
-        "{START}
-[[shared]]
-members = [\"a\", \"b\"]
-"
-    );
-    let applied = active.reload(&text).unwrap();
-    assert_eq!(applied.restart_required, [RestartOnly::Shared]);
-    assert!(active.file().shared.is_empty());
 }

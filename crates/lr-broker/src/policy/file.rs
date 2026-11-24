@@ -63,9 +63,10 @@ pub struct PolicyFile {
     pub results: ResultsSection,
     /// `[listen]`, applied only at start.
     pub listen: ListenSection,
-    /// `[networks]`: name to ranges, applied only at start; default none.
+    /// `[networks]`: name to ranges; `policy reload` applies it to new connections and orders;
+    /// default none.
     pub networks: NamedNetworks,
-    /// `[[shared]]` blocks, applied only at start; default none.
+    /// `[[shared]]` blocks; `policy reload` applies them to new orders; default none.
     pub shared: Vec<SharedBlock>,
     /// `[[local_user]]` in file order; default none (the installer writes the first entry).
     pub local_users: Vec<LocalUserEntry>,

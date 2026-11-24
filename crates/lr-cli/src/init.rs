@@ -43,7 +43,7 @@ impl NodeRole {
 pub fn policy_template(user: &str) -> String {
     format!(
         "# Broker policy (spec 3.5). `localrunner policy check` validates this file and\n\
-         # `localrunner policy reload` applies it; [listen] and [networks] apply at start only.\n\
+         # `localrunner policy reload` applies it; [listen] applies at start only.\n\
          \n\
          # The broker listens on the network only on explicit addresses, and only while a join\n\
          # code is open or a machine has joined. Wildcard addresses are refused.\n\
@@ -55,7 +55,7 @@ pub fn policy_template(user: &str) -> String {
          # home = [\"192.168.1.0/24\", \"127.0.0.1/32\"]\n\
          \n\
          # Names (client labels and runner names) that can reach one shared disk: the zone\n\
-         # between them is `shared`. Applies at start only.\n\
+         # between them is `shared`.\n\
          # [[shared]]\n\
          # members = [\"main-laptop\", \"docker-1\"]\n\
          \n\

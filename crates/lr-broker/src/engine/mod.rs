@@ -38,7 +38,7 @@ pub use events::{BusEvent, BusEvents};
 pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 pub use retention::RETENTION_EVERY_S;
 
-use crate::policy::{ActivePolicy, ListenValue};
+use crate::policy::{ActivePolicy, ListenValue, PolicyFile};
 use conn::{Command, ConnId, Outlet, COMMAND_QUEUE};
 use lr_abstractions::{
     BrokerStore, Clock, JobKey, Level, Listener, LogSink, Meter, Peer, Record, SecretSource,
@@ -94,6 +94,22 @@ pub struct BrokerDeps {
     pub meter: Arc<dyn Meter>,
 }
 
+pub(crate) fn site_of(file: &PolicyFile) -> Site {
+    Site {
+        broker_addrs: file
+            .listen
+            .addresses
+            .iter()
+            .filter_map(|a| match a {
+                ListenValue::Explicit(ip, _) => Some(*ip),
+                ListenValue::Container => None,
+            })
+            .collect(),
+        networks: file.networks.clone(),
+        shared: file.shared_sets(),
+    }
+}
+
 /// The broker role: accepts connections, queues orders and gives them to runners.
 pub struct Broker {
     engine: Engine,
@@ -106,20 +122,7 @@ impl Broker {
     /// A broker over `deps`, admitting local users named exactly in `[[local_user]]`.
     pub fn new(deps: BrokerDeps) -> Broker {
         let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
-        let file = deps.policy.file();
-        let site = Site {
-            broker_addrs: file
-                .listen
-                .addresses
-                .iter()
-                .filter_map(|a| match a {
-                    ListenValue::Explicit(ip, _) => Some(*ip),
-                    ListenValue::Container => None,
-                })
-                .collect(),
-            networks: file.networks.clone(),
-            shared: file.shared_sets(),
-        };
+        let site = site_of(deps.policy.file());
         Broker {
             engine: Engine {
                 clock: deps.clock,
