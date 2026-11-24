@@ -1,5 +1,5 @@
 use super::conn::Command;
-use super::Engine;
+use super::{site_of, Engine};
 use crate::policy::{Applied, PolicyError};
 use lr_abstractions::Level;
 use lr_proto::BrokerToRunner;
@@ -60,6 +60,7 @@ impl Engine {
                 let result = self.policy.reload(&text);
                 self.count_reload(result.is_ok());
                 if let Ok(applied) = &result {
+                    self.site = site_of(self.policy.file());
                     if let Some(update) = &applied.settings_update {
                         let conns: Vec<_> = self.runners.values().filter_map(|r| r.conn).collect();
                         for conn in conns {

@@ -2,6 +2,7 @@
 
 pub mod admin_cmd;
 pub mod args;
+pub mod config_cmd;
 pub mod confirm;
 pub mod down_cmd;
 pub mod history_cmd;
@@ -9,6 +10,7 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod policy_edit_cmd;
 pub mod profile_cmd;
 pub mod profile_summary;
 pub mod read_args;
@@ -45,6 +47,21 @@ pub struct Cli {
     /// Configuration directory (default: the state directory; LOCALRUNNER_CONFIG_DIR).
     #[arg(long, global = true)]
     pub config_dir: Option<PathBuf>,
+    /// Marks the elevated re-run of a command that needs administrator rights; on Windows the
+    /// value names the output channel. Hidden, accepted only before the subcommand.
+    #[arg(
+        long,
+        hide = true,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "",
+        value_name = "CHANNEL"
+    )]
+    pub elevated_child: Option<String>,
+    /// In the elevated re-run: the SHA-256 of the file text the parent showed the diff for; the
+    /// command writes nothing when the file no longer has it. Hidden.
+    #[arg(long, hide = true, require_equals = true, value_name = "SHA256")]
+    pub expect_before: Option<String>,
     /// The command.
     #[command(subcommand)]
     pub command: Command,
@@ -266,6 +283,13 @@ pub enum Command {
         #[command(subcommand)]
         action: PolicyAction,
     },
+    /// Change one setting of the file a role reads: `broker`, `hub`, `runner:<name>`,
+    /// `logging`.
+    Config {
+        /// What to do.
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Diagnostics configuration.
     Logging {
         /// What to do.
@@ -378,8 +402,108 @@ pub fn version_text() -> String {
     )
 }
 
+impl Cli {
+    /// Whether this process is the elevated re-run of a command (`--elevated-child`): it must
+    /// not elevate again nor show the diff the parent already showed.
+    pub fn is_elevated_child(&self) -> bool {
+        self.elevated_child.is_some()
+    }
+}
+
+async fn config(
+    layout: &Layout,
+    action: ConfigAction,
+    elevated_child: bool,
+    expected_before: Option<String>,
+) -> Result<i32, String> {
+    use config_cmd::{Edit, EditArgs};
+    let print = |text: String| {
+        println!("{text}");
+        0
+    };
+    let args = match action {
+        ConfigAction::Get { target, key } => {
+            return config_cmd::get(layout, &target, &key).map(print)
+        }
+        ConfigAction::Show { target } => return config_cmd::show(layout, &target).map(print),
+        ConfigAction::Set {
+            target,
+            key,
+            value,
+            string,
+            dry_run,
+            restart,
+        } => EditArgs {
+            target,
+            edit: Edit::Set { key, value, string },
+            dry_run,
+            restart,
+            expected_before,
+        },
+        ConfigAction::Unset {
+            target,
+            key,
+            dry_run,
+            restart,
+        } => EditArgs {
+            target,
+            edit: Edit::Unset { key },
+            dry_run,
+            restart,
+            expected_before,
+        },
+    };
+    config_cmd::edit(layout, args, elevated_child).await
+}
+
+async fn policy(
+    layout: &Layout,
+    action: PolicyAction,
+    elevated_child: bool,
+    expected_before: Option<String>,
+) -> Result<i32, String> {
+    use policy_edit_cmd::{Record, RecordArgs};
+    let (record, flags) = match action {
+        PolicyAction::Check { file } => return admin_cmd::policy_check(layout, file).await,
+        PolicyAction::Reload => return admin_cmd::policy_reload(layout).await,
+        PolicyAction::AllowSecret { name, label, flags } => {
+            (Record::AllowSecret { name, label }, flags)
+        }
+        PolicyAction::RemoveSecret { name, label, flags } => {
+            (Record::RemoveSecret { name, label }, flags)
+        }
+        PolicyAction::AllowService { name, label, flags } => {
+            (Record::AllowService { name, label }, flags)
+        }
+        PolicyAction::RemoveService { name, label, flags } => {
+            (Record::RemoveService { name, label }, flags)
+        }
+        PolicyAction::AddLocalUser { name, label, flags } => {
+            (Record::AddLocalUser { name, label }, flags)
+        }
+        PolicyAction::RemoveLocalUser { name, flags } => (Record::RemoveLocalUser { name }, flags),
+        PolicyAction::AddShared { members, flags } => (Record::AddShared { members }, flags),
+        PolicyAction::RemoveShared { members, flags } => (Record::RemoveShared { members }, flags),
+    };
+    let args = RecordArgs {
+        record,
+        dry_run: flags.dry_run,
+        restart: flags.restart,
+        expected_before,
+    };
+    policy_edit_cmd::edit(layout, args, elevated_child).await
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
+    let elevated_child = cli.is_elevated_child();
+    let expect_before = cli.expect_before.clone();
+    if let Some(channel) = cli.elevated_child.as_deref().filter(|c| !c.is_empty()) {
+        if let Err(e) = crate::config_edit::attach_elevated_output(channel) {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    }
     let layout = match Layout::resolve(cli.state_dir, cli.config_dir) {
         Ok(l) => l,
         Err(e) => {
@@ -454,10 +578,8 @@ pub async fn run(cli: Cli) -> i32 {
             let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
             down_cmd::down_cli(&layout, names, cancel, yes, wait).await
         }
-        Command::Policy { action } => match action {
-            PolicyAction::Check { file } => admin_cmd::policy_check(&layout, file).await,
-            PolicyAction::Reload => admin_cmd::policy_reload(&layout).await,
-        },
+        Command::Policy { action } => policy(&layout, action, elevated_child, expect_before).await,
+        Command::Config { action } => config(&layout, action, elevated_child, expect_before).await,
         Command::Logging {
             action: LoggingAction::Reload,
         } => logging_cmd::logging_reload(&layout).await,

@@ -636,6 +636,47 @@ pub async fn down_for(
     if targets.is_empty() {
         return Err("nothing to stop".into());
     }
+    stop_targets(targets, explicit, cancel, reason, roles, interrupt).await
+}
+
+/// Stops exactly `target`, typed, so a runner named `runner`, `hub` or `broker` is that runner
+/// and not a group, and waits up to `within` until a stopped runner has exited. The exit code
+/// is 1 when the role does not run, refused to stop or did not exit in time.
+pub async fn stop_one(layout: &Layout, target: Target, within: Duration) -> Result<i32, String> {
+    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
+    let roles = IpcRoles { layout, principal };
+    stop_one_with(target, within, &roles).await
+}
+
+/// [`stop_one`] through `roles`.
+pub async fn stop_one_with(
+    target: Target,
+    within: Duration,
+    roles: &dyn Roles,
+) -> Result<i32, String> {
+    let code = stop_targets(vec![target.clone()], true, false, None, roles, ctrl_c()).await?;
+    if let (0, Target::Runner(name)) = (code, &target) {
+        let left = runners_still_answering(roles, std::slice::from_ref(name), within).await;
+        if !left.is_empty() {
+            roles.say_err(&format!(
+                "did not exit within {} s: {name}",
+                within.as_secs()
+            ));
+            return Ok(1);
+        }
+    }
+    Ok(code)
+}
+
+/// Stops `targets` as `down` does; `explicit` makes a role that does not run an error.
+pub async fn stop_targets(
+    targets: Vec<Target>,
+    explicit: bool,
+    cancel: bool,
+    reason: Option<DrainReason>,
+    roles: &dyn Roles,
+    interrupt: impl Future<Output = ()>,
+) -> Result<i32, String> {
     let mode = down_mode(cancel);
     let service = targets.contains(&Target::Broker) && roles.broker_is_service();
     let mut interrupt = Some(interrupt);

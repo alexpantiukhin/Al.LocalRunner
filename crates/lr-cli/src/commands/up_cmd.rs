@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-const STARTED_WITHIN: Duration = Duration::from_secs(15);
+/// How long `up` waits for a started role to answer on its channel.
+pub const STARTED_WITHIN: Duration = Duration::from_secs(15);
+
+const POLL: Duration = Duration::from_millis(300);
 
 /// The roles of this installation that answer on their local IPC.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -57,6 +60,52 @@ pub async fn broker_answers(layout: &Layout) -> bool {
     }
 }
 
+/// Whether `role` of `layout` answers on its local channel, as `up` checks it.
+pub async fn role_answers(layout: &Layout, role: &super::down_cmd::Target) -> bool {
+    use super::down_cmd::Target;
+    if let Target::Broker = role {
+        return broker_answers(layout).await;
+    }
+    let Ok(principal) = lr_net::current_os_principal() else {
+        return false;
+    };
+    match role {
+        Target::Hub => answers(&layout.hub_ipc(&principal), IpcChannel::Cli).await,
+        Target::Runner(name) => {
+            answers(
+                &layout.runner_ipc(&principal, name),
+                IpcChannel::RunnerControl,
+            )
+            .await
+        }
+        Target::Broker => false,
+    }
+}
+
+/// Asks `probe` until `done` accepts its answer or `within` has passed, as `up` waits for the
+/// roles it started; the last answer.
+pub async fn poll_until<T, F, Fut>(mut probe: F, done: impl Fn(&T) -> bool, within: Duration) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = T>,
+{
+    let since = tokio::time::Instant::now();
+    loop {
+        let answer = probe().await;
+        if done(&answer) || since.elapsed() >= within {
+            return answer;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
+
+/// The same-user check `up` makes before it starts runner `name`: `Ok(Some(risk))` starts it
+/// with a warning, `Err` refuses the start with the reason.
+pub fn runner_start_verdict(layout: &Layout, name: &str) -> Result<Option<String>, String> {
+    let allowed = crate::doctor::runner_allows_same_user(layout, name);
+    crate::doctor::same_user_verdict(layout, allowed)
+}
+
 /// Which roles of `layout` run now.
 pub async fn running_roles(layout: &Layout) -> RunningRoles {
     let mut out = RunningRoles {
@@ -80,7 +129,8 @@ pub async fn running_roles(layout: &Layout) -> RunningRoles {
     out
 }
 
-fn dirs(layout: &Layout) -> Vec<String> {
+/// `--state-dir` (and `--config-dir` when it differs) of `layout`, as the started roles get them.
+pub fn dirs(layout: &Layout) -> Vec<String> {
     let mut out = vec![
         "--state-dir".to_string(),
         layout.root.to_string_lossy().into_owned(),
@@ -368,8 +418,7 @@ pub async fn up_with_services(
             return true;
         }
         let name = planned_runner(layout, argv);
-        let allowed = crate::doctor::runner_allows_same_user(layout, &name);
-        match crate::doctor::same_user_verdict(layout, allowed) {
+        match runner_start_verdict(layout, &name) {
             Ok(None) => true,
             Ok(Some(risk)) => {
                 if !warned {
@@ -419,14 +468,12 @@ pub async fn up_with_services(
             }
         }
     }
-    let since = tokio::time::Instant::now();
-    let late = loop {
-        let late = missing(&started, &running_roles(layout).await);
-        if waited || late.is_empty() || since.elapsed() >= within {
-            break late;
-        }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-    };
+    let late = poll_until(
+        || async { missing(&started, &running_roles(layout).await) },
+        |late: &Vec<String>| waited || late.is_empty(),
+        within,
+    )
+    .await;
     for l in late {
         eprintln!(
             "{l}: does not answer yet; see logs/ in {} or run `localrunner {l}` in the foreground",

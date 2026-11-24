@@ -20,6 +20,7 @@ The core knows no language and no toolchain. What to run and what it needs is de
 - [Docker Compose](#docker-compose)
 - [Project profiles](#project-profiles)
 - [Logging](#logging)
+- [Changing settings](#changing-settings)
 - [Autostart, stop, update, uninstall](#autostart-stop-update-uninstall)
 - [Troubleshooting](#troubleshooting)
 - [Security](#security)
@@ -243,7 +244,7 @@ Remove the service with `localrunner autostart off broker` or `uninstall`. `down
 |---|---|
 | `[listen]` | the address the broker listens on. Without it the network is not listened to. Wildcard addresses (`0.0.0.0`, `::`) are rejected. In a container: `address = "container"` |
 | `[networks]` | named networks; the hub's zone (`lan` or `remote`) depends on them |
-| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: client labels and runner names that reach one shared disk; the zone between them is `shared`. The label of a client is unique: `broker add --label` refuses a taken one. Read at start only |
+| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: client labels and runner names that reach one shared disk; the zone between them is `shared`. The label of a client is unique: `broker add --label` refuses a taken one. Applied on reload |
 | `[[local_user]]` | who may use local IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | priority, reserve, quota, weight by the `when` condition (the first matching rule for each field) |
@@ -286,7 +287,7 @@ Commands:
 
 ```
 localrunner policy check [file]   # check without applying
-localrunner policy reload         # apply; only on the broker machine. [listen] and [networks] need a restart
+localrunner policy reload         # apply every table, [listen], [networks] and [[shared]] included; only on the broker machine
 localrunner logging reload        # reread logging.toml in every running role
 ```
 
@@ -314,7 +315,7 @@ Install and start on the broker's machine:
 
 ```
 localrunner install --role runner
-# edit runner.toml (see below)
+# set keys: localrunner config set runner:<name> <key> <value> (see below and "Changing settings")
 localrunner up runner
 ```
 
@@ -322,7 +323,7 @@ A runner on another machine:
 
 ```
 localrunner install --role runner
-# edit runner.toml
+# set keys: localrunner config set runner:<name> <key> <value>
 localrunner runner join <host:port> --code-file code.txt --name box --count 2
 localrunner up runner
 ```
@@ -522,6 +523,30 @@ kind = "console"       # foreground only
 ```
 
 The `otlp` sink (`endpoint`, `ca_file`, `enabled`) is off by default: it is the only thing that can send data away from the machine. Secret values, join codes and tokens are masked in logs and output. Masking is exact and job-wide: the exact value of every secret of a job is replaced with `***` in the output of all its steps, with no minimum length, so a short or common value (`true`, `1`, `K`) would also damage ordinary output; use long random values for secrets.
+
+## Changing settings
+
+Every setting of `policy.toml`, `hub-policy.toml`, `runner.toml` and `logging.toml` can be changed with a command on the machine whose file it is. The command finds the file the role really reads (the broker service copy when the broker is an OS service, a runner's own copy when it has one), keeps comments and order, checks the result with the role's own parser, prints the diff, writes a backup `<name>.bak-<UTC time>` and the new file atomically, and reloads the running role.
+
+```
+localrunner config show runner:box                      # the path and the text of the file runner box reads
+localrunner config get broker queue.strategy
+localrunner config set broker queue.strategy fair-share --dry-run   # show the diff, write nothing
+localrunner config set runner:box cpu 4
+localrunner config set hub outbox.ttl_hours 48
+localrunner config set logging logging.level debug      # every role of the installation rereads logging.toml
+localrunner config unset runner:box limits.enforce      # back to the default
+localrunner policy allow-secret signing_key --label ci  # also remove-secret, allow-service, remove-service
+localrunner policy add-local-user ci-agent --label ci   # also remove-local-user
+localrunner policy add-shared main-laptop docker-1      # also remove-shared
+```
+
+- Targets: `broker` (`policy.toml`), `hub` (`hub-policy.toml`), `runner:<name>` (`runner.toml`), `logging` (`logging.toml`). The type of an existing key wins; a new value is read as TOML (`5`, `true`, `["a", "b"]`), otherwise as a string; `--string` forces a string. A value the role refuses, or a new unknown key in `runner.toml`, leaves the file untouched.
+- A file that needs administrator rights (the broker service file) is written by the same command run once again elevated: one UAC prompt on Windows, `sudo` on Unix. The diff is shown before the prompt; a refused prompt writes nothing, and so does the elevated copy when the file changed while the prompt was open (exit code 76).
+- A role that is not running is reported as `not running`: the file is written and the command exits 0. A role whose channel refuses your rights is a failure (exit 1) that says to run the command elevated. A runner template edit reloads every runner without an own copy; a `logging` edit does not reload a broker that runs as the OS service (it reads its own `logging.toml`). A repeated `policy allow-*` or `add-*` prints `already present` and exits 0.
+- Policy, hub policy and logging apply on reload, `[listen]`, `[networks]` and `[[shared]]` included: a moved `[listen]` keeps established connections, but a joined machine that reconnects later dials the address it saved at the join, so join it again. In `runner.toml`, `allow_elevated` applies at the next start of the runner (a runner checks it only when it starts); `name`, the state directory, `allow_same_user_as_broker`, `[service.*]`, `[secret.*]` and the broker address are named by the runner as `needs a restart`. The command prints the restart command and never restarts by itself; `--restart` runs it (the role's connections drop).
+- `allow_elevated = true` and `allow_same_user_as_broker = true` print a `widens privileges` line instead of asking for a confirmation.
+- An order refused for a secret or a service names the file, the label and the fix: `secret signing_key is not allowed for label agent in <path>; to allow it: localrunner policy allow-secret signing_key --label agent`. An allow entry with `label = ""` matches only clients whose label is empty (local owners without a `[[local_user]]` entry, members joined with an empty label), never a labelled client.
 
 ## Autostart, stop, update, uninstall
 

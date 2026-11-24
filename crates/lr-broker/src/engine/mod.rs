@@ -38,7 +38,7 @@ pub use events::{BusEvent, BusEvents};
 pub use local::{ExactLocalUsers, LocalAdmission, LocalClient};
 pub use retention::RETENTION_EVERY_S;
 
-use crate::policy::{ActivePolicy, ListenValue};
+use crate::policy::{ActivePolicy, ListenValue, PolicyFile};
 use conn::{Command, ConnId, Outlet, COMMAND_QUEUE};
 use lr_abstractions::{
     BrokerStore, Clock, JobKey, Level, Listener, LogSink, Meter, Peer, Record, SecretSource,
@@ -94,6 +94,22 @@ pub struct BrokerDeps {
     pub meter: Arc<dyn Meter>,
 }
 
+pub(crate) fn site_of(file: &PolicyFile) -> Site {
+    Site {
+        broker_addrs: file
+            .listen
+            .addresses
+            .iter()
+            .filter_map(|a| match a {
+                ListenValue::Explicit(ip, _) => Some(*ip),
+                ListenValue::Container => None,
+            })
+            .collect(),
+        networks: file.networks.clone(),
+        shared: file.shared_sets(),
+    }
+}
+
 /// The broker role: accepts connections, queues orders and gives them to runners.
 pub struct Broker {
     engine: Engine,
@@ -106,20 +122,7 @@ impl Broker {
     /// A broker over `deps`, admitting local users named exactly in `[[local_user]]`.
     pub fn new(deps: BrokerDeps) -> Broker {
         let (tx, rx) = mpsc::channel(COMMAND_QUEUE);
-        let file = deps.policy.file();
-        let site = Site {
-            broker_addrs: file
-                .listen
-                .addresses
-                .iter()
-                .filter_map(|a| match a {
-                    ListenValue::Explicit(ip, _) => Some(*ip),
-                    ListenValue::Container => None,
-                })
-                .collect(),
-            networks: file.networks.clone(),
-            shared: file.shared_sets(),
-        };
+        let site = site_of(deps.policy.file());
         Broker {
             engine: Engine {
                 clock: deps.clock,
@@ -154,6 +157,8 @@ impl Broker {
                 unsaved_starts: false,
                 silenced: HashSet::new(),
                 retention: retention::Retention::default(),
+                policy_path: String::new(),
+                service_policy: false,
             },
             listener: deps.listener,
             tx,
@@ -172,6 +177,20 @@ impl Broker {
     /// messages) to `sink`; without it they are discarded.
     pub fn with_log_sink(mut self, sink: Arc<dyn LogSink>) -> Broker {
         self.engine.log = sink;
+        self
+    }
+
+    /// Names `path`, the `policy.toml` the broker loads, in the reasons of orders the policy
+    /// refuses; without it the reasons leave the file out.
+    pub fn with_policy_path(mut self, path: String) -> Broker {
+        self.engine.policy_path = path;
+        self
+    }
+
+    /// Marks the policy file as the broker service's, so the fix named in a refusal is to be
+    /// run as administrator.
+    pub fn with_service_policy(mut self, service: bool) -> Broker {
+        self.engine.service_policy = service;
         self
     }
 
@@ -351,6 +370,8 @@ pub(crate) struct Engine {
     pub(crate) unsaved_starts: bool,
     pub(crate) silenced: HashSet<JobKey>,
     retention: retention::Retention,
+    pub(crate) policy_path: String,
+    pub(crate) service_policy: bool,
 }
 
 const MIB: u64 = 1024 * 1024;

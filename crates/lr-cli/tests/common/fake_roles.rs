@@ -159,3 +159,193 @@ impl Roles for FakeRoles {
         self.after_restart.lock().unwrap().clone()
     }
 }
+
+/// The role side of `config` commands: whether writing needs rights, which roles were reloaded
+/// (running ones answer `reloaded` with `restart_required`, `refuse` makes them refuse,
+/// `reload_error` makes the call fail) and restarted, and a restart command named after the
+/// role.
+pub struct FakeControl {
+    pub rights: bool,
+    pub running: bool,
+    pub refuse: Option<String>,
+    pub reload_error: Option<String>,
+    pub restart_required: Vec<String>,
+    pub broker_service: bool,
+    reloads: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
+    restarts: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
+}
+
+impl FakeControl {
+    pub fn new(rights: bool, running: bool) -> FakeControl {
+        FakeControl {
+            rights,
+            running,
+            refuse: None,
+            reload_error: None,
+            restart_required: Vec::new(),
+            broker_service: false,
+            reloads: Mutex::new(Vec::new()),
+            restarts: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn reloads(&self) -> Vec<lr_cli::commands::down_cmd::Target> {
+        self.reloads.lock().unwrap().clone()
+    }
+
+    pub fn restarts(&self) -> Vec<lr_cli::commands::down_cmd::Target> {
+        self.restarts.lock().unwrap().clone()
+    }
+}
+
+fn role_name(role: &lr_cli::commands::down_cmd::Target) -> String {
+    use lr_cli::commands::down_cmd::Target;
+    match role {
+        Target::Runner(n) => n.clone(),
+        Target::Hub => "hub".into(),
+        Target::Broker => "broker".into(),
+    }
+}
+
+#[async_trait(?Send)]
+impl lr_cli::config_edit::RoleControl for FakeControl {
+    fn needs_rights(&self, _path: &std::path::Path) -> bool {
+        self.rights
+    }
+
+    fn clock(&self) -> &dyn lr_abstractions::Clock {
+        &lr_exec::SystemClock
+    }
+
+    async fn reload(
+        &self,
+        _layout: &Layout,
+        _target: &lr_cli::config_edit::Target,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<lr_cli::commands::reload_cmd::Outcome, String> {
+        use lr_cli::commands::reload_cmd::Outcome;
+        self.reloads.lock().unwrap().push(role.clone());
+        if let Some(e) = &self.reload_error {
+            return Err(e.clone());
+        }
+        if let Some(why) = &self.refuse {
+            return Ok(Outcome::Refused(why.clone()));
+        }
+        Ok(match self.running {
+            true => Outcome::Reloaded {
+                restart_required: self.restart_required.clone(),
+            },
+            false => Outcome::NotRunning,
+        })
+    }
+
+    fn restart_command(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> String {
+        format!("restart-command-of-{}", role_name(role))
+    }
+
+    async fn restart(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+        _err: &mut dyn std::io::Write,
+    ) -> lr_cli::config_edit::RestartOutcome {
+        self.restarts.lock().unwrap().push(role.clone());
+        lr_cli::config_edit::RestartOutcome::Restarted
+    }
+
+    fn broker_is_service(&self, _layout: &Layout) -> bool {
+        self.broker_service
+    }
+}
+
+/// An elevator that records each call and gives `answer`; nothing is started.
+pub struct FakeElevator {
+    answer: Result<i32, String>,
+    calls: Mutex<Vec<(PathBuf, Vec<String>)>>,
+}
+
+impl FakeElevator {
+    pub fn new(answer: Result<i32, String>) -> FakeElevator {
+        FakeElevator {
+            answer,
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn calls(&self) -> Vec<(PathBuf, Vec<String>)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl lr_cli::config_edit::Elevator for FakeElevator {
+    fn run_elevated(&self, exe: &std::path::Path, args: &[String]) -> Result<i32, String> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((exe.to_path_buf(), args.to_vec()));
+        self.answer.clone()
+    }
+}
+
+/// User-process roles for a restart: `verdict` is `up`'s start check, `answers` whether the
+/// started role ever answers; stops and starts are recorded.
+pub struct FakeProcesses {
+    pub verdict: Result<Option<String>, String>,
+    pub answers: bool,
+    pub stopped: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
+    pub started: Mutex<Vec<Vec<String>>>,
+    pub probes: AtomicUsize,
+    pub service_restarts: Mutex<Vec<String>>,
+}
+
+impl FakeProcesses {
+    pub fn new(verdict: Result<Option<String>, String>, answers: bool) -> FakeProcesses {
+        FakeProcesses {
+            verdict,
+            answers,
+            stopped: Mutex::new(Vec::new()),
+            started: Mutex::new(Vec::new()),
+            probes: AtomicUsize::new(0),
+            service_restarts: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait(?Send)]
+impl lr_cli::config_edit::RoleProcesses for FakeProcesses {
+    fn start_verdict(
+        &self,
+        _layout: &Layout,
+        _role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<Option<String>, String> {
+        self.verdict.clone()
+    }
+
+    async fn stop(
+        &self,
+        _layout: &Layout,
+        role: &lr_cli::commands::down_cmd::Target,
+    ) -> Result<i32, String> {
+        self.stopped.lock().unwrap().push(role.clone());
+        Ok(0)
+    }
+
+    fn start(&self, _layout: &Layout, argv: &[String]) -> Result<(), String> {
+        self.started.lock().unwrap().push(argv.to_vec());
+        Ok(())
+    }
+
+    async fn answers(&self, _layout: &Layout, _role: &lr_cli::commands::down_cmd::Target) -> bool {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+        self.answers
+    }
+
+    async fn run_service_restart(&self, line: &str) -> Result<i32, String> {
+        self.service_restarts.lock().unwrap().push(line.to_string());
+        Ok(0)
+    }
+}

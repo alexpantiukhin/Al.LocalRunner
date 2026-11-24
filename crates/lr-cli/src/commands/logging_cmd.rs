@@ -19,10 +19,15 @@ pub enum Reload {
     Refused(String),
 }
 
+fn gone(error: &str) -> Reload {
+    super::reload_cmd::connect_failure(error).map_or(Reload::NotRunning, Reload::Refused)
+}
+
 async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
     let address = layout.runner_ipc(principal, name);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c
         .call::<_, ControlReply>(&RunnerControl::LoggingReload)
@@ -40,8 +45,9 @@ async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
 }
 
 async fn hub(layout: &Layout, principal: &str) -> Reload {
-    let Ok(c) = IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c.call::<_, CliReply>(&CliRequest::LoggingReload).await;
     c.close().await;
@@ -54,8 +60,9 @@ async fn hub(layout: &Layout, principal: &str) -> Reload {
 }
 
 async fn broker(layout: &Layout) -> Reload {
-    let Ok(c) = IpcClient::connect_broker_admin(&layout.admin_ipc()).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect_broker_admin(&layout.admin_ipc()).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c.call::<_, AdminReply>(&AdminRequest::LoggingReload).await;
     c.close().await;
@@ -66,18 +73,32 @@ async fn broker(layout: &Layout) -> Reload {
     }
 }
 
+/// Sends `logging reload` to one role of `layout` and returns its answer.
+pub async fn reload_one(layout: &Layout, target: &Target) -> Result<Reload, String> {
+    let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
+    Ok(reload_with(layout, &principal, target).await)
+}
+
+async fn reload_with(layout: &Layout, principal: &str, target: &Target) -> Reload {
+    match target {
+        Target::Runner(name) => runner(layout, principal, name).await,
+        Target::Hub => hub(layout, principal).await,
+        Target::Broker => broker(layout).await,
+    }
+}
+
 /// Sends `logging reload` to every role of `layout`: its runners, the hub of this OS user and
 /// the broker, each with its answer.
 pub async fn reload_all(layout: &Layout) -> Result<Vec<(String, Reload)>, String> {
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for t in down_targets(layout, &[]) {
-        let answer = match &t {
-            Target::Runner(name) => (name.clone(), runner(layout, &principal, name).await),
-            Target::Hub => ("hub".into(), hub(layout, &principal).await),
-            Target::Broker => ("broker".into(), broker(layout).await),
+        let who = match &t {
+            Target::Runner(name) => name.clone(),
+            Target::Hub => "hub".into(),
+            Target::Broker => "broker".into(),
         };
-        out.push(answer);
+        out.push((who, reload_with(layout, &principal, &t).await));
     }
     Ok(out)
 }

@@ -212,7 +212,9 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
     .with_local_admission(Arc::new(
         NetAdmission::new(vec![owner]).with_admins(Arc::new(lr_net::is_machine_admin)),
     ))
-    .with_log_sink(logger.clone());
+    .with_log_sink(logger.clone())
+    .with_policy_path(policy_path.display().to_string())
+    .with_service_policy(policy_path.parent() == Some(crate::paths::service_root().as_path()));
     let handle = broker.handle();
     let admin = Arc::new(BrokerAdmin {
         handle: handle.clone(),
@@ -224,6 +226,7 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         logger: logger.clone(),
         clock,
         host,
+        in_container,
         reloads: tokio::sync::Mutex::new(()),
         stop: Arc::new(tokio::sync::Notify::new()),
         service: layout.is_service(),

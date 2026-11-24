@@ -1,8 +1,9 @@
 mod common;
 
 use common::HOST;
-use lr_broker::policy::{ActivePolicy, RestartOnly};
+use lr_broker::policy::{ActivePolicy, ListenValue};
 use lr_core::Strategy;
+use std::net::{IpAddr, Ipv4Addr};
 
 const START: &str = r#"
 [listen]
@@ -41,41 +42,61 @@ fn start_returns_warnings() {
 fn reload_applies_rules_and_queue() {
     let mut active = started();
     let text = format!("{START}\n[queue]\nstrategy = \"weighted\"\n\n[[rule]]\npriority = 9\n");
-    let applied = active.reload(&text).unwrap();
-    assert!(applied.restart_required.is_empty());
+    active.reload(&text).unwrap();
     assert_eq!(active.file().queue.strategy, Strategy::Weighted);
     assert_eq!(active.file().rules[0].rule.priority, Some(9));
     assert_eq!(active.policy().pool().cpu, HOST.cpu);
 }
 
 #[test]
-fn networks_change_on_reload_reported_not_applied() {
+fn reload_applies_networks_and_shared() {
     let mut active = started();
-    let text = START.replace("192.168.1.0/24", "10.0.0.0/24");
-    let applied = active.reload(&text).unwrap();
-    assert_eq!(applied.restart_required, [RestartOnly::Networks]);
+    let text = format!(
+        "{}
+[[shared]]
+members = [\"a\", \"b\"]
+",
+        START.replace("192.168.1.0/24", "10.0.0.0/24")
+    );
+    active.reload(&text).unwrap();
     let home: Vec<String> = active.file().networks["home"]
         .iter()
         .map(|n| n.to_string())
         .collect();
-    assert_eq!(home, ["192.168.1.0/24"]);
+    assert_eq!(home, ["10.0.0.0/24"]);
+    assert_eq!(active.file().shared.len(), 1);
+    assert_eq!(active.file().shared[0].members, ["a", "b"]);
+    active.reload(START).unwrap();
+    assert!(active.file().shared.is_empty());
 }
 
 #[test]
-fn pending_restart_reported_until_reverted() {
+fn reload_applies_listen() {
     let mut active = started();
     let moved = START.replace("192.168.1.10", "192.168.1.11");
+    active.reload(&moved).unwrap();
     assert_eq!(
-        active.reload(&moved).unwrap().restart_required,
-        [RestartOnly::Listen]
+        active.file().listen.addresses,
+        [ListenValue::Explicit(
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 11)),
+            Some(7443)
+        )]
     );
-    let moved_again = format!("{moved}\n[queue]\nstrategy = \"fair-share\"\n");
-    assert_eq!(
-        active.reload(&moved_again).unwrap().restart_required,
-        [RestartOnly::Listen]
-    );
-    assert_eq!(active.file().queue.strategy, Strategy::FairShare);
-    assert!(active.reload(START).unwrap().restart_required.is_empty());
+}
+
+#[test]
+fn reload_refuses_container_listen_outside_a_container() {
+    let mut active = started();
+    let e = active
+        .reload("[listen]\naddress = \"container\"\n")
+        .unwrap_err();
+    assert_eq!(e.table.as_deref(), Some("listen"));
+    assert_eq!(active.file().listen.addresses.len(), 1);
+    let (mut inside, _) = ActivePolicy::start(START, HOST, true).unwrap();
+    inside
+        .reload("[listen]\naddress = \"container\"\n")
+        .unwrap();
+    assert_eq!(inside.file().listen.addresses, [ListenValue::Container]);
 }
 
 #[test]
@@ -126,18 +147,4 @@ fn invalid_reload_keeps_listen_networks_and_grace() {
     assert_eq!(active.file().grace.lost_min.get(), 3);
     assert_eq!(active.file().listen.addresses.len(), 1);
     assert!(active.file().networks.contains_key("home"));
-}
-
-#[test]
-fn shared_blocks_change_on_reload_reported_not_applied() {
-    let mut active = started();
-    let text = format!(
-        "{START}
-[[shared]]
-members = [\"a\", \"b\"]
-"
-    );
-    let applied = active.reload(&text).unwrap();
-    assert_eq!(applied.restart_required, [RestartOnly::Shared]);
-    assert!(active.file().shared.is_empty());
 }

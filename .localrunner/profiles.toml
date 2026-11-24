@@ -46,7 +46,7 @@ steps = [
 ]
 
 [profile.rust-test]
-command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --features {features}} {? --test {test}} {? {filter}}"
+command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}"
 timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
@@ -64,6 +64,9 @@ pattern = "[a-z0-9_-]+"
 
 [profile.rust-test.args.test]
 pattern = "[a-z0-9_]+"
+
+[profile.rust-test.args.target]
+pattern = "lib|bins|doc"
 
 [profile.rust-test.args.features]
 pattern = "[a-z0-9_,-]+"

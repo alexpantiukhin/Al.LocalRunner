@@ -28,7 +28,7 @@ async fn secret_not_allowed_for_label_rejected() {
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
     assert_eq!(
         r.detail,
-        "secret signing_key is not allowed for label agent"
+        "secret signing_key is not allowed for label agent; to allow it: localrunner policy allow-secret signing_key --label agent"
     );
     h.assert_recorded_rejection("laptop", "j1", "rejected_secret_not_allowed")
         .await;
@@ -60,7 +60,64 @@ async fn no_label_may_request_secrets_without_an_allow_entry() {
         .await;
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
-    assert_eq!(r.detail, "secret registry_auth is not allowed for label ci");
+    assert_eq!(
+        r.detail,
+        "secret registry_auth is not allowed for label ci; to allow it: localrunner policy allow-secret registry_auth --label ci"
+    );
+}
+
+#[tokio::test]
+async fn not_allowed_secret_names_the_file_the_label_and_the_fix() {
+    let path = "/home/alex/.config/localrunner/policy.toml";
+    let h = Harness::with_policy_path(ALLOW, path, false);
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.member_hub("laptop", "agent", "10.0.0.20").await;
+    hub.send(&order("j1", with_secrets(&["signing_key"]))).await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
+    assert_eq!(
+        r.detail,
+        format!("secret signing_key is not allowed for label agent in {path}; to allow it: localrunner policy allow-secret signing_key --label agent")
+    );
+}
+
+#[tokio::test]
+async fn not_allowed_secret_of_the_service_file_says_to_run_the_fix_as_administrator() {
+    let path = "C:\\ProgramData\\Al.LocalRunner\\policy.toml";
+    let h = Harness::with_policy_path("", path, true);
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.member_hub("blank", "", "10.0.0.20").await;
+    hub.send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
+    assert_eq!(
+        r.detail,
+        format!("secret registry_auth is not allowed for label (empty) in {path}; to allow it, run it as administrator: localrunner policy allow-secret registry_auth --label ''")
+    );
+}
+
+#[tokio::test]
+async fn empty_label_matches_only_clients_without_a_label() {
+    let h = Harness::start("[[secrets.allow]]\nlabel = \"\"\nnames = [\"registry_auth\"]\n");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut local = h.local_hub("root").await;
+    local
+        .send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
+    local.accepted().await;
+    let mut blank = h.member_hub("blank", "", "10.0.0.20").await;
+    blank
+        .send(&order("j2", with_secrets(&["registry_auth"])))
+        .await;
+    blank.accepted().await;
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.21").await;
+    ci.send(&order("j3", with_secrets(&["registry_auth"])))
+        .await;
+    assert_eq!(
+        ci.rejected().await.code.as_str(),
+        "rejected_secret_not_allowed"
+    );
 }
 
 #[tokio::test]
@@ -95,4 +152,41 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
         }
     };
     assert_eq!(result.reason, Some(ReasonCode::SecretMissing));
+}
+
+#[tokio::test]
+async fn the_suggested_fix_quotes_what_a_shell_would_expand() {
+    let h = Harness::start("");
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    for (i, (label, name, words)) in [
+        (
+            "team$HOME",
+            "registry_auth",
+            "registry_auth --label 'team$HOME'",
+        ),
+        (
+            "my team",
+            "registry_auth",
+            "registry_auth --label 'my team'",
+        ),
+        ("", "registry_auth", "registry_auth --label ''"),
+        ("ci", "db$x", "'db$x' --label ci"),
+        ("it's", "a b", "'a b' --label 'it''s'"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut hub = h
+            .member_hub(&format!("hub{i}"), label, &format!("10.0.0.{}", 20 + i))
+            .await;
+        hub.send(&order("j1", with_secrets(&[name]))).await;
+        let r = hub.rejected().await;
+        assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
+        assert!(
+            r.detail
+                .ends_with(&format!("localrunner policy allow-secret {words}")),
+            "{}",
+            r.detail
+        );
+    }
 }

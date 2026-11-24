@@ -24,9 +24,10 @@ pub struct TlsListening {
     identity: BrokerIdentity,
     registry: Arc<Registry>,
     merged: Arc<MergedListener>,
-    addresses: Vec<ListenAddr>,
+    addresses: Mutex<Vec<ListenAddr>>,
     bound: Mutex<Option<Vec<SocketAddr>>>,
-    sockets: Mutex<Vec<Arc<TlsListener>>>,
+    started: Mutex<bool>,
+    sockets: Mutex<Vec<(ListenAddr, Arc<TlsListener>)>>,
     starting: tokio::sync::Mutex<()>,
     desk: Option<Arc<crate::join::JoinDesk>>,
 }
@@ -43,8 +44,9 @@ impl TlsListening {
             identity,
             registry,
             merged,
-            addresses,
+            addresses: Mutex::new(addresses),
             bound: Mutex::new(None),
+            started: Mutex::new(false),
             sockets: Mutex::new(Vec::new()),
             starting: tokio::sync::Mutex::new(()),
             desk: None,
@@ -65,38 +67,101 @@ impl TlsListening {
         if let Some(b) = self.bound.lock().unwrap_or_else(|e| e.into_inner()).clone() {
             return Ok(b);
         }
-        if self.addresses.is_empty() {
+        let addresses = self
+            .addresses
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if addresses.is_empty() {
             return Err("policy.toml has no [listen] address; the broker cannot be joined".into());
         }
         let mut listeners = Vec::new();
-        for addr in &self.addresses {
-            let gate: Arc<dyn lr_net::KeyGate> = self.registry.clone();
-            let l = TlsListener::bind(*addr, &self.identity, gate)
-                .await
-                .map_err(|e| format!("listen {}: {e}", addr.socket_addr()))?;
-            listeners.push(l);
+        for addr in &addresses {
+            listeners.push((*addr, self.bind(addr).await?));
         }
-        let bound: Vec<SocketAddr> = listeners.iter().map(|l| l.local_addr()).collect();
-        for l in listeners {
-            let l = Arc::new(l);
-            self.sockets
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(l.clone());
-            let l: Arc<dyn Listener> = l;
-            let l: Arc<dyn Listener> = match &self.desk {
-                Some(desk) => Arc::new(crate::join::JoiningListener::new(l, desk.clone())),
-                None => l,
-            };
-            self.merged.add(l);
+        let bound: Vec<SocketAddr> = listeners.iter().map(|(_, l)| l.local_addr()).collect();
+        for (_, l) in &listeners {
+            self.feed(l.clone());
         }
+        *self.sockets.lock().unwrap_or_else(|e| e.into_inner()) = listeners;
         *self.bound.lock().unwrap_or_else(|e| e.into_inner()) = Some(bound.clone());
+        *self.started.lock().unwrap_or_else(|e| e.into_inner()) = true;
         Ok(bound)
+    }
+
+    /// Moves the listeners to `addresses` (the new `[listen]`) without a restart. Before the
+    /// broker first started listening, only the addresses of that start change. Once started,
+    /// listening goes on through every reload, also after an empty list closed every socket.
+    /// Otherwise the new sockets are bound first and accept at once, then the sockets of the
+    /// addresses that left stop accepting and let their ports go; an address in both keeps its
+    /// socket. Established connections stay. When one address cannot be bound, nothing
+    /// changes and the error names it.
+    pub async fn rebind(&self, addresses: Vec<ListenAddr>) -> Result<(), String> {
+        let _one_at_a_time = self.starting.lock().await;
+        let started = *self.started.lock().unwrap_or_else(|e| e.into_inner());
+        if !started {
+            *self.addresses.lock().unwrap_or_else(|e| e.into_inner()) = addresses;
+            return Ok(());
+        }
+        let old = self
+            .sockets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut next = Vec::new();
+        let mut fresh = Vec::new();
+        for addr in &addresses {
+            match old.iter().find(|(a, _)| a == addr) {
+                Some((_, l)) => next.push((*addr, l.clone())),
+                None => {
+                    let l = self.bind(addr).await?;
+                    fresh.push(l.clone());
+                    next.push((*addr, l));
+                }
+            }
+        }
+        for l in fresh {
+            self.feed(l);
+        }
+        let retired: Vec<Arc<TlsListener>> = old
+            .into_iter()
+            .filter(|(a, _)| !addresses.contains(a))
+            .map(|(_, l)| l)
+            .collect();
+        for l in &retired {
+            l.close();
+        }
+        for l in &retired {
+            l.closed().await;
+        }
+        let bound: Vec<SocketAddr> = next.iter().map(|(_, l)| l.local_addr()).collect();
+        *self.sockets.lock().unwrap_or_else(|e| e.into_inner()) = next;
+        *self.bound.lock().unwrap_or_else(|e| e.into_inner()) =
+            (!bound.is_empty()).then_some(bound);
+        *self.addresses.lock().unwrap_or_else(|e| e.into_inner()) = addresses;
+        Ok(())
+    }
+
+    async fn bind(&self, addr: &ListenAddr) -> Result<Arc<TlsListener>, String> {
+        let gate: Arc<dyn lr_net::KeyGate> = self.registry.clone();
+        TlsListener::bind(*addr, &self.identity, gate)
+            .await
+            .map(Arc::new)
+            .map_err(|e| format!("listen {}: {e}", addr.socket_addr()))
+    }
+
+    fn feed(&self, l: Arc<TlsListener>) {
+        let l: Arc<dyn Listener> = l;
+        let l: Arc<dyn Listener> = match &self.desk {
+            Some(desk) => Arc::new(crate::join::JoiningListener::new(l, desk.clone())),
+            None => l,
+        };
+        self.merged.add(l);
     }
 
     /// Stops accepting on every network socket at once.
     pub fn close(&self) {
-        for l in self
+        for (_, l) in self
             .sockets
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -113,7 +178,7 @@ impl TlsListening {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        for l in sockets {
+        for (_, l) in sockets {
             l.closed().await;
         }
     }
@@ -175,8 +240,11 @@ pub struct BrokerAdmin {
     pub clock: Arc<dyn Clock>,
     /// What the host has.
     pub host: HostResources,
-    /// Serializes `policy reload`: the file read, the engine's policy and the IPC access
-    /// always change together and in order.
+    /// The broker runs inside a container, where alone `[listen] address = "container"` is
+    /// accepted.
+    pub in_container: bool,
+    /// Serializes `policy reload`: the file read, the network listeners, the engine's policy
+    /// and the IPC access always change together and in order.
     pub reloads: tokio::sync::Mutex<()>,
     /// Signalled by `down` (`shutdown`): the process running this broker stops it.
     pub stop: Arc<tokio::sync::Notify>,
@@ -194,6 +262,18 @@ fn failed(message: impl Into<String>) -> AdminReply {
     }
 }
 
+/// The answer to a policy reload the engine applied: its warnings, or a failure when the local
+/// IPC access could not follow the new `[[local_user]]` list, since the users of the old list
+/// keep their access until the broker restarts.
+pub fn applied_reply(warnings: Vec<String>, access: Result<(), String>) -> AdminReply {
+    match access {
+        Ok(()) => AdminReply::Ok { warnings },
+        Err(e) => failed(format!(
+            "the policy applies, but the local IPC access did not follow [[local_user]] ({e}): the users of the old list keep their access until the broker restarts; restart the broker"
+        )),
+    }
+}
+
 fn read(path: &PathBuf) -> Result<String, String> {
     match std::fs::read_to_string(path) {
         Ok(t) => Ok(t),
@@ -203,30 +283,42 @@ fn read(path: &PathBuf) -> Result<String, String> {
 }
 
 impl BrokerAdmin {
+    fn reload_failed(&self, message: String) -> AdminReply {
+        let labels = [(RESULT, "error")];
+        self.logger.metrics().add(POLICY_RELOAD_TOTAL, &labels, 1);
+        failed(message)
+    }
+
     async fn reload(&self) -> AdminReply {
         let _in_order = self.reloads.lock().await;
         let text = match read(&self.policy_path) {
             Ok(t) => t,
-            Err(e) => {
-                let labels = [(RESULT, "error")];
-                self.logger.metrics().add(POLICY_RELOAD_TOTAL, &labels, 1);
-                return failed(e);
-            }
+            Err(e) => return self.reload_failed(e),
         };
+        if let Ok(file) = load(&text) {
+            let moved = listen_addresses(&file.listen.addresses, self.in_container)
+                .map_err(|e| format!("[listen] address: {e}"));
+            if let Err(e) = match moved {
+                Ok(addresses) => self.tls.rebind(addresses).await,
+                Err(e) => Err(e),
+            } {
+                return self.reload_failed(e);
+            }
+        }
         match self.handle.reload_policy(&text).await {
             Err(e) => failed(e.to_string()),
             Ok(applied) => {
-                let mut warnings: Vec<String> =
+                let warnings: Vec<String> =
                     applied.warnings.iter().map(|w| w.to_string()).collect();
-                for t in &applied.restart_required {
-                    warnings.push(format!("{t:?} changes apply after the broker restarts"));
-                }
-                if let Ok(file) = load(&text) {
-                    if let Err(e) = self.ipc.set_access(ipc_access(&file.local_users)).await {
-                        warnings.push(format!("IPC access not updated: {e}"));
-                    }
-                }
-                AdminReply::Ok { warnings }
+                let access = match load(&text) {
+                    Ok(file) => self
+                        .ipc
+                        .set_access(ipc_access(&file.local_users))
+                        .await
+                        .map_err(|e| e.to_string()),
+                    Err(_) => Ok(()),
+                };
+                applied_reply(warnings, access)
             }
         }
     }

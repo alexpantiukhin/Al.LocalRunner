@@ -847,6 +847,7 @@ dependencies = [
  "tar",
  "tokio",
  "toml",
+ "toml_edit",
  "ureq",
  "windows-sys 0.59.0",
  "zip",
