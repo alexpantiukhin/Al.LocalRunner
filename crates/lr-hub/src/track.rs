@@ -37,6 +37,8 @@ pub(crate) struct Track {
     pub(crate) log: Option<PathBuf>,
     pub(crate) wait_reason: Option<String>,
     pub(crate) runner: Option<String>,
+    pub(crate) started_at: Option<Timestamp>,
+    pub(crate) finished_at: Option<Timestamp>,
     pub(crate) next_select: Option<Timestamp>,
 }
 
@@ -58,6 +60,8 @@ impl Track {
             log,
             wait_reason: None,
             runner: None,
+            started_at: None,
+            finished_at: None,
             next_select: None,
         }
     }
@@ -108,8 +112,8 @@ impl Track {
             platform: spec.and_then(|s| s.requirements.platform.clone()),
             runner: self.runner.clone(),
             queued_at: spec.map(|s| s.enqueued_at).unwrap_or_default(),
-            started_at: None,
-            finished_at: None,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
             exit_code: None,
             reason: None,
             project: spec.map(|s| s.identity.project.clone()),

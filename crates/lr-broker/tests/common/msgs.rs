@@ -178,6 +178,7 @@ pub fn result(job: &str, seq: u64, state: lr_core::JobState, exit: i32) -> Runne
         detail: None,
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     })
 }
 

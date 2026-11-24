@@ -220,6 +220,7 @@ async fn an_order_cancelled_by_upgrade_is_stored_with_actor_upgrade() {
         detail: Some("stopped by upgrade".into()),
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     }))
     .await;
     let row = h.until_state(ALEX, "j1", JobState::Cancelled).await.job;

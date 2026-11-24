@@ -270,6 +270,7 @@ impl Engine {
                 if let Some(t) = self.tracks.get_mut(job) {
                     t.stage = Stage::Started;
                     t.runner = Some(s.runner.clone());
+                    t.started_at = Some(s.started_at);
                 }
                 let line = crate::logs::started_line(&s.runner, s.started_at);
                 self.log_copy(job, &line).await;
@@ -289,6 +290,9 @@ impl Engine {
             BrokerToHub::JobResult(r) => {
                 if let Some(d) = &r.detail {
                     self.log_copy(job, &format!("=== {d} ===\n")).await;
+                }
+                if let Some(t) = self.tracks.get_mut(job) {
+                    t.finished_at = r.finished_at;
                 }
                 self.final_result(job, r.state, r.exit_code, r.reason).await;
             }

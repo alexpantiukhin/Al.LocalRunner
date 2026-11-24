@@ -22,6 +22,7 @@ fn exceeded(job: &str, seq: u64) -> RunnerToBroker {
         reason: Some(ReasonCode::ResourceExceeded),
         detail: Some("declared mem_mb exceeded: declared 512 MB, peak 900 MB".into()),
         peak_mem_mb: Some(900),
+        finished_at: None,
         peak_disk_mb: Some(40),
     })
 }

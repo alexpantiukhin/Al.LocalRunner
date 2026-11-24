@@ -138,6 +138,7 @@ async fn secret_missing_on_the_runner_ends_the_job_with_its_reason() {
         detail: Some("secret not found: registry_auth".into()),
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     }))
     .await;
     r.acked(1).await;

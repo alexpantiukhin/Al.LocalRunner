@@ -354,6 +354,29 @@ impl FakeBroker {
             detail: None,
             peak_disk_mb: None,
             peak_mem_mb: None,
+            finished_at: None,
+        }))
+        .await;
+    }
+
+    pub async fn result_at(
+        &self,
+        job: &JobId,
+        state: JobState,
+        exit_code: Option<i32>,
+        finished_at: Timestamp,
+    ) {
+        let seq = self.next_seq(job);
+        self.send(BrokerToHub::JobResult(JobResult {
+            job: job.clone(),
+            seq,
+            state,
+            exit_code,
+            reason: None,
+            detail: None,
+            peak_disk_mb: None,
+            peak_mem_mb: None,
+            finished_at: Some(finished_at),
         }))
         .await;
     }

@@ -309,6 +309,10 @@ pub struct JobResult {
     /// Peak size of the job's working and temporary directories in MB.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_disk_mb: Option<u64>,
+    /// Finish on the broker clock, set by the broker when it tells the hub; absent from a runner
+    /// and from brokers of an earlier minor version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<Timestamp>,
 }
 
 /// The order was stored; the hub drops it from its outbox.

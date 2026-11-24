@@ -189,6 +189,7 @@ async fn restarted(shared: &Shared, job: JobId) {
         detail: Some("the runner restarted while the job ran".into()),
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     });
     shared.outbox.push_until_stored(&job, &msg).await;
 }

@@ -276,6 +276,7 @@ pub fn job_result(seq: u64) -> JobResult {
         detail: Some("restarted".into()),
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     }
 }
 
