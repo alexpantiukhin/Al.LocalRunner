@@ -143,3 +143,49 @@ async fn profile_without_args_is_unchanged() {
     assert_eq!(spec.steps[0].command, "make test");
     assert!(spec.args.is_empty());
 }
+
+#[tokio::test]
+async fn empty_arg_warns_and_counts_as_not_given() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(with_args(
+        "targeted",
+        None,
+        &[("target", ""), ("pkg", "")],
+    )))
+    .await;
+    match cli.reply().await {
+        CliReply::Submitted { warnings, .. } => assert_eq!(
+            warnings,
+            vec![
+                "warning: argument `target` is empty and counts as not given".to_string(),
+                "warning: argument `pkg` is empty and counts as not given".to_string(),
+            ]
+        ),
+        other => panic!("{other:?}"),
+    }
+    until(&local, "order sent", || local.orders().len() == 1).await;
+    let spec = &local.orders()[0].spec;
+    assert_eq!(spec.steps[0].command, "cargo test all");
+}
+
+#[tokio::test]
+async fn non_empty_arg_gives_no_empty_warning() {
+    let mut rig = Rig::new();
+    let local = rig.local_broker(Script::local_runner());
+    rig.start();
+    let cli = rig.cli().await;
+    cli.send(CliRequest::Submit(with_args(
+        "targeted",
+        None,
+        &[("target", "alpha")],
+    )))
+    .await;
+    match cli.reply().await {
+        CliReply::Submitted { warnings, .. } => assert!(warnings.is_empty(), "{warnings:?}"),
+        other => panic!("{other:?}"),
+    }
+    until(&local, "order sent", || local.orders().len() == 1).await;
+}

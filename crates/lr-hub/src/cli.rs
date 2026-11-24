@@ -77,6 +77,14 @@ impl Engine {
             Err(Refusal::Invalid(m)) => return Some(error(ProtocolErrorCode::Malformed, m)),
         };
         let (spec, mut warnings) = (built.spec, Vec::<String>::new());
+        warnings.extend(
+            req.args
+                .iter()
+                .filter(|(_, value)| value.is_empty())
+                .map(|(name, _)| {
+                    format!("warning: argument `{name}` is empty and counts as not given")
+                }),
+        );
         warnings.extend(self.duplicate_warning(&spec));
         if crate::select::local_only(&spec.requirements) && !self.links.contains_key(LOCAL_BROKER) {
             return Some(CliReply::Rejected {
