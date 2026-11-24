@@ -6,7 +6,7 @@ use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{middleware, Json, Router};
-use lr_abstractions::DataSource;
+use lr_abstractions::{DataSource, HistoryWindow};
 use lr_core::JobId;
 use lr_proto::DashboardSnapshot;
 use serde::{Deserialize, Serialize};
@@ -109,6 +109,12 @@ impl RunningDashboard {
 #[derive(Deserialize)]
 struct IndexQuery {
     token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SnapshotQuery {
+    history_offset: Option<u64>,
+    history_limit: Option<u64>,
 }
 
 impl<D> Dashboard<D>
@@ -283,11 +289,18 @@ async fn style() -> Response {
     ([(header::CONTENT_TYPE, "text/css; charset=utf-8")], STYLE).into_response()
 }
 
-async fn snapshot_json<D>(State(state): State<Arc<AppState<D>>>) -> Response
+async fn snapshot_json<D>(
+    State(state): State<Arc<AppState<D>>>,
+    Query(query): Query<SnapshotQuery>,
+) -> Response
 where
     D: DataSource<Snapshot = DashboardSnapshot> + 'static,
 {
-    match state.source.snapshot().await {
+    let window = HistoryWindow {
+        offset: query.history_offset.unwrap_or(0),
+        limit: query.history_limit,
+    };
+    match state.source.snapshot_page(window).await {
         Ok(snapshot) => Json(snapshot).into_response(),
         Err(e) => data_error(&e),
     }

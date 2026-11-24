@@ -6,6 +6,10 @@ use crate::api::{
 use lr_abstractions::{JobFilter, JobRecord};
 use lr_proto::{HistoryFilter, JobDetail, JobSummary, ReadReply, WireSource};
 
+fn start_of(f: &HistoryFilter) -> Option<String> {
+    f.offset.map(|o| o.to_string()).or_else(|| f.cursor.clone())
+}
+
 impl Engine {
     async fn visible_runs(
         &self,
@@ -59,9 +63,14 @@ impl Engine {
     pub(super) async fn history(&self, viewer: &Viewer, f: HistoryFilter) -> ReadReply {
         match self.visible_runs(viewer, &f).await {
             Ok(runs) => {
+                let total = runs.len() as u64;
                 let jobs = runs.into_iter().map(|(_, _, s)| s).collect();
-                let (jobs, next) = page(jobs, &f.cursor, f.effective_limit());
-                ReadReply::History { jobs, next }
+                let (jobs, next) = page(jobs, &start_of(&f), f.effective_limit());
+                ReadReply::History {
+                    jobs,
+                    next,
+                    total: Some(total),
+                }
             }
             Err(reply) => reply,
         }
@@ -70,7 +79,8 @@ impl Engine {
     pub(super) async fn history_details(&self, viewer: &Viewer, f: HistoryFilter) -> ReadReply {
         match self.visible_runs(viewer, &f).await {
             Ok(runs) => {
-                let (runs, next) = page(runs, &f.cursor, f.effective_limit());
+                let total = runs.len() as u64;
+                let (runs, next) = page(runs, &start_of(&f), f.effective_limit());
                 let jobs: Vec<JobDetail> = runs
                     .into_iter()
                     .filter_map(|(rec, a, _)| {
@@ -78,7 +88,11 @@ impl Engine {
                         mask_detail(detail_of(&rec, wait), a)
                     })
                     .collect();
-                ReadReply::Details { jobs, next }
+                ReadReply::Details {
+                    jobs,
+                    next,
+                    total: Some(total),
+                }
             }
             Err(reply) => reply,
         }

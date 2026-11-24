@@ -161,6 +161,7 @@ fn history_flags_become_the_brokers_filter() {
             active_only: false,
             limit: Some(5),
             cursor: None,
+            offset: None,
             mine: false,
         }
     );
@@ -761,6 +762,8 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
             profiles: Vec::new(),
             clients: Vec::new(),
         },
+        history_page: None,
+        queue_count: None,
     };
     assert_eq!(
         log_targets(&snap),
@@ -1088,6 +1091,7 @@ fn status_recent_lines_name_the_end_the_reason_and_who() {
             total_cpu: 0,
         },
         next: None,
+        queue_total: None,
     };
     let text = recent_lines(&[("local".into(), view.clone())]).join("\n");
     for needed in [
@@ -1132,6 +1136,7 @@ fn recent_rows_of_a_broker_that_ignores_the_filter_are_cut_on_this_side() {
             total_cpu: 0,
         },
         next: None,
+        queue_total: None,
     };
     let ids = |v: &StatusView| v.recent.iter().map(|s| s.job.0.clone()).collect::<Vec<_>>();
     let mut counted = view.clone();

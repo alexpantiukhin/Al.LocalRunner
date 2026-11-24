@@ -172,6 +172,51 @@ async fn queue_page_lists_jobs_with_project_source_label() {
 }
 
 #[tokio::test]
+async fn the_snapshot_route_passes_the_history_window_to_the_source() {
+    use lr_abstractions::HistoryWindow;
+    let source = common::source();
+    let dash = dashboard(source.clone());
+    let token = dash.launch_token().to_string();
+    let router = dash.router(PORT);
+    let cookie = session(&router, &token).await;
+    let ask = |uri: &str| {
+        Request::get(uri.to_string())
+            .header(header::HOST, host())
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap()
+    };
+    for uri in [
+        "/api/snapshot",
+        "/api/snapshot?history_offset=100&history_limit=50",
+        "/api/snapshot?history_offset=7",
+    ] {
+        assert_eq!(send(&router, ask(uri)).await.0, StatusCode::OK, "{uri}");
+    }
+    assert_eq!(
+        send(&router, ask("/api/snapshot?history_offset=-1"))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "a negative offset is not a number of runs"
+    );
+    assert_eq!(
+        source.pages(),
+        [
+            HistoryWindow::default(),
+            HistoryWindow {
+                offset: 100,
+                limit: Some(50)
+            },
+            HistoryWindow {
+                offset: 7,
+                limit: None
+            },
+        ]
+    );
+}
+
+#[tokio::test]
 async fn cancel_action_requires_token() {
     let source = common::source();
     let dash = dashboard(source.clone());

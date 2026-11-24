@@ -153,6 +153,7 @@ fn status_masks_the_last_lines_of_running_jobs() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let mut views = vec![("local".to_string(), view)];
     mask_status(&mut views, &Redactor::new(&[]));

@@ -732,6 +732,74 @@ async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_rea
 }
 
 #[tokio::test]
+async fn history_offset_skips_runs_and_the_answer_counts_them_all() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let page = |limit: u64, offset: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            limit: Some(limit),
+            offset,
+            ..HistoryFilter::default()
+        })
+    };
+    let ReadReply::History { jobs, next, total } = alex.read(page(1, Some(1))).await else {
+        panic!("history")
+    };
+    let ids: Vec<&str> = jobs.iter().map(|j| j.job.0.as_str()).collect();
+    assert_eq!(ids, ["j2"], "the second most recently finished");
+    assert_eq!((next.as_deref(), total), (Some("2"), Some(3)));
+    let ReadReply::History { jobs, next, total } = alex.read(page(2, Some(2))).await else {
+        panic!("history")
+    };
+    let ids: Vec<&str> = jobs.iter().map(|j| j.job.0.as_str()).collect();
+    assert_eq!(ids, ["j3"]);
+    assert_eq!((next, total), (None, Some(3)));
+    let ReadReply::History { jobs, total, .. } = alex.read(page(5, Some(50))).await else {
+        panic!("history")
+    };
+    assert!(jobs.is_empty(), "past the end");
+    assert_eq!(total, Some(3));
+    let ReadReply::Details { jobs, total, .. } = alex
+        .read(ReadRequest::HistoryDetails(HistoryFilter {
+            limit: Some(1),
+            offset: Some(2),
+            ..HistoryFilter::default()
+        }))
+        .await
+    else {
+        panic!("details")
+    };
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(total, Some(3));
+}
+
+#[tokio::test]
+async fn status_counts_the_whole_queue_whatever_the_size_of_the_list() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let s = status(
+        alex.read(ReadRequest::Status(StatusFilter {
+            limit: Some(1),
+            ..StatusFilter::default()
+        }))
+        .await,
+    );
+    assert_eq!(s.queue.len(), 1);
+    assert!(s.next.is_some(), "the list was cut");
+    assert_eq!(s.queue_total, Some(2), "j2 and j3 wait");
+}
+
+#[tokio::test]
 async fn history_window_keeps_the_runs_that_were_running_in_it() {
     let h = Harness::start("");
     let (r, mut alex) = pool_with_jobs(&h).await;

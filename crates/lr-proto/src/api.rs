@@ -116,6 +116,11 @@ pub struct HistoryFilter {
     pub limit: Option<u64>,
     /// Continue after the `next` token of the previous answer.
     pub cursor: Option<String>,
+    /// Skip this many runs of the list, newest first; wins over `cursor`. Absent from older
+    /// senders, and an older broker ignores it and answers the first page (it also leaves
+    /// `total` out of the answer, which tells the sender so).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
     /// Only runs of the asking client (`history` without `--all` or `--client`); the broker
     /// puts the asker's key in place of `client`. Absent from older senders.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -394,6 +399,10 @@ pub struct StatusView {
     pub pool: PoolLoad,
     /// Token for the next part of the queue, `None` at the end.
     pub next: Option<String>,
+    /// How many orders the filter matches in the whole queue, whatever the size of the list;
+    /// absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_total: Option<u64>,
 }
 
 /// A tag held by a running job.
@@ -507,6 +516,10 @@ pub enum ReadReply {
         jobs: Vec<JobSummary>,
         /// Token for the next page, `None` at the end.
         next: Option<String>,
+        /// How many runs the filter matches in all (at most what the broker scans), for the
+        /// reader who pages; absent from an older broker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
     },
     /// Answer to `history_show`.
     Job(Box<JobDetail>),
@@ -516,6 +529,9 @@ pub enum ReadReply {
         jobs: Vec<JobDetail>,
         /// Token for the next page, `None` at the end.
         next: Option<String>,
+        /// As in [`ReadReply::History`]; absent from an older broker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
     },
     /// Answer to `explain`.
     Explain {

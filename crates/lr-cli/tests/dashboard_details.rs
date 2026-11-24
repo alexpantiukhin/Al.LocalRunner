@@ -129,6 +129,7 @@ fn status() -> StatusView {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     }
 }
 
@@ -146,10 +147,12 @@ async fn snapshot(details: bool) -> DashboardSnapshot {
         ReadRequest::HistoryDetails(_) if details => Some(ReadReply::Details {
             jobs: vec![finished_detail()],
             next: None,
+            total: None,
         }),
         ReadRequest::History(_) => Some(ReadReply::History {
             jobs: vec![finished_detail().summary],
             next: None,
+            total: None,
         }),
         ReadRequest::Runners => Some(ReadReply::Runners {
             runners: vec![],

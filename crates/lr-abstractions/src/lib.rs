@@ -33,7 +33,7 @@ pub mod fakes;
 pub mod store_contract;
 
 pub use clock::{Clock, Sleep};
-pub use datasource::{CancelRequest, DataError, DataSource, EventStream};
+pub use datasource::{CancelRequest, DataError, DataSource, EventStream, HistoryWindow};
 pub use files::{Files, FilesError};
 pub use host::{DiskSpace, KeepAwake};
 pub use load::{HostLoad, LoadSample};

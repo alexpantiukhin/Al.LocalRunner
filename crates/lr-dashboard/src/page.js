@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
+    sel: -1, hp: { offset: 0, limit: 100 }, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -182,6 +182,27 @@
     root.replaceChildren(el("div", { cls: "scroll" }, [t]));
   }
 
+  function renderPager() {
+    var hp = S.data.history_page, text = $("hp-text");
+    var shown = S.data.jobs.filter(function (j) { return j.list === "history"; }).length;
+    $("hp-prev").disabled = !hp || hp.offset <= 0;
+    $("hp-next").disabled = !hp || hp.offset + hp.limit >= hp.total;
+    if (!hp) { text.textContent = shown + " runs"; return; }
+    var page = Math.floor(hp.offset / hp.limit) + 1, pages = Math.max(1, Math.ceil(hp.total / hp.limit));
+    text.textContent = "shown " + shown + " of " + hp.total + " runs, page " + page + " of " + pages;
+  }
+  function renderQueueNote() {
+    var qc = S.data.queue_count, note = $("queue-note");
+    var cut = !!qc && qc.total > qc.shown;
+    note.hidden = !cut;
+    note.textContent = cut ? "shown " + qc.shown + " of " + qc.total + " queued orders; the broker's list limit cut the rest" : "";
+  }
+  function pageTo(offset, limit) {
+    S.hp = { offset: Math.max(0, offset), limit: limit };
+    S.sel = -1;
+    refresh(true);
+  }
+
   function render() {
     document.querySelectorAll(".tabs button").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === S.tab)); });
     document.querySelectorAll(".tab").forEach(function (t) { t.hidden = t.id !== "tab-" + S.tab; });
@@ -190,8 +211,8 @@
       th.classList.toggle("asc", th.dataset.sort === shownSort.col && shownSort.dir > 0);
       th.classList.toggle("desc", th.dataset.sort === shownSort.col && shownSort.dir < 0);
     });
-    if (S.tab === "queue") renderTable($("queue-body"), QCOLS);
-    if (S.tab === "history") renderTable($("history-body"), HCOLS);
+    if (S.tab === "queue") { renderTable($("queue-body"), QCOLS); renderQueueNote(); }
+    if (S.tab === "history") { renderTable($("history-body"), HCOLS); renderPager(); }
     if (S.tab === "stats") renderStats();
     if (S.tab === "runners") renderRunners();
     if (S.tab === "brokers") renderBrokers();
@@ -366,10 +387,11 @@
   }
 
   var timer = null;
-  function refresh() {
+  function refresh(force) {
     if (!config.live) return;
-    fetch("/api/snapshot", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && !S.paused) { S.data = d; render(); } }).catch(function () { return; });
+    var url = "/api/snapshot?history_offset=" + S.hp.offset + "&history_limit=" + S.hp.limit;
+    fetch(url, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && (force === true || !S.paused)) { S.data = d; render(); } }).catch(function () { return; });
     if (S.open && $("log-follow").checked) loadLog();
   }
   function schedule() { if (!timer) timer = setTimeout(function () { timer = null; refresh(); }, 300); }
@@ -410,6 +432,9 @@
     th.addEventListener("click", function () { var c = th.dataset.sort; S.sort = { col: c, dir: S.sort.col === c ? -S.sort.dir : 1 }; saveState(); render(); });
   });
   FILTERS.forEach(function (k) { $("f-" + k).addEventListener("input", function (e) { S.filters[k] = e.target.value; S.sel = -1; saveState(); render(); }); });
+  $("hp-prev").addEventListener("click", function () { pageTo(S.hp.offset - S.hp.limit, S.hp.limit); });
+  $("hp-next").addEventListener("click", function () { pageTo(S.hp.offset + S.hp.limit, S.hp.limit); });
+  $("hp-size").addEventListener("change", function (e) { pageTo(0, Number(e.target.value) || 100); });
   $("card-close").addEventListener("click", closeCard);
   $("card-cancel").addEventListener("click", function () { if (S.open) askCancel([S.open]); });
   $("cancel-filtered").addEventListener("click", function () {

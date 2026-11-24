@@ -202,6 +202,7 @@ fn status_json_has_project_source_label() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let json = status_json(&[("local".to_string(), view)]);
     let brokers = json["brokers"].as_array().expect("brokers array");
@@ -240,6 +241,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let views = [("local".to_string(), view)];
     let now = Timestamp(195_000);
@@ -749,6 +751,7 @@ fn status_with_output_age(ago: Option<u64>) -> Vec<(String, StatusView)> {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     vec![("local".to_string(), view)]
 }

@@ -262,6 +262,7 @@ impl Engine {
                     .flatten(),
             });
         }
+        let queue_total = queue.len() as u64;
         let (queue, next) = page(queue, &f.cursor, limit as u64);
         let recent = self.recent(viewer, &f, limit as u64).await;
         let used = self.running_jobs();
@@ -277,6 +278,7 @@ impl Engine {
                 total_cpu: pool.cpu,
             },
             next,
+            queue_total: Some(queue_total),
         }
     }
 

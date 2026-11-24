@@ -124,6 +124,8 @@ pub fn snapshot() -> DashboardSnapshot {
             profiles: vec![],
             clients: vec![],
         },
+        history_page: None,
+        queue_count: None,
     }
 }
 

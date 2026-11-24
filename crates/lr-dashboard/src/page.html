@@ -40,12 +40,19 @@
 </section>
 <main>
   <section id="tab-queue" class="tab">
+    <p id="queue-note" class="note" role="status" hidden></p>
     <div class="scroll"><table id="queue-table">
       <thead><tr><th data-sort="position">#</th><th data-sort="job">Job</th><th data-sort="state">State</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="broker">Broker</th><th data-sort="wait">Waiting / elapsed</th></tr></thead>
       <tbody id="queue-body">{{QUEUE_ROWS}}</tbody>
     </table></div>
   </section>
   <section id="tab-history" class="tab" hidden>
+    <div id="history-pager" class="bar">
+      <button type="button" id="hp-prev" class="live-only">Previous</button>
+      <button type="button" id="hp-next" class="live-only">Next</button>
+      <label class="live-only">Runs per page <select id="hp-size"><option>50</option><option selected>100</option><option>250</option></select></label>
+      <span id="hp-text" role="status"></span>
+    </div>
     <div class="scroll"><table id="history-table">
       <thead><tr><th data-sort="job">Job</th><th data-sort="state">Result</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="queued">Queued</th><th data-sort="finished">Finished</th><th data-sort="duration">Duration</th></tr></thead>
       <tbody id="history-body"></tbody>

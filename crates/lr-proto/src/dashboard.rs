@@ -72,6 +72,36 @@ pub struct DashboardSnapshot {
     pub runners: Vec<BrokerRunners>,
     /// Statistics.
     pub stats: StatsView,
+    /// Which part of the history the finished jobs are; absent when the brokers do not report
+    /// the total, so the page cannot page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_page: Option<HistoryPage>,
+    /// How many queued orders the rows show against how many the brokers hold; absent when
+    /// the brokers do not report the total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_count: Option<GridCount>,
+}
+
+/// The part of the history a snapshot carries: `shown` runs from run number `offset` (from 0,
+/// newest first) of `total`, asked as pages of `limit`. With several brokers each one is paged
+/// by the same offset and limit and the totals add up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryPage {
+    /// Runs skipped on each broker.
+    pub offset: u64,
+    /// Page size asked of each broker.
+    pub limit: u64,
+    /// Runs the brokers hold in all.
+    pub total: u64,
+}
+
+/// A grid that a hard limit may have cut: the rows it shows and the rows there are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridCount {
+    /// Rows shown.
+    pub shown: u64,
+    /// Rows the brokers hold.
+    pub total: u64,
 }
 
 /// A live update of the dashboard: an event of one broker.

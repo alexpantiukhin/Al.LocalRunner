@@ -39,6 +39,50 @@ fn the_run_window_is_optional_on_the_wire() {
 }
 
 #[test]
+fn history_paging_fields_are_optional_on_the_wire() {
+    let older: HistoryFilter = serde_json::from_value(json!({"active_only": false})).unwrap();
+    assert_eq!(older.offset, None);
+    let v = serde_json::to_value(HistoryFilter::default()).unwrap();
+    assert!(v.get("offset").is_none(), "{v}");
+    let v = serde_json::to_value(HistoryFilter {
+        offset: Some(200),
+        ..HistoryFilter::default()
+    })
+    .unwrap();
+    assert_eq!(v["offset"], 200);
+
+    let old_reply = json!({"type": "history", "jobs": [], "next": null});
+    let ReadReply::History { total, .. } = serde_json::from_value(old_reply).unwrap() else {
+        panic!("history")
+    };
+    assert_eq!(total, None, "an older broker sends no total");
+    let v = serde_json::to_value(ReadReply::History {
+        jobs: Vec::new(),
+        next: None,
+        total: None,
+    })
+    .unwrap();
+    assert!(v.get("total").is_none(), "{v}");
+    let v = serde_json::to_value(ReadReply::History {
+        jobs: Vec::new(),
+        next: None,
+        total: Some(7),
+    })
+    .unwrap();
+    assert_eq!(v["total"], 7);
+
+    let old_status = json!({
+        "type": "status", "running": [], "queue": [], "recent": [],
+        "pool": {"used_mem_mb": 0, "total_mem_mb": 1, "used_cpu": 0, "total_cpu": 1},
+        "next": null
+    });
+    let ReadReply::Status(s) = serde_json::from_value(old_status).unwrap() else {
+        panic!("status")
+    };
+    assert_eq!(s.queue_total, None);
+}
+
+#[test]
 fn unfollow_is_unknown_to_an_older_broker_and_new_cli_messages_to_an_older_hub() {
     let v = serde_json::to_value(ReadRequest::Unfollow { req: 7 }).unwrap();
     assert_eq!(v, json!({"type": "unfollow", "req": 7}));

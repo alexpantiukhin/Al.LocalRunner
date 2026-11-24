@@ -23,6 +23,7 @@ button, .button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 12px; }
 .grow { flex: 1; }
+.note { margin: 0; padding: 8px 12px; color: var(--warn); }
 .conn { color: var(--muted); }
 .conn.live { color: var(--ok); }
 .conn.down { color: var(--bad); }

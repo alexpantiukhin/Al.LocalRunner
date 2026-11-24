@@ -94,6 +94,7 @@ fn status_json_carries_peaks_of_recent_jobs() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let mut json = status_json(&[("local".to_string(), view)]);
     add_ages(&mut json, Timestamp(10_000));

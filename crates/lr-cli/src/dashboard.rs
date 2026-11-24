@@ -6,13 +6,13 @@ use crate::commands::jobs::hub;
 use crate::commands::log_cmd::cli_redactor;
 use crate::commands::view::{known_brokers, read};
 pub use crate::dashboard_model::{
-    add_hub_orders, build_snapshot, detail_of, finished_runs, hub_orders, keep_last_known,
-    HISTORY_LIMIT, ORDERS_WAIT,
+    add_hub_orders, build_snapshot, build_snapshot_page, detail_of, finished_page, finished_runs,
+    hub_orders, keep_last_known, HISTORY_LIMIT, ORDERS_WAIT,
 };
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use async_trait::async_trait;
-use lr_abstractions::{CancelRequest, DataError, DataSource, EventStream};
+use lr_abstractions::{CancelRequest, DataError, DataSource, EventStream, HistoryWindow};
 use lr_core::JobId;
 use lr_dashboard::{Dashboard, DashboardOptions, LOG_TAIL_BYTES};
 use lr_obs::Redactor;
@@ -178,9 +178,14 @@ impl DataSource for HubSource {
     type Event = DashboardEvent;
 
     async fn snapshot(&self) -> Result<DashboardSnapshot, DataError> {
+        self.snapshot_page(HistoryWindow::default()).await
+    }
+
+    async fn snapshot_page(&self, history: HistoryWindow) -> Result<DashboardSnapshot, DataError> {
         let client = hub(&self.layout).await.map_err(unavailable)?;
         let redactor = cli_redactor(&self.layout);
-        let snap = build_snapshot(&client, &StatusFilter::default(), true, &redactor).await;
+        let snap =
+            build_snapshot_page(&client, &StatusFilter::default(), Some(history), &redactor).await;
         client.close().await;
         let mut snap = snap.map_err(unavailable)?;
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
