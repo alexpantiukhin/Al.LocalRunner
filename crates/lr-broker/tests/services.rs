@@ -58,7 +58,7 @@ async fn not_allowed_service_names_the_file_the_label_and_the_fix() {
     assert_eq!(r.code.as_str(), "rejected_service_not_allowed");
     assert_eq!(
         r.detail,
-        format!("service build-daemon is not allowed for label (empty) in {path}; to allow it, run it as administrator: localrunner policy allow-service build-daemon --label \"\"")
+        format!("service build-daemon is not allowed for label (empty) in {path}; to allow it, run it as administrator: localrunner policy allow-service build-daemon --label ''")
     );
     let h = Harness::with_policy_path(ALLOW, path, false);
     let _r = h.member_runner("r1", "10.0.0.7", with_service()).await;
@@ -77,6 +77,9 @@ async fn empty_label_service_entry_matches_only_clients_without_a_label() {
     let mut local = h.local_hub("root").await;
     local.send(&order("j1", needs_service(512))).await;
     local.accepted().await;
+    let mut blank = h.member_hub("blank", "", "10.0.0.20").await;
+    blank.send(&order("j3", needs_service(512))).await;
+    blank.accepted().await;
     let mut ci = h.member_hub("ci-box", "ci", "10.0.0.21").await;
     ci.send(&order("j2", needs_service(512))).await;
     assert_eq!(

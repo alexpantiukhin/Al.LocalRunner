@@ -4,6 +4,15 @@ use lr_core::QueueEntry;
 use lr_proto::{OrderSpec, RejectReason};
 use std::collections::BTreeSet;
 
+fn shell_word(value: &str) -> String {
+    let plain = |c: char| c.is_ascii_alphanumeric() || "._:/@-".contains(c);
+    if !value.is_empty() && value.chars().all(plain) {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+}
+
 const RESTARTED: &str = "runners have not come back after the broker restart, retry";
 
 impl Engine {
@@ -50,13 +59,10 @@ impl Engine {
         } else {
             ""
         };
-        let arg = if label.is_empty() || label.contains(|c: char| c.is_whitespace() || c == '"') {
-            format!("{label:?}")
-        } else {
-            label.to_string()
-        };
         format!(
-            "{what} {name} is not allowed for label {shown}{file}; to allow it{admin}: localrunner policy allow-{what} {name} --label {arg}"
+            "{what} {name} is not allowed for label {shown}{file}; to allow it{admin}: localrunner policy allow-{what} {} --label {}",
+            shell_word(name),
+            shell_word(label)
         )
     }
 
