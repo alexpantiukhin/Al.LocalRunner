@@ -24,7 +24,10 @@ struct Stage {
 }
 
 fn dockerfile_stages() -> Vec<Stage> {
-    let text = install_file("Dockerfile");
+    stages_of(&install_file("Dockerfile"))
+}
+
+fn stages_of(text: &str) -> Vec<Stage> {
     let mut stages: Vec<Stage> = Vec::new();
     let mut logical = String::new();
     for line in text.lines() {
@@ -87,7 +90,9 @@ fn compose_runs_broker_and_runner_from_the_versioned_image_as_non_root() {
         ("runner", "runner", "runner-state", "runner.toml"),
     ] {
         let s = &services[name];
-        assert_eq!(s["image"], image.as_str(), "{name}: image");
+        if name == "broker" {
+            assert_eq!(s["image"], image.as_str(), "{name}: image");
+        }
         assert_eq!(
             strings(&s["command"]),
             ["localrunner", role, "run"],
@@ -135,6 +140,81 @@ fn compose_runs_broker_and_runner_from_the_versioned_image_as_non_root() {
     );
 }
 
+fn runner_dockerfile() -> String {
+    compose()["services"]["runner"]["build"]["dockerfile_inline"]
+        .as_str()
+        .expect("the runner is built from dockerfile_inline")
+        .to_string()
+}
+
+#[test]
+fn runner_is_built_from_an_inline_dockerfile_with_visible_packages_and_the_published_binary() {
+    let doc = compose();
+    let runner = &doc["services"]["runner"];
+    assert!(runner["image"].is_null(), "the runner names no image to pull");
+    let stages = stages_of(&runner_dockerfile());
+    assert_eq!(stages.len(), 1, "one stage: the binary comes from the published image");
+    let stage = &stages[0];
+    assert_explicit_tag(&stage.from);
+    let runs = instruction(stage, "RUN");
+    let packages = runs
+        .iter()
+        .find(|r| r.contains("install"))
+        .expect("a RUN installs the packages");
+    for package in ["ca-certificates", "git", "python3"] {
+        assert!(
+            packages.split_whitespace().any(|w| w == package),
+            "{package} is in the visible package list: {packages}"
+        );
+    }
+    let copies = instruction(stage, "COPY");
+    assert_eq!(copies.len(), 1, "{copies:?}");
+    let parts: Vec<&str> = copies[0].split_whitespace().collect();
+    assert_eq!(
+        parts[0],
+        format!("--from=ghcr.io/alexpantiukhin/al.localrunner:{VERSION}"),
+        "the binary comes from the image of the same version"
+    );
+    assert_eq!(
+        parts[1..],
+        ["/usr/local/bin/localrunner", "/usr/local/bin/localrunner"]
+    );
+    let user = instruction(stage, "USER");
+    assert_eq!(user.len(), 1, "{user:?}");
+    assert_eq!(
+        runner["user"].as_str().unwrap(),
+        user[0],
+        "the Dockerfile and the service run as the same user"
+    );
+    let uid = user[0].split(':').next().unwrap();
+    assert!(uid != "0" && uid != "root", "runtime user {uid}");
+    let env = instruction(stage, "ENV").join(" ");
+    assert!(env.contains(&format!("LOCALRUNNER_STATE_DIR={STATE_DIR}")), "{env}");
+    assert!(env.contains(&format!("LOCALRUNNER_CONFIG_DIR={CONFIG_DIR}")), "{env}");
+    let mkdir = runs.iter().find(|r| r.contains("mkdir")).expect("directories are made");
+    for dir in [STATE_DIR, CONFIG_DIR, "/run/al-localrunner"] {
+        assert!(mkdir.contains(dir), "{dir} is created and owned: {mkdir}");
+    }
+    assert_eq!(strings(&runner["cap_drop"]), ["ALL"]);
+    assert_eq!(strings(&runner["security_opt"]), ["no-new-privileges:true"]);
+}
+
+#[test]
+fn the_release_compose_keeps_the_runner_build_and_drops_only_the_broker_build() {
+    let release = std::fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
+        .expect("release.yml exists")
+        .replace("\r\n", "\n");
+    let sed = release
+        .lines()
+        .find(|l| l.contains("src/install/compose.yaml"))
+        .expect("the release rewrites compose.yaml");
+    assert!(
+        !sed.contains("/dockerfile:/d"),
+        "a range up to `dockerfile:` would eat the inline Dockerfile of the runner: {sed}"
+    );
+    assert!(sed.contains("COPY --from="), "the binary source follows the release tag: {sed}");
+}
+
 #[test]
 fn image_is_built_on_alpine_musl_and_runs_on_debian_slim_with_a_shell_and_glibc() {
     let stages = dockerfile_stages();
@@ -163,7 +243,12 @@ fn image_is_built_on_alpine_musl_and_runs_on_debian_slim_with_a_shell_and_glibc(
 fn no_image_anywhere_uses_latest_or_an_implicit_tag() {
     let doc = compose();
     for (_, s) in doc["services"].as_object().unwrap() {
-        assert_explicit_tag(s["image"].as_str().unwrap());
+        if let Some(image) = s["image"].as_str() {
+            assert_explicit_tag(image);
+        }
+    }
+    for stage in stages_of(&runner_dockerfile()) {
+        assert_explicit_tag(&stage.from);
     }
     for stage in dockerfile_stages() {
         assert_explicit_tag(&stage.from);

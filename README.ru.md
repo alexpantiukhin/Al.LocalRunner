@@ -450,11 +450,27 @@ on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # по ум
 
 ## Docker Compose
 
-Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. В образе только бинарник поверх `debian:bookworm-slim` (оболочка, glibc, сертификаты CA), он работает не от root. Каждый релиз публикует образ `ghcr.io/alexpantiukhin/al-localrunner:<версия>` и прикладывает `compose.yaml`, который его использует. Инструментов джоб (node, java, cargo, git, ...) в образе нет: положите их в каталог хоста или том как `<инструмент>/bin`, смонтируйте в контейнер раннера и укажите в `runner.toml`: `[env] tools_dir = "/opt/tools"`. Найденные там каталоги `bin` дописываются к `path`; `localrunner reload` подхватывает каталог, заполненный позже. Свой образ не нужен. Если каталог для сокетов `/run/al-localrunner` недоступен для записи пользователю, от которого запущен контейнер (например, `user: 1000:1000`), раннер использует `ipc/` каталога состояния. Тег образа всегда указывается явно.
+Файлы: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. Опубликованный образ содержит только бинарник поверх `debian:bookworm-slim` (оболочка, glibc, сертификаты CA), работает не от root и остаётся минимальным. Каждый релиз публикует его как `ghcr.io/alexpantiukhin/al.localrunner:<версия>` и прикладывает `compose.yaml`, который его использует.
+
+Стандартный способ запустить раннер — собственный образ, который собирает сам `compose.yaml`, без репозитория и отдельного Dockerfile: у сервиса раннера есть `build: dockerfile_inline`, где вы выбираете базовую ОС и пакеты одним видимым списком, а бинарник копируется из опубликованного образа той же версии:
+
+```yaml
+runner:
+  build:
+    dockerfile_inline: |
+      FROM debian:bookworm-slim
+      RUN apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates git python3 \
+          && rm -rf /var/lib/apt/lists/*
+      COPY --from=ghcr.io/alexpantiukhin/al.localrunner:<version> /usr/local/bin/localrunner /usr/local/bin/localrunner
+      # ... каталоги, ENV и USER как в install/compose.yaml
+```
+
+Бинарник статический, поэтому подойдёт любая основа: для alpine напишите `FROM alpine:3.21` и `RUN apk add --no-cache ca-certificates git python3`. Сборка идёт один раз и кэшируется (`docker compose build runner` после правки списка); запуск контейнера сети не требует, раннер работает не от root, `cap_drop: [ALL]` остаётся. Что где держать: пакеты ОС (git, python, компилятор C, всё, что тянет общие библиотеки или `libexec`, которые каталог с диска не передаст) — в `dockerfile_inline`, тогда `[programs]` их находит; большие тулчейны (node, java, rust), которые не хочется пересобирать в образ, — в каталог хоста или том как `<инструмент>/bin`, смонтированный в контейнер раннера и названный в `runner.toml`: `[env] tools_dir = "/opt/tools"`. Найденные там каталоги `bin` дописываются к `path`; `localrunner reload` подхватывает каталог, заполненный позже. Если каталог для сокетов `/run/al-localrunner` недоступен для записи пользователю, от которого запущен контейнер, раннер использует `ipc/` каталога состояния. Тег образа всегда указывается явно, в том числе в `COPY --from`. У выпуска, которого ещё нет среди опубликованных, тега нет: копируйте бинарник из образа, который собирает сервис `broker` (`COPY --from=al-localrunner:<версия>`).
 
 Обновление Linux-раннеров в Docker: смените тег в своём `compose.yaml` на образ нового релиза, затем `docker compose pull` и `docker compose up -d`; каталог инструментов остаётся как есть. Том состояния хранит ключ раннера и запись о присоединении, поэтому заново присоединять не нужно. Проверка: `localrunner runners` показывает у каждого раннера версию, с которой он зарегистрировался (`version 0.2.0`, при расхождении рядом версия этого бинарника; она же в `--json` и на дашборде); раннер, не регистрировавшийся после обновления, показан как `version unknown`.
 
-Собственный образ должен создать эти каталоги и отдать их пользователю, от имени которого работает процесс (в официальном образе это `65532:65532`): `/var/lib/al-localrunner` (состояние, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (конфигурация, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (сокеты Unix). Без них процесс останавливается с `cannot create /run/al-localrunner: Permission denied`.
+Собственный образ (`dockerfile_inline` из `compose.yaml` это делает) должен создать эти каталоги и отдать их пользователю, от имени которого работает процесс (в официальном образе и в примере это `65532:65532`): `/var/lib/al-localrunner` (состояние, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (конфигурация, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (сокеты Unix). Без них процесс останавливается с `cannot create /run/al-localrunner: Permission denied`.
 
 ```
 docker compose -f install/compose.yaml up -d broker

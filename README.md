@@ -447,11 +447,27 @@ Only the broker needs an incoming port. There is no automatic broker discovery o
 
 ## Docker Compose
 
-Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The image holds only the binary on top of `debian:bookworm-slim` (a shell, glibc, CA certificates) and does not run as root. Every release publishes the image `ghcr.io/alexpantiukhin/al-localrunner:<version>` and attaches a `compose.yaml` that uses it. The tools of jobs (node, java, cargo, git, ...) are not in the image: put them in a directory of the host or a volume as `<tool>/bin`, mount it into the runner container and name it in `runner.toml`: `[env] tools_dir = "/opt/tools"`. The `bin` directories found there are appended to `path`; `localrunner reload` picks up a directory filled later. No image of your own is needed. If the directory for sockets, `/run/al-localrunner`, is not writable by the user the container runs as (for example `user: 1000:1000`), the runner uses `ipc/` of the state directory. Always give the image tag explicitly.
+Files: `install/Dockerfile`, `install/compose.yaml`, `install/policy.toml`, `install/runner.toml`. The published image holds only the binary on top of `debian:bookworm-slim` (a shell, glibc, CA certificates) and does not run as root; it stays minimal. Every release publishes it as `ghcr.io/alexpantiukhin/al.localrunner:<version>` and attaches a `compose.yaml` that uses it.
+
+The standard way to run a runner is an image of your own that `compose.yaml` builds itself, with no repository and no separate Dockerfile: the runner service has `build: dockerfile_inline`, where you pick the base OS and the packages in one visible list, and the binary is copied from the published image of the same version:
+
+```yaml
+runner:
+  build:
+    dockerfile_inline: |
+      FROM debian:bookworm-slim
+      RUN apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates git python3 \
+          && rm -rf /var/lib/apt/lists/*
+      COPY --from=ghcr.io/alexpantiukhin/al.localrunner:<version> /usr/local/bin/localrunner /usr/local/bin/localrunner
+      # ... directories, ENV and USER as in install/compose.yaml
+```
+
+The binary is static, so any base works: for alpine write `FROM alpine:3.21` and `RUN apk add --no-cache ca-certificates git python3`. The build runs once and is cached (`docker compose build runner` after a change of the list); starting the container needs no network, the runner does not run as root and `cap_drop: [ALL]` stays. Which way to use: packages of the OS (git, python, a C compiler, anything with shared libraries or `libexec`, which a mounted directory cannot carry) go to `dockerfile_inline`, so that `[programs]` finds them; large toolchains (node, java, rust) that you do not want to rebuild into the image go to a directory of the host or a volume as `<tool>/bin`, mounted into the runner container and named in `runner.toml`: `[env] tools_dir = "/opt/tools"`. The `bin` directories found there are appended to `path`; `localrunner reload` picks up a directory filled later. If the directory for sockets, `/run/al-localrunner`, is not writable by the user the container runs as, the runner uses `ipc/` of the state directory. Always give the image tag explicitly, also in `COPY --from`. A checkout of an unreleased version has no published tag yet: copy the binary from the image the `broker` service builds (`COPY --from=al-localrunner:<version>`).
 
 Updating Linux runners in Docker: change the tag in your `compose.yaml` to the new release image, then `docker compose pull` and `docker compose up -d`; the tools directory stays as it is. The state volume keeps the runner key and the join record, so nothing is joined again. Check the result with `localrunner runners`: every runner shows the version it registered with (`version 0.2.0`, with the version of this binary beside it when they differ; also in `--json` and on the dashboard), a runner that has not registered since the update shows `version unknown`.
 
-A custom image must create these directories and give them to the user the process runs as (the official image uses `65532:65532`): `/var/lib/al-localrunner` (state, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (configuration, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (Unix sockets). Without them the process stops with `cannot create /run/al-localrunner: Permission denied`.
+A custom image (the `dockerfile_inline` of `compose.yaml` does this) must create these directories and give them to the user the process runs as (the official image and the example use `65532:65532`): `/var/lib/al-localrunner` (state, `LOCALRUNNER_STATE_DIR`), `/etc/al-localrunner` (configuration, `LOCALRUNNER_CONFIG_DIR`), `/run/al-localrunner` (Unix sockets). Without them the process stops with `cannot create /run/al-localrunner: Permission denied`.
 
 ```
 docker compose -f install/compose.yaml up -d broker
