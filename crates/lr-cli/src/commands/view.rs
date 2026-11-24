@@ -335,7 +335,7 @@ pub async fn status_job(
     Ok(0)
 }
 
-async fn find_job(
+pub async fn find_job(
     client: &IpcClient,
     job: &JobId,
     broker: Option<&str>,

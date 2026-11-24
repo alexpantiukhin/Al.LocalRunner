@@ -576,15 +576,67 @@ pub fn mine_line(j: &lr_proto::JobSummary) -> String {
 pub async fn cancel_cli(
     layout: &Layout,
     job: Option<String>,
-    label: &str,
+    label: Option<String>,
     mine: bool,
     force: bool,
     reason: Option<String>,
     yes: bool,
 ) -> Result<i32, String> {
+    let Some(label) = label else {
+        return Err(missing_label_error(layout, job.as_deref()).await);
+    };
+    let label = label.as_str();
     let mut stdio = Stdio::new();
     let mut console = stdio.console();
     cancel_asked(layout, job, label, mine, force, reason, yes, &mut console).await
+}
+
+/// What `status` found out about the job named by `cancel` without `--as`.
+#[derive(Debug, Clone, Copy)]
+pub enum LabelLookup<'a> {
+    /// No job was named, or the hub could not be asked.
+    Unasked,
+    /// No broker of the hub knows the job.
+    Unknown,
+    /// The record the brokers show to this user; its label may be hidden from them.
+    Known(Option<&'a lr_proto::JobDetail>),
+}
+
+/// The error of `cancel` without `--as`: names the label of the job when `status` would show it
+/// to the same user.
+async fn missing_label_error(layout: &Layout, job: Option<&str>) -> String {
+    let Some(job) = job else {
+        return missing_label_text(None, LabelLookup::Unasked);
+    };
+    let Ok(client) = hub(layout).await else {
+        return missing_label_text(Some(job), LabelLookup::Unasked);
+    };
+    let found = super::view::find_job(&client, &JobId(job.to_string()), None, None).await;
+    client.close().await;
+    match &found {
+        Ok((_, _, detail)) => missing_label_text(Some(job), LabelLookup::Known(detail.as_ref())),
+        Err(_) => missing_label_text(Some(job), LabelLookup::Unknown),
+    }
+}
+
+/// The text of the `cancel` error when `--as` is missing; the label of `job` is named only
+/// when the broker shows it to this user.
+pub fn missing_label_text(job: Option<&str>, lookup: LabelLookup<'_>) -> String {
+    let base = "cancel: --as <LABEL> is required";
+    let (Some(job), LabelLookup::Known(_) | LabelLookup::Unknown) = (job, lookup) else {
+        return base.to_string();
+    };
+    match lookup {
+        LabelLookup::Known(detail) => match detail.and_then(|d| d.summary.label.as_deref()) {
+            Some(label) => format!(
+                "{base}; the label of {job} is {label} (use --force for a job of another label)"
+            ),
+            None => format!(
+                "{base}; the label of {job} is not shown to you (use --force for a job of another label)"
+            ),
+        },
+        _ => format!("{base}; job {job} is not known to the brokers of this hub, so its label is unknown"),
+    }
 }
 
 /// [`cancel`] that, for `--mine` (it can cancel several jobs), first asks (`yes` answers); a

@@ -177,8 +177,8 @@ pub enum Command {
         /// The job.
         job: Option<String>,
         /// Submitter label of the canceller.
-        #[arg(long = "as", value_name = "LABEL", required = true)]
-        label: String,
+        #[arg(long = "as", value_name = "LABEL")]
+        label: Option<String>,
         /// All own active jobs.
         #[arg(long)]
         mine: bool,
@@ -543,7 +543,7 @@ pub async fn run(cli: Cli) -> i32 {
             force,
             reason,
             yes,
-        } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
+        } => jobs::cancel_cli(&layout, job, label, mine, force, reason, yes).await,
         Command::Status {
             job,
             client,

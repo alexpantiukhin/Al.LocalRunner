@@ -4,11 +4,12 @@ use async_trait::async_trait;
 use lr_abstractions::fakes::{FakeNetwork, ManualClock};
 use lr_abstractions::{Dialer, Frame, Peer, PeerAccess};
 use lr_cli::admin::{serve, AdminApi};
+use lr_cli::commands::jobs::{missing_label_text, LabelLookup};
 use lr_cli::commands::view::{add_ages, status_json, status_text};
 use lr_core::{Endpoint, JobId, JobState, Timestamp};
 use lr_proto::{
-    AdminReply, AdminRequest, IpcChannel, IpcOpen, IpcOpenReply, JobSummary, PoolLoad, QueueItem,
-    RunningView, StatusView, WireSource, PROTOCOL_VERSION,
+    AdminReply, AdminRequest, IpcChannel, IpcOpen, IpcOpenReply, JobDetail, JobSummary, PoolLoad,
+    QueueItem, RunningView, StatusView, WireSource, PROTOCOL_VERSION,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -591,4 +592,64 @@ fn prepare_ipc_failure_names_the_directory() {
     let layout = lr_cli::paths::Layout::new(root.clone(), dir.path().join("config"));
     let e = layout.prepare_ipc().unwrap_err().to_string();
     assert!(e.contains(&root.join("ipc").display().to_string()), "{e}");
+}
+
+fn detail_with_label(label: Option<&str>) -> JobDetail {
+    let mut s = summary("j1", JobState::Running);
+    s.label = label.map(String::from);
+    JobDetail {
+        summary: s,
+        note: None,
+        branch: None,
+        cwd: None,
+        os_user: None,
+        source: None,
+        github_run_url: None,
+        steps: Vec::new(),
+        secrets: Vec::new(),
+        cancelled_by: None,
+        wait_reason: None,
+    }
+}
+
+#[test]
+fn cancel_parses_without_as_so_the_message_can_name_the_label() {
+    use clap::Parser;
+    let cli = lr_cli::commands::Cli::try_parse_from(["localrunner", "cancel", "j1"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        lr_cli::commands::Command::Cancel { label: None, .. }
+    ));
+}
+
+#[test]
+fn cancel_without_as_names_the_label_of_a_known_job() {
+    let d = detail_with_label(Some("agent-1"));
+    assert_eq!(
+        missing_label_text(Some("j1"), LabelLookup::Known(Some(&d))),
+        "cancel: --as <LABEL> is required; the label of j1 is agent-1 (use --force for a job of another label)"
+    );
+}
+
+#[test]
+fn cancel_without_as_says_unknown_for_an_unknown_job() {
+    let text = missing_label_text(Some("j9"), LabelLookup::Unknown);
+    assert!(text.starts_with("cancel: --as <LABEL> is required; job j9 is not known"));
+    assert!(text.contains("label is unknown"), "{text}");
+}
+
+#[test]
+fn cancel_without_as_does_not_name_a_label_the_status_hides() {
+    let d = detail_with_label(None);
+    let text = missing_label_text(Some("j1"), LabelLookup::Known(Some(&d)));
+    assert!(text.contains("not shown to you"), "{text}");
+    assert!(!text.contains("agent-1"));
+    assert_eq!(
+        missing_label_text(Some("j1"), LabelLookup::Unasked),
+        "cancel: --as <LABEL> is required"
+    );
+    assert_eq!(
+        missing_label_text(None, LabelLookup::Unasked),
+        "cancel: --as <LABEL> is required"
+    );
 }
