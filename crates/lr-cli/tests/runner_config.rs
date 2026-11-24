@@ -117,6 +117,14 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
     assert!(!c.settings.programs.contains("surely-missing-program-xyz"));
     assert!(!c.settings.programs.contains("failing"));
     assert_eq!(problems.len(), 2, "{problems:?}");
+    let reported = c.settings.capabilities(None);
+    assert_eq!(
+        reported.programs_missing.iter().collect::<Vec<_>>(),
+        ["failing", "surely-missing-program-xyz"],
+        "the runner tells the broker which programs it declared and did not find"
+    );
+    assert!(reported.programs.contains("git"));
+    assert!(!reported.programs_missing.contains("git"));
 }
 
 #[test]

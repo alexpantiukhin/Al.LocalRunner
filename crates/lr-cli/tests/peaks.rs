@@ -126,6 +126,7 @@ fn runners_list_shows_enforcement() {
         enforcement: enforcement.map(str::to_string),
         version: None,
         enforce_limit: false,
+        programs_missing: Default::default(),
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
         name: name.into(),

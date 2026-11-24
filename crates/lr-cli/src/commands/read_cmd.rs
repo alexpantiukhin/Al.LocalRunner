@@ -194,6 +194,19 @@ fn listed<'a>(items: impl Iterator<Item = &'a String>) -> String {
     }
 }
 
+/// `programs not found: a, b`: what `runners` and `status` say next to a runner that declares
+/// programs it did not find; the runner still shows as online.
+pub fn missing_programs_text(missing: &std::collections::BTreeSet<String>) -> String {
+    format!(
+        "programs not found: {}",
+        missing
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 fn liveness_text(r: &RunnerInfo) -> String {
     match (r.liveness, r.online) {
         (Some(RunnerLiveness::Stale), _) => match r.silent_for_s {
@@ -232,6 +245,12 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         listed(c.tags.iter()),
         listed(c.programs.iter()),
     ));
+    if !c.programs_missing.is_empty() {
+        out.push(format!(
+            "    {}",
+            missing_programs_text(&c.programs_missing)
+        ));
+    }
     if let (Some(busy), Some(can)) = (r.busy, r.can_start_now) {
         out.push(format!(
             "    {}; can start a job now: {}",

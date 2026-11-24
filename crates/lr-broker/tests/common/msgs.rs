@@ -56,6 +56,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         enforcement: None,
         version: None,
         enforce_limit: false,
+        programs_missing: Default::default(),
     }
 }
 

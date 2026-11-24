@@ -909,6 +909,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             enforcement: None,
             version: Some(version.into()),
             enforce_limit: false,
+            programs_missing: Default::default(),
         };
         lr_proto::RunnerInfo {
             name: name.into(),

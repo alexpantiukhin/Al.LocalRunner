@@ -457,6 +457,7 @@ fn runners_on_another_version_are_named_per_broker() {
             enforcement: None,
             version: version.map(str::to_string),
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1)),
         free_mem_mb: 0,
@@ -487,4 +488,61 @@ fn runners_on_another_version_are_named_per_broker() {
         found[0].detail
     );
     assert!(runner_version_checks(&per[..1], "1.2.0").is_empty());
+}
+
+#[test]
+fn doctor_warns_about_runners_of_a_broker_that_miss_programs_but_not_about_its_own() {
+    use lr_cli::doctor::{runner_program_checks, Status};
+    use lr_core::Timestamp;
+    use lr_proto::{RunnerInfo, WireCapabilities};
+    let runner = |name: &str, missing: &[&str]| RunnerInfo {
+        name: name.into(),
+        online: true,
+        caps: WireCapabilities {
+            platforms: Default::default(),
+            mem_mb: 1,
+            cpu: 1,
+            disk_mb: 1,
+            programs: Default::default(),
+            tags: Default::default(),
+            max_job_timeout_s: None,
+            services: Default::default(),
+            machine: None,
+            accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: None,
+            enforce_limit: false,
+            programs_missing: missing.iter().map(|m| m.to_string()).collect(),
+        },
+        last_seen: Some(Timestamp(1)),
+        free_mem_mb: 0,
+        free_cpu: 0,
+        held_tags: Vec::new(),
+        services: Vec::new(),
+        unmet: Vec::new(),
+        liveness: None,
+        silent_for_s: None,
+        kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
+    };
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            runner("far", &["cargo", "npm"]),
+            runner("ok", &[]),
+            runner("local:mine", &["git"]),
+        ],
+    )];
+    let checks = runner_program_checks(&per, &["mine".to_string()]);
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(checks[0].name, "broker office runner far");
+    assert_eq!(checks[0].status, Status::Warn);
+    assert_eq!(checks[0].detail, "programs not found: cargo, npm");
 }

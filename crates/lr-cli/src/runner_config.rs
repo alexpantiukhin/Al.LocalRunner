@@ -188,12 +188,16 @@ impl RunnerConfig {
         let env = self.settings.base_env();
         let mut problems = Vec::new();
         self.settings.programs.clear();
+        self.settings.programs_missing.clear();
         for (name, spec) in &self.programs {
             match check_program(name, spec, search.as_deref(), &env) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
-                Err(why) => problems.push(format!("program {name}: {why}")),
+                Err(why) => {
+                    self.settings.programs_missing.insert(name.clone());
+                    problems.push(format!("program {name}: {why}"));
+                }
             }
         }
         problems

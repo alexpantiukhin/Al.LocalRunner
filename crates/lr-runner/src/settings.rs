@@ -137,6 +137,8 @@ pub struct RunnerSettings {
     pub enforcement: Option<String>,
     /// The `localrunner` version this runner runs; set by the assembly.
     pub version: Option<String>,
+    /// Programs of `[programs]` that were not found or failed their check; set by the assembly.
+    pub programs_missing: BTreeSet<String>,
 }
 
 /// Why `runner.toml` was refused.
@@ -260,6 +262,7 @@ impl RunnerSettings {
             job_env_inherit: Vec::new(),
             enforcement: None,
             version: None,
+            programs_missing: BTreeSet::new(),
         }
     }
 
@@ -405,6 +408,7 @@ impl RunnerSettings {
             enforcement: self.enforcement.clone(),
             version: self.version.clone(),
             enforce_limit: self.enforcement.as_deref() == Some("os"),
+            programs_missing: self.programs_missing.clone(),
         }
     }
 }

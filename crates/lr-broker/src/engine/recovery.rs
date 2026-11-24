@@ -79,6 +79,7 @@ impl Engine {
             enforcement: row.enforcement.clone(),
             version: row.version.clone(),
             enforce_limit: false,
+            programs_missing: Default::default(),
         }
     }
 

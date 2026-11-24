@@ -93,6 +93,7 @@ pub fn caps() -> WireCapabilities {
         enforcement: None,
         version: None,
         enforce_limit: false,
+        programs_missing: Default::default(),
     }
 }
 

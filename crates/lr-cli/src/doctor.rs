@@ -614,12 +614,40 @@ pub fn runner_version_checks(
         .collect()
 }
 
+/// One warning per runner that a broker lists with declared programs it did not find, for the
+/// runners of other machines too; a runner named in `own` is left out, its `runner.toml` is
+/// checked by `runners`. The runner stays online and keeps taking the orders it fits.
+pub fn runner_program_checks(
+    per: &[(String, Vec<lr_proto::RunnerInfo>)],
+    own: &[String],
+) -> Vec<Check> {
+    per.iter()
+        .flat_map(|(broker, runners)| {
+            runners
+                .iter()
+                .filter(|r| !r.caps.programs_missing.is_empty())
+                .filter(|r| {
+                    !own.iter()
+                        .any(|n| crate::commands::upgrade_pool::is_own_name(&r.name, n))
+                })
+                .map(move |r| {
+                    check(
+                        format!("broker {broker} runner {}", r.name),
+                        Status::Warn,
+                        crate::commands::read_cmd::missing_programs_text(&r.caps.programs_missing),
+                    )
+                })
+        })
+        .collect()
+}
+
 async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     let Ok(client) = crate::commands::jobs::hub(layout).await else {
         return;
     };
     if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
         out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
+        out.extend(runner_program_checks(&per, &layout.runner_names()));
     }
     client.close().await;
 }

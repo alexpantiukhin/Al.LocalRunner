@@ -284,7 +284,40 @@ pub fn add_runners(doc: &mut Value, per: &[(String, Vec<RunnerInfo>)]) {
             })
             .collect();
         b["runners"] = json!(listed);
+        let notes: Vec<Value> = runners
+            .iter()
+            .filter(|r| !r.caps.programs_missing.is_empty())
+            .map(|r| json!({ "name": r.name, "programs_missing": r.caps.programs_missing }))
+            .collect();
+        if !notes.is_empty() {
+            b["runner_notes"] = json!(notes);
+        }
     }
+}
+
+/// The lines of `status` about runners that serve but declare programs they did not find, one
+/// block per broker; empty when none does. The runner stays online.
+pub fn runner_note_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (broker, runners) in per {
+        let notes: Vec<String> = runners
+            .iter()
+            .filter(|r| !r.caps.programs_missing.is_empty())
+            .map(|r| {
+                format!(
+                    "  {}  {}",
+                    r.name,
+                    super::read_cmd::missing_programs_text(&r.caps.programs_missing)
+                )
+            })
+            .collect();
+        if notes.is_empty() {
+            continue;
+        }
+        out.push(format!("broker {broker}: runners with a problem"));
+        out.extend(notes);
+    }
+    out
 }
 
 /// The lines of `status` for runners that are `stale` or `offline`; empty when all serve.
@@ -534,6 +567,9 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
             }
         }
         for line in not_serving_lines(&per_runners) {
+            println!("{line}");
+        }
+        for line in runner_note_lines(&per_runners) {
             println!("{line}");
         }
         for line in &drift {

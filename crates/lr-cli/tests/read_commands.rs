@@ -6,7 +6,8 @@ use lr_cli::commands::log_cmd::LogPrinter;
 use lr_cli::commands::read_cmd::{pool_runner_lines, runner_lines, runners_document, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::view::{
-    add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines, runners_of,
+    add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines,
+    runner_note_lines, runners_of,
 };
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
@@ -609,6 +610,7 @@ fn stats_and_runners_print_per_broker() {
             enforcement: None,
             version: None,
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 1024,
@@ -880,6 +882,7 @@ fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo 
             enforcement: None,
             version: None,
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 0,
@@ -1374,4 +1377,50 @@ fn runners_json_carries_pools() {
     assert_eq!(broker["runners"][0]["can_start_now"], false);
     let wire: ReadReply = serde_json::from_str(r#"{"type":"runners","runners":[]}"#).unwrap();
     assert!(matches!(wire, ReadReply::Runners { pools, .. } if pools.is_empty()));
+}
+
+fn without_programs(name: &str, missing: &[&str]) -> RunnerInfo {
+    let mut r = runner_info(name, RunnerLiveness::Online, 3);
+    r.caps.programs_missing = missing.iter().map(|m| m.to_string()).collect();
+    r
+}
+
+#[test]
+fn runners_prints_programs_not_found_next_to_an_online_runner() {
+    let r = without_programs("r1", &["npm", "cargo"]);
+    let text = runner_lines(&[("office".into(), vec![r])]).join("\n");
+    assert!(text.contains("online"), "the runner stays online:\n{text}");
+    assert!(text.contains("programs not found: cargo, npm"), "{text}");
+    let fine = runner_lines(&[("office".into(), vec![without_programs("r2", &[])])]).join("\n");
+    assert!(!fine.contains("not found"), "{fine}");
+}
+
+#[test]
+fn status_names_runners_with_programs_not_found_and_keeps_them_online() {
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            without_programs("r1", &["cargo"]),
+            without_programs("r2", &[]),
+        ],
+    )];
+    let text = runner_note_lines(&per).join("\n");
+    assert!(
+        text.contains("office")
+            && text.contains("r1")
+            && text.contains("programs not found: cargo"),
+        "{text}"
+    );
+    assert!(!text.contains("r2"), "{text}");
+    assert!(
+        not_serving_lines(&per).is_empty(),
+        "a runner without a program still serves"
+    );
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "office" }] });
+    add_runners(&mut doc, &per);
+    let notes = doc["brokers"][0]["runner_notes"].as_array().expect("notes");
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["name"], "r1");
+    assert_eq!(notes[0]["programs_missing"][0], "cargo");
+    assert!(runner_note_lines(&[]).is_empty());
 }
