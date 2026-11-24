@@ -441,15 +441,13 @@ pub fn autostart_line(on: bool, entry: &str) -> String {
     }
 }
 
-fn runner_needs(layout: &Layout, name: &str) -> Vec<String> {
-    let Some(text) = crate::build::runner_config_path(layout, name, None)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-    else {
-        return Vec::new();
-    };
-    let Ok(table) = toml::from_str::<toml::Table>(&text) else {
-        return Vec::new();
-    };
+fn runner_table(layout: &Layout, name: &str) -> Option<toml::Table> {
+    let text = crate::build::runner_config_path(layout, name, None)
+        .and_then(|p| std::fs::read_to_string(p).ok())?;
+    toml::from_str::<toml::Table>(&text).ok()
+}
+
+fn runner_needs(table: &toml::Table) -> Vec<String> {
     let words = |key: &str| -> Vec<String> {
         table
             .get(key)
@@ -559,6 +557,7 @@ pub fn runner_service_with(
         service: &service,
         confirm_started: &started,
         confirm_stopped: &stopped,
+        say: &|line| println!("{line}"),
     };
     runner_service_for(layout, switch, name, dry_run, &ctx)
 }
@@ -586,6 +585,9 @@ pub struct ServiceContext<'a> {
     pub confirm_started: &'a dyn Fn(&str) -> Result<(), Option<bool>>,
     /// Whether the service of the named runner stopped (bounded).
     pub confirm_stopped: &'a dyn Fn(&str) -> bool,
+    /// Prints one note line; the notes of an `on` run come before the rights are asked for, so
+    /// they appear in `--dry-run` and in the refusal of a shell without them.
+    pub say: &'a dyn Fn(&str),
 }
 
 /// [`runner_service_with`] for `ctx`. `on` refuses, in this order: root or `SYSTEM` as the
@@ -641,6 +643,8 @@ pub fn runner_service_for(
             return Err(format!("autostart {verb} runner {name} --service: {why}"));
         }
     }
+    let table = runner_table(layout, name).unwrap_or_default();
+    let needs = runner_needs(&table);
     let mut restore_key = false;
     if on {
         let refused = |why: String| format!("autostart on runner {name} --service: {why}");
@@ -649,7 +653,7 @@ pub fn runner_service_for(
         }
         let dir = layout.runner_dir(name);
         let joined = dir.join(crate::build::BROKER_FILE).is_file();
-        let why = runner_service::refusal(name, &runner_needs(layout, name))
+        let why = runner_service::refusal(name, &needs)
             .or_else(|| {
                 runner_service::runner_dir_refusal(
                     name,
@@ -686,6 +690,10 @@ pub fn runner_service_for(
             .map_err(|e| format!("autostart runner {name}: {e}"))?
         {
             eprintln!("runner {name}: warning: {risk}");
+        }
+        let secrets = crate::runner_config::secret_sources(&table);
+        for note in runner_service::service_notes(&inputs, &needs, &secrets) {
+            (ctx.say)(&note);
         }
     } else if os == Os::Windows {
         let exists = (ctx.access)(&key) != runner_service::KeyState::Missing;
@@ -794,17 +802,6 @@ pub fn runner_service_for(
                 named_restart_command(os, &service)
             );
         }
-        if os == Os::Windows {
-            println!(
-                "the service account does not have your PATH or the tools installed for your \
-                 user only: jobs see only tools installed for all users"
-            );
-            println!("{}", runner_service::network_identity_note(&inputs));
-        }
-        println!(
-            "stopping the service ends running jobs at once, without a drain; use `localrunner \
-             down {name}` first where it reaches the runner"
-        );
     } else {
         println!("autostart off: runner {name} is no longer an OS service");
         if let Some(root) = runner_service::job_root(&inputs) {

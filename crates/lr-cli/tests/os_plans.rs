@@ -2043,3 +2043,35 @@ fn leftover_job_roots_are_the_directories_under_the_parent() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn service_notes_name_what_the_service_lacks_and_never_print_a_value() {
+    use lr_cli::runner_config::SecretFrom;
+    use std::collections::BTreeMap;
+    let secrets = BTreeMap::from([
+        (
+            "registry".to_string(),
+            SecretFrom::Env("LR_FAKE_VAR".into()),
+        ),
+        (
+            "signing".to_string(),
+            SecretFrom::Keychain("release".into()),
+        ),
+    ]);
+    for os in ALL {
+        let i = runner_service(os, "box");
+        let notes = runner_service::service_notes(&i, &["docker".into()], &secrets).join("\n");
+        assert!(notes.contains("without a drain"), "{os:?}: {notes}");
+        assert!(notes.contains("[secret.registry]") && notes.contains("env:LR_FAKE_VAR"));
+        assert!(
+            !notes.contains("signing"),
+            "only env: secrets are warned about"
+        );
+        assert!(notes.contains("declares `docker`"), "{os:?}: {notes}");
+        assert_eq!(notes.contains("PATH"), os == Os::Windows, "{os:?}");
+        assert_eq!(notes.contains("DOMAIN"), os == Os::Windows, "{os:?}");
+    }
+    let plain =
+        runner_service::service_notes(&runner_service(Os::Linux, "box"), &[], &BTreeMap::new());
+    assert_eq!(plain.len(), 1, "{plain:?}");
+}

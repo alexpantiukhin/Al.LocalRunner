@@ -85,6 +85,21 @@ fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
     }
 }
 
+/// The `[secret.*]` sources of an already parsed `runner.toml`; an entry that does not read
+/// (a mistake `RunnerConfig::parse` reports) is left out.
+pub fn secret_sources(table: &toml::Table) -> BTreeMap<String, SecretFrom> {
+    let Some(secrets) = table.get("secret").and_then(toml::Value::as_table) else {
+        return BTreeMap::new();
+    };
+    secrets
+        .iter()
+        .filter_map(|(name, entry)| {
+            let from = entry.get("from")?.as_str()?;
+            Some((name.clone(), secret_from(name, from).ok()?))
+        })
+        .collect()
+}
+
 impl RunnerConfig {
     /// Reads `text`. The name is `name` when given (`--name`), else `name` of the file, else
     /// `default_name` (the host name). Without `mem_mb` or `cpu` the runner offers all of

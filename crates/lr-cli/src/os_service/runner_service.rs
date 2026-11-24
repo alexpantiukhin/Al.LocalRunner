@@ -7,6 +7,8 @@
 use super::autostart::plist;
 use super::quote::{systemd_command_line, windows_command_line, xml};
 use super::{Action, Os, Tolerate};
+use crate::runner_config::SecretFrom;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// What `autostart on|off runner <name> --service` needs.
@@ -1038,6 +1040,78 @@ pub fn network_identity_note(i: &RunnerServiceInputs) -> String {
         account(i),
         i.name
     )
+}
+
+/// What a runner of `needs` (its tags, platforms and services) and `secrets` (its
+/// `[secret.*]` sources) should know before it becomes the OS service of `i`, one line each:
+/// the service has no `PATH` of the user and (on Windows) reaches the network as the computer
+/// account, stopping it ends running jobs without a drain, an `env:` secret is invisible to
+/// it, and a `docker` tag asks for the Docker engine. Names and variable names only, never a
+/// value.
+pub fn service_notes(
+    i: &RunnerServiceInputs,
+    needs: &[String],
+    secrets: &BTreeMap<String, SecretFrom>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if i.os == Os::Windows {
+        out.push(
+            "the service account does not have your PATH or the tools installed for your user \
+             only: jobs see only tools installed for all users"
+                .to_string(),
+        );
+        out.push(network_identity_note(i));
+    }
+    out.push(format!(
+        "stopping the service ends running jobs at once, without a drain; use `localrunner down \
+         {}` first where it reaches the runner",
+        i.name
+    ));
+    for (secret, from) in secrets {
+        if let SecretFrom::Env(var) = from {
+            out.push(format!(
+                "[secret.{secret}] from = \"env:{var}\": the service does not see the \
+                 variables of your shell or user ({}); the secret will be missing for its jobs",
+                service_env_hint(i.os)
+            ));
+        }
+    }
+    if needs.iter().any(|n| {
+        n.to_ascii_lowercase()
+            .split(['-', '_', '.', ' '])
+            .any(|w| w == "docker")
+    }) {
+        out.push(format!(
+            "runner {} declares `docker`: {}",
+            i.name,
+            docker_hint(i)
+        ));
+    }
+    out
+}
+
+fn service_env_hint(os: Os) -> &'static str {
+    match os {
+        Os::Windows => "only machine-level variables reach a Windows service",
+        Os::Linux => "only what the systemd unit sets reaches it",
+        Os::MacOs => "only what the LaunchDaemon plist sets reaches it",
+    }
+}
+
+fn docker_hint(i: &RunnerServiceInputs) -> String {
+    match i.os {
+        Os::Windows => "the service account is not you and cannot open the pipe of Docker \
+            Desktop, which is the signed-in user's: its jobs may not reach the Docker engine"
+            .to_string(),
+        Os::Linux => format!(
+            "`{}` must be in the `docker` group when the service starts, or its jobs cannot \
+             reach the Docker engine",
+            i.user
+        ),
+        Os::MacOs => "a LaunchDaemon does not see the Docker Desktop socket of your home, so \
+            its jobs may not reach the Docker engine"
+            .to_string(),
+    }
 }
 
 /// A right the Windows service account gets on one path for as long as the service exists.
