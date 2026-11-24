@@ -4,10 +4,32 @@ struct Line {
     indent: usize,
     text: String,
     number: usize,
+    block: Option<String>,
+}
+
+fn close_block(lines: &mut [Line], at: usize, mut body: Vec<String>) {
+    while body.last().is_some_and(|l| l.is_empty()) {
+        body.pop();
+    }
+    if body.is_empty() {
+        return;
+    }
+    let strip = body
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let text: Vec<String> = body
+        .iter()
+        .map(|l| l.get(strip..).unwrap_or("").to_string())
+        .collect();
+    lines[at].block = Some(format!("{}\n", text.join("\n")));
 }
 
 pub fn parse(text: &str) -> Result<Value, String> {
-    let mut lines = Vec::new();
+    let mut lines: Vec<Line> = Vec::new();
+    let mut open: Option<(usize, Vec<String>)> = None;
     for (i, raw) in text.lines().enumerate() {
         let number = i + 1;
         if raw.contains('\t') {
@@ -15,14 +37,34 @@ pub fn parse(text: &str) -> Result<Value, String> {
         }
         let trimmed = raw.trim_end();
         let content = trimmed.trim_start();
+        let indent = trimmed.len() - content.len();
+        if let Some((at, body)) = open.as_mut() {
+            if content.is_empty() {
+                body.push(String::new());
+                continue;
+            }
+            if indent > lines[*at].indent {
+                body.push(trimmed.to_string());
+                continue;
+            }
+            let (at, body) = open.take().expect("a block is open");
+            close_block(&mut lines, at, body);
+        }
         if content.is_empty() || content.starts_with('#') {
             continue;
         }
         lines.push(Line {
-            indent: trimmed.len() - content.len(),
+            indent,
             text: content.to_string(),
             number,
+            block: None,
         });
+        if content.ends_with(": |") {
+            open = Some((lines.len() - 1, Vec::new()));
+        }
+    }
+    if let Some((at, body)) = open.take() {
+        close_block(&mut lines, at, body);
     }
     if lines.is_empty() {
         return Ok(Value::Null);
@@ -66,7 +108,10 @@ fn mapping(lines: &mut [Line], at: &mut usize, indent: usize) -> Result<Value, S
         let (key, rest) =
             split_key(&lines[*at].text).ok_or(format!("line {number}: expected `key: value`"))?;
         *at += 1;
-        let value = if !rest.is_empty() {
+        let value = if rest == "|" {
+            let body = lines[*at - 1].block.clone();
+            Value::String(body.ok_or(format!("line {number}: empty block"))?)
+        } else if !rest.is_empty() {
             scalar_or_flow(&rest).map_err(|e| format!("line {number}: {e}"))?
         } else if *at < lines.len() && lines[*at].indent > indent {
             let inner = lines[*at].indent;
@@ -196,6 +241,16 @@ fn the_subset_parser_reads_mappings_sequences_and_flow_values() {
 }
 
 #[test]
+fn the_subset_parser_reads_a_literal_block_with_comments_and_continuations() {
+    let doc =
+        "a:\n  b: |\n    FROM x\n    RUN one \\\n        && two\n\n    # kept\n  c: 1\nd: 2\n";
+    let v = parse(doc).unwrap();
+    assert_eq!(v["a"]["b"], "FROM x\nRUN one \\\n    && two\n\n# kept\n");
+    assert_eq!(v["a"]["c"], "1");
+    assert_eq!(v["d"], "2");
+}
+
+#[test]
 fn the_subset_parser_refuses_broken_documents() {
     for bad in [
         "a: 1\na: 2\n",
@@ -204,7 +259,8 @@ fn the_subset_parser_refuses_broken_documents() {
         "a: \"open\n",
         "a: 1\n   b: 2\n",
         "just text\n",
-        "a: |\n  x\n",
+        "a: >\n  x\n",
+        "a: |\nb: 1\n",
     ] {
         assert!(parse(bad).is_err(), "accepted: {bad:?}");
     }

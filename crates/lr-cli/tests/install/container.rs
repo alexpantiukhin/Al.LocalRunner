@@ -151,9 +151,16 @@ fn runner_dockerfile() -> String {
 fn runner_is_built_from_an_inline_dockerfile_with_visible_packages_and_the_published_binary() {
     let doc = compose();
     let runner = &doc["services"]["runner"];
-    assert!(runner["image"].is_null(), "the runner names no image to pull");
+    assert!(
+        runner["image"].is_null(),
+        "the runner names no image to pull"
+    );
     let stages = stages_of(&runner_dockerfile());
-    assert_eq!(stages.len(), 1, "one stage: the binary comes from the published image");
+    assert_eq!(
+        stages.len(),
+        1,
+        "one stage: the binary comes from the published image"
+    );
     let stage = &stages[0];
     assert_explicit_tag(&stage.from);
     let runs = instruction(stage, "RUN");
@@ -189,9 +196,18 @@ fn runner_is_built_from_an_inline_dockerfile_with_visible_packages_and_the_publi
     let uid = user[0].split(':').next().unwrap();
     assert!(uid != "0" && uid != "root", "runtime user {uid}");
     let env = instruction(stage, "ENV").join(" ");
-    assert!(env.contains(&format!("LOCALRUNNER_STATE_DIR={STATE_DIR}")), "{env}");
-    assert!(env.contains(&format!("LOCALRUNNER_CONFIG_DIR={CONFIG_DIR}")), "{env}");
-    let mkdir = runs.iter().find(|r| r.contains("mkdir")).expect("directories are made");
+    assert!(
+        env.contains(&format!("LOCALRUNNER_STATE_DIR={STATE_DIR}")),
+        "{env}"
+    );
+    assert!(
+        env.contains(&format!("LOCALRUNNER_CONFIG_DIR={CONFIG_DIR}")),
+        "{env}"
+    );
+    let mkdir = runs
+        .iter()
+        .find(|r| r.contains("mkdir"))
+        .expect("directories are made");
     for dir in [STATE_DIR, CONFIG_DIR, "/run/al-localrunner"] {
         assert!(mkdir.contains(dir), "{dir} is created and owned: {mkdir}");
     }
@@ -212,7 +228,10 @@ fn the_release_compose_keeps_the_runner_build_and_drops_only_the_broker_build() 
         !sed.contains("/dockerfile:/d"),
         "a range up to `dockerfile:` would eat the inline Dockerfile of the runner: {sed}"
     );
-    assert!(sed.contains("COPY --from="), "the binary source follows the release tag: {sed}");
+    assert!(
+        sed.contains("COPY --from="),
+        "the binary source follows the release tag: {sed}"
+    );
 }
 
 #[test]
