@@ -5,6 +5,13 @@ mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 
+[profile.rust-test-all]
+command   = "cargo test --workspace --locked --no-fail-fast -j 2"
+timeout_s = 1800
+mem_mb    = 5120
+cpu       = 2
+tags      = ["cargo"]
+
 [profile.skills-lint]
 command   = "cargo test -p lr-cli --locked --test skills_lint"
 timeout_s = 600
