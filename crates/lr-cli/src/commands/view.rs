@@ -284,10 +284,20 @@ pub fn add_runners(doc: &mut Value, per: &[(String, Vec<RunnerInfo>)]) {
             })
             .collect();
         b["runners"] = json!(listed);
+        let current = env!("CARGO_PKG_VERSION");
         let notes: Vec<Value> = runners
             .iter()
-            .filter(|r| !r.caps.programs_missing.is_empty())
-            .map(|r| json!({ "name": r.name, "programs_missing": r.caps.programs_missing }))
+            .filter(|r| !runner_notes(r, current).is_empty())
+            .map(|r| {
+                let mut note = json!({ "name": r.name });
+                if !r.caps.programs_missing.is_empty() {
+                    note["programs_missing"] = json!(r.caps.programs_missing);
+                }
+                if super::read_cmd::version_behind(r.caps.version.as_deref(), current) {
+                    note["version_behind"] = json!(r.caps.version.as_deref().unwrap_or("unknown"));
+                }
+                note
+            })
             .collect();
         if !notes.is_empty() {
             b["runner_notes"] = json!(notes);
@@ -295,27 +305,47 @@ pub fn add_runners(doc: &mut Value, per: &[(String, Vec<RunnerInfo>)]) {
     }
 }
 
-/// The lines of `status` about runners that serve but declare programs they did not find, one
-/// block per broker; empty when none does. The runner stays online.
+/// What `status` says about one runner besides its liveness: the programs it declared and did
+/// not find, and a version that lags behind `current`. The runner stays online.
+fn runner_notes(r: &RunnerInfo, current: &str) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !r.caps.programs_missing.is_empty() {
+        notes.push(super::read_cmd::missing_programs_text(
+            &r.caps.programs_missing,
+        ));
+    }
+    if super::read_cmd::version_behind(r.caps.version.as_deref(), current) {
+        notes.push(super::read_cmd::behind_text(
+            r.caps.version.as_deref(),
+            current,
+        ));
+    }
+    notes
+}
+
+/// The lines of `status` about runners that serve but have a problem (programs not found, a
+/// version behind this binary), one block per broker; empty when none has.
 pub fn runner_note_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
+    runner_note_lines_for(per, env!("CARGO_PKG_VERSION"))
+}
+
+/// [`runner_note_lines`] against version `current`.
+pub fn runner_note_lines_for(per: &[(String, Vec<RunnerInfo>)], current: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (broker, runners) in per {
-        let notes: Vec<String> = runners
+        let lines: Vec<String> = runners
             .iter()
-            .filter(|r| !r.caps.programs_missing.is_empty())
-            .map(|r| {
-                format!(
-                    "  {}  {}",
-                    r.name,
-                    super::read_cmd::missing_programs_text(&r.caps.programs_missing)
-                )
+            .flat_map(|r| {
+                runner_notes(r, current)
+                    .into_iter()
+                    .map(move |n| format!("  {}  {n}", r.name))
             })
             .collect();
-        if notes.is_empty() {
+        if lines.is_empty() {
             continue;
         }
         out.push(format!("broker {broker}: runners with a problem"));
-        out.extend(notes);
+        out.extend(lines);
     }
     out
 }

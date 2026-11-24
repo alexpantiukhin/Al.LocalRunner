@@ -207,6 +207,28 @@ pub fn missing_programs_text(missing: &std::collections::BTreeSet<String>) -> St
     )
 }
 
+/// Whether a runner that reports `runner` as its version lags behind `current`: it is older,
+/// or it reports none (a runner of an earlier version). A version that does not parse is not
+/// judged.
+pub fn version_behind(runner: Option<&str>, current: &str) -> bool {
+    use super::upgrade_cmd::parse_version;
+    let Some(current) = parse_version(current) else {
+        return false;
+    };
+    match runner {
+        None => true,
+        Some(v) => parse_version(v).is_some_and(|v| v.number < current.number),
+    }
+}
+
+/// What `runners` and `status` say about a runner whose version lags behind.
+pub fn behind_text(runner: Option<&str>, current: &str) -> String {
+    format!(
+        "version {} is behind {current}: run `localrunner upgrade` on its machine",
+        runner.unwrap_or("unknown")
+    )
+}
+
 fn liveness_text(r: &RunnerInfo) -> String {
     match (r.liveness, r.online) {
         (Some(RunnerLiveness::Stale), _) => match r.silent_for_s {
@@ -263,6 +285,9 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         Some(v) if v == mine => out.push(format!("    version {v}")),
         Some(v) => out.push(format!("    version {v} (this binary: {mine})")),
         None => out.push(format!("    version unknown (this binary: {mine})")),
+    }
+    if version_behind(c.version.as_deref(), mine) {
+        out.push(format!("    {}", behind_text(c.version.as_deref(), mine)));
     }
     let older = if c.enforce_limit {
         ""

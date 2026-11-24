@@ -7,7 +7,7 @@ use lr_cli::commands::read_cmd::{pool_runner_lines, runner_lines, runners_docume
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::view::{
     add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines,
-    runner_note_lines, runners_of,
+    runner_note_lines, runner_note_lines_for, runners_of,
 };
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
@@ -1381,6 +1381,7 @@ fn runners_json_carries_pools() {
 
 fn without_programs(name: &str, missing: &[&str]) -> RunnerInfo {
     let mut r = runner_info(name, RunnerLiveness::Online, 3);
+    r.caps.version = Some(env!("CARGO_PKG_VERSION").to_string());
     r.caps.programs_missing = missing.iter().map(|m| m.to_string()).collect();
     r
 }
@@ -1423,4 +1424,56 @@ fn status_names_runners_with_programs_not_found_and_keeps_them_online() {
     assert_eq!(notes[0]["name"], "r1");
     assert_eq!(notes[0]["programs_missing"][0], "cargo");
     assert!(runner_note_lines(&[]).is_empty());
+}
+
+fn on_version(name: &str, version: Option<&str>) -> RunnerInfo {
+    let mut r = runner_info(name, RunnerLiveness::Online, 3);
+    r.caps.version = version.map(str::to_string);
+    r
+}
+
+#[test]
+fn a_runner_on_an_older_version_is_marked_in_runners_and_status() {
+    let current = env!("CARGO_PKG_VERSION");
+    let old = on_version("old", Some("0.1.0"));
+    let text = runner_lines(&[("office".into(), vec![old.clone()])]).join("\n");
+    assert!(
+        text.contains("version 0.1.0 is behind") && text.contains("localrunner upgrade"),
+        "{text}"
+    );
+    let same = on_version("same", Some(current));
+    let text = runner_lines(&[("office".into(), vec![same])]).join("\n");
+    assert!(!text.contains("is behind"), "{text}");
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            old,
+            on_version("same", Some("0.8.0")),
+            on_version("newer", Some("0.9.0")),
+            on_version("unknown", None),
+        ],
+    )];
+    let text = runner_note_lines_for(&per, "0.8.0").join("\n");
+    assert!(
+        text.contains("old  version 0.1.0 is behind 0.8.0"),
+        "{text}"
+    );
+    assert!(
+        text.contains("unknown  version unknown is behind 0.8.0"),
+        "a runner that reports no version is an earlier one: {text}"
+    );
+    assert!(!text.contains("same") && !text.contains("newer"), "{text}");
+    assert!(
+        not_serving_lines(&per).is_empty(),
+        "a lagging runner still serves"
+    );
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "office" }] });
+    add_runners(&mut doc, &per);
+    let notes = doc["brokers"][0]["runner_notes"].as_array().expect("notes");
+    assert!(notes
+        .iter()
+        .any(|n| n["name"] == "old" && n["version_behind"] == "0.1.0"));
+    assert!(notes
+        .iter()
+        .any(|n| n["name"] == "unknown" && n["version_behind"] == "unknown"));
 }
