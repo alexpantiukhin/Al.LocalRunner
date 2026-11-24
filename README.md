@@ -611,7 +611,7 @@ Without the rights the command prints the exact line to run (on Windows a PowerS
 | unclear what is wrong with a node | `localrunner doctor` (`--json`; code 1 if there is a `fail`) |
 | an order does not start | `localrunner explain <job>`: the reason and the rule that fired |
 | no suitable runner | the answer names the difference between the order and the runners; `localrunner runners` |
-| a setting in `runner.toml` has no effect | a misspelled key or section is not an error: it is printed as a warning at start and by `localrunner doctor` |
+| a setting in `runner.toml` has no effect | a misspelled key or section is not an error: it is printed as a warning at start and by `localrunner doctor`; the section `[workspace]`, which 0.7.0 dropped, is read without an error and reported as `deprecated since 0.7.0, remove it` |
 | a runner does not start | the message names the reason: no `[env] path`, run as root, runner under the broker's user |
 | the hub does not see the broker | `localrunner brokers`; check `[listen]`, `[networks]` and the port |
 | `broker add`: "admin channel is not reachable ... access denied" | run it as an administrator (Windows service) or as the broker's OS user; hand the code over with `--code-file` |

@@ -216,6 +216,30 @@ fn unknown_keys_and_sections_are_warnings_not_errors() {
 }
 
 #[test]
+fn a_workspace_section_is_deprecated_not_unknown_and_not_an_error() {
+    let c = parse("[workspace]\nroot = \"/work\"\n", None);
+    assert_eq!(c.warnings.len(), 1, "{:?}", c.warnings);
+    let w = &c.warnings[0];
+    assert!(
+        w.contains("`[workspace]`") && w.contains("deprecated since 0.7.0, remove it"),
+        "{w}"
+    );
+    assert!(!w.contains("unknown"), "{w}");
+    let key = parse("workspace = \"x\"\n", None);
+    assert!(
+        key.warnings[0].contains("deprecated since 0.7.0, remove it"),
+        "{:?}",
+        key.warnings
+    );
+    let other = parse("[wrkspace]\nroot = 1\n", None);
+    assert!(
+        other.warnings[0].contains("unknown section"),
+        "{:?}",
+        other.warnings
+    );
+}
+
+#[test]
 fn a_check_does_not_see_what_jobs_do_not_get() {
     let probe = if cfg!(windows) {
         "if defined CARGO_MANIFEST_DIR (exit 0) else (exit 1)"

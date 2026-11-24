@@ -1,0 +1,1 @@
+**Deprecated:** the `[workspace]` section of `runner.toml` has had no effect since 0.7.0. It is still read without an error; `doctor` and the runner start report `deprecated since 0.7.0, remove it`. Delete the section by hand.
