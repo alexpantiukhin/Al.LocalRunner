@@ -171,6 +171,21 @@ fn unset_through_inline_table() {
 }
 
 #[test]
+fn unset_last_key_of_an_inline_table_keeps_its_comments() {
+    let mut doc =
+        ConfigDoc::parse("# the queue\nqueue = { max = 3 } # queue limits\nother = 1\n").unwrap();
+    assert!(doc.unset("queue.max").unwrap());
+    let text = doc.render();
+    assert!(text.contains("# the queue"), "{text}");
+    assert!(text.contains("# queue limits"), "{text}");
+    assert_eq!(doc.get("queue.max"), None);
+    assert_eq!(doc.get("other").unwrap(), "1");
+    let mut plain = ConfigDoc::parse("queue = { max = 3 }\nother = 1\n").unwrap();
+    assert!(plain.unset("queue.max").unwrap());
+    assert!(!plain.render().contains("queue"), "{}", plain.render());
+}
+
+#[test]
 fn unset_last_key_keeps_commented_table_and_drops_plain_one() {
     let mut doc = ConfigDoc::parse(SAMPLE).unwrap();
     assert!(doc.unset("runner.cpu").unwrap());

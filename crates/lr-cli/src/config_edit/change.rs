@@ -187,8 +187,28 @@ fn unique() -> String {
     )
 }
 
-fn create_exclusive(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().write(true).create_new(true).open(path)
+fn create_exclusive(path: &Path, mode: Option<u32>) -> std::io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if let Some(mode) = mode {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    options.open(path)
+}
+
+#[cfg(unix)]
+fn mode_of(meta: &std::fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Some(meta.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn mode_of(_meta: &std::fs::Metadata) -> Option<u32> {
+    None
 }
 
 /// True when this user cannot create a file in the directory of `path`, so writing needs administrator or root rights.
@@ -203,7 +223,7 @@ pub fn needs_rights(path: &Path) -> bool {
         }
     }
     let probe = dir.join(format!(".probe-{}", unique()));
-    match create_exclusive(&probe) {
+    match create_exclusive(&probe, None) {
         Ok(file) => {
             drop(file);
             let _ = std::fs::remove_file(&probe);
@@ -232,7 +252,7 @@ fn sibling(path: &Path, suffix: &str) -> Result<PathBuf, String> {
     Ok(path.with_file_name(format!("{name}{suffix}")))
 }
 
-fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
+fn back_up(path: &Path, clock: &dyn Clock, mode: Option<u32>) -> Result<PathBuf, String> {
     let stamp = stamp(clock);
     let fail = |e: std::io::Error| format!("cannot back up {}: {e}", path.display());
     let mut source = File::open(path).map_err(fail)?;
@@ -243,7 +263,7 @@ fn back_up(path: &Path, clock: &dyn Clock) -> Result<PathBuf, String> {
             format!(".bak-{stamp}-{n}")
         };
         let backup = sibling(path, &suffix)?;
-        match create_exclusive(&backup) {
+        match create_exclusive(&backup, mode) {
             Ok(mut out) => {
                 if let Err(e) = std::io::copy(&mut source, &mut out) {
                     drop(out);
@@ -283,11 +303,11 @@ pub fn backup_failure(
 
 const TEMP_ATTEMPTS: u64 = 100;
 
-fn create_temp(path: &Path, first: u64) -> Result<(PathBuf, File), String> {
+fn create_temp(path: &Path, first: u64, mode: Option<u32>) -> Result<(PathBuf, File), String> {
     let mut last = None;
     for n in first..first + TEMP_ATTEMPTS {
         let temp = sibling(path, &format!(".tmp-{}-{n}", std::process::id()))?;
-        match create_exclusive(&temp) {
+        match create_exclusive(&temp, mode) {
             Ok(file) => return Ok((temp, file)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => last = Some(e),
             Err(e) => return Err(format!("cannot write {}: {e}", temp.display())),
@@ -340,14 +360,15 @@ pub fn write_with_counter(
         Err(e) => return Err(format!("cannot read the state of {}: {e}", path.display())),
     };
     let backup = match &original {
-        Some(meta) if meta.is_file() => Some(back_up(path, clock)?),
+        Some(meta) if meta.is_file() => Some(back_up(path, clock, mode_of(meta))?),
         _ => None,
     };
     let permissions = original
         .as_ref()
         .filter(|m| m.is_file())
         .map(|m| m.permissions());
-    let (temp, file) = create_temp(path, first)?;
+    let mode = original.as_ref().filter(|m| m.is_file()).and_then(mode_of);
+    let (temp, file) = create_temp(path, first, mode)?;
     if let Err(e) = fill_temp(&temp, file, &change.after, permissions.as_ref()) {
         let _ = std::fs::remove_file(&temp);
         return Err(e);

@@ -1,5 +1,5 @@
 use super::value::parse_value;
-use toml_edit::{DocumentMut, Item, Key, Table, TableLike};
+use toml_edit::{Decor, DocumentMut, Item, Key, Table, TableLike};
 
 /// A TOML document edited in place: comments, order and formatting survive a change.
 pub struct ConfigDoc {
@@ -20,16 +20,23 @@ fn find<'a>(table: &'a dyn TableLike, path: &[String]) -> Option<&'a Item> {
     find(item.as_table_like()?, rest)
 }
 
-fn has_comment(item: &Item) -> bool {
-    let Some(table) = item.as_table() else {
-        return false;
-    };
-    let decor = table.decor();
+fn decor_has_comment(decor: &Decor) -> bool {
     [decor.prefix(), decor.suffix()]
         .into_iter()
         .flatten()
         .filter_map(|raw| raw.as_str())
         .any(|text| text.contains('#'))
+}
+
+fn has_comment(table: &dyn TableLike, key: &str) -> bool {
+    let own = match table.get(key) {
+        Some(Item::Table(t)) => decor_has_comment(t.decor()),
+        Some(Item::Value(v)) => decor_has_comment(v.decor()),
+        _ => false,
+    };
+    own || table
+        .key(key)
+        .is_some_and(|k| decor_has_comment(k.leaf_decor()))
 }
 
 fn remove(table: &mut dyn TableLike, path: &[String]) -> bool {
@@ -43,7 +50,7 @@ fn remove(table: &mut dyn TableLike, path: &[String]) -> bool {
         return false;
     };
     let removed = remove(child, rest);
-    let prune = removed && child.is_empty() && !table.get(first).is_some_and(has_comment);
+    let prune = removed && child.is_empty() && !has_comment(table, first);
     if prune {
         table.remove(first);
     }

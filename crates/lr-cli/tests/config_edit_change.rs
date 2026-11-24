@@ -219,16 +219,18 @@ fn widens_lists_same_user_and_skips_already_true() {
 
 #[cfg(unix)]
 #[test]
-fn write_keeps_the_permissions_of_the_file() {
+fn write_keeps_the_permissions_of_the_file_and_its_backup() {
     use std::os::unix::fs::PermissionsExt;
     let (_, dir) = scratch("mode");
     let path = dir.join("logging.toml");
     std::fs::write(&path, "old\n").unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     let clock = ManualClock::new(Timestamp(1_795_459_151_000));
-    write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
-    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600);
+    let backup = write(&change(path.clone(), "old\n", "new\n"), &clock).unwrap();
+    assert_ne!(backup, path);
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&path), 0o600);
+    assert_eq!(mode(&backup), 0o600);
 }
 
 #[test]
