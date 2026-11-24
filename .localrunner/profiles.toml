@@ -8,7 +8,7 @@ tags      = ["cargo"]
 [profile.skills-lint]
 command   = "cargo test -p lr-cli --locked --test skills_lint"
 timeout_s = 600
-mem_mb    = 2048
+mem_mb    = 4096
 cpu       = 2
 tags      = ["cargo"]
 
