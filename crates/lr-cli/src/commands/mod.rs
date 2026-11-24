@@ -100,7 +100,9 @@ pub struct OrderArgs {
     /// Shorthand for `--zones` from local up to this zone.
     #[arg(long = "max-zone", value_name = "ZONE", value_parser = args::parse_zone)]
     pub max_zone: Option<lr_core::Zone>,
-    /// Without it the order is cancelled when the sending process exits; with it the order outlives the sending process.
+    /// Make the order outlive the sending process; `submit` without `--wait` already does, so it
+    /// only matters for `submit --wait` and `run`, where the order is otherwise cancelled when
+    /// the sending process exits.
     #[arg(long)]
     pub detach: bool,
 }
@@ -128,6 +130,13 @@ pub enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// The order is cancelled when the sending process exits (the behavior before `submit`
+        /// detached by default).
+        #[arg(long, conflicts_with = "detach")]
+        no_detach: bool,
+        /// Do not print the follow, result and cancel hints to stderr.
+        #[arg(long)]
+        quiet: bool,
     },
     /// `submit --wait`: place an order, stream its output, return its exit code.
     Run {
@@ -512,8 +521,14 @@ pub async fn run(cli: Cli) -> i32 {
         }
     };
     let result = match cli.command {
-        Command::Submit { order, wait, json } => jobs::submit(&layout, order, wait, json).await,
-        Command::Run { order } => jobs::submit(&layout, order, true, false).await,
+        Command::Submit {
+            order,
+            wait,
+            json,
+            no_detach,
+            quiet,
+        } => jobs::submit(&layout, order, wait, json, no_detach, quiet).await,
+        Command::Run { order } => jobs::submit(&layout, order, true, false, false, false).await,
         Command::Wait { jobs, label, json } => jobs::wait_jobs(&layout, jobs, label, json).await,
         Command::Jobs {
             label,

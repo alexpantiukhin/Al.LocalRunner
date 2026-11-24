@@ -654,7 +654,7 @@ All commands:
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
 | `dashboard` | a page on 127.0.0.1 |
 
-Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (without it the order is cancelled when the sending process exits; an agent session always passes it and then `wait`s, or uses `run`). `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
+Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (explicit; `submit` already detaches by default), `--no-detach` (`submit` only: the order is cancelled when the sending process exits, as `submit --wait` and `run` always do), `--quiet` (`submit` only: no hint block). A detached `submit` prints only the job id to stdout and a hint block to stderr with ready-to-copy commands (`queued <job-id> (profile ..., label ...)`, `follow: localrunner wait <job-id>`, `result: localrunner log <job-id> --tail 50`, `cancel: localrunner cancel <job-id> --as <label>`); `--quiet`, `--json` and `run` print no block. `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
 
 ## Releasing
 

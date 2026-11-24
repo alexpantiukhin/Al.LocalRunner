@@ -13,7 +13,7 @@ use lr_proto::{
     CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, ReasonCode, SubmitRequest,
 };
 use std::collections::BTreeMap;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -212,28 +212,39 @@ pub fn print_warnings(warnings: &[String], err: &mut impl Write) {
     }
 }
 
-/// The line printed to stderr when an order is submitted without `--detach`, without `--wait`
-/// and without a terminal.
-pub const DETACH_WARNING: &str = "warning: without --detach this order is cancelled when this process exits; pass --detach and then run \"localrunner wait <job-id>\", or use \"localrunner run\"";
-
-/// Writes `DETACH_WARNING` to `err` only when the order is neither detached, nor waited for,
-/// nor submitted from a terminal.
-pub fn warn_if_orphaned(detach: bool, wait: bool, terminal: bool, err: &mut impl Write) {
-    if !detach && !wait && !terminal {
-        let _ = writeln!(err, "{DETACH_WARNING}");
-    }
+/// Whether an order outlives its sending process: always with `--detach`, and by default for
+/// a `submit` that does not wait, unless `--no-detach` asks for the old behavior.
+pub fn effective_detach(detach: bool, no_detach: bool, wait: bool) -> bool {
+    detach || (!wait && !no_detach)
 }
 
-/// `submit` (and `run` = `submit --wait`).
+/// The hint block printed to stderr after a detached `submit`: the order and ready-to-copy
+/// commands to follow, read and cancel it.
+pub fn detach_hint(job: &JobId, profile: Option<&str>, label: &str) -> String {
+    let profile = profile.unwrap_or("default");
+    format!(
+        "queued {job} (profile {profile}, label {label})\n\
+         follow:  localrunner wait {job}   (run it as a background task; interrupting it cancels nothing)\n\
+         result:  localrunner log {job} --tail 50   (never read the whole log)\n\
+         cancel:  localrunner cancel {job} --as {label}\n"
+    )
+}
+
+/// `submit` (and `run` = `submit --wait`). A `submit` without `--wait` detaches unless
+/// `no_detach`; `quiet` and `json` keep stderr free of the hint block.
 pub async fn submit(
     layout: &Layout,
     args: OrderArgs,
     wait: bool,
     json: bool,
+    no_detach: bool,
+    quiet: bool,
 ) -> Result<i32, String> {
     let identity = identity(args.label.as_deref(), args.note.as_deref())?;
     let client = hub(layout).await?;
-    let detach = args.detach;
+    let detach = effective_detach(args.detach, no_detach, wait);
+    let label = identity.label.clone();
+    let profile = args.profile.clone();
     let req = SubmitRequest {
         identity,
         profile: args.profile,
@@ -247,18 +258,23 @@ pub async fn submit(
         wait,
     };
     let mut stdout = std::io::stdout();
+    let mut placed: Option<String> = None;
     let code = submit_on(client, req, json, &cli_redactor(layout), &mut |text| {
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
+        if !wait {
+            placed = Some(text.trim().to_string());
+        }
     })
     .await?;
-    if code == 0 {
-        warn_if_orphaned(
-            detach,
-            wait,
-            std::io::stdin().is_terminal(),
-            &mut std::io::stderr(),
-        );
+    if code == 0 && detach && !wait && !json && !quiet {
+        if let Some(job) = placed {
+            let _ = write!(
+                std::io::stderr(),
+                "{}",
+                detach_hint(&JobId(job), profile.as_deref(), &label)
+            );
+        }
     }
     Ok(code)
 }

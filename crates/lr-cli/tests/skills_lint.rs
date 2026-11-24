@@ -489,9 +489,9 @@ fn repo_setup_changes_machine_files_through_the_cli() {
 #[test]
 fn run_skill_states_the_detach_rule() {
     let text = skill("run");
-    assert!(
-        text.contains("Without `--detach` the order is cancelled when the sending process exits")
-    );
-    assert!(text.contains("always passes `--detach` to `submit`"));
-    assert!(!text.contains("only when the run must outlive the sending process"));
+    assert!(text.contains("`submit` detaches by default"));
+    assert!(text.contains("`--no-detach` restores the old behavior"));
+    assert!(text.contains("hint block"));
+    assert!(!text.contains("submit --detach"));
+    assert!(!text.contains("always passes `--detach`"));
 }
