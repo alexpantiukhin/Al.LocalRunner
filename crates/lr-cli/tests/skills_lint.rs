@@ -235,9 +235,27 @@ fn changes_through_the_cli(code: &str) -> bool {
         })
 }
 
+const FILLER: [&str; 14] = [
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "them",
+    "with",
+    "using",
+    "via",
+    "through",
+    "localrunner",
+];
+
 enum Token<'a> {
     Word(String),
     File,
+    Stop,
     Code(&'a str),
 }
 
@@ -271,31 +289,37 @@ fn units(text: &str) -> Vec<String> {
     out
 }
 
+fn prose_tokens(chunk: &str) -> Vec<Token<'static>> {
+    let mut out = Vec::new();
+    if chunk.starts_with([',', ';']) {
+        out.push(Token::Stop);
+    }
+    match CONFIG_FILES.iter().any(|f| chunk.contains(f)) {
+        true => out.push(Token::File),
+        false => out.extend(
+            chunk
+                .to_lowercase()
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|w| !w.is_empty())
+                .map(|w| Token::Word(w.to_string())),
+        ),
+    }
+    if chunk.ends_with([',', ';']) {
+        out.push(Token::Stop);
+    }
+    out
+}
+
 fn tokens(clause: &str) -> Vec<Token<'_>> {
     clause
         .split('`')
         .enumerate()
         .flat_map(|(i, part)| match i % 2 {
             1 => vec![Token::Code(part)],
-            _ => part
-                .split_whitespace()
-                .flat_map(
-                    |chunk| match CONFIG_FILES.iter().any(|f| chunk.contains(f)) {
-                        true => vec![Token::File],
-                        false => chunk
-                            .to_lowercase()
-                            .split(|c: char| !c.is_ascii_alphabetic())
-                            .filter(|w| !w.is_empty())
-                            .map(|w| Token::Word(w.to_string()))
-                            .collect(),
-                    },
-                )
-                .collect(),
+            _ => part.split_whitespace().flat_map(prose_tokens).collect(),
         })
         .collect()
 }
-
-const MAX_FILLER: usize = 6;
 
 fn is_hand_edit(clause: &str) -> bool {
     let tokens = tokens(clause);
@@ -307,16 +331,27 @@ fn is_hand_edit(clause: &str) -> bool {
             i > 0 && matches!(&tokens[i - 1], Token::Word(w) if w == "never" || w == "not");
         let filler = tokens[i + 1..]
             .iter()
-            .take_while(|t| matches!(t, Token::Word(_)))
+            .take_while(|t| matches!(t, Token::Word(w) if FILLER.contains(&w.as_str())))
             .count();
-        let object_is_cli = filler <= MAX_FILLER
-            && matches!(tokens.get(i + 1 + filler), Some(Token::Code(code)) if changes_through_the_cli(code));
+        let object_is_cli = matches!(
+            tokens.get(i + 1 + filler),
+            Some(Token::Code(code)) if changes_through_the_cli(code)
+        );
         HAND_EDITS.contains(&word.as_str()) && !negated && !object_is_cli
     });
     let assignment = tokens.iter().any(
         |t| matches!(t, Token::Code(code) if !changes_through_the_cli(code) && code.contains(" = ")),
     );
     unbound_verb || assignment
+}
+
+fn names_a_config(clause: &str) -> bool {
+    CONFIG_FILES.iter().any(|f| clause.contains(f))
+        || clause
+            .split('`')
+            .skip(1)
+            .step_by(2)
+            .any(changes_through_the_cli)
 }
 
 fn hand_edits(text: &str) -> Vec<String> {
@@ -328,7 +363,7 @@ fn hand_edits(text: &str) -> Vec<String> {
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
-        .filter(|c| CONFIG_FILES.iter().any(|f| c.contains(f)))
+        .filter(|c| names_a_config(c))
         .filter(|c| is_hand_edit(c))
         .collect()
 }
@@ -394,6 +429,21 @@ fn the_hand_edit_check_tells_edits_from_descriptions() {
     );
     assert!(hand_edits("Use `localrunner config set runner:a k v` for `runner.toml`.").is_empty());
     assert_eq!(
+        hand_edits(
+            "Edit the file by hand, then run `localrunner config set runner:a k v` for `runner.toml`."
+        )
+        .len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("Edit the file by hand, then run `localrunner config set runner:a k v`.").len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("Set it, then `localrunner config set runner:a k v` for `runner.toml`.").len(),
+        1
+    );
+    assert_eq!(
         hand_edits("Put the clients in a `[[shared]]` block of `policy.toml`.").len(),
         1
     );
@@ -412,7 +462,7 @@ fn the_hand_edit_check_tells_edits_from_descriptions() {
     .is_empty());
     assert!(hand_edits("`localrunner config show logging` prints `logging.toml`.").is_empty());
     assert!(hand_edits(
-        "Set it on the host: `localrunner --config-dir <dir> config set runner:<name> env.x 1` in `runner.toml`."
+        "Set it with `localrunner --config-dir <dir> config set runner:<name> env.x 1` in `runner.toml`."
     )
     .is_empty());
     assert_eq!(
