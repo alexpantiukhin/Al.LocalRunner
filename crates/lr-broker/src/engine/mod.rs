@@ -157,6 +157,8 @@ impl Broker {
                 unsaved_starts: false,
                 silenced: HashSet::new(),
                 retention: retention::Retention::default(),
+                policy_path: String::new(),
+                service_policy: false,
             },
             listener: deps.listener,
             tx,
@@ -175,6 +177,20 @@ impl Broker {
     /// messages) to `sink`; without it they are discarded.
     pub fn with_log_sink(mut self, sink: Arc<dyn LogSink>) -> Broker {
         self.engine.log = sink;
+        self
+    }
+
+    /// Names `path`, the `policy.toml` the broker loads, in the reasons of orders the policy
+    /// refuses; without it the reasons leave the file out.
+    pub fn with_policy_path(mut self, path: String) -> Broker {
+        self.engine.policy_path = path;
+        self
+    }
+
+    /// Marks the policy file as the broker service's, so the fix named in a refusal is to be
+    /// run as administrator.
+    pub fn with_service_policy(mut self, service: bool) -> Broker {
+        self.engine.service_policy = service;
         self
     }
 
@@ -354,6 +370,8 @@ pub(crate) struct Engine {
     pub(crate) unsaved_starts: bool,
     pub(crate) silenced: HashSet<JobKey>,
     retention: retention::Retention,
+    pub(crate) policy_path: String,
+    pub(crate) service_policy: bool,
 }
 
 const MIB: u64 = 1024 * 1024;

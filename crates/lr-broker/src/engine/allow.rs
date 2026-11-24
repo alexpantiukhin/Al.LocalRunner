@@ -19,7 +19,7 @@ impl Engine {
         if let Some(name) = req.secrets.iter().find(|n| !secrets.contains(n)) {
             return Err((
                 RejectReason::SecretNotAllowed,
-                format!("secret {name} is not allowed for label {label}"),
+                self.not_allowed("secret", name, label),
             ));
         }
         if let Some(name) = req
@@ -29,13 +29,35 @@ impl Engine {
         {
             return Err((
                 RejectReason::ServiceNotAllowed,
-                format!("service {name} is not allowed for label {label}"),
+                self.not_allowed("service", name, label),
             ));
         }
         if file.command_mode(&entry.client.key, label) == CommandMode::Named {
             self.named_only(label, spec)?;
         }
         Ok(())
+    }
+
+    fn not_allowed(&self, what: &str, name: &str, label: &str) -> String {
+        let shown = if label.is_empty() { "(empty)" } else { label };
+        let file = if self.policy_path.is_empty() {
+            String::new()
+        } else {
+            format!(" in {}", self.policy_path)
+        };
+        let admin = if self.service_policy {
+            ", run it as administrator"
+        } else {
+            ""
+        };
+        let arg = if label.is_empty() || label.contains(|c: char| c.is_whitespace() || c == '"') {
+            format!("{label:?}")
+        } else {
+            label.to_string()
+        };
+        format!(
+            "{what} {name} is not allowed for label {shown}{file}; to allow it{admin}: localrunner policy allow-{what} {name} --label {arg}"
+        )
     }
 
     pub(crate) fn command_names(

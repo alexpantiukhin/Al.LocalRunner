@@ -77,6 +77,7 @@ pub struct Harness {
     task: tokio::task::JoinHandle<()>,
     extra: String,
     owners: Vec<String>,
+    policy_at: Option<(String, bool)>,
 }
 
 impl Drop for Harness {
@@ -92,6 +93,18 @@ impl Harness {
 
     pub fn with_owners(extra: &str, owners: &[&str]) -> Harness {
         Harness::build(extra, owners, |l| Arc::new(l))
+    }
+
+    pub fn with_policy_path(extra: &str, path: &str, service: bool) -> Harness {
+        Harness::over(
+            Arc::new(MemoryBrokerStore::new()),
+            ManualClock::new(Timestamp(START)),
+            extra,
+            &["root"],
+            |l| Arc::new(l),
+            |_| {},
+            Some((path.to_string(), service)),
+        )
     }
 
     pub fn stalling(extra: &str) -> (Harness, Stall) {
@@ -116,6 +129,7 @@ impl Harness {
             owners,
             wrap,
             |_| {},
+            None,
         )
     }
 
@@ -133,6 +147,7 @@ impl Harness {
             &owners,
             |l| Arc::new(l),
             prepare,
+            self.policy_at.clone(),
         );
         h.poke().await;
         h
@@ -145,6 +160,7 @@ impl Harness {
         owners: &[&str],
         wrap: impl FnOnce(FakeListener) -> Arc<dyn Listener>,
         prepare: impl FnOnce(&FaultyStore),
+        policy_at: Option<(String, bool)>,
     ) -> Harness {
         let net = FakeNetwork::new(Arc::new(clock.clone()));
         let listener = net.listen(
@@ -173,6 +189,12 @@ impl Harness {
             owners.iter().map(|s| s.to_string()),
         )))
         .with_log_sink(log.clone());
+        let broker = match &policy_at {
+            Some((path, service)) => broker
+                .with_policy_path(path.clone())
+                .with_service_policy(*service),
+            None => broker,
+        };
         let events = broker.subscribe();
         let handle = broker.handle();
         let task = tokio::spawn(broker.run());
@@ -188,6 +210,7 @@ impl Harness {
             task,
             extra: extra.to_string(),
             owners: owners.iter().map(|s| s.to_string()).collect(),
+            policy_at,
         }
     }
 
