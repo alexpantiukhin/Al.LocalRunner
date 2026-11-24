@@ -207,7 +207,8 @@ impl RunnerConfig {
     }
 
     /// Runs the `[programs]` lookups and checks in the `PATH` jobs get (`[env] path`) and keeps
-    /// only the programs that passed; returns one line per program that failed.
+    /// only the programs that passed; returns one line per program that failed. A program with a
+    /// `check` and no `path` is not looked up by name: the exit code of the check decides.
     pub fn check_programs(&mut self) -> Vec<String> {
         let search = self.settings.path.clone();
         let env = self.settings.base_env();
@@ -334,6 +335,7 @@ fn check_program(
     match (&spec.path, search) {
         (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
         (Some(_), _) => {}
+        (None, _) if spec.check.is_some() => {}
         (None, None) => {
             return Err("not looked up: runner.toml has no [env] path, the PATH of jobs".into())
         }

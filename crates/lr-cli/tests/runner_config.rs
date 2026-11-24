@@ -142,6 +142,47 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
 }
 
 #[test]
+fn a_capability_with_a_check_and_no_path_is_decided_by_the_check_alone() {
+    let (ok, fail) = if cfg!(windows) {
+        ("exit 0", "exit 3")
+    } else {
+        ("true", "false")
+    };
+    let text = format!(
+        "[programs]\nandroid-emulator = {{ check = \"{ok}\" }}\n\
+         gradle = {{ check = \"{fail}\" }}\n\
+         no-such-program-xyz = {{}}\n{}",
+        common::env_path_toml()
+    );
+    let mut c = parse(&text, None);
+    let problems = c.check_programs();
+    assert!(
+        c.settings.programs.contains("android-emulator"),
+        "{problems:?}"
+    );
+    assert!(!c.settings.programs.contains("gradle"));
+    assert!(!c.settings.programs.contains("no-such-program-xyz"));
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.starts_with("program gradle: check")),
+        "{problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|p| p == "program no-such-program-xyz: not found in PATH"),
+        "{problems:?}"
+    );
+    let reported = c.settings.capabilities(None);
+    assert_eq!(
+        reported.programs_missing.iter().collect::<Vec<_>>(),
+        ["gradle", "no-such-program-xyz"]
+    );
+}
+
+#[test]
 fn a_check_that_outlives_its_timeout_is_stopped_and_the_program_is_not_offered() {
     assert_eq!(DEFAULT_CHECK_TIMEOUT_S, 10);
     let slow = if cfg!(windows) {
