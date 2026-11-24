@@ -233,6 +233,11 @@ impl Layout {
         self.ipc_in(&self.own_ipc_dir, &format!("hub-{principal}"))
     }
 
+    /// The local channel of the dashboard of OS principal `principal`.
+    pub fn dashboard_ipc(&self, principal: &str) -> String {
+        self.ipc_in(&self.own_ipc_dir, &format!("dashboard-{principal}"))
+    }
+
     /// The broker's IPC for hubs and runners of this machine; for the default layout of a
     /// user on Unix, the broker service's socket when the service runs.
     pub fn broker_ipc(&self) -> String {

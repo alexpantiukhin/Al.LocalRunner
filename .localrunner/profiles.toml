@@ -44,6 +44,13 @@ mem_mb    = 1024
 cpu       = 1
 tags      = ["cargo"]
 
+[profile.rust-fmt-fix]
+command   = "cargo fmt --all"
+timeout_s = 120
+mem_mb    = 1024
+cpu       = 1
+tags      = ["cargo"]
+
 [profile.ci-docs]
 command   = "python .github/scripts/docs_pair.py"
 timeout_s = 60

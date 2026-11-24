@@ -126,7 +126,7 @@ The skills never raise rights on their own and never print join codes or tokens.
    ```
    localrunner run hello --as me:test   # submit, show the output, return the exit code
    localrunner history                  # the runs, most recently finished first
-   localrunner dashboard                # live page on 127.0.0.1, Ctrl+C stops it
+   localrunner dashboard                # starts the live page in the background, prints its link; down stops it
    localrunner down                     # the runner finishes the current job, then everything stops
    ```
 
@@ -594,7 +594,7 @@ Without the rights the command prints the exact line to run (on Windows a PowerS
 
 ## Security
 
-- The dashboard listens only on `127.0.0.1` and `::1`.
+- The dashboard listens only on `127.0.0.1` and `::1`. `localrunner dashboard` starts it in the background and prints the link (with a one-time token) on one line; a repeated call asks the running one for a fresh link through a per-user local channel (a named pipe or a Unix socket, never TCP). The token is printed to the terminal only and never logged.
 - A member joins by a one-time code; the broker's certificate is pinned by the fingerprint from the code. After that a revocable member key works: `client remove`, `runner remove`.
 - The broker never runs under a privileged account.
 - Only whoever sits at the broker machine edits the policy; `policy reload` is accepted only over the local channel.
@@ -655,7 +655,7 @@ All commands:
 | `status --recent [N\|DURATION]` | the orders that left the queue, with the end reason and who ended it |
 | `history [--all]`, `history show <job>` | history with `QUEUED`, `STARTED` and `FINISHED` columns; `--since` keeps the runs queued since a time, `--ran-since` and `--ran-until` keep the runs that were running in a window (started before its end, not finished before its start; a run still going counts); the `REASON` column says who cancelled a run and why |
 | `stats`, `runners`, `brokers` | statistics, runners, brokers |
-| `dashboard` | a page on 127.0.0.1; the queue grid has `Priority` (the effective priority, sortable, in CSV and JSON), `Client label` (the `--as` label) and `Labels` (the profile labels) columns; the History tab is paged (previous, next, page size) and the queue says `shown N of M` when a broker's list limit cut orders |
+| `dashboard` | a page on 127.0.0.1, started in the background (the link is one line on stdout, closing the terminal does not stop it; a repeated call prints a fresh link; `--foreground` keeps it in the terminal until Ctrl+C; `down` stops it, and it ends with the hub); the queue grid has `Priority` (the effective priority, sortable, in CSV and JSON), `Client label` (the `--as` label) and `Labels` (the profile labels) columns; the History tab is paged (previous, next, page size) and the queue says `shown N of M` when a broker's list limit cut orders |
 
 Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (explicit; `submit` already detaches by default), `--no-detach` (`submit` only: the order is cancelled when the sending process exits, as `submit --wait` and `run` always do), `--quiet` (`submit` only: no hint block). A detached `submit` prints only the job id to stdout and a hint block to stderr with ready-to-copy commands (`queued <job-id> (profile ..., label ...)`, `follow: localrunner wait <job-id>`, `result: localrunner log <job-id> --tail 50`, `cancel: localrunner cancel <job-id> --as <label>`); `--quiet`, `--json` and `run` print no block. `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
 

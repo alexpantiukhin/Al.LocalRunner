@@ -262,8 +262,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Live dashboard on loopback.
-    Dashboard,
+    /// Live dashboard on loopback: starts it in the background when it does not run and prints
+    /// the link (one line, with a new one-time token), then exits; `down` stops it.
+    Dashboard {
+        /// Serve in this terminal until Ctrl+C instead of in the background.
+        #[arg(long)]
+        foreground: bool,
+        /// Started by `dashboard` itself: hide or create the console.
+        #[arg(long, hide = true, requires = "foreground")]
+        background: bool,
+    },
     /// Stop runners, the hub and the broker: runners finish the current job (default) or
     /// cancel it.
     Down {
@@ -590,7 +598,10 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Runners(a) => read_cmd::runners(&layout, a).await,
         Command::Up { names } => up_cmd::up(&layout, names).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
-        Command::Dashboard => crate::dashboard::run(&layout).await,
+        Command::Dashboard {
+            foreground,
+            background,
+        } => crate::dashboard::run(&layout, foreground, background).await,
         Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,
         Command::Down {
             names,

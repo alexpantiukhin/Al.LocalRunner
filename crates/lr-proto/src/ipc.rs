@@ -16,8 +16,48 @@ pub enum IpcChannel {
     Cli,
     /// Administrative commands to a broker.
     Admin,
+    /// Control channel of a running dashboard: a fresh link, or a stop.
+    Dashboard,
     /// Control channel of a runner.
     RunnerControl,
+}
+
+/// What a command asks of the dashboard that runs for this user, on its local channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DashboardRequest {
+    /// A link with a new one-time token.
+    Link,
+    /// Stop the dashboard.
+    Stop,
+}
+
+/// The answer of a running dashboard to [`DashboardRequest`].
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DashboardReply {
+    /// The link to open; it carries the one-time token, so it goes to the terminal only.
+    Link {
+        /// `http://127.0.0.1:<port>/?token=...`.
+        url: String,
+    },
+    /// The dashboard is stopping.
+    Stopping,
+    /// The request could not be served.
+    Failed {
+        /// Why.
+        message: String,
+    },
+}
+
+impl std::fmt::Debug for DashboardReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DashboardReply::Link { .. } => f.write_str("Link { url: <hidden> }"),
+            DashboardReply::Stopping => f.write_str("Stopping"),
+            DashboardReply::Failed { message } => write!(f, "Failed {{ message: {message:?} }}"),
+        }
+    }
 }
 
 /// First message on a local IPC connection: the protocol version and the channel it is for, so
@@ -517,6 +557,8 @@ message!(
     ["ok", "policy", "join_code", "names", "failed"]
 );
 message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "status"]);
+message!(DashboardRequest, local: true, ["link", "stop"]);
+message!(DashboardReply, local: true, ["link", "stopping", "failed"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
 message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "link"]);

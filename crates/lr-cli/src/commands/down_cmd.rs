@@ -319,6 +319,10 @@ pub trait Roles: Send + Sync {
     async fn runner_answers(&self, name: &str) -> bool;
     /// Stops the hub; `false` when it does not run.
     async fn stop_hub(&self) -> Result<bool, String>;
+    /// Asks the dashboard of this user to stop; `false` when none runs.
+    async fn stop_dashboard(&self) -> bool {
+        false
+    }
     /// Stops the broker as [`stop_broker`] does.
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String>;
     /// Whether the broker runs under the OS service manager.
@@ -419,6 +423,10 @@ impl Roles for IpcRoles<'_> {
 
     async fn stop_hub(&self) -> Result<bool, String> {
         hub(self.layout, &self.principal).await
+    }
+
+    async fn stop_dashboard(&self) -> bool {
+        crate::dashboard_channel::stop_running(self.layout).await
     }
 
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String> {
@@ -721,14 +729,19 @@ pub async fn stop_targets(
                     code = 1;
                 }
             },
-            Target::Hub => match roles.stop_hub().await {
-                Ok(true) => println!("hub: stopped"),
-                Ok(false) => not_running("hub", &mut code),
-                Err(e) => {
-                    eprintln!("hub: {e}");
-                    code = 1;
+            Target::Hub => {
+                match roles.stop_hub().await {
+                    Ok(true) => println!("hub: stopped"),
+                    Ok(false) => not_running("hub", &mut code),
+                    Err(e) => {
+                        eprintln!("hub: {e}");
+                        code = 1;
+                    }
                 }
-            },
+                if roles.stop_dashboard().await {
+                    println!("dashboard: stopped");
+                }
+            }
             Target::Broker => {
                 if !stopping.is_empty() && (cancel || !service) {
                     eprintln!(

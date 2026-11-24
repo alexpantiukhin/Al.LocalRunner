@@ -1,4 +1,4 @@
-use crate::guard::{data_error, guard, random_hex, AppState};
+use crate::guard::{data_error, guard, random_hex, AppState, LaunchTokens};
 use crate::snapshot::{render, render_snapshot, Mode, SCRIPT, STYLE};
 use crate::{actions, sse};
 use axum::extract::{Path, Query, State};
@@ -12,7 +12,7 @@ use lr_proto::DashboardSnapshot;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -70,7 +70,7 @@ pub struct Dashboard<D> {
     source: Arc<D>,
     options: DashboardOptions,
     launch_token: String,
-    unspent: Arc<Mutex<Option<String>>>,
+    unspent: Arc<LaunchTokens>,
     session: String,
     csrf: String,
     stop: watch::Sender<bool>,
@@ -82,14 +82,50 @@ pub struct Dashboard<D> {
 pub struct RunningDashboard {
     addr: SocketAddr,
     url: String,
+    issuer: LinkIssuer,
     stop: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
+}
+
+/// Issues links with new one-time launch tokens for a running dashboard. The tokens are never
+/// part of its `Debug` output.
+#[derive(Clone)]
+pub struct LinkIssuer {
+    tokens: Arc<LaunchTokens>,
+    port: u16,
+}
+
+impl fmt::Debug for LinkIssuer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LinkIssuer {{ port: {} }}", self.port)
+    }
+}
+
+impl LinkIssuer {
+    /// A link to the dashboard with a new one-time token. The dashboard keeps a few unspent
+    /// tokens, so links printed by two terminals both work; beyond that the oldest unspent
+    /// one is retired.
+    pub fn fresh_url(&self) -> Result<String, DashboardError> {
+        let token = random_hex(32).map_err(|e| DashboardError::Random(e.to_string()))?;
+        self.tokens.add(token.clone());
+        Ok(format!("http://127.0.0.1:{}/?token={token}", self.port))
+    }
+
+    /// Retires every unspent token, including the one of the first link.
+    pub fn revoke_all(&self) {
+        self.tokens.clear();
+    }
 }
 
 impl RunningDashboard {
     /// The bound IPv4 loopback address.
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// The issuer of links with new one-time tokens.
+    pub fn link_issuer(&self) -> LinkIssuer {
+        self.issuer.clone()
     }
 
     /// The address to open, carrying the launch token.
@@ -130,7 +166,7 @@ where
         Ok(Dashboard {
             source,
             options,
-            unspent: Arc::new(Mutex::new(Some(launch_token.clone()))),
+            unspent: Arc::new(LaunchTokens::with(launch_token.clone())),
             launch_token,
             session: secret()?,
             csrf: secret()?,
@@ -212,6 +248,10 @@ where
                 self.launch_token
             ),
             addr,
+            issuer: LinkIssuer {
+                tokens: self.unspent.clone(),
+                port: addr.port(),
+            },
             stop: self.stop,
             tasks,
         })

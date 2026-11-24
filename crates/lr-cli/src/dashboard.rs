@@ -1,6 +1,8 @@
 //! `dashboard` (spec 9): the loopback page over a [`DataSource`] that reads the hub through its
 //! CLI channel and builds the [`DashboardSnapshot`] model from the brokers' answers. The URL
-//! carries the launch token, so it is printed to the terminal only and never logged.
+//! carries the launch token, so it is printed to the terminal only and never logged. The
+//! dashboard runs in a background process of its own; a repeated `dashboard` asks it for a link
+//! with a new token on its local channel ([`crate::dashboard_channel`]).
 
 use crate::commands::jobs::hub;
 use crate::commands::log_cmd::cli_redactor;
@@ -228,19 +230,75 @@ impl DataSource for HubSource {
     }
 }
 
-/// `dashboard`: serves until Ctrl+C or until `down` stops the hub it serves. The URL goes to
-/// stdout only.
-pub async fn run(layout: &Layout) -> Result<i32, String> {
+/// `dashboard`: without `foreground`, prints the link of the dashboard of this user, starting
+/// it in the background first when none runs; the link is one line on stdout and carries a new
+/// one-time token. With `foreground`, serves in this process until Ctrl+C or until `down` stops
+/// the hub it serves. `background` marks the process this command started itself.
+pub async fn run(layout: &Layout, foreground: bool, background: bool) -> Result<i32, String> {
+    if foreground {
+        return serve(layout, background).await;
+    }
+    let client = match crate::dashboard_channel::find_running(layout).await {
+        Some(client) => client,
+        None => start_background(layout).await?,
+    };
+    let link = crate::dashboard_channel::request_link(&client).await;
+    client.close().await;
+    println!("{}", link?);
+    eprintln!("dashboard on loopback; `localrunner down` stops it");
+    Ok(0)
+}
+
+async fn start_background(layout: &Layout) -> Result<IpcClient, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut argv = vec![
+        "dashboard".to_string(),
+        "--foreground".into(),
+        "--background".into(),
+    ];
+    argv.extend(crate::commands::up_cmd::dirs(layout));
+    crate::commands::up_cmd::spawn(&exe, &argv)
+        .map_err(|e| format!("cannot start the dashboard: {e}"))?;
+    crate::commands::up_cmd::poll_until(
+        || crate::dashboard_channel::find_running(layout),
+        |found| found.is_some(),
+        crate::commands::up_cmd::STARTED_WITHIN,
+    )
+    .await
+    .ok_or_else(|| {
+        "the dashboard did not start; `localrunner dashboard --foreground` shows why".to_string()
+    })
+}
+
+async fn serve(layout: &Layout, background: bool) -> Result<i32, String> {
+    if background {
+        crate::os_service::background_console();
+    }
     let user = lr_net::current_os_user().map_err(|e| e.to_string())?;
+    let listener = Arc::new(crate::dashboard_channel::listen(layout).await?);
     let source = Arc::new(HubSource::new(layout.clone()));
     let dashboard = Dashboard::new(source, DashboardOptions { user }).map_err(|e| e.to_string())?;
     let running = dashboard.serve().await.map_err(|e| e.to_string())?;
-    println!("{}", running.url());
-    eprintln!("dashboard on loopback; Ctrl+C or down stops it");
+    let issuer = running.link_issuer();
+    let stop = Arc::new(tokio::sync::Notify::new());
+    let channel = tokio::spawn(crate::dashboard_channel::serve(
+        listener.clone(),
+        issuer.clone(),
+        stop.clone(),
+    ));
+    if background {
+        issuer.revoke_all();
+    } else {
+        println!("{}", running.url());
+        eprintln!("dashboard on loopback; Ctrl+C or down stops it");
+    }
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
+        _ = stop.notified() => {}
         _ = crate::hub_watch::hub_stopped(layout, crate::hub_watch::HUB_CHECK) => eprintln!("the hub stopped; dashboard ends"),
     }
+    listener.closed().await;
+    channel.abort();
     running.shutdown().await;
     Ok(0)
 }

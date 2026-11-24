@@ -189,7 +189,7 @@ fn keep_std_handles_from_children() {
     }
 }
 
-fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
+pub(crate) fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
         .env(
