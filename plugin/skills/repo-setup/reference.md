@@ -30,17 +30,26 @@ There is no `env`, no working directory, no `matrix` and no retry. Several comma
 
 ## Pitfalls
 
-1. A profile with `platforms` or a `platform.*` table needs a runner that declares the platform in its `runner.toml`, where the template has `platforms` commented out. A profile without `[profile.X.zone.<zone>]` variants runs only in the zones `local` and `shared`; to run on a `lan` or `remote` runner give it a variant for that zone, whose steps bring the code (for example `git fetch` and `checkout` of `{branch}`, passed as `--arg branch=...`).
+1. A profile with `platforms` or a `platform.*` table needs a runner that declares the platform: `localrunner config set runner:<name> platforms '["<platform>"]'` (the template has `platforms` commented out). A profile without `[profile.X.zone.<zone>]` variants runs only in the zones `local` and `shared`; to run on a `lan` or `remote` runner give it a variant for that zone, whose steps bring the code (for example `git fetch` and `checkout` of `{branch}`, passed as `--arg branch=...`).
 2. In `lan` and `remote` a job works in its own folder, which the runner deletes when the job ends: what must survive between runs (a dependency store, a build cache) is declared as a `cache` of the profile. In `local` and `shared` the job works in the client's directory.
 3. A `keychain:` secret source is parsed but not read by `profile check`; prefer `env:`.
 3. The secret names `PATH`, `HOME`, `TEMP`, `TMP` and `LOCALRUNNER_*` are reserved and fail the job.
 4. The `check` of a profile's `programs` runs only on the runner, against its own `[programs]`.
 5. Masking of secrets in output is job-wide and exact: never use short values such as `true` or `1` as secrets.
 
-## Machine files the skill may propose
+## Machine settings the skill may propose
 
-`runner.toml`: `platforms`, `tags`, `[programs]` (`name = {}` or `{ check = "..." }`), `[secret.<name>]` with `from = "env:VAR"`, `[job_env]` with `NAME = "value"` or `inherit = ["ProgramFiles(x86)"]` (exact names copied from the runner process at the start of each job), `[service.<name>]` with `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
+Each is one command, run first with `--dry-run` (step 7 of the skill).
 
-`policy.toml`: `[[secrets.allow]]` with `label` and `names`; `[[services.allow]]` with `label` and `names`.
+Runner keys, `localrunner config set runner:<name> <key> <value>` (the value is TOML; other text is a string):
+- `platforms`, `tags`: a list such as `'["a", "b"]'`; it replaces the whole list, so read it first with `localrunner config get runner:<name> tags`.
+- `programs.<name>`: `{}` or `'{ check = "..." }'`.
+- `secret.<name>.from`: `env:VAR`.
+- `job_env.<NAME>`: a value; `job_env.inherit`: a list of exact names copied from the runner process at the start of each job (`'["ProgramFiles(x86)"]'`).
+- `service.<name>.<key>` with the keys `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
+
+Broker policy: `localrunner policy allow-secret <name> --label <label>` allows a secret for a client label (`[[secrets.allow]]`), `localrunner policy allow-service <name> --label <label>` a service (`[[services.allow]]`); `remove-secret` and `remove-service` take one back.
+
+`localrunner config show runner:<name>` prints the path and the text of the file a runner reads; `localrunner config show broker` the same for the broker policy.
 
 Never propose `allow_elevated` or `allow_same_user_as_broker`.

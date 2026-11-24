@@ -167,6 +167,145 @@ fn repo_setup_keeps_its_scope() {
     }
 }
 
+const CONFIG_FILES: [&str; 4] = [
+    "runner.toml",
+    "policy.toml",
+    "hub-policy.toml",
+    "logging.toml",
+];
+
+const HAND_EDITS: [&str; 11] = [
+    "edit",
+    "add",
+    "set",
+    "put",
+    "change",
+    "append",
+    "uncomment",
+    "insert",
+    "remove",
+    "write",
+    "apply",
+];
+
+fn changes_through_the_cli(code: &str) -> bool {
+    let words: Vec<&str> = code.split_whitespace().collect();
+    words.first() == Some(&"localrunner")
+        && words.windows(2).any(|w| match w {
+            ["config", verb] => ["set", "unset"].contains(verb),
+            ["policy", verb] => !["check", "reload"].contains(verb),
+            _ => false,
+        })
+}
+
+fn hand_edits(text: &str) -> Vec<String> {
+    text.lines()
+        .flat_map(|line| line.split(". "))
+        .flat_map(|s| s.split("; "))
+        .filter(|c| CONFIG_FILES.iter().any(|f| c.contains(f)))
+        .filter(|c| !c.split('`').skip(1).step_by(2).any(changes_through_the_cli))
+        .filter(|c| {
+            let prose = c
+                .split('`')
+                .step_by(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let words: Vec<&str> = prose.split(|ch: char| !ch.is_ascii_alphabetic()).collect();
+            HAND_EDITS.iter().any(|v| words.contains(v))
+                || prose.contains("list the names in")
+                || c.split('`')
+                    .skip(1)
+                    .step_by(2)
+                    .any(|code| code.contains(" = "))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+fn plugin_texts() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = SKILLS
+        .iter()
+        .map(|n| (format!("skills/{n}/SKILL.md"), skill(n)))
+        .collect();
+    for rel in [
+        "skills/repo-setup/reference.md",
+        "shared/os/windows.md",
+        "shared/os/linux.md",
+        "shared/os/macos.md",
+    ] {
+        let path = plugin().join(rel);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+            .replace("\r\n", "\n");
+        out.push((rel.to_string(), text));
+    }
+    out
+}
+
+#[test]
+fn no_skill_edits_a_config_file_by_hand() {
+    let found: Vec<String> = plugin_texts()
+        .into_iter()
+        .flat_map(|(path, text)| {
+            hand_edits(&text)
+                .into_iter()
+                .map(move |c| format!("{path}: {c}"))
+        })
+        .collect();
+    assert!(
+        found.is_empty(),
+        "change these through `localrunner config` or `localrunner policy`:\n{}",
+        found.join("\n")
+    );
+}
+
+#[test]
+fn the_hand_edit_check_tells_edits_from_descriptions() {
+    assert_eq!(hand_edits("Set `[env] path` in `runner.toml`.").len(), 1);
+    assert_eq!(
+        hand_edits("Put the clients in a `[[shared]]` block of `policy.toml`.").len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("`[env] tools_dir = \"/opt/tools\"` in `runner.toml` appends `bin`.").len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("Show the diff for `hub-policy.toml` and apply it.").len(),
+        1
+    );
+    assert!(hand_edits("`init` writes `[env] path` of `runner.toml` from the shell.").is_empty());
+    assert!(hand_edits(
+        "Set it with `localrunner config set runner:<name> env.path <PATH>`: it edits `runner.toml`."
+    )
+    .is_empty());
+    assert!(hand_edits("`localrunner config show logging` prints `logging.toml`.").is_empty());
+    assert!(hand_edits(
+        "Set it on the host: `localrunner --config-dir <dir> config set runner:<name> env.x 1` in `runner.toml`."
+    )
+    .is_empty());
+    assert_eq!(
+        hand_edits("Edit `policy.toml`, then run `localrunner policy check`.").len(),
+        1
+    );
+}
+
+#[test]
+fn repo_setup_changes_machine_files_through_the_cli() {
+    let text = skill("repo-setup");
+    for needle in [
+        "`--dry-run`",
+        "`--restart`",
+        "`localrunner config set runner:<name> <key> <value>`",
+        "`localrunner policy allow-secret <name> --label <label>`",
+        "`localrunner policy allow-service <name> --label <label>`",
+        "Never set `allow_elevated` or `allow_same_user_as_broker`",
+    ] {
+        assert!(text.contains(needle), "repo-setup: {needle}");
+    }
+}
+
 #[test]
 fn run_skill_states_the_detach_rule() {
     let text = skill("run");

@@ -23,5 +23,5 @@ Used by `install-runner`, `up-runner`, `autostart-runner`, `down-runner`. Shell:
 ## Notes
 - Emulators need KVM: `/dev/kvm` must exist and be writable by the user (group `kvm`); otherwise reject `emulator` tag jobs.
 - `/tmp` may be a small tmpfs; the daemon keeps logs under the submitter `temp/` and its state under the data directory, never in `/tmp`.
-- A runner in a container gets the tools of jobs from a mounted directory: `[env] tools_dir = "/opt/tools"` in `runner.toml` appends `bin` and `<name>/bin` of it to `path`; no image of your own is needed (`install/compose.yaml`).
+- A runner in a container gets the tools of jobs from a mounted directory: the key `env.tools_dir` (`/opt/tools`) appends `bin` and `<name>/bin` of it to `path`; no image of your own is needed (`install/compose.yaml`). The container reads its `runner.toml` mounted read-only, so set the key on the host: `localrunner --state-dir <dir> --config-dir <dir> config set runner:<name> env.tools_dir /opt/tools`, with `<dir>` the host directory of that file.
 - Containers started by a job belong to that job: remove them in the profile cleanup so orphaned ones do not hold ports.
