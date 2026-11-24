@@ -745,9 +745,9 @@ async fn a_runner_with_an_own_copy_edits_it_and_says_so() {
     std::fs::write(template_file(&layout), RUNNER).unwrap();
     let roles = FakeControl::new(false, true);
     let elevator = FakeElevator::new(Ok(0));
-    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    let r = run(&layout, set(r1(), "cpu", "2"), false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert!(read(&runner_file(&layout)).contains("cpu = 4"));
+    assert!(read(&runner_file(&layout)).contains("cpu = 2"));
     assert_eq!(read(&template_file(&layout)), RUNNER);
     assert!(
         r.out
@@ -766,9 +766,9 @@ async fn a_runner_without_an_own_copy_edits_the_template_and_says_so() {
     assert!(!runner_file(&layout).exists());
     let roles = FakeControl::new(false, true);
     let elevator = FakeElevator::new(Ok(0));
-    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    let r = run(&layout, set(r1(), "cpu", "2"), false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert!(read(&template_file(&layout)).contains("cpu = 4"));
+    assert!(read(&template_file(&layout)).contains("cpu = 2"));
     assert!(!runner_file(&layout).exists());
     assert!(
         r.out
@@ -831,9 +831,9 @@ async fn a_template_edit_reloads_every_runner_that_reads_the_template() {
     std::fs::write(layout.runner_dir("r3").join("runner.toml"), RUNNER).unwrap();
     let roles = FakeControl::new(false, true);
     let elevator = FakeElevator::new(Ok(0));
-    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    let r = run(&layout, set(r1(), "cpu", "2"), false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert!(read(&template_file(&layout)).contains("cpu = 4"));
+    assert!(read(&template_file(&layout)).contains("cpu = 2"));
     assert_eq!(
         roles.reloads(),
         [Role::Runner("r1".into()), Role::Runner("r2".into())],
