@@ -355,6 +355,7 @@ path = "/usr/local/bin:/usr/bin:/bin"
 [programs]                     # what to look for on the runner and how to check it
 git    = {}
 gradle = { check = "gradle --version" }
+android-emulator = { check = "emulator -list-avds" }   # a capability name: the check decides
 [accept]
 min_mem_mb = 8192              # a reserve for heavy orders
 
@@ -385,6 +386,8 @@ on        = ["passed", "failed", "killed", "cancelled", "timeout"]   # default: 
 ```
 
 `[programs]`: `check` is any command, run in the same environment as a job, and its exit code 0 is all that `doctor` and the registration of the runner trust. `cargo --version` proves that the program starts, not that it does what the projects need (a native build can still fail at link time because the clean job environment lacks a variable). An owner whose projects compile native code makes `check` do a step the project needs, for example a link of a tiny crate or `cargo build --offline` of a fixture. The runner and `doctor` know nothing about any toolchain.
+
+The key of a `[programs]` entry is the name of a capability and by default the name of the program. With a `check` and no `path`, the name is not looked up in `[env] path`: the exit code of the check decides, so a key such as `android-emulator` is offered when `emulator -list-avds` succeeds. Without a `check` the name is looked up in `[env] path`; with a `path` the file must exist. A check that fails or takes longer than `check_timeout_s` (default 10) only means that the program is not offered: the runner keeps running, and `doctor`, `runners` and `status` show the program as not found. A capability that has no command to check goes to `tags`.
 
 Runner services (a build daemon, an emulator) are described in `[service.<name>]`: `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime` (`per_job`, `idle`, `keep`), `idle_timeout_s`, `max_lifetime_s` (mandatory), `reuse`. The format is in section 3.11 of the architecture document.
 
