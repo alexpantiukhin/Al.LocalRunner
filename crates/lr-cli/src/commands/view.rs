@@ -54,7 +54,7 @@ pub fn mask_status(views: &mut [(String, StatusView)], redactor: &Redactor) {
     for (_, v) in views.iter_mut() {
         for r in v.running.iter_mut() {
             for l in r.last_lines.iter_mut() {
-                *l = redactor.redact_text(l);
+                *l = redactor.redact_job_text(l);
             }
         }
     }

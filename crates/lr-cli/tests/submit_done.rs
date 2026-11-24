@@ -133,7 +133,7 @@ async fn run_waits_on_the_same_channel_and_never_says_done() {
     )
     .await;
     assert_eq!(code, Ok(3), "the job's own exit code");
-    assert_eq!(printed, "built\npassword=***\n");
+    assert_eq!(printed, "built\npassword=***(name: password)\n");
     let frames = seen.lock().unwrap().clone();
     assert_eq!(frames.len(), 1, "{frames:?}");
     assert!(matches!(&frames[0], CliRequest::Submit(s) if s.wait));

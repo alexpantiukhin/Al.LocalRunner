@@ -229,7 +229,7 @@ fn is_authorization(word: &str) -> bool {
     word.eq_ignore_ascii_case("auth") || segments(word).iter().any(|s| s == "authorization")
 }
 
-pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
+pub(crate) fn key_values(s: &str, named: bool, sensitive: impl Fn(&str) -> bool) -> String {
     let mut out = String::with_capacity(s.len());
     let mut from = 0;
     let mut i = 0;
@@ -264,6 +264,11 @@ pub(crate) fn key_values(s: &str, sensitive: impl Fn(&str) -> bool) -> String {
         if let Some((mask_from, mask_to, resume)) = value_span(s, j, until) {
             out.push_str(&s[from..mask_from]);
             out.push_str(MASK);
+            if named {
+                out.push_str("(name: ");
+                out.push_str(word);
+                out.push(')');
+            }
             from = mask_to;
             i = resume;
         }

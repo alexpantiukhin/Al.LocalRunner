@@ -513,6 +513,7 @@ pub async fn run(cli: Cli) -> i32 {
             return 2;
         }
     }
+    let state_flag = cli.state_dir.clone();
     let layout = match Layout::resolve(cli.state_dir, cli.config_dir) {
         Ok(l) => l,
         Err(e) => {
@@ -520,6 +521,15 @@ pub async fn run(cli: Cli) -> i32 {
             return 2;
         }
     };
+    if matches!(
+        cli.command,
+        Command::Status { .. } | Command::Doctor { .. } | Command::Up { .. } | Command::Down { .. }
+    ) {
+        let env = std::env::var_os(crate::paths::STATE_DIR_ENV);
+        if let Some(note) = layout.state_dir_note(state_flag.as_deref(), env.as_deref()) {
+            eprintln!("{note}");
+        }
+    }
     let result = match cli.command {
         Command::Submit {
             order,

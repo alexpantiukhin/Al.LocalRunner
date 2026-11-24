@@ -5,6 +5,13 @@ mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
 
+[profile.rust-build]
+command   = "cargo build -p lr-cli --locked"
+timeout_s = 1200
+mem_mb    = 8192
+cpu       = 4
+tags      = ["cargo"]
+
 [profile.rust-test-all]
 command   = "cargo test --workspace --locked --no-fail-fast -j 2"
 timeout_s = 1800

@@ -152,6 +152,34 @@ fn field_names_match_by_segment_case_insensitively() {
 }
 
 #[test]
+fn job_output_names_the_rule_that_masked_a_value_and_structured_text_does_not() {
+    let r = plain();
+    assert_eq!(
+        r.redact_job_text("debug command: cargo test --all"),
+        format!("debug command: {MASK}(name: command)")
+    );
+    assert_eq!(
+        r.redact_job_text("GET /x?api_key=zz&page=1 token=abc def"),
+        format!("GET /x?api_key={MASK}(name: api_key)&page=1 token={MASK}(name: token) def")
+    );
+    assert_eq!(
+        r.redact_text("debug command: cargo test --all"),
+        format!("debug command: {MASK}")
+    );
+    r.protect("hunter2hunter2");
+    assert_eq!(
+        r.redact_job_text("x hunter2hunter2 y"),
+        format!("x {MASK} y"),
+        "a registered value has no name"
+    );
+    assert_eq!(r.redact_job_text("the token expired"), "the token expired");
+    assert_eq!(
+        r.redact_job_text("home step\napi_token=hunter2hunter2\n"),
+        format!("home step\napi_token={MASK}(name: api_token)\n")
+    );
+}
+
+#[test]
 fn key_value_pairs_in_text_are_masked() {
     let r = plain();
     assert_eq!(r.redact_text("token=abc def"), format!("token={MASK} def"));

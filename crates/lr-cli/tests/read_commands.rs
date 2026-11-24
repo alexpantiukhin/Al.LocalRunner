@@ -342,6 +342,15 @@ fn history_show_prints_the_card_with_steps_and_no_secret_values() {
 }
 
 #[test]
+fn log_printer_names_the_rule_of_a_masked_value() {
+    let mut p = LogPrinter::default();
+    assert_eq!(
+        p.push("test prints command: cargo test\n"),
+        format!("test prints command: {}(name: command)\n", lr_obs::MASK)
+    );
+}
+
+#[test]
 fn log_printer_masks_secrets_even_when_a_chunk_splits_them() {
     let mut p = LogPrinter::default();
     assert_eq!(p.push("step one\napi_token=abc"), "step one\n");

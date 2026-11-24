@@ -66,9 +66,73 @@ fn status_without_a_hub_says_so_briefly() {
     let out = localrunner(&["status"]);
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
+    let note = format!(
+        "state directory: {} (from LOCALRUNNER_STATE_DIR)",
+        std::env::temp_dir().join("lr-cli-no-state").display()
+    );
     assert_eq!(
         err.trim(),
-        "error: the hub is not running; start it: localrunner up"
+        format!("{note}\nerror: the hub is not running; start it: localrunner up")
+    );
+}
+
+#[test]
+fn the_state_directory_note_goes_to_stderr_of_status_doctor_up_and_down_only() {
+    let dir = std::env::temp_dir().join("lr-cli-no-state");
+    for cmd in ["status", "doctor"] {
+        let out = localrunner(&[cmd]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.starts_with(&format!(
+                "state directory: {} (from LOCALRUNNER_STATE_DIR)\n",
+                dir.display()
+            )),
+            "{cmd}: {err}"
+        );
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("(from LOCALRUNNER_STATE_DIR)"));
+    }
+    let out = localrunner(&["jobs", "--as", "dev"]);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("state directory:"));
+    let out = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["status", "--state-dir"])
+        .arg(&dir)
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("LOCALRUNNER_STATE_DIR")
+        .output()
+        .expect("the binary runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.starts_with(&format!(
+            "state directory: {} (from --state-dir)\n",
+            dir.display()
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_state_directory_note_names_where_the_directory_came_from() {
+    let layout = lr_cli::paths::Layout::new("/tmp/s".into(), "/tmp/s".into());
+    let path = std::path::Path::new("/tmp/s");
+    let env = std::ffi::OsStr::new("/tmp/s");
+    assert_eq!(
+        layout.state_dir_note(Some(path), Some(env)).unwrap(),
+        format!(
+            "state directory: {} (from --state-dir)",
+            layout.root.display()
+        )
+    );
+    assert_eq!(
+        layout.state_dir_note(None, Some(env)).unwrap(),
+        format!(
+            "state directory: {} (from LOCALRUNNER_STATE_DIR)",
+            layout.root.display()
+        )
+    );
+    assert_eq!(layout.state_dir_note(None, None), None);
+    assert_eq!(
+        layout.state_dir_note(None, Some(std::ffi::OsStr::new(""))),
+        None
     );
 }
 
