@@ -19,10 +19,15 @@ pub enum Reload {
     Refused(String),
 }
 
+fn gone(error: &str) -> Reload {
+    super::reload_cmd::connect_failure(error).map_or(Reload::NotRunning, Reload::Refused)
+}
+
 async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
     let address = layout.runner_ipc(principal, name);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c
         .call::<_, ControlReply>(&RunnerControl::LoggingReload)
@@ -40,8 +45,9 @@ async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
 }
 
 async fn hub(layout: &Layout, principal: &str) -> Reload {
-    let Ok(c) = IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c.call::<_, CliReply>(&CliRequest::LoggingReload).await;
     c.close().await;
@@ -54,8 +60,9 @@ async fn hub(layout: &Layout, principal: &str) -> Reload {
 }
 
 async fn broker(layout: &Layout) -> Reload {
-    let Ok(c) = IpcClient::connect_broker_admin(&layout.admin_ipc()).await else {
-        return Reload::NotRunning;
+    let c = match IpcClient::connect_broker_admin(&layout.admin_ipc()).await {
+        Ok(c) => c,
+        Err(e) => return gone(&e),
     };
     let reply = c.call::<_, AdminReply>(&AdminRequest::LoggingReload).await;
     c.close().await;

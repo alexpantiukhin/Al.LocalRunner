@@ -190,3 +190,19 @@ async fn policy_check_without_a_broker_reads_the_local_file() {
         Ok(0)
     );
 }
+
+#[test]
+fn a_failed_ipc_access_update_fails_the_reload() {
+    use lr_cli::broker_admin::applied_reply;
+    assert!(matches!(
+        applied_reply(vec!["w".into()], Ok(())),
+        AdminReply::Ok { warnings } if warnings == ["w"]
+    ));
+    match applied_reply(Vec::new(), Err("access denied".into())) {
+        AdminReply::Failed { message } => assert!(
+            message.contains("access denied") && message.contains("restart the broker"),
+            "{message}"
+        ),
+        other => panic!("{other:?}"),
+    }
+}

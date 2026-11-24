@@ -162,6 +162,8 @@ pub struct RecordArgs {
     pub dry_run: bool,
     /// Restart the broker when the list applies only at its next start.
     pub restart: bool,
+    /// In the elevated re-run: the SHA-256 of the file text the parent showed the diff for.
+    pub expected_before: Option<String>,
 }
 
 /// The arguments of the elevated re-run of `args`: the directories of [`elevated_dirs`], then
@@ -243,6 +245,7 @@ pub async fn edit_with(
         elevated_child,
         args: child_command(layout, &args, &change),
         keys: vec![args.record.key().to_string()],
+        expected_before: args.expected_before.clone(),
     };
     let result = run_change_with(
         layout,

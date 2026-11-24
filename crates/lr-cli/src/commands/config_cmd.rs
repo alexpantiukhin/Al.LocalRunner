@@ -37,6 +37,8 @@ pub struct EditArgs {
     pub dry_run: bool,
     /// Restart the role when the key applies only at its next start.
     pub restart: bool,
+    /// In the elevated re-run: the SHA-256 of the file text the parent showed the diff for.
+    pub expected_before: Option<String>,
 }
 
 /// The command-line word of `target`.
@@ -141,6 +143,7 @@ pub async fn edit_with(
         keys: vec![match &args.edit {
             Edit::Set { key, .. } | Edit::Unset { key } => key.clone(),
         }],
+        expected_before: args.expected_before.clone(),
     };
     run_change_with(
         layout,

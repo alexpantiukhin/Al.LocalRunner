@@ -170,6 +170,7 @@ pub struct FakeControl {
     pub refuse: Option<String>,
     pub reload_error: Option<String>,
     pub restart_required: Vec<String>,
+    pub broker_service: bool,
     reloads: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
     restarts: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
 }
@@ -182,6 +183,7 @@ impl FakeControl {
             refuse: None,
             reload_error: None,
             restart_required: Vec::new(),
+            broker_service: false,
             reloads: Mutex::new(Vec::new()),
             restarts: Mutex::new(Vec::new()),
         }
@@ -253,6 +255,10 @@ impl lr_cli::config_edit::RoleControl for FakeControl {
     ) -> lr_cli::config_edit::RestartOutcome {
         self.restarts.lock().unwrap().push(role.clone());
         lr_cli::config_edit::RestartOutcome::Restarted
+    }
+
+    fn broker_is_service(&self, _layout: &Layout) -> bool {
+        self.broker_service
     }
 }
 

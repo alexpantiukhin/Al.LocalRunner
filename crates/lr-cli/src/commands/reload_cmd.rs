@@ -23,9 +23,30 @@ pub enum Outcome {
     Refused(String),
 }
 
+/// What a failed connection to a role's channel means: `None` when nothing listens there (no
+/// such pipe or socket, or the socket refuses: the role does not run); otherwise the failure to
+/// report, with the fix when the channel refused this user's rights.
+pub fn connect_failure(error: &str) -> Option<String> {
+    let gone = ["(os error 2)", "(os error 61)", "(os error 111)"];
+    if gone.iter().any(|code| error.contains(code)) {
+        return None;
+    }
+    let denied = ["(os error 5)", "(os error 13)", "(os error 1)"];
+    Some(match denied.iter().any(|code| error.contains(code)) {
+        true => format!(
+            "cannot reach it, access denied ({error}): run the command as administrator or as the OS user the role runs as"
+        ),
+        false => format!("cannot reach it: {error}"),
+    })
+}
+
 async fn runner(layout: &Layout, principal: &str, name: &str) -> Outcome {
     let address = layout.runner_ipc(principal, name);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
+    let connected = IpcClient::connect(&address, IpcChannel::RunnerControl).await;
+    if let Some(why) = connected.as_ref().err().and_then(|e| connect_failure(e)) {
+        return Outcome::Refused(why);
+    }
+    let Ok(c) = connected else {
         use crate::os_service::{runner_service, Os};
         let os = Os::current();
         let n = name.to_string();
@@ -52,8 +73,9 @@ async fn runner(layout: &Layout, principal: &str, name: &str) -> Outcome {
 }
 
 async fn hub(layout: &Layout, principal: &str) -> Outcome {
-    let Ok(c) = IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await else {
-        return Outcome::NotRunning;
+    let c = match IpcClient::connect(&layout.hub_ipc(principal), IpcChannel::Cli).await {
+        Ok(c) => c,
+        Err(e) => return connect_failure(&e).map_or(Outcome::NotRunning, Outcome::Refused),
     };
     let reply = c.call::<_, CliReply>(&CliRequest::PolicyReload).await;
     c.close().await;
@@ -68,8 +90,9 @@ async fn hub(layout: &Layout, principal: &str) -> Outcome {
 }
 
 async fn broker(layout: &Layout) -> Outcome {
-    let Ok(c) = IpcClient::connect_broker_admin(&layout.admin_ipc()).await else {
-        return Outcome::NotRunning;
+    let c = match IpcClient::connect_broker_admin(&layout.admin_ipc()).await {
+        Ok(c) => c,
+        Err(e) => return connect_failure(&e).map_or(Outcome::NotRunning, Outcome::Refused),
     };
     let reply = c.call::<_, AdminReply>(&AdminRequest::PolicyReload).await;
     c.close().await;

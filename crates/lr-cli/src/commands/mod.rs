@@ -58,6 +58,10 @@ pub struct Cli {
         value_name = "CHANNEL"
     )]
     pub elevated_child: Option<String>,
+    /// In the elevated re-run: the SHA-256 of the file text the parent showed the diff for; the
+    /// command writes nothing when the file no longer has it. Hidden.
+    #[arg(long, hide = true, require_equals = true, value_name = "SHA256")]
+    pub expect_before: Option<String>,
     /// The command.
     #[command(subcommand)]
     pub command: Command,
@@ -410,6 +414,7 @@ async fn config(
     layout: &Layout,
     action: ConfigAction,
     elevated_child: bool,
+    expected_before: Option<String>,
 ) -> Result<i32, String> {
     use config_cmd::{Edit, EditArgs};
     let print = |text: String| {
@@ -433,6 +438,7 @@ async fn config(
             edit: Edit::Set { key, value, string },
             dry_run,
             restart,
+            expected_before,
         },
         ConfigAction::Unset {
             target,
@@ -444,6 +450,7 @@ async fn config(
             edit: Edit::Unset { key },
             dry_run,
             restart,
+            expected_before,
         },
     };
     config_cmd::edit(layout, args, elevated_child).await
@@ -453,6 +460,7 @@ async fn policy(
     layout: &Layout,
     action: PolicyAction,
     elevated_child: bool,
+    expected_before: Option<String>,
 ) -> Result<i32, String> {
     use policy_edit_cmd::{Record, RecordArgs};
     let (record, flags) = match action {
@@ -481,6 +489,7 @@ async fn policy(
         record,
         dry_run: flags.dry_run,
         restart: flags.restart,
+        expected_before,
     };
     policy_edit_cmd::edit(layout, args, elevated_child).await
 }
@@ -488,6 +497,7 @@ async fn policy(
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let elevated_child = cli.is_elevated_child();
+    let expect_before = cli.expect_before.clone();
     if let Some(channel) = cli.elevated_child.as_deref().filter(|c| !c.is_empty()) {
         if let Err(e) = crate::config_edit::attach_elevated_output(channel) {
             eprintln!("error: {e}");
@@ -568,8 +578,8 @@ pub async fn run(cli: Cli) -> i32 {
             let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
             down_cmd::down_cli(&layout, names, cancel, yes, wait).await
         }
-        Command::Policy { action } => policy(&layout, action, elevated_child).await,
-        Command::Config { action } => config(&layout, action, elevated_child).await,
+        Command::Policy { action } => policy(&layout, action, elevated_child, expect_before).await,
+        Command::Config { action } => config(&layout, action, elevated_child, expect_before).await,
         Command::Logging {
             action: LoggingAction::Reload,
         } => logging_cmd::logging_reload(&layout).await,

@@ -210,3 +210,25 @@ async fn role_and_name_select_the_targets() {
     hub_roles.stop();
     broker.stop();
 }
+
+#[test]
+fn a_missing_channel_is_not_running_and_a_denied_one_is_a_failure() {
+    use lr_cli::commands::reload_cmd::connect_failure;
+    let missing =
+        r"\\.\pipe\x: unreachable: The system cannot find the file specified. (os error 2)";
+    assert_eq!(connect_failure(missing), None);
+    assert_eq!(
+        connect_failure("/run/x.sock: unreachable: Connection refused (os error 111)"),
+        None
+    );
+    let denied =
+        connect_failure(r"\\.\pipe\x: unreachable: Access is denied. (os error 5)").unwrap();
+    assert!(
+        denied.contains("access denied") && denied.contains("administrator"),
+        "{denied}"
+    );
+    let unix = connect_failure("/x.sock: unreachable: Permission denied (os error 13)").unwrap();
+    assert!(unix.contains("administrator"), "{unix}");
+    let other = connect_failure("refused: untrusted_server: x").unwrap();
+    assert!(other.starts_with("cannot reach it: refused"), "{other}");
+}

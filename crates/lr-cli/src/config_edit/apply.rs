@@ -59,6 +59,9 @@ pub struct ApplyOpts {
     /// The dotted keys the command edits; a restart-only key among them counts even when the
     /// file already had the value.
     pub keys: Vec<String>,
+    /// In the elevated child: the SHA-256 of the file text the parent computed its diff from;
+    /// the child writes nothing when the file no longer has it.
+    pub expected_before: Option<String>,
 }
 
 /// The roles a change reaches and the file system it is written to.
@@ -79,6 +82,9 @@ pub trait RoleControl {
     fn restart_command(&self, layout: &Layout, role: &Role) -> String;
     /// Restarts `role`; a warning goes to `err`.
     async fn restart(&self, layout: &Layout, role: &Role, err: &mut dyn Write) -> RestartOutcome;
+    /// True when the broker of `layout` runs as the OS service, which reads the files of the
+    /// service directory, not those of a user layout.
+    fn broker_is_service(&self, layout: &Layout) -> bool;
 }
 
 /// The roles of this machine: the reload channels of the roles, the OS service manager for a
@@ -231,6 +237,10 @@ impl RoleControl for LiveRoles {
         )
     }
 
+    fn broker_is_service(&self, layout: &Layout) -> bool {
+        layout.broker_is_service()
+    }
+
     async fn restart(&self, layout: &Layout, role: &Role, err: &mut dyn Write) -> RestartOutcome {
         match restart_plan(role, service_of(layout, role)) {
             RestartPlan::Service(line) => {
@@ -381,12 +391,66 @@ fn role_of(target: &Target) -> Option<Role> {
     }
 }
 
-/// The roles that read the file of `target`: its own role, or for `logging` every role of the
-/// installation (runners, the hub, the broker).
-pub fn roles_of(layout: &Layout, target: &Target) -> Vec<Role> {
-    match role_of(target) {
-        Some(role) => vec![role],
-        None => down_cmd::down_targets(layout, &[]),
+/// Which roles read the edited file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Readers {
+    /// The roles that read `path` and are reloaded.
+    pub reload: Vec<Role>,
+    /// The roles the file belongs to: their restart-only keys and restart answers lead to a
+    /// restart (none for `logging.toml`, which configures every role but belongs to none).
+    pub own: Vec<Role>,
+    /// Roles of the installation that do not read this file, with the reason.
+    pub skipped: Vec<(Role, String)>,
+}
+
+/// The roles that read `path`, the file of `target`: the broker or the hub; for a runner every
+/// runner of the installation that reads the same file (the template is shared by every
+/// runner without an own copy); for `logging` every role of the installation except a broker
+/// that runs as the OS service (`broker_service`) and reads the service's own file, unless
+/// `layout` is the service's.
+pub fn readers(layout: &Layout, target: &Target, path: &Path, broker_service: bool) -> Readers {
+    match target {
+        Target::Broker | Target::Hub => {
+            let role = role_of(target).into_iter().collect::<Vec<_>>();
+            Readers {
+                reload: role.clone(),
+                own: role,
+                skipped: Vec::new(),
+            }
+        }
+        Target::Runner(name) => {
+            let mut runners = vec![Role::Runner(name.clone())];
+            for other in layout.runner_names() {
+                let reads =
+                    super::target::resolve_with(layout, &Target::Runner(other.clone()), false)
+                        .is_ok_and(|p| p == path);
+                if &other != name && reads {
+                    runners.push(Role::Runner(other));
+                }
+            }
+            Readers {
+                reload: runners.clone(),
+                own: runners,
+                skipped: Vec::new(),
+            }
+        }
+        Target::Logging => {
+            let mut readers = Readers::default();
+            for role in down_cmd::down_targets(layout, &[]) {
+                if role == Role::Broker && broker_service && !layout.is_service() {
+                    readers.skipped.push((
+                        role,
+                        format!(
+                            "it runs as the OS service and reads {}, not this file",
+                            crate::paths::service_root().join("logging.toml").display()
+                        ),
+                    ));
+                } else {
+                    readers.reload.push(role);
+                }
+            }
+            readers
+        }
     }
 }
 
@@ -472,6 +536,14 @@ fn show(out: &mut dyn Write, change: &Change) {
 /// broker failed; any other non-zero code of the child means nothing was written.
 pub const EXIT_WRITTEN_STEP_FAILED: i32 = 75;
 
+/// The exit code of an elevated child that wrote nothing because the file changed after the
+/// parent showed its diff.
+pub const EXIT_FILE_CHANGED: i32 = 76;
+
+/// The hidden top-level flag that gives the elevated child the SHA-256 of the file text the
+/// parent showed the diff for: `--expect-before=<hex>`.
+pub const EXPECT_BEFORE: &str = "--expect-before";
+
 /// Which roles a process reloads and restarts after the write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -538,13 +610,31 @@ pub async fn run_change_with(
         let _ = writeln!(out, "dry run: nothing written");
         return Ok(0);
     }
+    let changed = opts
+        .expected_before
+        .as_ref()
+        .filter(|_| opts.elevated_child)
+        .is_some_and(|hash| *hash != crate::runner_reload::hash_text(&change.before));
+    if changed {
+        let _ = writeln!(
+            err,
+            "{path} changed after its diff was shown: nothing written; run the command again to see the new diff"
+        );
+        return Ok(EXIT_FILE_CHANGED);
+    }
     if !opts.elevated_child && roles.needs_rights(&change.path) {
         let _ = writeln!(
             out,
             "writing {path} needs administrator rights: running the command elevated"
         );
         let exe = std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))?;
-        let code = rerun_elevated(elevator, Os::current(), &exe, &opts.args, err);
+        let args: Vec<String> = std::iter::once(format!(
+            "{EXPECT_BEFORE}={}",
+            crate::runner_reload::hash_text(&change.before)
+        ))
+        .chain(opts.args.iter().cloned())
+        .collect();
+        let code = rerun_elevated(elevator, Os::current(), &exe, &args, err);
         if code != 0 && code != EXIT_WRITTEN_STEP_FAILED {
             return Ok(code);
         }
@@ -595,10 +685,16 @@ pub async fn after_write(
 ) -> i32 {
     let mut code = 0;
     let mut to_restart: Vec<Role> = Vec::new();
-    for role in roles_of(layout, target)
-        .into_iter()
-        .filter(|r| phase.covers(r))
-    {
+    let found = readers(
+        layout,
+        target,
+        &change.path,
+        roles.broker_is_service(layout),
+    );
+    for (role, why) in found.skipped.iter().filter(|(r, _)| phase.covers(r)) {
+        let _ = writeln!(out, "{}: not reloaded: {why}", role_name(role));
+    }
+    for role in found.reload.into_iter().filter(|r| phase.covers(r)) {
         let who = role_name(&role);
         match roles.reload(layout, target, &role).await {
             Ok(Outcome::NotRunning) => {
@@ -609,7 +705,7 @@ pub async fn after_write(
                 for setting in &restart_required {
                     let _ = writeln!(out, "{who}: needs a restart: {setting}");
                 }
-                if !restart_required.is_empty() && role_of(target).as_ref() == Some(&role) {
+                if !restart_required.is_empty() && found.own.contains(&role) {
                     to_restart.push(role);
                 }
             }
@@ -623,9 +719,9 @@ pub async fn after_write(
             }
         }
     }
-    if let Some(role) = role_of(target).filter(|r| phase.covers(r)) {
+    let pending = restart_only_changes(target, change, &opts.keys);
+    for role in found.own.into_iter().filter(|r| phase.covers(r)) {
         let name = role_name(&role);
-        let pending = restart_only_changes(target, change, &opts.keys);
         for (key, reason, value) in &pending {
             let value = match value {
                 Some(v) => format!("{key} = {v}"),

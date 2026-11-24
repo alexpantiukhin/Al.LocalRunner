@@ -136,6 +136,26 @@ fn the_cli_reads_the_marker_only_before_the_subcommand() {
 }
 
 #[test]
+fn the_cli_reads_the_expected_hash_of_the_elevated_child() {
+    let child = Cli::try_parse_from([
+        "localrunner",
+        "--elevated-child",
+        "--expect-before=ab12",
+        "--state-dir",
+        "s",
+        "config",
+        "show",
+        "broker",
+    ])
+    .unwrap();
+    assert_eq!(child.expect_before.as_deref(), Some("ab12"));
+    let plain = Cli::try_parse_from(["localrunner", "status"]).unwrap();
+    assert_eq!(plain.expect_before, None);
+    let help = Cli::command().render_long_help().to_string();
+    assert!(!help.contains("expect-before"), "{help}");
+}
+
+#[test]
 fn rerun_passes_the_arguments_and_returns_the_child_exit_code() {
     let fake = FakeElevator::new(Ok(3));
     let mut err = Vec::new();

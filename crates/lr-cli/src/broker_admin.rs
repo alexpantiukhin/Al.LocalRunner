@@ -262,6 +262,18 @@ fn failed(message: impl Into<String>) -> AdminReply {
     }
 }
 
+/// The answer to a policy reload the engine applied: its warnings, or a failure when the local
+/// IPC access could not follow the new `[[local_user]]` list, since the users of the old list
+/// keep their access until the broker restarts.
+pub fn applied_reply(warnings: Vec<String>, access: Result<(), String>) -> AdminReply {
+    match access {
+        Ok(()) => AdminReply::Ok { warnings },
+        Err(e) => failed(format!(
+            "the policy applies, but the local IPC access did not follow [[local_user]] ({e}): the users of the old list keep their access until the broker restarts; restart the broker"
+        )),
+    }
+}
+
 fn read(path: &PathBuf) -> Result<String, String> {
     match std::fs::read_to_string(path) {
         Ok(t) => Ok(t),
@@ -296,14 +308,17 @@ impl BrokerAdmin {
         match self.handle.reload_policy(&text).await {
             Err(e) => failed(e.to_string()),
             Ok(applied) => {
-                let mut warnings: Vec<String> =
+                let warnings: Vec<String> =
                     applied.warnings.iter().map(|w| w.to_string()).collect();
-                if let Ok(file) = load(&text) {
-                    if let Err(e) = self.ipc.set_access(ipc_access(&file.local_users)).await {
-                        warnings.push(format!("IPC access not updated: {e}"));
-                    }
-                }
-                AdminReply::Ok { warnings }
+                let access = match load(&text) {
+                    Ok(file) => self
+                        .ipc
+                        .set_access(ipc_access(&file.local_users))
+                        .await
+                        .map_err(|e| e.to_string()),
+                    Err(_) => Ok(()),
+                };
+                applied_reply(warnings, access)
             }
         }
     }

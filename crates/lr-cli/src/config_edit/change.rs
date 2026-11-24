@@ -211,6 +211,20 @@ fn mode_of(_meta: &std::fs::Metadata) -> Option<u32> {
     None
 }
 
+#[cfg(unix)]
+fn keep_mode(path: &Path, mode: Option<u32>) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    match mode {
+        Some(mode) => std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)),
+        None => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+fn keep_mode(_path: &Path, _mode: Option<u32>) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// True when this user cannot create a file in the directory of `path`, so writing needs administrator or root rights.
 pub fn needs_rights(path: &Path) -> bool {
     let Some(mut dir) = path.parent() else {
@@ -265,7 +279,9 @@ fn back_up(path: &Path, clock: &dyn Clock, mode: Option<u32>) -> Result<PathBuf,
         let backup = sibling(path, &suffix)?;
         match create_exclusive(&backup, mode) {
             Ok(mut out) => {
-                if let Err(e) = std::io::copy(&mut source, &mut out) {
+                let copied =
+                    std::io::copy(&mut source, &mut out).and_then(|_| keep_mode(&backup, mode));
+                if let Err(e) = copied {
                     drop(out);
                     let removed = std::fs::remove_file(&backup);
                     return Err(backup_failure(

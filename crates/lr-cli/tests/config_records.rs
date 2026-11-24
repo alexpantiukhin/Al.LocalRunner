@@ -32,6 +32,7 @@ fn args(record: Record) -> RecordArgs {
         record,
         dry_run: false,
         restart: false,
+        expected_before: None,
     }
 }
 
@@ -540,9 +541,36 @@ async fn elevated_rerun_repeats_the_verb() {
         calls[0].1
     );
     assert_eq!(
+        calls[0].1[0],
+        format!(
+            "--expect-before={}",
+            lr_cli::runner_reload::hash_text(TWO_SECRETS)
+        )
+    );
+    assert_eq!(
         std::fs::read_to_string(policy(&layout)).unwrap(),
         TWO_SECRETS
     );
+}
+
+#[tokio::test]
+async fn the_elevated_child_of_a_verb_refuses_a_policy_that_changed() {
+    let dir = TempDir::new("records-child-changed");
+    let layout = layout_with(&dir, TWO_SECRETS);
+    let roles = FakeControl::new(true, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let mut a = args(secret("c", "ci"));
+    a.expected_before = Some(lr_cli::runner_reload::hash_text("[queue]\n"));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = edit_with(&layout, a, true, &elevator, &roles, &mut out, &mut err).await;
+    let err = String::from_utf8(err).unwrap();
+    assert_eq!(code, Ok(lr_cli::config_edit::EXIT_FILE_CHANGED), "{err}");
+    assert!(err.contains("changed after its diff was shown"), "{err}");
+    assert_eq!(
+        std::fs::read_to_string(policy(&layout)).unwrap(),
+        TWO_SECRETS
+    );
+    assert!(roles.reloads().is_empty());
 }
 
 #[test]

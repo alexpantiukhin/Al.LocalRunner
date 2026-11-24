@@ -7,7 +7,7 @@ use lr_cli::commands::down_cmd::stop_one_with;
 use lr_cli::commands::down_cmd::Target as Role;
 use lr_cli::config_edit::{
     restart_line, restart_plan, restart_process, restart_service, RestartOutcome, RestartPlan,
-    Target, EXIT_WRITTEN_STEP_FAILED,
+    Target, EXIT_FILE_CHANGED, EXIT_WRITTEN_STEP_FAILED,
 };
 use lr_cli::os_service::Os;
 use lr_cli::paths::Layout;
@@ -39,6 +39,7 @@ fn set(target: Target, key: &str, value: &str) -> EditArgs {
         },
         dry_run: false,
         restart: false,
+        expected_before: None,
     }
 }
 
@@ -237,6 +238,7 @@ async fn unset_missing_key_exit_nonzero() {
         edit: Edit::Unset { key: key.into() },
         dry_run: false,
         restart: false,
+        expected_before: None,
     };
     let r = run(&layout, unset("tags"), false, &roles, &elevator).await;
     assert!(
@@ -301,9 +303,14 @@ async fn needs_rights_goes_through_the_elevator() {
     assert_eq!(calls.len(), 1);
     let root = layout.root.display().to_string();
     let config = layout.config.display().to_string();
+    let expect = format!(
+        "--expect-before={}",
+        lr_cli::runner_reload::hash_text(RUNNER)
+    );
     assert_eq!(
         calls[0].1,
         [
+            expect.as_str(),
             "--state-dir",
             root.as_str(),
             "--config-dir",
@@ -777,6 +784,7 @@ async fn a_runner_without_an_own_copy_edits_the_template_and_says_so() {
         edit: Edit::Unset { key: "cpu".into() },
         dry_run: false,
         restart: false,
+        expected_before: None,
     };
     let r = run(&layout, unset, false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
@@ -811,6 +819,95 @@ async fn logging_edit_writes_logging_toml_and_reloads_every_role() {
     assert!(r.out.contains("hub: reloaded"), "{}", r.out);
     assert!(r.out.contains("broker: reloaded"), "{}", r.out);
     assert!(roles.restarts().is_empty());
+}
+
+#[tokio::test]
+async fn a_template_edit_reloads_every_runner_that_reads_the_template() {
+    let dir = TempDir::new("config-template-all");
+    let layout = with_runner(&dir);
+    std::fs::write(template_file(&layout), RUNNER).unwrap();
+    std::fs::create_dir_all(layout.runner_dir("r2")).unwrap();
+    std::fs::create_dir_all(layout.runner_dir("r3")).unwrap();
+    std::fs::write(layout.runner_dir("r3").join("runner.toml"), RUNNER).unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(&layout, set(r1(), "cpu", "4"), false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(read(&template_file(&layout)).contains("cpu = 4"));
+    assert_eq!(
+        roles.reloads(),
+        [Role::Runner("r1".into()), Role::Runner("r2".into())],
+        "every runner without an own copy reads the template; r3 has its own"
+    );
+    assert!(r.out.contains("r1: reloaded"), "{}", r.out);
+    assert!(r.out.contains("r2: reloaded"), "{}", r.out);
+    assert!(!r.out.contains("r3"), "{}", r.out);
+
+    let mut restart = FakeControl::new(false, true);
+    restart.restart_required = vec!["services".into()];
+    let r = run(&layout, set(r1(), "cpu", "2"), false, &restart, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("restart r1 to apply it"), "{}", r.out);
+    assert!(r.out.contains("restart r2 to apply it"), "{}", r.out);
+}
+
+#[tokio::test]
+async fn logging_edit_skips_a_service_broker_that_reads_its_own_file() {
+    let dir = TempDir::new("config-logging-service");
+    let layout = with_runner(&dir);
+    let file = layout.config_file("logging.toml");
+    std::fs::write(&file, "[logging]\nlevel = \"info\"\n").unwrap();
+    let mut roles = FakeControl::new(false, true);
+    roles.broker_service = true;
+    let elevator = FakeElevator::new(Ok(0));
+    let r = run(
+        &layout,
+        set(Target::Logging, "logging.level", "debug"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert_eq!(roles.reloads(), [Role::Runner("r1".into()), Role::Hub]);
+    assert!(
+        r.out
+            .contains("broker: not reloaded: it runs as the OS service and reads"),
+        "{}",
+        r.out
+    );
+    assert!(!r.out.contains("broker: reloaded"), "{}", r.out);
+}
+
+#[tokio::test]
+async fn the_elevated_child_refuses_a_file_that_changed_after_the_diff() {
+    let dir = TempDir::new("config-child-changed");
+    let layout = runner_layout(&dir, RUNNER);
+    let roles = FakeControl::new(true, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let mut args = set(r1(), "cpu", "2");
+    args.expected_before = Some(lr_cli::runner_reload::hash_text("cpu = 9\n"));
+    let r = run(&layout, args, true, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(EXIT_FILE_CHANGED), "{} {}", r.out, r.err);
+    assert!(
+        r.err
+            .contains("changed after its diff was shown: nothing written"),
+        "{}",
+        r.err
+    );
+    assert_eq!(read(&runner_file(&layout)), RUNNER);
+    assert!(roles.reloads().is_empty());
+    assert!(elevator.calls().is_empty());
+
+    let mut args = set(r1(), "cpu", "2");
+    args.expected_before = Some(lr_cli::runner_reload::hash_text(RUNNER));
+    let r = run(&layout, args, true, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(read(&runner_file(&layout)).contains("cpu = 2"));
+
+    let parent = FakeElevator::new(Ok(EXIT_FILE_CHANGED));
+    let r = run(&layout, set(r1(), "cpu", "3"), false, &roles, &parent).await;
+    assert_eq!(r.code, Ok(EXIT_FILE_CHANGED), "{} {}", r.out, r.err);
 }
 
 #[tokio::test]
