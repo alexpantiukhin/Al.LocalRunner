@@ -22,8 +22,12 @@ const LABEL: &str = "swap";
 const PLATFORM: &str = "swap-remote";
 
 fn policy(address: &str) -> String {
+    policy_with(&format!("\"{address}\""))
+}
+
+fn policy_with(value: &str) -> String {
     let user = lr_net::current_os_user().unwrap();
-    format!("[listen]\naddress = \"{address}\"\n\n[[local_user]]\nname = {user:?}\nlabel = \"{LABEL}\"\n")
+    format!("[listen]\naddress = {value}\n\n[[local_user]]\nname = {user:?}\nlabel = \"{LABEL}\"\n")
 }
 
 fn broker_layout(dir: &TempDir) -> Layout {
@@ -65,6 +69,11 @@ async fn code(layout: &Layout, name: &str, runners: Option<u32>) -> (String, Str
 
 async fn move_listen(layout: &Layout, address: &str) -> AdminReply {
     std::fs::write(layout.config_file("policy.toml"), policy(address)).unwrap();
+    admin(layout, AdminRequest::PolicyReload).await
+}
+
+async fn close_listen(layout: &Layout) -> AdminReply {
+    std::fs::write(layout.config_file("policy.toml"), policy_with("[]")).unwrap();
     admin(layout, AdminRequest::PolicyReload).await
 }
 
@@ -198,6 +207,54 @@ async fn listen_swap_failure_keeps_the_old_listener() {
     assert_eq!(address, old, "the old address still serves joins");
     round_trip(&*connect(&second, &old).await, 1).await;
     round_trip(&*live, 2).await;
+    drop(taken);
+    broker.stopped().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn listen_swap_after_an_empty_list_binds_the_new_address() {
+    let dir = TempDir::new("listen-swap-empty");
+    let layout = broker_layout(&dir);
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let (first, old) = join_hub(&dir, &layout, "first-hub").await;
+    let live = connect(&first, &old).await;
+
+    reload_ok(&close_listen(&layout).await);
+    assert!(broker.network_addresses().is_empty());
+    round_trip(&*live, 1).await;
+
+    reload_ok(&move_listen(&layout, "127.0.0.1:0").await);
+    let bound = broker.network_addresses();
+    assert_eq!(
+        bound.len(),
+        1,
+        "an empty list does not stop listening for good"
+    );
+    let fresh = connect(&first, &bound[0].to_string()).await;
+    round_trip(&*fresh, 2).await;
+    broker.stopped().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn listen_swap_after_an_empty_list_reports_a_busy_address() {
+    let dir = TempDir::new("listen-swap-empty-busy");
+    let layout = broker_layout(&dir);
+    let broker = start_broker(&layout, false).await.expect("broker starts");
+    let (first, old) = join_hub(&dir, &layout, "first-hub").await;
+    let live = connect(&first, &old).await;
+    reload_ok(&close_listen(&layout).await);
+
+    let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let busy = taken.local_addr().unwrap().to_string();
+    match move_listen(&layout, &busy).await {
+        AdminReply::Failed { message } => assert!(
+            message.contains(&busy),
+            "the error names the address: {message}"
+        ),
+        other => panic!("a reload whose address is taken answered {other:?}"),
+    }
+    assert!(broker.network_addresses().is_empty(), "nothing changed");
+    round_trip(&*live, 1).await;
     drop(taken);
     broker.stopped().await;
 }

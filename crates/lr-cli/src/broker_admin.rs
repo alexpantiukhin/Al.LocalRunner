@@ -26,6 +26,7 @@ pub struct TlsListening {
     merged: Arc<MergedListener>,
     addresses: Mutex<Vec<ListenAddr>>,
     bound: Mutex<Option<Vec<SocketAddr>>>,
+    started: Mutex<bool>,
     sockets: Mutex<Vec<(ListenAddr, Arc<TlsListener>)>>,
     starting: tokio::sync::Mutex<()>,
     desk: Option<Arc<crate::join::JoinDesk>>,
@@ -45,6 +46,7 @@ impl TlsListening {
             merged,
             addresses: Mutex::new(addresses),
             bound: Mutex::new(None),
+            started: Mutex::new(false),
             sockets: Mutex::new(Vec::new()),
             starting: tokio::sync::Mutex::new(()),
             desk: None,
@@ -83,23 +85,21 @@ impl TlsListening {
         }
         *self.sockets.lock().unwrap_or_else(|e| e.into_inner()) = listeners;
         *self.bound.lock().unwrap_or_else(|e| e.into_inner()) = Some(bound.clone());
+        *self.started.lock().unwrap_or_else(|e| e.into_inner()) = true;
         Ok(bound)
     }
 
-    /// Moves the listeners to `addresses` (the new `[listen]`) without a restart. While the
-    /// broker does not listen, only the addresses of the next start of listening change.
+    /// Moves the listeners to `addresses` (the new `[listen]`) without a restart. Before the
+    /// broker first started listening, only the addresses of that start change. Once started,
+    /// listening goes on through every reload, also after an empty list closed every socket.
     /// Otherwise the new sockets are bound first and accept at once, then the sockets of the
     /// addresses that left stop accepting and let their ports go; an address in both keeps its
     /// socket. Established connections stay. When one address cannot be bound, nothing
     /// changes and the error names it.
     pub async fn rebind(&self, addresses: Vec<ListenAddr>) -> Result<(), String> {
         let _one_at_a_time = self.starting.lock().await;
-        let listening = self
-            .bound
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_some();
-        if !listening {
+        let started = *self.started.lock().unwrap_or_else(|e| e.into_inner());
+        if !started {
             *self.addresses.lock().unwrap_or_else(|e| e.into_inner()) = addresses;
             return Ok(());
         }
