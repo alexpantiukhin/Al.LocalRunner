@@ -52,6 +52,23 @@ fn check_span(span: &str) -> Result<(), String> {
     let mut path = Vec::new();
     let words: Vec<&str> = span.split_whitespace().skip(1).collect();
     let mut rest = words.as_slice();
+    let mut globals = 0;
+    while let Some(arg) = rest
+        .first()
+        .and_then(|w| w.strip_prefix("--"))
+        .and_then(|long| {
+            root.get_arguments()
+                .find(|a| a.is_global_set() && a.get_long() == Some(long))
+        })
+    {
+        let width = if arg.get_action().takes_values() {
+            2
+        } else {
+            1
+        };
+        rest = &rest[width.min(rest.len())..];
+        globals += 1;
+    }
     while let Some((word, tail)) = rest.split_first() {
         match cmd.find_subcommand(word) {
             Some(sub) => {
@@ -62,7 +79,8 @@ fn check_span(span: &str) -> Result<(), String> {
             None => break,
         }
     }
-    if path.is_empty() && !rest.first().is_some_and(|w| w.starts_with('-')) {
+    let only_globals = globals > 0 && rest.is_empty();
+    if path.is_empty() && !only_globals && !rest.first().is_some_and(|w| w.starts_with('-')) {
         return Err(format!("`{span}`: no such command"));
     }
     for token in rest {
@@ -134,6 +152,23 @@ fn the_span_check_refuses_unknown_commands_and_flags() {
     assert!(check_span("localrunner launch").is_err());
     assert!(check_span("localrunner status --colour").is_err());
     assert!(check_span("localrunner down [--drain|--purge]").is_err());
+    assert!(check_span(
+        "localrunner --state-dir <dir> --config-dir <dir> config set runner:<name> k v --string"
+    )
+    .is_ok());
+    assert!(
+        check_span("localrunner --config-dir <dir> config set runner:<name> k v --colour").is_err()
+    );
+    assert!(check_span("localrunner --config-dir <dir> launch").is_err());
+}
+
+#[test]
+fn every_plugin_text_names_real_commands() {
+    for (path, text) in plugin_texts() {
+        for span in command_spans(&text) {
+            check_span(&span).unwrap_or_else(|e| panic!("{path}: {e}"));
+        }
+    }
 }
 
 #[test]
@@ -174,7 +209,7 @@ const CONFIG_FILES: [&str; 4] = [
     "logging.toml",
 ];
 
-const HAND_EDITS: [&str; 11] = [
+const HAND_EDITS: [&str; 13] = [
     "edit",
     "add",
     "set",
@@ -186,6 +221,8 @@ const HAND_EDITS: [&str; 11] = [
     "remove",
     "write",
     "apply",
+    "declare",
+    "list",
 ];
 
 fn changes_through_the_cli(code: &str) -> bool {
@@ -198,28 +235,91 @@ fn changes_through_the_cli(code: &str) -> bool {
         })
 }
 
-fn hand_edits(text: &str) -> Vec<String> {
-    text.lines()
-        .flat_map(|line| line.split(". "))
-        .flat_map(|s| s.split("; "))
-        .filter(|c| CONFIG_FILES.iter().any(|f| c.contains(f)))
-        .filter(|c| !c.split('`').skip(1).step_by(2).any(changes_through_the_cli))
-        .filter(|c| {
-            let prose = c
-                .split('`')
-                .step_by(2)
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
-            let words: Vec<&str> = prose.split(|ch: char| !ch.is_ascii_alphabetic()).collect();
-            HAND_EDITS.iter().any(|v| words.contains(v))
-                || prose.contains("list the names in")
-                || c.split('`')
-                    .skip(1)
-                    .step_by(2)
-                    .any(|code| code.contains(" = "))
+enum Token<'a> {
+    Word(String),
+    Code(&'a str),
+}
+
+fn units(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            out.extend(current.take());
+            continue;
+        }
+        let starts = ["- ", "* ", "|", "#", "```"]
+            .iter()
+            .any(|p| line.starts_with(p))
+            || line
+                .split_once(". ")
+                .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        match current.as_mut() {
+            Some(unit) if !starts => {
+                unit.push(' ');
+                unit.push_str(line);
+            }
+            _ => {
+                out.extend(current.take());
+                current = Some(line.to_string());
+            }
+        }
+    }
+    out.extend(current);
+    out
+}
+
+fn tokens(clause: &str) -> Vec<Token<'_>> {
+    clause
+        .split('`')
+        .enumerate()
+        .flat_map(|(i, part)| match i % 2 {
+            1 => vec![Token::Code(part)],
+            _ => part
+                .to_lowercase()
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .filter(|w| !w.is_empty())
+                .map(|w| Token::Word(w.to_string()))
+                .collect(),
         })
-        .map(str::to_string)
+        .collect()
+}
+
+fn is_hand_edit(clause: &str) -> bool {
+    let tokens = tokens(clause);
+    let unbound_verb = tokens.iter().enumerate().any(|(i, token)| {
+        let Token::Word(word) = token else {
+            return false;
+        };
+        let negated =
+            i > 0 && matches!(&tokens[i - 1], Token::Word(w) if w == "never" || w == "not");
+        let through_cli = tokens[i + 1..]
+            .iter()
+            .find_map(|t| match t {
+                Token::Code(code) => Some(*code),
+                Token::Word(_) => None,
+            })
+            .is_some_and(changes_through_the_cli);
+        HAND_EDITS.contains(&word.as_str()) && !negated && !through_cli
+    });
+    let assignment = tokens.iter().any(
+        |t| matches!(t, Token::Code(code) if !changes_through_the_cli(code) && code.contains(" = ")),
+    );
+    unbound_verb || assignment
+}
+
+fn hand_edits(text: &str) -> Vec<String> {
+    units(text)
+        .iter()
+        .flat_map(|unit| {
+            unit.split(". ")
+                .flat_map(|s| s.split("; "))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|c| CONFIG_FILES.iter().any(|f| c.contains(f)))
+        .filter(|c| is_hand_edit(c))
         .collect()
 }
 
@@ -263,6 +363,12 @@ fn no_skill_edits_a_config_file_by_hand() {
 #[test]
 fn the_hand_edit_check_tells_edits_from_descriptions() {
     assert_eq!(hand_edits("Set `[env] path` in `runner.toml`.").len(), 1);
+    assert_eq!(
+        hand_edits("Edit `runner.toml`, then run `localrunner config set runner:a k v`.").len(),
+        1
+    );
+    assert_eq!(hand_edits("Edit the file\n`runner.toml` by hand.").len(), 1);
+    assert!(hand_edits("Never edit `runner.toml` by hand.").is_empty());
     assert_eq!(
         hand_edits("Put the clients in a `[[shared]]` block of `policy.toml`.").len(),
         1
