@@ -472,11 +472,20 @@ A custom image (the `dockerfile_inline` of `compose.yaml` does this) must create
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443
-docker compose -f install/compose.yaml run --rm runner localrunner runner join broker:7443 <code>
+docker compose -f install/compose.yaml run --rm -e LOCALRUNNER_JOIN_CODE runner localrunner runner join broker:7443 --config /etc/al-localrunner/runner.toml --name runner
 docker compose -f install/compose.yaml up -d runner
 ```
 
+The code that `broker add` prints is a secret and must not go on a command line, where other users of the machine see it: put it in the environment of your shell first (`read -rs LOCALRUNNER_JOIN_CODE; export LOCALRUNNER_JOIN_CODE` in bash, `$env:LOCALRUNNER_JOIN_CODE = Read-Host` in PowerShell) and pass the variable by name, as `-e LOCALRUNNER_JOIN_CODE` above (without `=value`), or use `--code-file -` with the code on standard input (`run --rm -T`) or `--code-file <file>` with a file mounted into the container. In a container `runner join` needs `--config /etc/al-localrunner/runner.toml` (the mounted file, which the runner then reads directly) and `--name`: the name the runner has in the pool (otherwise the container's host name).
+
 Policy: edit `install/policy.toml`, then `docker compose exec broker localrunner policy reload`. The broker port is published on `127.0.0.1:7443`; for other machines replace the address with the host interface. A runner in a container does not see host files and takes only orders with a commit.
+
+Docker Desktop (Windows, macOS). The runner runs inside the Docker virtual machine, so:
+
+- **Memory.** `runner.toml` is checked against the memory of the machine the runner sees, and in a container that is the virtual machine, by default much smaller than the memory of Windows: `mem_mb = 12288` on a VM of 7944 MB stops the runner with `mem_mb = 12288 is more than this host has (7944); declare at most 7944`. Raise the VM limit in `%UserProfile%\.wslconfig` (`[wsl2]`, `memory=16GB`; on the Hyper-V backend in the Docker Desktop settings) and apply it with `wsl --shutdown`: a change restarts WSL and **every** container of Docker Desktop, also the ones that have nothing to do with the runner. `cpus` and `mem_limit` of the service limit the runner inside the VM.
+- **A broker on the host.** A broker that runs on the host (`[listen] address = "127.0.0.1:7443"`) is reached from the container as `host.docker.internal:7443` (Docker Desktop resolves the name; on Linux Docker add `extra_hosts: ["host.docker.internal:host-gateway"]` to the service and let the broker listen on an address the bridge reaches). Create the code with `localrunner broker add --runners 1 --address host.docker.internal:7443` and join with `runner join host.docker.internal:7443 ...` as above; `install/compose.yaml` has the broker in a container, then the address is `broker:7443`.
+- **The directory of sockets.** `/run/al-localrunner` must exist and belong to the user the container runs as: the `dockerfile_inline` of `install/compose.yaml` creates it; in an image of your own add `mkdir -p /run/al-localrunner && chown <uid>:<gid> /run/al-localrunner`, otherwise the runner stops with `cannot create /run/al-localrunner: Permission denied`.
+
 
 ## Project profiles
 

@@ -1,5 +1,16 @@
 name: al-localrunner
 
+# Start: `docker compose up -d broker`, then `docker compose exec broker localrunner broker add
+# --runners 1 --address broker:7443`, then join (the code is a secret: keep it off the command
+# line, give it in the environment as below, or with `--code-file`):
+#   docker compose run --rm -e LOCALRUNNER_JOIN_CODE runner localrunner runner join broker:7443 \
+#     --config /etc/al-localrunner/runner.toml --name runner
+# and `docker compose up -d runner`.
+# Docker Desktop: the runner sees the memory of the Docker virtual machine, not of the host, so
+# `mem_mb` of runner.toml must fit it (raise it with `memory=` in .wslconfig: a change restarts
+# WSL and every container). A broker that runs on the host (`[listen] address = "127.0.0.1:7443"`)
+# is reached as host.docker.internal:7443 instead of broker:7443.
+
 services:
   broker:
     # The broker runs the image al-localrunner:<version> with an explicit tag (never latest).

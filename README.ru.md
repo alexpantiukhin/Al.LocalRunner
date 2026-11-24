@@ -475,11 +475,20 @@ runner:
 ```
 docker compose -f install/compose.yaml up -d broker
 docker compose -f install/compose.yaml exec broker localrunner broker add --runners 1 --address broker:7443
-docker compose -f install/compose.yaml run --rm runner localrunner runner join broker:7443 <код>
+docker compose -f install/compose.yaml run --rm -e LOCALRUNNER_JOIN_CODE runner localrunner runner join broker:7443 --config /etc/al-localrunner/runner.toml --name runner
 docker compose -f install/compose.yaml up -d runner
 ```
 
+Код, который печатает `broker add`, секретный и не должен попадать в командную строку, где его видят другие пользователи машины: сначала положите его в окружение своей оболочки (`read -rs LOCALRUNNER_JOIN_CODE; export LOCALRUNNER_JOIN_CODE` в bash, `$env:LOCALRUNNER_JOIN_CODE = Read-Host` в PowerShell) и передайте переменную по имени, как `-e LOCALRUNNER_JOIN_CODE` выше (без `=значение`), либо используйте `--code-file -` с кодом на стандартном вводе (`run --rm -T`) или `--code-file <файл>` с файлом, смонтированным в контейнер. В контейнере `runner join` нужны `--config /etc/al-localrunner/runner.toml` (смонтированный файл, который раннер потом читает напрямую) и `--name`: имя раннера в пуле (иначе берётся имя хоста контейнера).
+
 Политика: правьте `install/policy.toml`, затем `docker compose exec broker localrunner policy reload`. Порт брокера опубликован на `127.0.0.1:7443`; для других машин замените адрес на интерфейс хоста. Раннер в контейнере не видит файлы хоста и берёт только заказы с коммитом.
+
+Docker Desktop (Windows, macOS). Раннер работает внутри виртуальной машины Docker, поэтому:
+
+- **Память.** `runner.toml` проверяется против памяти машины, которую видит раннер, а в контейнере это виртуальная машина, по умолчанию заметно меньше памяти Windows: `mem_mb = 12288` при ВМ на 7944 МБ останавливает раннер сообщением `mem_mb = 12288 is more than this host has (7944); declare at most 7944`. Лимит ВМ поднимают в `%UserProfile%\.wslconfig` (`[wsl2]`, `memory=16GB`; на бэкенде Hyper-V — в настройках Docker Desktop) и применяют командой `wsl --shutdown`: смена перезапускает WSL и **все** контейнеры Docker Desktop, в том числе не относящиеся к раннеру. `cpus` и `mem_limit` сервиса ограничивают раннер внутри ВМ.
+- **Брокер на хосте.** Брокер, запущенный на хосте (`[listen] address = "127.0.0.1:7443"`), доступен из контейнера как `host.docker.internal:7443` (имя разрешает Docker Desktop; в Docker на Linux добавьте сервису `extra_hosts: ["host.docker.internal:host-gateway"]` и пусть брокер слушает адрес, до которого доходит мост). Код создают командой `localrunner broker add --runners 1 --address host.docker.internal:7443`, присоединяются `runner join host.docker.internal:7443 ...` как выше; в `install/compose.yaml` брокер лежит в контейнере, тогда адрес `broker:7443`.
+- **Каталог сокетов.** `/run/al-localrunner` должен существовать и принадлежать пользователю, от которого запущен контейнер: `dockerfile_inline` в `install/compose.yaml` его создаёт; в собственном образе добавьте `mkdir -p /run/al-localrunner && chown <uid>:<gid> /run/al-localrunner`, иначе раннер остановится с `cannot create /run/al-localrunner: Permission denied`.
+
 
 ## Профили проекта
 
