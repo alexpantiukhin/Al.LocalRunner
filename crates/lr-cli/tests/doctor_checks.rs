@@ -312,6 +312,7 @@ fn doctor_warns_that_a_login_autostart_stops_at_logout() {
             service: None,
             login: true,
             linger,
+            local_channel: false,
         };
         let c = autostart_check("box", &found).unwrap();
         assert_eq!(c.name, "runner box autostart");
@@ -327,11 +328,37 @@ fn doctor_warns_that_a_login_autostart_stops_at_logout() {
         service: None,
         login: false,
         linger: Some(true),
+        local_channel: false,
     };
     assert_eq!(
         autostart_check("box", &nothing),
         None,
         "no autostart, nothing to say"
+    );
+}
+
+#[test]
+fn doctor_sends_a_local_channel_runner_to_join_before_a_service() {
+    use lr_cli::doctor::{autostart_check, AutostartFound};
+    let local = AutostartFound {
+        service: None,
+        login: true,
+        linger: None,
+        local_channel: true,
+    };
+    let c = autostart_check("box", &local).unwrap();
+    assert_eq!(c.status, Status::Warn, "{c:?}");
+    assert!(c.detail.starts_with(LOGIN_ONLY), "{c:?}");
+    for part in [
+        "broker add --runners 1",
+        "runner join <address> --name box",
+        "autostart on runner box --service",
+    ] {
+        assert!(c.detail.contains(part), "{part}: {c:?}");
+    }
+    assert!(
+        c.detail.contains("would be refused"),
+        "the plain service advice is not given: {c:?}"
     );
 }
 
@@ -345,6 +372,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: None,
         login: true,
         linger: parse_linger("Linger=yes\n"),
+        local_channel: false,
     };
     let c = autostart_check("box", &lingering).unwrap();
     assert_eq!(c.status, Status::Ok, "{c:?}");
@@ -354,6 +382,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
             service: Some(running),
             login: false,
             linger: None,
+            local_channel: false,
         };
         let c = autostart_check("box", &service).unwrap();
         assert_eq!(c.status, Status::Ok, "{c:?}");
@@ -363,6 +392,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: Some(Some(false)),
         login: false,
         linger: None,
+        local_channel: false,
     };
     let c = autostart_check("box", &stopped).unwrap();
     assert_eq!(c.status, Status::Warn, "{c:?}");
@@ -371,6 +401,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: Some(Some(true)),
         login: true,
         linger: None,
+        local_channel: false,
     };
     let c = autostart_check("box", &both).unwrap();
     assert_eq!(c.status, Status::Warn, "{c:?}");

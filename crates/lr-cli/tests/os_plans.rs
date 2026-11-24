@@ -1625,7 +1625,13 @@ fn a_login_autostart_is_refused_for_a_runner_that_is_an_os_service() {
 fn a_local_ipc_runner_is_refused_a_windows_service_and_a_joined_one_is_not() {
     let refused = runner_service::local_runner_refusal(Os::Windows, "box", false).unwrap();
     assert!(
-        refused.contains("runner join") && refused.contains("box"),
+        [
+            "broker add",
+            "runner join",
+            "autostart on runner box --service"
+        ]
+        .iter()
+        .all(|c| refused.contains(c)),
         "{refused}"
     );
     assert_eq!(

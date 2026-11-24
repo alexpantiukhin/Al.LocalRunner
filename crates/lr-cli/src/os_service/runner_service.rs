@@ -825,11 +825,20 @@ pub fn local_runner_refusal(os: Os, name: &str, joined: bool) -> Option<String> 
     (os == Os::Windows && !joined).then(|| {
         format!(
             "runner {name} reaches its broker over this user's local channel, which a Windows \
-             service account cannot use; join it to the broker with its own key (`localrunner \
-             broker add --runners 1`, then `localrunner runner join <address> --name {name}`) \
-             or keep its login autostart"
+             service account cannot use; {}, or keep its login autostart",
+            join_steps(name)
         )
     })
+}
+
+/// The commands that give a local runner its own broker key, after which it may become a
+/// service: `broker add`, `runner join`, then `autostart on runner <name> --service`.
+pub fn join_steps(name: &str) -> String {
+    format!(
+        "join it to the broker with its own key (`localrunner broker add --runners 1`, then \
+         `localrunner runner join <address> --name {name}`, then `localrunner autostart on \
+         runner {name} --service`)"
+    )
 }
 
 /// Why runner `name` gets no service: its directory is missing (a typo, or the elevated run
