@@ -120,6 +120,7 @@ fn status() -> StatusView {
             position: 1,
             wait_reason: Some("needs memory".into()),
             wait_code: Some("memory".into()),
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -143,7 +144,7 @@ fn finished_detail() -> JobDetail {
 
 async fn snapshot(details: bool) -> DashboardSnapshot {
     let client = fake_hub(Box::new(move |req| match req {
-        ReadRequest::Status(_) => Some(ReadReply::Status(status())),
+        ReadRequest::Status(_) => Some(ReadReply::Status(Box::new(status()))),
         ReadRequest::HistoryDetails(_) if details => Some(ReadReply::Details {
             jobs: vec![finished_detail()],
             next: None,

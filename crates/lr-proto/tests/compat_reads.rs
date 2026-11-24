@@ -83,6 +83,31 @@ fn history_paging_fields_are_optional_on_the_wire() {
 }
 
 #[test]
+fn the_priority_is_optional_on_the_wire() {
+    let wire = |extra: Value| {
+        let mut v = json!({
+            "summary": {
+                "job": "j", "client_label": "c", "state": "queued", "platform": null,
+                "runner": null, "queued_at": 1, "started_at": null, "finished_at": null,
+                "exit_code": null, "reason": null, "project": null, "label": null, "profile": null
+            },
+            "position": 1,
+            "wait_reason": null
+        });
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        v
+    };
+    let old: QueueItem = serde_json::from_value(wire(json!({}))).unwrap();
+    assert_eq!(old.priority, None);
+    let v = serde_json::to_value(&old).unwrap();
+    assert!(v.get("priority").is_none(), "{v}");
+    let new: QueueItem = serde_json::from_value(wire(json!({"priority": -3}))).unwrap();
+    assert_eq!(new.priority, Some(-3));
+}
+
+#[test]
 fn unfollow_is_unknown_to_an_older_broker_and_new_cli_messages_to_an_older_hub() {
     let v = serde_json::to_value(ReadRequest::Unfollow { req: 7 }).unwrap();
     assert_eq!(v, json!({"type": "unfollow", "req": 7}));

@@ -47,6 +47,7 @@ fn snapshot() -> DashboardSnapshot {
                 last_lines: vec!["tail".into()],
                 stale: i % 2 == 0,
                 wait_code: None,
+                priority: None,
             })
             .collect(),
         runners: vec![BrokerRunners {

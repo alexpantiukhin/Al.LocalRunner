@@ -287,7 +287,7 @@ pub async fn status(layout: &Layout) -> Option<StatusView> {
     .ok();
     client.close().await;
     match reply? {
-        ReadReply::Status(view) => Some(view),
+        ReadReply::Status(view) => Some(*view),
         _ => None,
     }
 }

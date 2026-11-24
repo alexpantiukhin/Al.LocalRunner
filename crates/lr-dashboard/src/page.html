@@ -31,7 +31,7 @@
   <input id="f-text" type="search" placeholder="Search ( / )" aria-label="Search">
   <input id="f-project" placeholder="project" aria-label="Project">
   <select id="f-source" aria-label="Source"><option value="">any source</option><option>session</option><option>github</option></select>
-  <input id="f-label" placeholder="label" aria-label="Label">
+  <input id="f-label" placeholder="client label" aria-label="Client label (--as)">
   <input id="f-runner" placeholder="runner" aria-label="Runner">
   <input id="f-profile" placeholder="profile" aria-label="Profile">
   <input id="f-state" placeholder="state" aria-label="State or result">
@@ -42,7 +42,7 @@
   <section id="tab-queue" class="tab">
     <p id="queue-note" class="note" role="status" hidden></p>
     <div class="scroll"><table id="queue-table">
-      <thead><tr><th data-sort="position">#</th><th data-sort="job">Job</th><th data-sort="state">State</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="broker">Broker</th><th data-sort="wait">Waiting / elapsed</th></tr></thead>
+      <thead><tr><th data-sort="position">#</th><th data-sort="job">Job</th><th data-sort="state">State</th><th data-sort="priority">Priority</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="client_label">Client label</th><th data-sort="labels">Labels</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="broker">Broker</th><th data-sort="wait">Waiting / elapsed</th></tr></thead>
       <tbody id="queue-body">{{QUEUE_ROWS}}</tbody>
     </table></div>
   </section>
@@ -54,7 +54,7 @@
       <span id="hp-text" role="status"></span>
     </div>
     <div class="scroll"><table id="history-table">
-      <thead><tr><th data-sort="job">Job</th><th data-sort="state">Result</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="label">Label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="queued">Queued</th><th data-sort="finished">Finished</th><th data-sort="duration">Duration</th></tr></thead>
+      <thead><tr><th data-sort="job">Job</th><th data-sort="state">Result</th><th data-sort="project">Project</th><th data-sort="source">Source</th><th data-sort="client_label">Client label</th><th data-sort="profile">Profile</th><th data-sort="cwd">Directory</th><th data-sort="runner">Runner</th><th data-sort="queued">Queued</th><th data-sort="finished">Finished</th><th data-sort="duration">Duration</th></tr></thead>
       <tbody id="history-body"></tbody>
     </table></div>
   </section>

@@ -274,6 +274,29 @@ fn a_run_overlaps_the_window_when_it_started_before_its_end_and_did_not_end_befo
 }
 
 #[test]
+fn the_card_names_the_client_label_and_lists_the_profile_labels() {
+    let mut run = summary("j", 0);
+    run.labels = vec!["release".into(), "night".into()];
+    let detail = JobDetail {
+        summary: run,
+        note: None,
+        branch: None,
+        cwd: None,
+        os_user: None,
+        source: None,
+        github_run_url: None,
+        steps: Vec::new(),
+        secrets: Vec::new(),
+        cancelled_by: None,
+        wait_reason: None,
+    };
+    let text = show_lines("local", &detail).join("\n");
+    assert!(text.contains("client_label agent-1"), "{text}");
+    assert!(text.contains("labels    release, night"), "{text}");
+    assert!(!text.contains("\nlabel     "), "{text}");
+}
+
+#[test]
 fn history_shows_when_each_run_started_and_finished() {
     let never = JobSummary {
         started_at: None,
@@ -320,7 +343,7 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     let lines = history_lines(&rows);
     assert_eq!(lines.len(), 4, "a header and one line per run: {lines:?}");
     assert!(
-        lines[0].contains("PROFILE	PROJECT	SOURCE	LABEL	"),
+        lines[0].contains("PROFILE	PROJECT	SOURCE	CLIENT_LABEL	CLIENT	"),
         "{}",
         lines[0]
     );
@@ -747,6 +770,7 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
         last_lines: Vec::new(),
         stale: false,
         wait_code: None,
+        priority: None,
     };
     let snap = DashboardSnapshot {
         taken_at: Timestamp(0),
@@ -786,7 +810,7 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     )];
     let lines = history_lines(&rows);
     let cols: Vec<&str> = lines[1].split('\t').collect();
-    assert_eq!(cols[9], "-", "{}", lines[1]);
+    assert_eq!(cols[10], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
 }
 

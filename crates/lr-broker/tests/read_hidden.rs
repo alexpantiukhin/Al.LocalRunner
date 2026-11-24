@@ -8,7 +8,7 @@ const NONE: &str = "[visibility]\nothers_orders = \"none\"\n";
 
 fn status(reply: ReadReply) -> StatusView {
     match reply {
-        ReadReply::Status(s) => s,
+        ReadReply::Status(s) => *s,
         other => panic!("expected status, got {other:?}"),
     }
 }

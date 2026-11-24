@@ -41,8 +41,8 @@
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
       : (d.wait_reason || "") + (s.started_at ? "" : " (" + dur(t - s.queued_at) + ")");
     return {
-      j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
-      source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
+      j: j, position: j.position || "", job: s.job, state: shown(s), priority: j.priority == null ? null : j.priority, project: s.project || "",
+      source: d.source || "", client_label: s.label || "", labels: (s.labels || []).join(", "), profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
       queued: s.queued_at, finished: s.finished_at == null ? null : s.finished_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
@@ -52,10 +52,10 @@
     function has(v, q) { return !q || String(v).toLowerCase().indexOf(q.toLowerCase()) >= 0; }
     if (f.source && r.source !== f.source) return false;
     if (f.period && r.queued < t - Number(f.period) * 1000) return false;
-    if (!has(r.project, f.project) || !has(r.label, f.label) || !has(r.runner, f.runner)) return false;
+    if (!has(r.project, f.project) || !has(r.client_label, f.label) || !has(r.runner, f.runner)) return false;
     if (!has(r.profile, f.profile) || !has(r.state, f.state)) return false;
     if (f.text) {
-      var all = [r.job, r.project, r.label, r.profile, r.cwd, r.runner, r.broker, r.wait, r.j.detail.note || "", r.j.detail.branch || ""].join(" ");
+      var all = [r.job, r.project, r.client_label, r.labels, r.profile, r.cwd, r.runner, r.broker, r.wait, r.j.detail.note || "", r.j.detail.branch || ""].join(" ");
       if (!has(all, f.text)) return false;
     }
     return true;
@@ -63,7 +63,7 @@
   function sorted(rows) {
     var c = S.sort.col, d = S.sort.dir;
     rows.sort(function (a, b) {
-      var pin = S.tab === "queue" && S.as, pa = pin && a.label === S.as ? 0 : 1, pb = pin && b.label === S.as ? 0 : 1;
+      var pin = S.tab === "queue" && S.as, pa = pin && a.client_label === S.as ? 0 : 1, pb = pin && b.client_label === S.as ? 0 : 1;
       if (pa !== pb) return pa - pb;
       if (!c) return 0;
       var x = a[c], y = b[c];
@@ -91,7 +91,7 @@
     S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
-        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : String(r[c]);
+        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : r[c] == null ? "" : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
         if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
@@ -100,15 +100,15 @@
         }
         return td;
       }));
-      if (S.as && r.label === S.as) tr.classList.add("pinned");
+      if (S.as && r.client_label === S.as) tr.classList.add("pinned");
       if (r.j.stale) tr.classList.add("stale");
       if (i === S.sel) tr.classList.add("sel");
       tr.addEventListener("click", function () { S.sel = i; openCard(r.j); });
       return tr;
     }));
   }
-  var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "finished", "duration"];
+  var QCOLS = ["position", "job", "state", "priority", "project", "source", "client_label", "labels", "profile", "cwd", "runner", "broker", "wait"];
+  var HCOLS = ["job", "state", "project", "source", "client_label", "profile", "cwd", "runner", "queued", "finished", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
@@ -237,7 +237,7 @@
     S.filters = {};
     FILTERS.forEach(function (k) { S.filters[k] = (fromHash ? h.get(k) : saved[k]) || ""; $("f-" + k).value = S.filters[k]; });
     S.tab = h.get("tab") || "queue";
-    var sort = h.get("sort") || "";
+    var sort = (h.get("sort") || "").replace(/^(-?)label$/, "$1client_label");
     S.sort = { col: sort.replace(/^-/, ""), dir: sort.charAt(0) === "-" ? -1 : 1 };
   }
 
@@ -249,7 +249,7 @@
       S.step = live ? live.name : "";
     }
     $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
-    var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
+    var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Client label (--as)", s.label], ["Profile labels", (s.labels || []).join(", ")], ["Priority", j.priority], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
       ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
       ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
@@ -389,8 +389,7 @@
   var timer = null;
   function refresh(force) {
     if (!config.live) return;
-    var url = "/api/snapshot?history_offset=" + S.hp.offset + "&history_limit=" + S.hp.limit;
-    fetch(url, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
+    fetch("/api/snapshot?history_offset=" + S.hp.offset + "&history_limit=" + S.hp.limit, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) { if (d && (force === true || !S.paused)) { S.data = d; render(); } }).catch(function () { return; });
     if (S.open && $("log-follow").checked) loadLog();
   }

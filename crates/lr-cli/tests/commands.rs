@@ -193,6 +193,7 @@ fn status_json_has_project_source_label() {
             position: 1,
             wait_reason: Some("runner busy".into()),
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -217,6 +218,77 @@ fn status_json_has_project_source_label() {
     assert_eq!(brokers[0]["queue"][0]["wait_reason"], "runner busy");
 }
 
+fn queue_of(items: Vec<(&str, Option<i64>, &[&str])>) -> Vec<(String, StatusView)> {
+    let queue = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, (job, priority, labels))| {
+            let mut s = summary(job, JobState::Queued);
+            s.labels = labels.iter().map(|l| l.to_string()).collect();
+            QueueItem {
+                summary: s,
+                position: i as u32 + 1,
+                wait_reason: None,
+                wait_code: None,
+                priority,
+            }
+        })
+        .collect();
+    let view = StatusView {
+        running: Vec::new(),
+        queue,
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+        queue_total: None,
+    };
+    vec![("local".to_string(), view)]
+}
+
+#[test]
+fn status_shows_the_priority_of_each_queued_order_when_the_broker_sends_it() {
+    let views = queue_of(vec![("hi", Some(50), &["release"]), ("lo", Some(0), &[])]);
+    let text = status_text(&views, Timestamp(10_000));
+    let line_of = |job: &str| {
+        text.lines()
+            .find(|l| l.contains(&format!("  {job}  ")))
+            .unwrap_or_else(|| panic!("{job}: {text}"))
+            .to_string()
+    };
+    assert!(line_of("hi").ends_with("#1  priority 50"), "{text}");
+    assert!(line_of("lo").ends_with("#2  priority 0"), "{text}");
+    let json = status_json(&views);
+    let queue = &json["brokers"][0]["queue"];
+    assert_eq!(queue[0]["priority"], 50);
+    assert_eq!(queue[1]["priority"], 0);
+    assert_eq!(
+        queue[0]["label"], "agent-1",
+        "the JSON key of the client label stays"
+    );
+    assert_eq!(queue[0]["labels"], serde_json::json!(["release"]));
+}
+
+#[test]
+fn an_older_broker_sends_no_priority_and_status_prints_none() {
+    let views = queue_of(vec![("old", None, &[])]);
+    let text = status_text(&views, Timestamp(10_000));
+    assert!(!text.contains("priority"), "{text}");
+    let json = status_json(&views);
+    assert!(json["brokers"][0]["queue"][0]["priority"].is_null());
+    let wire = serde_json::json!({
+        "summary": serde_json::to_value(summary("w", JobState::Queued)).unwrap(),
+        "position": 1,
+        "wait_reason": null,
+    });
+    let item: QueueItem = serde_json::from_value(wire).expect("a queue item without the new field");
+    assert_eq!(item.priority, None);
+}
+
 #[test]
 fn status_shows_note_branch_directory_and_age_of_each_job() {
     let mut queued = summary("j2", JobState::Queued);
@@ -232,6 +304,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             position: 1,
             wait_reason: None,
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {

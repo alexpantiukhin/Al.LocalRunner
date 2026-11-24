@@ -78,6 +78,7 @@ fn job(
         },
         stale: false,
         wait_code: None,
+        priority: None,
     }
 }
 

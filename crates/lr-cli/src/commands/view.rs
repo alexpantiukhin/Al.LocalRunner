@@ -42,6 +42,7 @@ pub fn status_json(views: &[(String, StatusView)]) -> Value {
                 "queue": v.queue.iter().map(|q| item(&q.summary, json!({
                     "position": q.position,
                     "wait_reason": q.wait_reason,
+                    "priority": q.priority,
                 }))).collect::<Vec<_>>(),
                 "recent": v.recent.iter().map(|s| item(s, Value::Object(Map::new()))).collect::<Vec<_>>(),
             })
@@ -152,7 +153,11 @@ pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
                 .as_deref()
                 .map(|w| format!("  #{} waits: {w}", q.position))
                 .unwrap_or_else(|| format!("  #{}", q.position));
-            out.push(line(&q.summary, &why, now));
+            let priority = q
+                .priority
+                .map(|p| format!("  priority {p}"))
+                .unwrap_or_default();
+            out.push(line(&q.summary, &format!("{why}{priority}"), now));
         }
         if v.running.is_empty() && v.queue.is_empty() {
             out.push("  (no jobs)".into());
@@ -480,7 +485,8 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
             continue;
         }
         match read(&client, &b.name, ReadRequest::Status(filter.clone())).await {
-            Ok(ReadReply::Status(mut v)) => {
+            Ok(ReadReply::Status(v)) => {
+                let mut v = *v;
                 if let Some(r) = &filter.recent {
                     clip_recent(&mut v, r);
                 }

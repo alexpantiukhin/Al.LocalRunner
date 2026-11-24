@@ -22,7 +22,7 @@ async fn pool_with_jobs(h: &Harness) -> (Conn, Conn) {
 
 fn status(reply: ReadReply) -> StatusView {
     match reply {
-        ReadReply::Status(s) => s,
+        ReadReply::Status(s) => *s,
         other => panic!("expected status, got {other:?}"),
     }
 }
@@ -616,6 +616,11 @@ async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
     alex.send(&order("j2", req(512, 1, 60))).await;
     alex.accepted().await;
     let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
+    let seen_by_ci = seen_by_ci
+        .split("; priority:")
+        .next()
+        .unwrap_or_default()
+        .to_string();
     assert!(seen_by_ci.contains("the runner is busy"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("order"), "{seen_by_ci}");

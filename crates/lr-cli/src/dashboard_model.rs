@@ -47,6 +47,7 @@ fn job(broker: &str, list: DashboardList, detail: JobDetail) -> DashboardJob {
         last_lines: Vec::new(),
         stale: false,
         wait_code: None,
+        priority: None,
     }
 }
 
@@ -150,6 +151,7 @@ pub async fn build_snapshot_page(
         let Ok(ReadReply::Status(status)) = status else {
             continue;
         };
+        let status = *status;
         for r in status.running {
             let mut j = job(
                 name,
@@ -165,7 +167,7 @@ pub async fn build_snapshot_page(
         }
         queue_shown += status.queue.len() as u64;
         match status.queue_total {
-            Some(t) => queue_all += t,
+            Some(t) => queue_all += u64::from(t),
             None => queue_known = false,
         }
         for q in status.queue {
@@ -176,6 +178,7 @@ pub async fn build_snapshot_page(
             );
             j.position = Some(q.position);
             j.wait_code = q.wait_code;
+            j.priority = q.priority;
             snap.jobs.push(j);
         }
         if window.is_some() {
@@ -281,6 +284,7 @@ pub fn add_hub_orders(snap: &mut DashboardSnapshot, orders: Vec<HubOrder>, filte
             last_lines: Vec::new(),
             stale,
             wait_code: None,
+            priority: None,
         });
     }
 }

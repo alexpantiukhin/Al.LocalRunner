@@ -151,7 +151,14 @@ async fn queue_page_lists_jobs_with_project_source_label() {
     let row = &page[row..row + page[row..].find("</tr>").unwrap()];
     assert!(row.contains("<td data-col=\"project\">alpha</td>"), "{row}");
     assert!(row.contains("<td data-col=\"source\">github</td>"), "{row}");
-    assert!(row.contains("<td data-col=\"label\">agent-1</td>"), "{row}");
+    assert!(
+        row.contains("<td data-col=\"client_label\">agent-1</td>"),
+        "{row}"
+    );
+    assert!(
+        row.contains("<td data-col=\"priority\"></td>"),
+        "no priority from an older broker: {row}"
+    );
     assert!(page.contains("data-job=\"j-run\""));
     assert!(
         !page.contains("<script>alert"),

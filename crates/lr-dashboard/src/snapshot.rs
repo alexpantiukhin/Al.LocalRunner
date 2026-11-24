@@ -109,9 +109,15 @@ fn queue_row(out: &mut String, job: &DashboardJob) {
             state_name(s.state)
         },
     );
+    cell(
+        out,
+        "priority",
+        &job.priority.map(|p| p.to_string()).unwrap_or_default(),
+    );
     cell(out, "project", &opt(&s.project));
     cell(out, "source", source_name(d.source));
-    cell(out, "label", &opt(&s.label));
+    cell(out, "client_label", &opt(&s.label));
+    cell(out, "labels", &s.labels.join(", "));
     cell(out, "profile", &opt(&s.profile));
     cell(out, "cwd", &opt(&d.cwd));
     cell(out, "runner", &opt(&s.runner));

@@ -39,6 +39,41 @@ fn with_pool_carries_no_rules() {
 }
 
 #[test]
+fn the_priority_origin_names_the_rule_and_its_condition_or_that_no_rule_sets_one() {
+    let mut p = lr_core::RulePolicy::with_pool(common::pool(8192, 8));
+    p.rules = vec![
+        rule(Some("quiet"), "ci"),
+        Rule {
+            priority: Some(70),
+            ..rule(Some("ci-boost"), "ci")
+        },
+        Rule {
+            priority: Some(5),
+            ..rule(None, "agent")
+        },
+    ];
+    let origin = p.priority_origin(&entry("c", "ci", 0));
+    assert_eq!(origin.priority, 70);
+    let found = origin.rule.as_ref().expect("a rule");
+    assert_eq!(
+        found.name, "ci-boost",
+        "the first rule that sets a priority, not the first match"
+    );
+    assert!(found.when.contains("client_label"), "{}", found.when);
+    assert_eq!(
+        origin.describe(),
+        format!("70 from rule ci-boost (when {})", found.when)
+    );
+    let unnamed = p.priority_origin(&entry("a", "agent", 0));
+    assert_eq!(unnamed.rule.map(|r| r.name), Some("3".to_string()));
+    let none = p.priority_origin(&entry("x", "other", 0));
+    assert_eq!(none.priority, 0);
+    assert_eq!(none.rule, None);
+    assert_eq!(none.describe(), "no rule sets a priority: 0");
+    assert_eq!(p.priority_of(&entry("c", "ci", 0)), origin.priority);
+}
+
+#[test]
 fn default_policy_matches_spec_defaults() {
     let p = policy(8192, 8);
     assert_eq!(p.strategy, Strategy::PriorityFifo);

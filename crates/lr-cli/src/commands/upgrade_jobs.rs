@@ -164,7 +164,7 @@ pub async fn activity(layout: &Layout) -> Activity {
                     match read(client, name, ReadRequest::Status(filter)).await? {
                         ReadReply::Status(v) => {
                             let next = v.next.clone();
-                            Ok((v, next))
+                            Ok((*v, next))
                         }
                         other => Err(format!("broker {name}: {other:?}")),
                     }

@@ -65,7 +65,7 @@ pub fn read_requests() -> Vec<ReadRequest> {
 
 pub fn read_replies() -> Vec<ReadReply> {
     vec![
-        ReadReply::Status(StatusView {
+        ReadReply::Status(Box::new(StatusView {
             running: vec![RunningView {
                 summary: summary(),
                 steps: vec![step_view()],
@@ -77,6 +77,7 @@ pub fn read_replies() -> Vec<ReadReply> {
                 position: 1,
                 wait_reason: Some("runner busy".into()),
                 wait_code: None,
+                priority: None,
             }],
             recent: vec![JobSummary {
                 state: JobState::Cancelled,
@@ -91,7 +92,7 @@ pub fn read_replies() -> Vec<ReadReply> {
             },
             next: Some("q2".into()),
             queue_total: None,
-        }),
+        })),
         ReadReply::History {
             jobs: vec![summary()],
             next: None,

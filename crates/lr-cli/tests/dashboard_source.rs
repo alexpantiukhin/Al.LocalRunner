@@ -99,6 +99,7 @@ fn status(name: &str) -> StatusView {
             position: 1,
             wait_reason: Some(format!("runner of {name} busy")),
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -181,7 +182,7 @@ fn hub(
                 }
             }
             let reply = match &r.request {
-                ReadRequest::Status(_) => ReadReply::Status(status(&name)),
+                ReadRequest::Status(_) => ReadReply::Status(Box::new(status(&name))),
                 ReadRequest::History(_) => ReadReply::History {
                     jobs: vec![
                         JobSummary {
@@ -315,7 +316,7 @@ async fn snapshot_collects_queue_runners_and_history_from_every_broker() {
     );
 }
 
-fn pages(inner: Answer, total: Option<u64>, queue_total: Option<u64>) -> Answer {
+fn pages(inner: Answer, total: Option<u64>, queue_total: Option<u32>) -> Answer {
     Box::new(move |req| {
         let CliRequest::Read(r) = req else {
             return inner(req);
@@ -330,10 +331,10 @@ fn pages(inner: Answer, total: Option<u64>, queue_total: Option<u64>) -> Answer 
                 next: None,
                 total,
             },
-            ReadRequest::Status(_) => ReadReply::Status(StatusView {
+            ReadRequest::Status(_) => ReadReply::Status(Box::new(StatusView {
                 queue_total,
                 ..status(&name)
-            }),
+            })),
             _ => return inner(req),
         };
         CliReply::Read {
@@ -476,6 +477,46 @@ async fn a_broker_that_does_not_report_totals_gives_its_first_page_and_no_paging
         "an older broker ignores the offset, so its first page is not shown again as page two"
     );
     assert_eq!(later.history_page, None);
+}
+
+#[tokio::test]
+async fn the_priority_of_a_queued_order_reaches_the_grid_and_an_older_broker_leaves_it_empty() {
+    let with = |priority: Option<i64>| -> Answer {
+        let inner = hub(&["home"], &[], Vec::new());
+        Box::new(move |req| match req {
+            CliRequest::Read(r) if matches!(r.request, ReadRequest::Status(_)) => {
+                let name = r.broker.clone().unwrap();
+                let mut view = status(&name);
+                view.queue[0].priority = priority;
+                view.queue[0].summary.labels = vec!["release".into()];
+                CliReply::Read {
+                    broker: name,
+                    reply: ReadReply::Status(Box::new(view)),
+                }
+            }
+            other => inner(other),
+        })
+    };
+    for (sent, shown) in [(Some(50), Some(50)), (None, None)] {
+        let (client, _) = fake_hub(with(sent)).await;
+        let snap = build_snapshot(
+            &client,
+            &StatusFilter::default(),
+            false,
+            &Redactor::new(&[]),
+        )
+        .await
+        .unwrap();
+        let queued = snap
+            .jobs
+            .iter()
+            .find(|j| j.list == DashboardList::Queued)
+            .unwrap();
+        assert_eq!(queued.priority, shown);
+        assert_eq!(queued.detail.summary.labels, ["release"]);
+        let json = serde_json::to_value(queued).unwrap();
+        assert_eq!(json.get("priority").is_some(), shown.is_some(), "{json}");
+    }
 }
 
 #[tokio::test]

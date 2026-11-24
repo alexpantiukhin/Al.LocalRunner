@@ -371,6 +371,11 @@ pub struct QueueItem {
     /// `offline`, `reserved`), hidden with the reason. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_code: Option<String>,
+    /// The effective priority the policy gives the order, greater first (the first matching
+    /// rule that sets one, else 0), hidden from a reader who may not see the order's fields.
+    /// Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
 }
 
 /// Pool load.
@@ -402,7 +407,7 @@ pub struct StatusView {
     /// How many orders the filter matches in the whole queue, whatever the size of the list;
     /// absent from an older broker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub queue_total: Option<u64>,
+    pub queue_total: Option<u32>,
 }
 
 /// A tag held by a running job.
@@ -508,8 +513,8 @@ pub struct PoolInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReadReply {
-    /// Answer to `status`.
-    Status(StatusView),
+    /// Answer to `status`; boxed so that the answers that carry an error stay small.
+    Status(Box<StatusView>),
     /// Answer to `history`.
     History {
         /// Runs, newest first.

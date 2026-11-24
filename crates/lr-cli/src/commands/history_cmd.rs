@@ -34,6 +34,7 @@ pub fn history_filter(f: &HistoryFilters, now: Timestamp) -> HistoryFilter {
         active_only: false,
         limit: f.limit,
         cursor: None,
+        offset: None,
         mine: f.client.is_none() && !f.all,
     }
 }
@@ -122,7 +123,7 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tSTARTED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
+        "JOB\tSTATE\tQUEUED\tSTARTED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tCLIENT_LABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
             .into(),
     ];
     for (b, s) in rows {
@@ -152,6 +153,14 @@ pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     out
 }
 
+fn labels_text(labels: &[String]) -> String {
+    if labels.is_empty() {
+        "-".into()
+    } else {
+        labels.join(", ")
+    }
+}
+
 fn mb(v: Option<u64>) -> String {
     v.map_or("-".into(), |v| v.to_string())
 }
@@ -174,9 +183,10 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
         format!("job       {} (broker {broker})", s.job),
         format!("state     {}, exit {exit}{reason}", shown_state(s)),
         format!("project   {}", dash(&s.project)),
-        format!("label     {}", dash(&s.label)),
+        format!("client_label {}", dash(&s.label)),
         format!("client    {}", s.client_label),
         format!("profile   {}", dash(&s.profile)),
+        format!("labels    {}", labels_text(&s.labels)),
         format!("source    {source}"),
         format!("note      {}", dash(&d.note)),
         format!("branch    {}", dash(&d.branch)),
