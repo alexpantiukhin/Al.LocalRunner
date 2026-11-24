@@ -18,6 +18,27 @@ fn history_mine_is_optional_for_older_senders() {
 }
 
 #[test]
+fn the_run_window_is_optional_on_the_wire() {
+    let older: HistoryFilter = serde_json::from_value(json!({"active_only": false})).unwrap();
+    assert_eq!((older.ran_since, older.ran_until), (None, None));
+    let v = serde_json::to_value(HistoryFilter::default()).unwrap();
+    assert!(
+        v.get("ran_since").is_none() && v.get("ran_until").is_none(),
+        "{v}"
+    );
+    let v = serde_json::to_value(HistoryFilter {
+        ran_since: Some(lr_core::Timestamp(5)),
+        ran_until: Some(lr_core::Timestamp(9)),
+        ..HistoryFilter::default()
+    })
+    .unwrap();
+    assert_eq!(
+        (v["ran_since"].as_u64(), v["ran_until"].as_u64()),
+        (Some(5), Some(9))
+    );
+}
+
+#[test]
 fn unfollow_is_unknown_to_an_older_broker_and_new_cli_messages_to_an_older_hub() {
     let v = serde_json::to_value(ReadRequest::Unfollow { req: 7 }).unwrap();
     assert_eq!(v, json!({"type": "unfollow", "req": 7}));

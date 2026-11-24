@@ -550,16 +550,18 @@ pub async fn jobs(
 }
 
 /// One line of `jobs --mine`: job, state, profile, then project, source and label together
-/// (spec 7.2); an unknown value is `-`.
+/// (spec 7.2), then the start and the end time; an unknown value is `-`.
 pub fn mine_line(j: &lr_proto::JobSummary) -> String {
     let mut line = format!(
-        "{}\t{:?}\t{}\t{}\t{}\t{}",
+        "{}\t{:?}\t{}\t{}\t{}\t{}\t{}\t{}",
         j.job,
         j.state,
         j.profile.as_deref().unwrap_or("-"),
         j.project.as_deref().unwrap_or("-"),
         super::view::source_name(j.source),
-        j.label.as_deref().unwrap_or("-")
+        j.label.as_deref().unwrap_or("-"),
+        super::history_cmd::when(j.started_at),
+        super::history_cmd::when(j.finished_at)
     );
     if j.peak_mem_mb.is_some() || j.peak_disk_mb.is_some() {
         let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| v.to_string());

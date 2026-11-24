@@ -25,6 +25,8 @@ pub fn read_requests() -> Vec<ReadRequest> {
             platform: None,
             runner: Some("r-1".into()),
             since: Some(Timestamp(5)),
+            ran_since: Some(Timestamp(6)),
+            ran_until: Some(Timestamp(7)),
             active_only: true,
             limit: Some(20),
             cursor: Some("c2".into()),

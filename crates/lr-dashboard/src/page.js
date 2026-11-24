@@ -185,9 +185,10 @@
   function render() {
     document.querySelectorAll(".tabs button").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === S.tab)); });
     document.querySelectorAll(".tab").forEach(function (t) { t.hidden = t.id !== "tab-" + S.tab; });
+    var shownSort = S.sort.col || S.tab !== "history" ? S.sort : { col: "finished", dir: -1 };
     document.querySelectorAll("th[data-sort]").forEach(function (th) {
-      th.classList.toggle("asc", th.dataset.sort === S.sort.col && S.sort.dir > 0);
-      th.classList.toggle("desc", th.dataset.sort === S.sort.col && S.sort.dir < 0);
+      th.classList.toggle("asc", th.dataset.sort === shownSort.col && shownSort.dir > 0);
+      th.classList.toggle("desc", th.dataset.sort === shownSort.col && shownSort.dir < 0);
     });
     if (S.tab === "queue") renderTable($("queue-body"), QCOLS);
     if (S.tab === "history") renderTable($("history-body"), HCOLS);

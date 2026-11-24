@@ -529,11 +529,24 @@ fn jobs_mine_prints_project_source_and_label_together() {
     use lr_cli::commands::jobs::mine_line;
     assert_eq!(
         mine_line(&summary("j1", JobState::Running)),
-        "j1\tRunning\tunit\towner/repo\tsession\tagent-1"
+        "j1\tRunning\tunit\towner/repo\tsession\tagent-1\t-\t-"
     );
     let mut bare = summary("j2", JobState::Queued);
     (bare.project, bare.source, bare.label) = (None, None, None);
-    assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-");
+    assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-\t-\t-");
+    let mut ran = summary("j3", JobState::Passed);
+    ran.started_at = Some(Timestamp(2000));
+    ran.finished_at = Some(Timestamp(9000));
+    let line = mine_line(&ran);
+    let cells: Vec<&str> = line.split('\t').collect();
+    assert_eq!(
+        cells[6],
+        lr_cli::commands::timefmt::format_time(Timestamp(2000))
+    );
+    assert_eq!(
+        cells[7],
+        lr_cli::commands::timefmt::format_time(Timestamp(9000))
+    );
 }
 
 #[test]

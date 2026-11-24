@@ -29,6 +29,8 @@ impl Engine {
             platform: f.platform.clone(),
             runner: f.runner.clone(),
             since: f.since,
+            ran_since: f.ran_since,
+            ran_until: f.ran_until,
             active_only: f.active_only,
             limit: Some(SCAN_LIMIT),
             by_finish: true,

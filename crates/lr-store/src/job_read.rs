@@ -159,6 +159,20 @@ pub(crate) fn jobs(conn: &Connection, filter: &JobFilter) -> R<Vec<JobRecord>> {
         args.push(Value::Integer(time(since)));
         sql.push_str(&format!(" AND queued_at >= ?{}", args.len()));
     }
+    if let Some(since) = filter.ran_since {
+        args.push(Value::Integer(time(since)));
+        sql.push_str(&format!(
+            " AND started_at IS NOT NULL AND (finished_at IS NULL OR finished_at >= ?{})",
+            args.len()
+        ));
+    }
+    if let Some(until) = filter.ran_until {
+        args.push(Value::Integer(time(until)));
+        sql.push_str(&format!(
+            " AND started_at IS NOT NULL AND started_at <= ?{}",
+            args.len()
+        ));
+    }
     if filter.active_only {
         sql.push_str(&format!(" AND state NOT IN {}", final_list()));
     }

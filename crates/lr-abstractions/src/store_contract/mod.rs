@@ -87,6 +87,7 @@ macro_rules! broker_store_contract {
             broker::log_tail_reads_only_the_end,
             broker_history::history_is_newest_first_filtered_and_limited,
             broker_history::history_by_finish_time_keeps_a_late_finish_under_the_limit,
+            broker_history::run_window_keeps_runs_that_overlap_it,
             broker_history::stats_count_final_runs_with_median_and_p95,
             broker_history::stats_report_declared_and_real_memory,
             broker_history::stats_count_timeouts_cancels_and_losses,

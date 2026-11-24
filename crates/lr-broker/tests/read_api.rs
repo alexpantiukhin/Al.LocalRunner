@@ -732,6 +732,43 @@ async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_rea
 }
 
 #[tokio::test]
+async fn history_window_keeps_the_runs_that_were_running_in_it() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    let ids =
+        |jobs: Vec<JobSummary>| -> Vec<String> { jobs.into_iter().map(|j| j.job.0).collect() };
+    let at = |ms: u64| Some(lr_core::Timestamp(START + ms));
+    let window = |since: Option<u64>, until: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            ran_since: since.and_then(at),
+            ran_until: until.and_then(at),
+            ..HistoryFilter::default()
+        })
+    };
+    assert_eq!(
+        ids(history(alex.read(window(Some(5_000), None)).await)),
+        ["j1"],
+        "a run still going overlaps; an order that never started does not"
+    );
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    assert_eq!(
+        ids(history(alex.read(window(Some(5_000), Some(8_000))).await)),
+        ["j1"]
+    );
+    assert!(history(alex.read(window(Some(60_000), None)).await).is_empty());
+    let before = ReadRequest::History(HistoryFilter {
+        ran_until: Some(lr_core::Timestamp(START - 1)),
+        ..HistoryFilter::default()
+    });
+    assert!(
+        history(alex.read(before).await).is_empty(),
+        "nothing had started before the window ended"
+    );
+}
+
+#[tokio::test]
 async fn history_lists_the_most_recently_finished_first_and_a_limit_keeps_them() {
     let h = Harness::start("");
     let (r, mut alex) = pool_with_jobs(&h).await;

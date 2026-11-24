@@ -29,6 +29,8 @@ pub fn history_filter(f: &HistoryFilters, now: Timestamp) -> HistoryFilter {
         platform: f.platform.clone(),
         runner: f.runner.clone(),
         since: f.since.map(|s| s.resolve(now)),
+        ran_since: f.ran_since.map(|s| s.resolve(now)),
+        ran_until: f.ran_until.map(|s| s.resolve(now)),
         active_only: false,
         limit: f.limit,
         cursor: None,
@@ -63,6 +65,19 @@ pub fn reason_text(s: &JobSummary) -> String {
         (None, Some(by)) if s.state == JobState::Cancelled => format!("cancelled by {by}"),
         (None, _) => "-".into(),
     }
+}
+
+/// Whether the run was running at some moment of the window: it started at or before `until`
+/// and did not finish before `since`; a run that is still going overlaps, one that never
+/// started does not. A missing end leaves that side open.
+pub fn overlaps(s: &JobSummary, since: Option<Timestamp>, until: Option<Timestamp>) -> bool {
+    if since.is_none() && until.is_none() {
+        return true;
+    }
+    let Some(started) = s.started_at else {
+        return false;
+    };
+    until.is_none_or(|u| started <= u) && since.is_none_or(|t| s.finished_at.is_none_or(|f| f >= t))
 }
 
 /// The runs of every broker as one list, the most recently finished first (ties by job id,
@@ -107,15 +122,16 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
 /// A header and one tab-separated line per run.
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
     let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
+        "JOB\tSTATE\tQUEUED\tSTARTED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tLABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
             .into(),
     ];
     for (b, s) in rows {
         out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}\t{}",
             s.job,
             shown_state(s),
             format_time(s.queued_at),
+            when(s.started_at),
             when(s.finished_at),
             span(s.started_at, s.finished_at),
             dash(&s.profile),
@@ -140,7 +156,8 @@ fn mb(v: Option<u64>) -> String {
     v.map_or("-".into(), |v| v.to_string())
 }
 
-fn when(t: Option<Timestamp>) -> String {
+/// A time as the list commands print it, `-` when unknown.
+pub fn when(t: Option<Timestamp>) -> String {
     t.map_or("-".into(), format_time)
 }
 
@@ -240,6 +257,19 @@ pub async fn history(layout: &Layout, f: HistoryFilters) -> Result<i32, String> 
     let per = if f.result == Some(ResultArg::Rejected) {
         per.into_iter()
             .map(|(b, jobs)| (b, jobs.into_iter().filter(is_rejected).collect()))
+            .collect()
+    } else {
+        per
+    };
+    let per = if filter.ran_since.is_some() || filter.ran_until.is_some() {
+        per.into_iter()
+            .map(|(b, jobs)| {
+                let kept = jobs
+                    .into_iter()
+                    .filter(|s| overlaps(s, filter.ran_since, filter.ran_until))
+                    .collect();
+                (b, kept)
+            })
             .collect()
     } else {
         per

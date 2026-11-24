@@ -101,6 +101,15 @@ pub struct HistoryFilter {
     pub runner: Option<String>,
     /// Only runs queued at or after this time.
     pub since: Option<Timestamp>,
+    /// Only runs that were running at some moment at or after this time: started, and not
+    /// finished before it (a run still going counts). Absent from older senders, and an older
+    /// broker ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_since: Option<Timestamp>,
+    /// Only runs that started at or before this time. Absent from older senders, and an older
+    /// broker ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_until: Option<Timestamp>,
     /// Only runs that are not final.
     pub active_only: bool,
     /// Maximum number of runs; bounded by [`HISTORY_LIMIT_MAX`].
