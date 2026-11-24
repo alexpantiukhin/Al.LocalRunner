@@ -9,7 +9,7 @@ use super::confirm::{Console, Stdio};
 use super::down_cmd::{down_for, down_mode, wait_for_runners, IpcRoles, Roles, Waited};
 use super::setup::{binary_name, default_bin_dir, upgrade_plan};
 use super::up_cmd::{running_roles, starter, up_with, up_with_services, RunningRoles, Spawn};
-use super::upgrade_jobs::{activity, choose, Activity, Mode};
+use super::upgrade_jobs::{activity, choose, Activity, Mode, WaitProgress};
 use super::upgrade_pool::{plan_lines, pool, reconnected, report_lines, PoolRunner, Reconnected};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
@@ -485,13 +485,13 @@ impl Job<'_> {
             }
             let watching = mode == Mode::Wait && self.activity.busy();
             let started = tokio::time::Instant::now();
+            let (progress, first) = WaitProgress::start(self.activity);
             if watching {
-                eprintln!("waiting for the running jobs to finish (Ctrl+C stops waiting)");
-                for line in self.activity.waiting_lines(Duration::ZERO) {
+                for line in first {
                     println!("{line}");
                 }
             }
-            let shown = Mutex::new((self.activity.running.clone(), started + JOBS_REFRESH));
+            let shown = Mutex::new((progress, started + JOBS_REFRESH));
             let (names, shown) = (&runners, &shown);
             let any_answers = move || async move {
                 let mut any = false;
@@ -555,29 +555,22 @@ impl Job<'_> {
     }
 }
 
-/// Asks for the running jobs every [`JOBS_REFRESH`] and prints the wait again when they changed.
+/// Asks for the running jobs every [`JOBS_REFRESH`] and prints the progress line when they
+/// changed or a minute passed.
 async fn refresh_jobs(
     roles: &dyn Roles,
-    shown: &Mutex<(Vec<String>, tokio::time::Instant)>,
+    shown: &Mutex<(WaitProgress, tokio::time::Instant)>,
     started: tokio::time::Instant,
 ) {
     let now = tokio::time::Instant::now();
     if now < shown.lock().unwrap().1 {
         return;
     }
-    let jobs = roles.running_jobs().await;
+    let jobs = roles.running_job_list().await;
     let mut shown = shown.lock().unwrap();
     shown.1 = now + JOBS_REFRESH;
     let Some(jobs) = jobs else { return };
-    if jobs == shown.0 {
-        return;
-    }
-    shown.0 = jobs.clone();
-    let seen = Activity {
-        running: jobs,
-        ..Activity::default()
-    };
-    for line in seen.waiting_lines(now - started) {
+    if let Some(line) = shown.0.observe(&jobs, now - started) {
         println!("{line}");
     }
 }

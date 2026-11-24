@@ -321,11 +321,27 @@ pub struct RunnerParts {
     pub reload: Arc<crate::runner_reload::RunnerReloader>,
 }
 
-/// Where a runner's `runner.toml` is: `explicit`, else its own directory, else the template of
-/// the configuration directory.
+/// Where a runner's `runner.toml` is: `explicit`, else the file of the configuration directory
+/// when the process runs in a container and the file exists (a mounted file is read directly, so
+/// an edit reaches the runner at once), else its own directory, else that file as a template.
 pub fn runner_config_path(layout: &Layout, name: &str, explicit: Option<&Path>) -> Option<PathBuf> {
+    runner_config_path_in(layout, name, explicit, host::in_container())
+}
+
+/// [`runner_config_path`] with the answer to "does the process run in a container" given by the
+/// caller.
+pub fn runner_config_path_in(
+    layout: &Layout,
+    name: &str,
+    explicit: Option<&Path>,
+    in_container: bool,
+) -> Option<PathBuf> {
     if let Some(p) = explicit {
         return Some(p.to_path_buf());
+    }
+    let mounted = layout.config_file("runner.toml");
+    if in_container && mounted.exists() {
+        return Some(mounted);
     }
     [
         layout.runner_dir(name).join("runner.toml"),

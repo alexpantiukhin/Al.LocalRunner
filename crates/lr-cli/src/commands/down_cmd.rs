@@ -303,6 +303,10 @@ pub trait Roles: Send + Sync {
     async fn running_jobs(&self) -> Option<Vec<String>> {
         None
     }
+    /// The running jobs with their runners and run times, or `None` when they are not known.
+    async fn running_job_list(&self) -> Option<Vec<super::upgrade_jobs::RunningJob>> {
+        None
+    }
     /// Whether runner `name` runs a job, from [`Roles::running_jobs`]; `None` when not known.
     async fn runner_has_job(&self, name: &str) -> Option<bool> {
         let on = format!(" on {name} (");
@@ -414,6 +418,11 @@ impl Roles for IpcRoles<'_> {
     async fn running_jobs(&self) -> Option<Vec<String>> {
         let seen = super::upgrade_jobs::activity(self.layout).await;
         seen.note.is_none().then_some(seen.running)
+    }
+
+    async fn running_job_list(&self) -> Option<Vec<super::upgrade_jobs::RunningJob>> {
+        let seen = super::upgrade_jobs::activity(self.layout).await;
+        seen.note.is_none().then_some(seen.running_jobs)
     }
 
     async fn runner_answers(&self, name: &str) -> bool {

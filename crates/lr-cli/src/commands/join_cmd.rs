@@ -161,6 +161,38 @@ fn template(layout: &Layout, j: &RunnerJoin) -> Result<String, String> {
     with_flags(text, &j.platforms, &j.tags)
 }
 
+/// The `runner.toml` a joining runner reads directly instead of keeping an own copy: the file of
+/// the configuration directory when the process runs in a container (`in_container`), the file
+/// exists and `config` is not another file. `None` otherwise.
+pub fn mounted_config(
+    layout: &Layout,
+    config: Option<&Path>,
+    in_container: bool,
+) -> Option<PathBuf> {
+    let file = layout.config_file("runner.toml");
+    if !in_container || !file.exists() {
+        return None;
+    }
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    config.is_none_or(|c| same(c, &file)).then_some(file)
+}
+
+/// The text of the settings a joining runner starts with: the template, written to `own` first
+/// when the runner keeps an own copy and none exists yet; with a `mounted` file nothing is
+/// written and the template is the text.
+pub fn settings_text(own: &Path, template: &str, mounted: bool) -> Result<String, String> {
+    if mounted {
+        return Ok(template.to_string());
+    }
+    if !own.exists() {
+        std::fs::write(own, template).map_err(|e| format!("{}: {e}", own.display()))?;
+    }
+    std::fs::read_to_string(own).map_err(|e| format!("{}: {e}", own.display()))
+}
+
 /// The `runner.toml` text with `--platforms` and `--tags` replacing the template's lists;
 /// an empty flag keeps the template's value and every other key stays.
 pub fn with_flags(text: String, platforms: &[String], tags: &[String]) -> Result<String, String> {
@@ -185,6 +217,12 @@ pub fn with_flags(text: String, platforms: &[String], tags: &[String]) -> Result
 pub async fn runner_join(layout: &Layout, j: RunnerJoin) -> Result<i32, String> {
     let base = crate::roles::runner_base_name(layout, j.name.as_deref(), j.config.as_deref());
     let names = instance_names(&base, j.count)?;
+    let mounted = mounted_config(layout, j.config.as_deref(), crate::host::in_container());
+    if mounted.is_some() && !(j.platforms.is_empty() && j.tags.is_empty()) {
+        return Err(
+            "--platforms and --tags need an own copy of runner.toml, but this container reads the mounted file directly: set them in that file".into(),
+        );
+    }
     let text = template(layout, &j)?;
     let host = crate::host::resources();
     crate::init::ensure_state_dir(&layout.root)?;
@@ -203,12 +241,7 @@ pub async fn runner_join(layout: &Layout, j: RunnerJoin) -> Result<i32, String> 
     for name in names {
         let dir = layout.runner_dir(&name);
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        let own = dir.join("runner.toml");
-        if !own.exists() {
-            std::fs::write(&own, &text).map_err(|e| format!("{}: {e}", own.display()))?;
-        }
-        let own_text =
-            std::fs::read_to_string(&own).map_err(|e| format!("{}: {e}", own.display()))?;
+        let own_text = settings_text(&dir.join("runner.toml"), &text, mounted.is_some())?;
         let mut cfg = RunnerConfig::parse(&own_text, Some(&name), &name, dir.clone(), host)
             .map_err(|e| format!("runner {name}: {e}"))?;
         for p in cfg.check_programs() {

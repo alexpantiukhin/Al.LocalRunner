@@ -153,13 +153,12 @@ fn runners_list_shows_enforcement() {
     .join("\n");
     assert_eq!(text.matches("enforcement").count(), 3, "{text}");
     assert!(
-        text.contains("    enforcement watcher (limit mode not supported: runs as warn)\n"),
+        text.contains("    enforcement watcher (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)\n"),
         "{text}"
     );
     assert!(
         text.contains(
-            "    enforcement unknown (limit mode not supported: runs as warn)
-"
+            "    enforcement unknown (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)\n"
         ),
         "{text}"
     );

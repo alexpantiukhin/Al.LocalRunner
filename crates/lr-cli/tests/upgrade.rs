@@ -9,7 +9,7 @@ use lr_cli::commands::upgrade_cmd::{
     parse_duration, parse_version, restart_roles, restart_summary, stop_names, verdict, Job,
     Verdict,
 };
-use lr_cli::commands::upgrade_jobs::{pages, Activity, RunningJob};
+use lr_cli::commands::upgrade_jobs::{pages, Activity, RunningJob, WaitProgress};
 use lr_cli::commands::upgrade_pool::{plan_lines, report_lines, Kind, PoolRunner, Reconnected};
 use lr_cli::commands::RoleArg;
 use lr_cli::os_service::{Action, System};
@@ -305,6 +305,7 @@ fn busy() -> Activity {
         running_jobs: vec![RunningJob {
             job: "j1".into(),
             runner: Some("local:r1".into()),
+            running_ms: Some(0),
         }],
         queued: vec!["j2".into(), "j3".into()],
         note: None,
@@ -506,12 +507,86 @@ fn parse_duration_rejects_zero_and_garbage() {
     }
 }
 
+fn job(id: &str, running_min: u64) -> RunningJob {
+    RunningJob {
+        job: id.into(),
+        runner: Some("local:r1".into()),
+        running_ms: Some(running_min * 60_000),
+    }
+}
+
 #[test]
-fn the_wait_prints_the_jobs_and_the_elapsed_time() {
-    let lines = busy().waiting_lines(std::time::Duration::from_secs(185));
-    assert_eq!(lines, ["j1 on r1 (tests)", "waited 3m05s"]);
-    let idle = Activity::default().waiting_lines(std::time::Duration::from_secs(2));
-    assert_eq!(idle, ["waited 2.0s"]);
+fn the_wait_starts_with_the_count_the_pause_of_new_jobs_and_the_jobs() {
+    let (_, lines) = WaitProgress::start(&busy());
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines[0].starts_with("waiting for 1 job to finish"),
+        "{lines:?}"
+    );
+    assert!(lines[0].contains("new jobs are not taken while upgrade waits"));
+    assert_eq!(lines[1], "  j1 on r1 (tests)");
+}
+
+#[test]
+fn the_wait_prints_on_a_change_and_once_a_minute_in_one_line() {
+    use std::time::Duration;
+    let secs = Duration::from_secs;
+    let (mut progress, _) = WaitProgress::start(&busy());
+    let one = [job("j1", 12)];
+    assert_eq!(progress.observe(&one, secs(5)), None);
+    assert_eq!(progress.observe(&one, secs(59)), None);
+    assert_eq!(
+        progress.observe(&one, secs(60)).as_deref(),
+        Some("waiting for 1 job, running 12 min")
+    );
+    assert_eq!(progress.observe(&one, secs(119)), None);
+    assert_eq!(
+        progress.observe(&one, secs(120)).as_deref(),
+        Some("waiting for 1 job, running 12 min")
+    );
+    let two = [job("j1", 13), job("j2", 1)];
+    assert_eq!(
+        progress.observe(&two, secs(125)).as_deref(),
+        Some("waiting for 2 jobs, running 13 min"),
+        "a new job prints at once, the longest run time is named"
+    );
+    assert_eq!(progress.observe(&two, secs(130)), None);
+    assert_eq!(
+        progress.observe(&[job("j2", 1)], secs(135)).as_deref(),
+        Some("waiting for 1 job, running 1 min")
+    );
+    assert_eq!(
+        progress.observe(&[], secs(140)).as_deref(),
+        Some("the jobs have finished, waiting for the runners to stop")
+    );
+    assert_eq!(progress.observe(&[], secs(145)), None);
+}
+
+#[test]
+fn a_long_wait_prints_few_lines_and_the_run_time_has_a_short_unit() {
+    use std::time::Duration;
+    let (mut progress, _) = WaitProgress::start(&busy());
+    let lines = (1..=1800u64)
+        .filter_map(|s| progress.observe(&[job("j1", 0)], Duration::from_secs(s)))
+        .count();
+    assert_eq!(lines, 30, "half an hour is one line a minute");
+    let (mut p, _) = WaitProgress::start(&Activity::default());
+    let long = RunningJob {
+        running_ms: Some(3_900_000),
+        ..job("j", 0)
+    };
+    assert_eq!(
+        p.observe(&[long], Duration::from_secs(1)).as_deref(),
+        Some("waiting for 1 job, running 1 h 05 min")
+    );
+    let short = RunningJob {
+        running_ms: Some(40_000),
+        ..job("k", 0)
+    };
+    assert_eq!(
+        p.observe(&[short], Duration::from_secs(2)).as_deref(),
+        Some("waiting for 1 job, running 40 s")
+    );
 }
 
 fn put(path: &Path, text: &str) {
@@ -938,6 +1013,7 @@ async fn upgrade_cancel_names_only_the_jobs_of_the_runners_it_stops() {
     c.activity.running_jobs.push(RunningJob {
         job: "j9".into(),
         runner: Some("r7".into()),
+        running_ms: None,
     });
     let o = run(c).await;
     assert!(o.result.is_ok(), "{:?}", o.result);

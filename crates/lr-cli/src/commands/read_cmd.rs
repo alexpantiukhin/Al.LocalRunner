@@ -248,7 +248,10 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
     let older = if c.enforce_limit {
         ""
     } else {
-        " (limit mode not supported: runs as warn)"
+        match c.enforcement.as_deref() {
+            Some("watcher") => " (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)",
+            _ => " (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)",
+        }
     };
     out.push(format!(
         "    enforcement {}{older}",

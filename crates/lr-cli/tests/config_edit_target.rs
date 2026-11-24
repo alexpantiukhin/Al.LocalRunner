@@ -57,6 +57,35 @@ fn runner_prefers_own_copy() {
 }
 
 #[test]
+fn in_a_container_a_mounted_runner_toml_wins_over_an_own_copy() {
+    use lr_cli::build::runner_config_path_in;
+    let (layout, _) = custom("mounted");
+    std::fs::create_dir_all(layout.runner_dir("a")).unwrap();
+    let own = layout.runner_dir("a").join("runner.toml");
+    std::fs::write(&own, "").unwrap();
+    assert_eq!(
+        runner_config_path_in(&layout, "a", None, false),
+        Some(own.clone())
+    );
+    assert_eq!(
+        runner_config_path_in(&layout, "a", None, true),
+        Some(own.clone()),
+        "without a file in the configuration directory the copy is read"
+    );
+    std::fs::write(layout.config_file("runner.toml"), "").unwrap();
+    assert_eq!(runner_config_path_in(&layout, "a", None, false), Some(own));
+    assert_eq!(
+        runner_config_path_in(&layout, "a", None, true),
+        Some(layout.config_file("runner.toml"))
+    );
+    let explicit = std::path::Path::new("x.toml");
+    assert_eq!(
+        runner_config_path_in(&layout, "a", Some(explicit), true),
+        Some(explicit.to_path_buf())
+    );
+}
+
+#[test]
 fn policy_check_without_file_uses_resolved_path() {
     let layout = Layout::new(default_root().unwrap(), default_root().unwrap());
     let asked = RefCell::new(Vec::new());

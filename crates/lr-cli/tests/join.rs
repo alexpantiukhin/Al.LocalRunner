@@ -2,7 +2,9 @@ mod common;
 
 use common::TempDir;
 use lr_abstractions::HubStore;
-use lr_cli::commands::join_cmd::{hub_join, runner_join, RunnerJoin};
+use lr_cli::commands::join_cmd::{
+    hub_join, mounted_config, runner_join, settings_text, RunnerJoin,
+};
 use lr_cli::ipc_client::IpcClient;
 use lr_cli::paths::Layout;
 use lr_cli::roles::start_broker;
@@ -114,4 +116,47 @@ async fn hub_and_runners_join_with_codes_and_keep_the_pinned_broker() {
     let again = runner_join(&node, join).await;
     assert!(again.unwrap_err().contains("already"));
     broker.stop();
+}
+
+#[test]
+fn a_container_reads_the_mounted_runner_toml_and_keeps_no_copy() {
+    let dir = TempDir::new("join-mounted");
+    let layout = Layout::new(dir.path().join("state"), dir.path().join("etc"));
+    std::fs::create_dir_all(dir.path().join("etc")).unwrap();
+    assert_eq!(mounted_config(&layout, None, true), None, "no file mounted");
+    let file = layout.config_file("runner.toml");
+    std::fs::write(&file, "mem_mb = 64\n").unwrap();
+    assert_eq!(
+        mounted_config(&layout, None, false),
+        None,
+        "not in a container"
+    );
+    assert_eq!(mounted_config(&layout, None, true), Some(file.clone()));
+    assert_eq!(
+        mounted_config(&layout, Some(&file), true),
+        Some(file.clone())
+    );
+    let other = dir.path().join("other.toml");
+    std::fs::write(&other, "").unwrap();
+    assert_eq!(mounted_config(&layout, Some(&other), true), None);
+
+    let own = dir.path().join("own.toml");
+    assert_eq!(
+        settings_text(&own, "mem_mb = 64\n", true).unwrap(),
+        "mem_mb = 64\n"
+    );
+    assert!(!own.exists(), "no copy is written next to a mounted file");
+    assert_eq!(
+        settings_text(&own, "mem_mb = 64\n", false).unwrap(),
+        "mem_mb = 64\n"
+    );
+    assert!(
+        own.exists(),
+        "the template is copied without a mounted file"
+    );
+    std::fs::write(&own, "mem_mb = 8\n").unwrap();
+    assert_eq!(
+        settings_text(&own, "mem_mb = 64\n", false).unwrap(),
+        "mem_mb = 8\n"
+    );
 }
