@@ -335,6 +335,7 @@ pub(crate) struct Job {
     pub(crate) confirmed: bool,
     pub(crate) gone_since: Option<Timestamp>,
     pub(crate) lost_floor: Option<Timestamp>,
+    pub(crate) last_output_at: Option<Timestamp>,
 }
 
 pub(crate) struct Engine {

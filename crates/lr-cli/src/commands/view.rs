@@ -37,6 +37,7 @@ pub fn status_json(views: &[(String, StatusView)]) -> Value {
                 "running": v.running.iter().map(|r| item(&r.summary, json!({
                     "steps": r.steps,
                     "last_lines": r.last_lines,
+                    "last_output_ago_ms": r.last_output_ago_ms,
                 }))).collect::<Vec<_>>(),
                 "queue": v.queue.iter().map(|q| item(&q.summary, json!({
                     "position": q.position,
@@ -139,7 +140,11 @@ pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
                 .find(|s| s.started_at.is_some())
                 .map(|s| format!("  step {}", s.name))
                 .unwrap_or_default();
-            out.push(line(&r.summary, &step, now));
+            let quiet = r
+                .last_output_ago_ms
+                .map(|ms| format!("  last output {} ago", format_ms(ms)))
+                .unwrap_or_default();
+            out.push(line(&r.summary, &format!("{step}{quiet}"), now));
         }
         for q in &v.queue {
             let why = q

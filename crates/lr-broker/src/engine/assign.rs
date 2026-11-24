@@ -362,6 +362,7 @@ impl Engine {
                     return;
                 };
                 let key = self.active[i].key.clone();
+                self.active[i].last_output_at = Some(now);
                 let limit = self.log_limit();
                 if let Err(e) = self
                     .store

@@ -92,6 +92,7 @@ fn status(name: &str) -> StatusView {
             summary: summary(&format!("run-{name}"), JobState::Running),
             steps: Vec::new(),
             last_lines: vec![format!("{name} api_token=hunter2hunter2")],
+            last_output_ago_ms: None,
         }],
         queue: vec![QueueItem {
             summary: summary(&format!("wait-{name}"), JobState::Queued),

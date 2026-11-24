@@ -216,6 +216,7 @@ impl Engine {
             confirmed: false,
             gone_since: None,
             lost_floor: rec.job.started_at.map(|_| now),
+            last_output_at: None,
         })
     }
 

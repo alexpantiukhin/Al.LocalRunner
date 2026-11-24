@@ -337,6 +337,11 @@ pub struct RunningView {
     pub steps: Vec<StepView>,
     /// Last lines of the current step.
     pub last_lines: Vec<String>,
+    /// How long before this answer the log of the run last received output, in milliseconds on
+    /// the broker clock; absent while it has had none, for a reader who does not see the
+    /// order fields, and from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_output_ago_ms: Option<u64>,
 }
 
 /// A queued order.

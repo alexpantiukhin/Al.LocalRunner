@@ -186,6 +186,7 @@ fn status_json_has_project_source_label() {
             summary: summary("j1", JobState::Running),
             steps: Vec::new(),
             last_lines: Vec::new(),
+            last_output_ago_ms: None,
         }],
         queue: vec![QueueItem {
             summary: summary("j2", JobState::Queued),
@@ -716,4 +717,58 @@ fn cancel_without_as_does_not_name_a_label_the_status_hides() {
         missing_label_text(None, LabelLookup::Unasked),
         "cancel: --as <LABEL> is required"
     );
+}
+
+fn status_with_output_age(ago: Option<u64>) -> Vec<(String, StatusView)> {
+    let view = StatusView {
+        running: vec![RunningView {
+            summary: summary("j1", JobState::Running),
+            steps: Vec::new(),
+            last_lines: Vec::new(),
+            last_output_ago_ms: ago,
+        }],
+        queue: Vec::new(),
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+    };
+    vec![("local".to_string(), view)]
+}
+
+#[test]
+fn status_says_how_long_ago_a_running_job_last_wrote_to_its_log() {
+    let text = status_text(&status_with_output_age(Some(7_000)), Timestamp(10_000));
+    assert!(text.contains("  last output 7.0s ago"), "{text}");
+    let text = status_text(&status_with_output_age(Some(125_000)), Timestamp(10_000));
+    assert!(text.contains("  last output 2m05s ago"), "{text}");
+    let text = status_text(&status_with_output_age(None), Timestamp(10_000));
+    assert!(!text.contains("last output"), "{text}");
+}
+
+#[test]
+fn status_json_has_the_output_age_of_a_running_job_when_the_broker_gave_one() {
+    let json = status_json(&status_with_output_age(Some(7_000)));
+    assert_eq!(
+        json["brokers"][0]["running"][0]["last_output_ago_ms"],
+        7_000
+    );
+    let json = status_json(&status_with_output_age(None));
+    assert!(json["brokers"][0]["running"][0]["last_output_ago_ms"].is_null());
+}
+
+#[test]
+fn a_status_from_an_older_broker_has_no_output_age() {
+    let mut running = serde_json::to_value(&status_with_output_age(None)[0].1.running[0]).unwrap();
+    assert!(running.get("last_output_ago_ms").is_none(), "{running}");
+    running
+        .as_object_mut()
+        .unwrap()
+        .remove("last_output_ago_ms");
+    let back: RunningView = serde_json::from_value(running).unwrap();
+    assert_eq!(back.last_output_ago_ms, None);
 }

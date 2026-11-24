@@ -67,6 +67,7 @@ pub fn read_replies() -> Vec<ReadReply> {
                 summary: summary(),
                 steps: vec![step_view()],
                 last_lines: vec!["line".into()],
+                last_output_ago_ms: None,
             }],
             queue: vec![QueueItem {
                 summary: summary(),

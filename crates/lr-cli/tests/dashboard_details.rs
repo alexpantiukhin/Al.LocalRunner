@@ -106,11 +106,13 @@ fn status() -> StatusView {
                 summary: summary("mine", JobState::Running, true),
                 steps: vec![step(0, StepState::Running, Some(2_000))],
                 last_lines: Vec::new(),
+                last_output_ago_ms: None,
             },
             RunningView {
                 summary: summary("theirs", JobState::Running, false),
                 steps: Vec::new(),
                 last_lines: Vec::new(),
+                last_output_ago_ms: None,
             },
         ],
         queue: vec![QueueItem {

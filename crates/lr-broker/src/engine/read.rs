@@ -215,6 +215,11 @@ impl Engine {
                 ),
                 _ => Vec::new(),
             };
+            let last_output_ago_ms = a
+                .sees_fields()
+                .then_some(job.last_output_at)
+                .flatten()
+                .map(|at| self.now().0.saturating_sub(at.0));
             let last_lines = if a.sees_log() {
                 self.tail(&job.key, 5).await
             } else {
@@ -224,6 +229,7 @@ impl Engine {
                 summary,
                 steps,
                 last_lines,
+                last_output_ago_ms,
             });
         }
         running.truncate(limit);

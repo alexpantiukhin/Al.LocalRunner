@@ -276,3 +276,35 @@ async fn a_skipped_step_has_no_start_and_stays_out_of_step_statistics() {
         .collect();
     assert_eq!(steps, [("build", 1)], "{stats:?}");
 }
+
+#[tokio::test]
+async fn status_tells_how_long_ago_the_log_of_a_running_job_last_received_output() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut bob = h.local_hub("bob").await;
+    alex.send(&order("j1", req(512, 1, 600))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.started_notice().await;
+    let status = ReadRequest::Status(StatusFilter::default());
+    let view = running(alex.read(status.clone()).await);
+    assert_eq!(view.last_output_ago_ms, None, "no output yet");
+    r.send(&chunk("j1", 2, "first\n")).await;
+    r.acked(2).await;
+    h.clock.advance(Duration::from_secs(7));
+    let view = running(alex.read(status.clone()).await);
+    assert_eq!(view.last_output_ago_ms, Some(7_000));
+    h.clock.advance(Duration::from_secs(3));
+    r.send(&chunk("j1", 3, "second\n")).await;
+    r.acked(3).await;
+    h.clock.advance(Duration::from_secs(1));
+    let view = running(alex.read(status.clone()).await);
+    assert_eq!(view.last_output_ago_ms, Some(1_000));
+    let view = running(bob.read(status).await);
+    assert_eq!(
+        view.last_output_ago_ms, None,
+        "a viewer who does not see the order fields is not told"
+    );
+}
