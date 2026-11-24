@@ -243,9 +243,9 @@ pub enum Command {
     Runners(RunnersArgs),
     /// Start the hub, the broker and the runners as separate processes, except those running.
     Up {
-        /// The role; the roles `init` created when omitted.
-        #[arg(value_enum)]
-        role: Option<RoleArg>,
+        /// Runner names (also `local:<name>`), `runner` (every runner), `hub`, `broker` or `all`;
+        /// the roles `init` created when omitted.
+        names: Vec<String>,
     },
     /// Running roles reread their settings files without a restart: runners `runner.toml`, the
     /// hub `hub-policy.toml`, the broker `policy.toml`.
@@ -578,7 +578,7 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Log(a) => log_cmd::log(&layout, a).await,
         Command::Stats(a) => read_cmd::stats(&layout, a).await,
         Command::Runners(a) => read_cmd::runners(&layout, a).await,
-        Command::Up { role } => up_cmd::up(&layout, role).await,
+        Command::Up { names } => up_cmd::up(&layout, names).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
         Command::Dashboard => crate::dashboard::run(&layout).await,
         Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,

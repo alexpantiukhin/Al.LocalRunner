@@ -584,10 +584,14 @@ fn read_commands_parse_their_flags() {
         Cli::try_parse_from(["localrunner", "status", "--with-logs"]).is_err(),
         "--with-logs needs --html"
     );
-    let Command::Up { role } = parse(&["up", "hub"]) else {
+    let Command::Up { names } = parse(&["up", "hub", "local:r1"]) else {
         panic!("up");
     };
-    assert_eq!(role, Some(lr_cli::commands::RoleArg::Hub));
+    assert_eq!(names, vec!["hub".to_string(), "local:r1".to_string()]);
+    let Command::Up { names } = parse(&["up"]) else {
+        panic!("up");
+    };
+    assert!(names.is_empty());
 }
 
 #[test]
