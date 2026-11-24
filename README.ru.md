@@ -20,6 +20,7 @@
 - [Docker Compose](#docker-compose)
 - [Профили проекта](#профили-проекта)
 - [Журналы](#журналы)
+- [Изменение настроек](#изменение-настроек)
 - [Автозапуск, остановка, обновление, удаление](#автозапуск-остановка-обновление-удаление)
 - [Диагностика](#диагностика)
 - [Безопасность](#безопасность)
@@ -245,7 +246,7 @@ localrunner broker install-service
 |---|---|
 | `[listen]` | адрес, на котором брокер слушает сеть. Без него сеть не слушается. Подстановочные адреса (`0.0.0.0`, `::`) отвергаются. В контейнере: `address = "container"` |
 | `[networks]` | именованные сети; от них зависит зона hub (`lan` или `remote`) |
-| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: метки клиентов и имена раннеров с общим диском; зона между ними `shared`. Метка клиента уникальна: `broker add --label` занятую метку отклоняет. Читается только при старте |
+| `[[shared]]` | `members = ["main-laptop", "docker-1"]`: метки клиентов и имена раннеров с общим диском; зона между ними `shared`. Метка клиента уникальна: `broker add --label` занятую метку отклоняет. Применяется при перезагрузке |
 | `[[local_user]]` | кому разрешён локальный IPC: `name`, `label` |
 | `[queue]` | `strategy` = `priority-fifo`, `fair-share`, `weighted` |
 | `[[rule]]` | приоритет, резерв, квота, вес по условию `when` (первое подошедшее правило по каждому полю) |
@@ -288,7 +289,7 @@ priority = 50
 
 ```
 localrunner policy check [файл]   # проверить, не применяя
-localrunner policy reload         # применить; только на машине брокера. [listen] и [networks] требуют перезапуска
+localrunner policy reload         # применить все таблицы, включая [listen], [networks] и [[shared]]; только на машине брокера
 localrunner logging reload        # перечитать logging.toml во всех работающих ролях
 ```
 
@@ -316,7 +317,7 @@ localrunner client remove <имя> [--yes]   # отозвать ключ hub
 
 ```
 localrunner install --role runner
-# отредактировать runner.toml (раздел ниже)
+# задать ключи: localrunner config set runner:<имя> <ключ> <значение> (раздел ниже и «Изменение настроек»)
 localrunner up runner
 ```
 
@@ -324,7 +325,7 @@ localrunner up runner
 
 ```
 localrunner install --role runner
-# отредактировать runner.toml
+# задать ключи: localrunner config set runner:<имя> <ключ> <значение>
 localrunner runner join <адрес:порт> --code-file code.txt --name box --count 2
 localrunner up runner
 ```
@@ -525,6 +526,30 @@ kind = "console"       # только на переднем плане
 ```
 
 Получатель `otlp` (`endpoint`, `ca_file`, `enabled`) по умолчанию выключен: это единственное, что может отправлять данные с машины. Значения секретов, коды вступления и токены маскируются в логах и выводе. Маскировка точная и действует на всю джобу: точное значение каждого секрета джобы заменяется на `***` в выводе всех её шагов, без минимальной длины, поэтому короткое или распространённое значение (`true`, `1`, `K`) испортит и обычный вывод; для секретов нужны длинные случайные значения.
+
+## Изменение настроек
+
+Любую настройку `policy.toml`, `hub-policy.toml`, `runner.toml` и `logging.toml` можно поменять командой на той машине, чей это файл. Команда находит файл, который роль читает на самом деле (копию службы брокера, если брокер работает службой ОС, собственную копию раннера, если она есть), сохраняет комментарии и порядок, проверяет результат парсером самой роли, печатает diff, пишет резервную копию `<имя>.bak-<время UTC>` и атомарно новый файл и перезагружает работающую роль.
+
+```
+localrunner config show runner:box                      # путь и текст файла, который читает раннер box
+localrunner config get broker queue.strategy
+localrunner config set broker queue.strategy fair-share --dry-run   # показать diff, ничего не писать
+localrunner config set runner:box cpu 4
+localrunner config set hub outbox.ttl_hours 48
+localrunner config set logging logging.level debug      # все роли установки перечитывают logging.toml
+localrunner config unset runner:box limits.enforce      # вернуть значение по умолчанию
+localrunner policy allow-secret signing_key --label ci  # также remove-secret, allow-service, remove-service
+localrunner policy add-local-user ci-agent --label ci   # также remove-local-user
+localrunner policy add-shared main-laptop docker-1      # также remove-shared
+```
+
+- Цели: `broker` (`policy.toml`), `hub` (`hub-policy.toml`), `runner:<имя>` (`runner.toml`), `logging` (`logging.toml`). Тип существующего ключа главнее; новое значение читается как TOML (`5`, `true`, `["a", "b"]`), иначе как строка; `--string` делает строку принудительно. Значение, которое роль отвергает, или новый неизвестный ключ в `runner.toml` оставляют файл нетронутым.
+- Файл, которому нужны права администратора (файл службы брокера), пишет та же команда, запущенная ещё раз с повышением: один запрос UAC на Windows, `sudo` на Unix. Diff показывается до запроса; отказ в запросе ничего не пишет.
+- Неработающая роль показывается как `not running`: файл записан, код выхода 0. Повторный `policy allow-*` или `add-*` печатает `already present` и завершается с кодом 0.
+- Политика, политика hub и журналы применяются при перезагрузке, включая `[listen]`, `[networks]` и `[[shared]]`: при переносе `[listen]` установленные соединения остаются, но присоединённая машина, переподключаясь позже, набирает адрес, сохранённый при присоединении, поэтому её надо присоединить заново. В `runner.toml` `allow_elevated` действует со следующего старта раннера (раннер проверяет его только при старте); `name`, каталог состояния, `allow_same_user_as_broker`, `[service.*]`, `[secret.*]` и адрес брокера раннер называет как `needs a restart`. Команда печатает команду перезапуска и сама ничего не перезапускает; `--restart` выполняет её (соединения роли рвутся).
+- `allow_elevated = true` и `allow_same_user_as_broker = true` печатают строку `widens privileges` вместо запроса подтверждения.
+- Заказ, отклонённый из-за секрета или сервиса, называет файл, ярлык и исправление: `secret signing_key is not allowed for label agent in <путь>; to allow it: localrunner policy allow-secret signing_key --label agent`. Запись допуска с `label = ""` подходит только клиентам с пустым ярлыком (локальным владельцам без записи `[[local_user]]`, участникам, присоединённым с пустым ярлыком) и никогда не подходит клиенту с ярлыком.
 
 ## Автозапуск, остановка, обновление, удаление
 
