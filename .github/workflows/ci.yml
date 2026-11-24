@@ -35,7 +35,7 @@ jobs:
             echo "rust=$(hit '^(crates/|install/|Cargo\.toml$|Cargo\.lock$|rust-toolchain\.toml$|deny\.toml$|\.github/workflows/ci\.yml$|\.github/test-budgets\.toml$|\.github/scripts/test_budget\.py$)')"
             echo "docs=$(hit '^(README(\.ru)?\.md$|docs/|plugin/|AGENTS\.md$|\.github/workflows/ci\.yml$)')"
             echo "plugin=$(hit '^(plugin/|\.claude-plugin/|\.agents/)')"
-            echo "workflows=$(hit '^\.github/workflows/')"
+            echo "workflows=$(hit '^(\.github/workflows/|\.github/scripts/(test_)?release_notes\.py$)')"
           } >> "$GITHUB_OUTPUT"
 
   rust:
@@ -86,6 +86,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: No control characters in a workflow file
         run: python3 .github/scripts/workflow_control_chars.py
+      - name: Release notes script
+        run: python3 -m unittest discover -s .github/scripts -p test_release_notes.py
       - name: actionlint
         run: docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:1.7.7 -color
 

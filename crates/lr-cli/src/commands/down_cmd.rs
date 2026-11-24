@@ -70,6 +70,18 @@ pub fn down_targets(layout: &Layout, names: &[String]) -> Vec<Target> {
     out
 }
 
+/// What a role that did not open its channel means for `down`: `Ok(false)` when it does not
+/// run, the report of a role that runs on another major protocol version (it cannot be told
+/// to stop from here) as an error.
+pub fn not_reached(error: &str) -> Result<bool, String> {
+    match crate::ipc_client::protocol_refusal(error) {
+        true => Err(format!(
+            "it is running and answers on the old protocol, so `down` cannot stop it: {error}"
+        )),
+        false => Ok(false),
+    }
+}
+
 async fn answers(address: &str, channel: IpcChannel) -> bool {
     match IpcClient::connect(address, channel).await {
         Err(_) => false,
@@ -117,8 +129,9 @@ async fn runner(
 ) -> Result<bool, String> {
     crate::runner_config::check_runner_name(name)?;
     let address = layout.runner_ipc(principal, name);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
-        return Ok(false);
+    let c = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e),
     };
     match c
         .call::<_, ControlReply>(&RunnerControl::Down { mode, reason })
@@ -134,8 +147,9 @@ async fn runner(
 
 async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
     let address = layout.hub_ipc(principal);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::Cli).await else {
-        return Ok(false);
+    let c = match IpcClient::connect(&address, IpcChannel::Cli).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e),
     };
     match c.call::<_, CliReply>(&CliRequest::Shutdown).await {
         Ok(CliReply::Stopping) | Err(_) => {}
@@ -155,8 +169,9 @@ async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
 /// stopping.
 pub async fn stop_broker(layout: &Layout) -> Result<Option<Vec<String>>, String> {
     let address = layout.admin_ipc();
-    let Ok(c) = IpcClient::connect_broker_admin(&address).await else {
-        return Ok(None);
+    let c = match IpcClient::connect_broker_admin(&address).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e).map(|_| None),
     };
     let warnings = match c.call::<_, AdminReply>(&AdminRequest::Shutdown).await {
         Ok(AdminReply::Ok { warnings }) => warnings,

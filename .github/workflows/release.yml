@@ -119,6 +119,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: src
+          fetch-depth: 0
       - name: Install scripts with the release public key
         env:
           RELEASE_PUBKEY: ${{ env.LR_RELEASE_KEYS }}
@@ -143,6 +144,8 @@ jobs:
           printf '%s\n' "$SIGNING_KEY" > "$key"
           ssh-keygen -Y sign -f "$key" -n al-localrunner-release SHA256SUMS
           rm -f "$key"
+      - name: Release notes
+        run: python3 src/.github/scripts/release_notes.py src "${GITHUB_REF_NAME}" > notes.md
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -151,7 +154,9 @@ jobs:
           case "${GITHUB_REF_NAME}" in
             *-*) pre="--prerelease" ;;
           esac
-          gh release create "${GITHUB_REF_NAME}" dist/* $pre \
+          extra=()
+          if [ -s notes.md ]; then extra=(--notes-file notes.md); fi
+          gh release create "${GITHUB_REF_NAME}" dist/* $pre "${extra[@]}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes

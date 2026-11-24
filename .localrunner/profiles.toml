@@ -63,6 +63,7 @@ mem_mb    = 512
 cpu       = 1
 steps = [
   { name = "control-chars", command = "python .github/scripts/workflow_control_chars.py", timeout_s = 60 },
+  { name = "release-notes", command = "python -m unittest discover -s .github/scripts -p test_release_notes.py", timeout_s = 60 },
   { name = "actionlint",    command = "docker run --rm -v \".:/repo\" --workdir /repo rhysd/actionlint:1.7.7 -color", timeout_s = 240 },
 ]
 

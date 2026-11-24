@@ -320,6 +320,11 @@ impl Job<'_> {
             println!(
                 "warning: the major protocol version changes: upgrade the broker, the hubs and the runners of other machines in the same window"
             );
+            if self.layout.broker_is_service() {
+                println!(
+                    "the broker service keeps answering on the old protocol until `localrunner broker update-service` (administrator rights): this command does not update it, and the new hub and runners cannot use it before that"
+                );
+            }
         }
         let service = self.layout.broker_is_service();
         let stop = stop_names(self.running, service);
