@@ -11,6 +11,7 @@ use crate::os_service::{
     service_installed, Action, DryRun, Os, OsSystem, System,
 };
 use crate::paths::{service_root, Layout};
+use crate::runner_config::SecretFrom;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -611,6 +612,9 @@ pub fn runner_service_for(
     crate::runner_config::check_runner_name(name)?;
     let os = Os::current();
     let exe = exe()?;
+    let table = runner_table(layout, name).unwrap_or_default();
+    let needs = runner_needs(&table);
+    let secrets = crate::runner_config::secret_sources(&table);
     let mut inputs = RunnerServiceInputs {
         os,
         exe: exe.clone(),
@@ -618,6 +622,13 @@ pub fn runner_service_for(
         state_dir: layout.root.clone(),
         config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
         user: ctx.user.clone(),
+        secret_files: secrets
+            .values()
+            .filter_map(|from| match from {
+                SecretFrom::File(path) => Some(path.clone()),
+                _ => None,
+            })
+            .collect(),
     };
     let key = runner_service::key_path(&inputs);
     let account = runner_service::account(&inputs);
@@ -643,8 +654,6 @@ pub fn runner_service_for(
             return Err(format!("autostart {verb} runner {name} --service: {why}"));
         }
     }
-    let table = runner_table(layout, name).unwrap_or_default();
-    let needs = runner_needs(&table);
     let mut restore_key = false;
     if on {
         let refused = |why: String| format!("autostart on runner {name} --service: {why}");
@@ -691,7 +700,6 @@ pub fn runner_service_for(
         {
             eprintln!("runner {name}: warning: {risk}");
         }
-        let secrets = crate::runner_config::secret_sources(&table);
         for note in runner_service::service_notes(&inputs, &needs, &secrets) {
             (ctx.say)(&note);
         }

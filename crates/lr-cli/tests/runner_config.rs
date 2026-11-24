@@ -92,9 +92,23 @@ fn elevation_and_secret_sources_are_read() {
     );
     assert_eq!(c.secrets["signing"], SecretFrom::Keychain("release".into()));
     assert!(!parse("", None).allow_elevated);
-    let bad = with_path("[secret.x]\nfrom = \"file:/etc/x\"\n");
+    let bad = with_path("[secret.x]\nfrom = \"vault:x\"\n");
     let e = RunnerConfig::parse(&bad, None, "h", PathBuf::new(), HOST).unwrap_err();
     assert!(e.to_string().contains("secret.x"), "{e}");
+    assert!(e.to_string().contains("file:PATH"), "{e}");
+}
+
+#[test]
+fn a_file_secret_source_takes_an_absolute_path() {
+    let path = std::env::temp_dir().join("fake-token");
+    let from = toml::Value::String(format!("file:{}", path.display()));
+    let c = parse(&format!("[secret.token]\nfrom = {from}\n"), None);
+    assert_eq!(c.secrets["token"], SecretFrom::File(path));
+    for relative in ["file:token", "file:", "file:./token"] {
+        let bad = with_path(&format!("[secret.token]\nfrom = \"{relative}\"\n"));
+        let e = RunnerConfig::parse(&bad, None, "h", PathBuf::new(), HOST).unwrap_err();
+        assert!(e.to_string().contains("absolute path"), "{relative}: {e}");
+    }
 }
 
 #[test]

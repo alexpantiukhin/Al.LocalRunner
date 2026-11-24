@@ -346,6 +346,7 @@ fn service_saying<R>(
                     state_dir: layout.root.clone(),
                     config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
                     user: owner,
+                    secret_files: Vec::new(),
                 });
                 if !named {
                     ours.command = ours.command.replace(" --owner nobody", "");

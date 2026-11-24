@@ -455,6 +455,7 @@ fn runner_service(os: Os, name: &str) -> RunnerServiceInputs {
         state_dir: PathBuf::from("/home/alex/state & more"),
         config_dir: None,
         user: "alex".into(),
+        secret_files: Vec::new(),
     }
 }
 
@@ -2068,10 +2069,87 @@ fn service_notes_name_what_the_service_lacks_and_never_print_a_value() {
             "only env: secrets are warned about"
         );
         assert!(notes.contains("declares `docker`"), "{os:?}: {notes}");
-        assert_eq!(notes.contains("PATH"), os == Os::Windows, "{os:?}");
+        assert_eq!(
+            notes.contains("have your PATH"),
+            os == Os::Windows,
+            "{os:?}"
+        );
         assert_eq!(notes.contains("DOMAIN"), os == Os::Windows, "{os:?}");
     }
     let plain =
         runner_service::service_notes(&runner_service(Os::Linux, "box"), &[], &BTreeMap::new());
     assert_eq!(plain.len(), 1, "{plain:?}");
+}
+
+#[test]
+fn a_file_secret_is_read_by_the_windows_service_account_and_taken_back() {
+    let file = PathBuf::from("/secure/registry.token");
+    for os in ALL {
+        let i = RunnerServiceInputs {
+            secret_files: vec![file.clone()],
+            ..runner_service(os, "box")
+        };
+        let on = runs(&runner_service::install(&i)).join("\n");
+        let off = runs(&runner_service::uninstall(&i, false)).join("\n");
+        let account = runner_service::account(&i);
+        let grant = format!("icacls {} /grant {account}:(R)", file.display());
+        let remove = format!("icacls {} /remove {account}", file.display());
+        assert_eq!(on.contains(&grant), os == Os::Windows, "{os:?}: {on}");
+        assert_eq!(off.contains(&remove), os == Os::Windows, "{os:?}: {off}");
+    }
+}
+
+#[test]
+fn a_missing_secret_file_is_named_and_a_present_one_is_never_read_into_the_notes() {
+    use lr_cli::runner_config::SecretFrom;
+    use std::collections::BTreeMap;
+    let dir = std::env::temp_dir().join(format!("lr-secret-notes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let present = dir.join("present.token");
+    std::fs::write(&present, "fake-value-not-for-output").unwrap();
+    let missing = dir.join("missing.token");
+    let secrets = BTreeMap::from([
+        ("a".to_string(), SecretFrom::File(present.clone())),
+        ("b".to_string(), SecretFrom::File(missing.clone())),
+    ]);
+    for os in ALL {
+        let notes = runner_service::service_notes(&runner_service(os, "box"), &[], &secrets);
+        let text = notes.join("\n");
+        assert!(text.contains("the file does not exist"), "{os:?}: {text}");
+        assert!(
+            text.contains(&missing.display().to_string()),
+            "{os:?}: {text}"
+        );
+        assert!(
+            !text.contains("fake-value-not-for-output"),
+            "{os:?}: {text}"
+        );
+        assert_eq!(
+            text.contains("gets read access to the file"),
+            os == Os::Windows,
+            "{os:?}: {text}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_secret_file_other_users_can_read_is_reported() {
+    use lr_cli::runner_config::SecretFrom;
+    use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("lr-secret-mode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("token");
+    std::fs::write(&file, "fake").unwrap();
+    let secrets = BTreeMap::from([("a".to_string(), SecretFrom::File(file.clone()))]);
+    let i = runner_service(Os::Linux, "box");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let loose = runner_service::service_notes(&i, &[], &secrets).join("\n");
+    assert!(loose.contains("other users can read the file"), "{loose}");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let tight = runner_service::service_notes(&i, &[], &secrets).join("\n");
+    assert!(!tight.contains("other users"), "{tight}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

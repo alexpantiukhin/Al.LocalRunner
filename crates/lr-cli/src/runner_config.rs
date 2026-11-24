@@ -30,6 +30,10 @@ pub struct ProgramSpec {
 pub enum SecretFrom {
     /// `env:VAR`: an environment variable of the runner process.
     Env(String),
+    /// `file:PATH`: the contents of a file (an absolute path), read at each request; one trailing
+    /// line break is dropped. The way for an OS service, which does not see the environment of
+    /// the user: the file is readable by the service account (spec 3.13).
+    File(PathBuf),
     /// `keychain:ENTRY`: the OS credential store.
     Keychain(String),
 }
@@ -76,11 +80,17 @@ pub struct RunnerConfig {
 fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
     match text.split_once(':') {
         Some(("env", var)) if !var.is_empty() => Ok(SecretFrom::Env(var.to_string())),
+        Some(("file", path)) if Path::new(path).is_absolute() => {
+            Ok(SecretFrom::File(PathBuf::from(path)))
+        }
+        Some(("file", _)) => Err(SettingsError(format!(
+            "[secret.{name}] from = \"{text}\": file: takes an absolute path"
+        ))),
         Some(("keychain", entry)) if !entry.is_empty() => {
             Ok(SecretFrom::Keychain(entry.to_string()))
         }
         _ => Err(SettingsError(format!(
-            "[secret.{name}] from = \"{text}\": use env:VARIABLE or keychain:ENTRY"
+            "[secret.{name}] from = \"{text}\": use env:VARIABLE, file:PATH or keychain:ENTRY"
         ))),
     }
 }

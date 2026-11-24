@@ -26,6 +26,9 @@ pub struct RunnerServiceInputs {
     pub config_dir: Option<PathBuf>,
     /// The OS user who installs: the account of the service on Linux and macOS.
     pub user: String,
+    /// The files of the `file:` sources of `[secret.*]`: the Windows service account gets read
+    /// access to each, as to its own key.
+    pub secret_files: Vec<PathBuf>,
 }
 
 /// The privileges the Windows service keeps: no impersonation, so a job of the runner cannot
@@ -1068,12 +1071,15 @@ pub fn service_notes(
         i.name
     ));
     for (secret, from) in secrets {
-        if let SecretFrom::Env(var) = from {
-            out.push(format!(
+        match from {
+            SecretFrom::Env(var) => out.push(format!(
                 "[secret.{secret}] from = \"env:{var}\": the service does not see the \
-                 variables of your shell or user ({}); the secret will be missing for its jobs",
+                 variables of your shell or user ({}); the secret will be missing for its jobs; \
+                 use from = \"file:PATH\" with a file only the service account reads",
                 service_env_hint(i.os)
-            ));
+            )),
+            SecretFrom::File(path) => out.extend(file_secret_notes(i, secret, path)),
+            SecretFrom::Keychain(_) => {}
         }
     }
     if needs.iter().any(|n| {
@@ -1088,6 +1094,43 @@ pub fn service_notes(
         ));
     }
     out
+}
+
+fn file_secret_notes(i: &RunnerServiceInputs, secret: &str, path: &Path) -> Vec<String> {
+    let shown = path.display();
+    if !path.is_file() {
+        return vec![format!(
+            "[secret.{secret}] from = \"file:{shown}\": the file does not exist; create it \
+             before a job asks for the secret, which otherwise ends with secret_missing"
+        )];
+    }
+    let mut out = Vec::new();
+    if i.os == Os::Windows {
+        out.push(format!(
+            "[secret.{secret}] from = \"file:{shown}\": the service account gets read access to \
+             the file, and `autostart off` takes it back; remove the access of other users \
+             yourself, the file holds the secret"
+        ));
+    }
+    if group_or_other_can_use(path) {
+        out.push(format!(
+            "[secret.{secret}] from = \"file:{shown}\": other users can read the file; \
+             restrict it to {} (chmod 600)",
+            i.user
+        ));
+    }
+    out
+}
+
+#[cfg(unix)]
+fn group_or_other_can_use(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o077 != 0)
+}
+
+#[cfg(not(unix))]
+fn group_or_other_can_use(_path: &Path) -> bool {
+    false
 }
 
 fn service_env_hint(os: Os) -> &'static str {
@@ -1150,6 +1193,9 @@ pub fn windows_grants(i: &RunnerServiceInputs) -> Vec<Grant> {
     ];
     if let Some(root) = job_root(i) {
         out.insert(1, grant(root, "(OI)(CI)M", false));
+    }
+    for file in &i.secret_files {
+        out.push(grant(file.clone(), "(R)", true));
     }
     match &i.config_dir {
         Some(c) => out.push(grant(c.clone(), "(OI)(CI)RX", false)),
