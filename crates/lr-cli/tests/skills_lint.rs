@@ -237,6 +237,7 @@ fn changes_through_the_cli(code: &str) -> bool {
 
 enum Token<'a> {
     Word(String),
+    File,
     Code(&'a str),
 }
 
@@ -277,14 +278,24 @@ fn tokens(clause: &str) -> Vec<Token<'_>> {
         .flat_map(|(i, part)| match i % 2 {
             1 => vec![Token::Code(part)],
             _ => part
-                .to_lowercase()
-                .split(|c: char| !c.is_ascii_alphabetic())
-                .filter(|w| !w.is_empty())
-                .map(|w| Token::Word(w.to_string()))
+                .split_whitespace()
+                .flat_map(
+                    |chunk| match CONFIG_FILES.iter().any(|f| chunk.contains(f)) {
+                        true => vec![Token::File],
+                        false => chunk
+                            .to_lowercase()
+                            .split(|c: char| !c.is_ascii_alphabetic())
+                            .filter(|w| !w.is_empty())
+                            .map(|w| Token::Word(w.to_string()))
+                            .collect(),
+                    },
+                )
                 .collect(),
         })
         .collect()
 }
+
+const MAX_FILLER: usize = 6;
 
 fn is_hand_edit(clause: &str) -> bool {
     let tokens = tokens(clause);
@@ -294,14 +305,13 @@ fn is_hand_edit(clause: &str) -> bool {
         };
         let negated =
             i > 0 && matches!(&tokens[i - 1], Token::Word(w) if w == "never" || w == "not");
-        let through_cli = tokens[i + 1..]
+        let filler = tokens[i + 1..]
             .iter()
-            .find_map(|t| match t {
-                Token::Code(code) => Some(*code),
-                Token::Word(_) => None,
-            })
-            .is_some_and(changes_through_the_cli);
-        HAND_EDITS.contains(&word.as_str()) && !negated && !through_cli
+            .take_while(|t| matches!(t, Token::Word(_)))
+            .count();
+        let object_is_cli = filler <= MAX_FILLER
+            && matches!(tokens.get(i + 1 + filler), Some(Token::Code(code)) if changes_through_the_cli(code));
+        HAND_EDITS.contains(&word.as_str()) && !negated && !object_is_cli
     });
     let assignment = tokens.iter().any(
         |t| matches!(t, Token::Code(code) if !changes_through_the_cli(code) && code.contains(" = ")),
@@ -369,6 +379,20 @@ fn the_hand_edit_check_tells_edits_from_descriptions() {
     );
     assert_eq!(hand_edits("Edit the file\n`runner.toml` by hand.").len(), 1);
     assert!(hand_edits("Never edit `runner.toml` by hand.").is_empty());
+    assert_eq!(
+        hand_edits("Edit runner.toml, then run `localrunner config set runner:a k v`.").len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("To change `policy.toml`, use `localrunner policy allow-secret s --label l`.")
+            .len(),
+        1
+    );
+    assert_eq!(
+        hand_edits("Set it in runner.toml with `localrunner config set runner:a k v`.").len(),
+        1
+    );
+    assert!(hand_edits("Use `localrunner config set runner:a k v` for `runner.toml`.").is_empty());
     assert_eq!(
         hand_edits("Put the clients in a `[[shared]]` block of `policy.toml`.").len(),
         1
