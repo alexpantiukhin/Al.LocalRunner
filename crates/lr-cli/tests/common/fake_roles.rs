@@ -161,13 +161,15 @@ impl Roles for FakeRoles {
 }
 
 /// The role side of `config` commands: whether writing needs rights, which roles were reloaded
-/// (running ones answer `reloaded`, `refuse` makes them refuse, `reload_error` makes the call
-/// fail) and restarted, and a restart command named after the role.
+/// (running ones answer `reloaded` with `restart_required`, `refuse` makes them refuse,
+/// `reload_error` makes the call fail) and restarted, and a restart command named after the
+/// role.
 pub struct FakeControl {
     pub rights: bool,
     pub running: bool,
     pub refuse: Option<String>,
     pub reload_error: Option<String>,
+    pub restart_required: Vec<String>,
     reloads: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
     restarts: Mutex<Vec<lr_cli::commands::down_cmd::Target>>,
 }
@@ -179,6 +181,7 @@ impl FakeControl {
             running,
             refuse: None,
             reload_error: None,
+            restart_required: Vec::new(),
             reloads: Mutex::new(Vec::new()),
             restarts: Mutex::new(Vec::new()),
         }
@@ -228,7 +231,7 @@ impl lr_cli::config_edit::RoleControl for FakeControl {
         }
         Ok(match self.running {
             true => Outcome::Reloaded {
-                restart_required: Vec::new(),
+                restart_required: self.restart_required.clone(),
             },
             false => Outcome::NotRunning,
         })

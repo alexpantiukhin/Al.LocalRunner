@@ -68,8 +68,8 @@ fn addresses<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<ListenValue>, D::Err
     Ok(parsed)
 }
 
-/// `[listen]`: read only when the service starts; `policy reload` reports changes and does not
-/// apply them.
+/// `[listen]`: the network addresses of the broker; `policy reload` rebinds them without a
+/// restart.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct ListenSection {
@@ -80,7 +80,8 @@ pub struct ListenSection {
 }
 
 impl ListenSection {
-    /// The start-time check: `container` is accepted only when `in_container` is true.
+    /// The check at start and at reload: `container` is accepted only when `in_container` is
+    /// true.
     pub fn check_at_start(&self, in_container: bool) -> Result<(), PolicyError> {
         if !in_container && self.addresses.contains(&ListenValue::Container) {
             return Err(PolicyError::at(

@@ -119,12 +119,10 @@ async fn reload_applies_networks_to_new_connections() {
     let mut runner = h.member_runner("other", "10.0.0.8", linux()).await;
     let (mut before, zone) = hub_with_zone(&h, "hub-a", "dev", "10.0.0.5").await;
     assert_eq!(zone, Some(Zone::Remote));
-    let applied = h
-        .handle
+    h.handle
         .reload_policy(&policy(NETWORK))
         .await
         .expect("reload applies");
-    assert!(applied.restart_required.is_empty(), "{applied:?}");
     let (mut after, zone) = hub_with_zone(&h, "hub-b", "ops", "10.0.0.6").await;
     assert_eq!(
         zone,
@@ -152,12 +150,10 @@ async fn reload_applies_shared_to_new_orders() {
     assert_eq!(runner.assign().await.spec.steps, vec![step("lan")]);
     runner.send(&started("before", 1)).await;
     hub.started_notice().await;
-    let applied = h
-        .handle
+    h.handle
         .reload_policy(&policy(POLICY))
         .await
         .expect("reload applies");
-    assert!(applied.restart_required.is_empty(), "{applied:?}");
     hub.send(&zoned_order("after", &[Zone::Shared, Zone::Lan]))
         .await;
     hub.accepted().await;

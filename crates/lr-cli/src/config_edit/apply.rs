@@ -39,18 +39,11 @@ impl TargetKind {
 
 /// Keys a running role does not take on reload: the kind of file, the dotted key (a table
 /// covers every key under it) and why the change waits for the next start.
-pub const RESTART_ONLY: &[(TargetKind, &str, &str)] = &[
-    (
-        TargetKind::Runner,
-        "allow_elevated",
-        "a runner checks it only when it starts",
-    ),
-    (
-        TargetKind::Broker,
-        "listen",
-        "the broker binds its addresses when it starts",
-    ),
-];
+pub const RESTART_ONLY: &[(TargetKind, &str, &str)] = &[(
+    TargetKind::Runner,
+    "allow_elevated",
+    "a runner checks it only when it starts",
+)];
 
 /// How [`run_change`] runs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

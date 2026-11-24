@@ -61,7 +61,7 @@ pub struct PolicyFile {
     pub grace: GraceSection,
     /// `[results]`.
     pub results: ResultsSection,
-    /// `[listen]`, applied only at start.
+    /// `[listen]`; `policy reload` rebinds the network listener to it.
     pub listen: ListenSection,
     /// `[networks]`: name to ranges; `policy reload` applies it to new connections and orders;
     /// default none.

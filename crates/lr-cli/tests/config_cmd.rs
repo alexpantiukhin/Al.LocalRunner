@@ -152,31 +152,61 @@ async fn allow_elevated_prints_widens_line_and_next_start_note() {
 #[tokio::test]
 async fn restart_only_key_names_the_command_and_does_not_restart_without_flag() {
     let dir = TempDir::new("config-restart-only");
-    let layout = with_runner(&dir);
-    let policy = layout.config_file("policy.toml");
-    std::fs::write(&policy, "[listen]\naddress = []\n").unwrap();
+    let layout = runner_layout(&dir, RUNNER);
     let roles = FakeControl::new(false, true);
     let elevator = FakeElevator::new(Ok(0));
-    let args = || set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
-    let r = run(&layout, args(), false, &roles, &elevator).await;
+    let r = run(
+        &layout,
+        set(r1(), "allow_elevated", "true"),
+        false,
+        &roles,
+        &elevator,
+    )
+    .await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert!(r.out.contains("broker: reloaded"), "{}", r.out);
+    assert!(r.out.contains("r1: reloaded"), "{}", r.out);
     assert!(r.out.contains("applies at the next start"), "{}", r.out);
-    assert!(r.out.contains("restart-command-of-broker"), "{}", r.out);
+    assert!(r.out.contains("restart-command-of-r1"), "{}", r.out);
     assert!(r.out.contains("connections drop"), "{}", r.out);
     assert!(roles.restarts().is_empty(), "no restart without --restart");
 
-    let mut again = set(Target::Broker, "listen.address", "[\"127.0.0.1:7342\"]");
+    let mut again = set(r1(), "allow_elevated", "false");
     again.restart = true;
     let r = run(&layout, again, false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
-    assert_eq!(roles.restarts(), [Role::Broker]);
+    assert_eq!(roles.restarts(), [Role::Runner("r1".into())]);
     assert!(r.out.contains("connections drop"), "{}", r.out);
 
-    let mut other = set(Target::Broker, "queue.strategy", "fair-share");
+    let mut other = set(r1(), "cpu", "2");
     other.restart = true;
     let r = run(&layout, other, false, &roles, &elevator).await;
-    assert_eq!(roles.restarts(), [Role::Broker], "{} {}", r.out, r.err);
+    assert_eq!(
+        roles.restarts(),
+        [Role::Runner("r1".into())],
+        "{} {}",
+        r.out,
+        r.err
+    );
+}
+
+#[tokio::test]
+async fn listen_applies_on_reload_without_a_restart() {
+    let dir = TempDir::new("config-listen-live");
+    let layout = with_runner(&dir);
+    std::fs::write(
+        layout.config_file("policy.toml"),
+        "[listen]\naddress = []\n",
+    )
+    .unwrap();
+    let roles = FakeControl::new(false, true);
+    let elevator = FakeElevator::new(Ok(0));
+    let mut listen = set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
+    listen.restart = true;
+    let r = run(&layout, listen, false, &roles, &elevator).await;
+    assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
+    assert!(r.out.contains("broker: reloaded"), "{}", r.out);
+    assert!(!r.out.contains("applies at the next start"), "{}", r.out);
+    assert!(roles.restarts().is_empty(), "{}", r.out);
 }
 
 #[tokio::test]
@@ -327,6 +357,8 @@ async fn the_elevated_child_handles_only_the_broker_and_the_parent_the_rest() {
         "a runner is reloaded by the parent"
     );
 
+    let mut child = child;
+    child.restart_required = vec!["a broker setting".into()];
     let mut listen = set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
     listen.restart = true;
     let r = run(&layout, listen.clone(), true, &child, &elevator).await;
@@ -334,7 +366,8 @@ async fn the_elevated_child_handles_only_the_broker_and_the_parent_the_rest() {
     assert_eq!(child.reloads(), [Role::Broker]);
     assert_eq!(child.restarts(), [Role::Broker]);
 
-    let parent = FakeControl::new(true, true);
+    let mut parent = FakeControl::new(true, true);
+    parent.restart_required = vec!["a broker setting".into()];
     let mut listen = set(Target::Broker, "listen.address", "[\"127.0.0.1:7342\"]");
     listen.restart = true;
     let r = run(&layout, listen, false, &parent, &elevator).await;
@@ -408,12 +441,10 @@ async fn a_refused_reload_keeps_the_file_and_exits_one() {
 #[tokio::test]
 async fn a_repeated_command_reloads_and_restarts_again() {
     let dir = TempDir::new("config-repeat");
-    let layout = runner_layout(&dir, RUNNER);
-    std::fs::write(
-        layout.config_file("policy.toml"),
-        "[listen]\naddress = [\"127.0.0.1:7341\"]\n",
-    )
-    .unwrap();
+    let layout = runner_layout(
+        &dir,
+        &format!("allow_elevated = true\nmem_mb = 1024\ncpu = 1\n{ENV}"),
+    );
     let roles = FakeControl::new(false, true);
     let elevator = FakeElevator::new(Ok(0));
     let r = run(&layout, set(r1(), "cpu", "1"), false, &roles, &elevator).await;
@@ -423,15 +454,15 @@ async fn a_repeated_command_reloads_and_restarts_again() {
     assert_eq!(roles.reloads(), [Role::Runner("r1".into())]);
     assert_eq!(
         std::fs::read_to_string(runner_file(&layout)).unwrap(),
-        RUNNER
+        format!("allow_elevated = true\nmem_mb = 1024\ncpu = 1\n{ENV}")
     );
 
-    let mut again = set(Target::Broker, "listen.address", "[\"127.0.0.1:7341\"]");
+    let mut again = set(r1(), "allow_elevated", "true");
     again.restart = true;
     let r = run(&layout, again, false, &roles, &elevator).await;
     assert_eq!(r.code, Ok(0), "{} {}", r.out, r.err);
     assert!(r.out.contains("no change in"), "{}", r.out);
-    assert_eq!(roles.restarts(), [Role::Broker]);
+    assert_eq!(roles.restarts(), [Role::Runner("r1".into())]);
 }
 
 #[test]

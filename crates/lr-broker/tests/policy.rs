@@ -3,7 +3,7 @@ mod common;
 use common::{err, ok, HOST, SPEC_EXAMPLE};
 use lr_broker::policy::{
     ActivePolicy, AllowEntry, CacheShare, CancelOthers, CommandMode, ListenValue, LocalUserEntry,
-    OrphanQueued, OrphanRunning, OthersOrders, RestartOnly,
+    OrphanQueued, OrphanRunning, OthersOrders,
 };
 use lr_core::{GroupBy, NumAttr, NumTest, StrAttr, StrTest, Strategy, Term, Zone};
 use std::net::{IpAddr, Ipv4Addr};
@@ -155,17 +155,16 @@ fn defaults_applied_grace_3_no_aging() {
 }
 
 #[test]
-fn listen_change_on_reload_reported_not_applied() {
+fn listen_change_on_reload_applied() {
     let (mut active, _) =
         ActivePolicy::start("[listen]\naddress = \"192.168.1.10:7443\"\n", HOST, false).unwrap();
-    let applied = active
+    active
         .reload("[listen]\naddress = \"10.0.0.5:7443\"\n")
         .unwrap();
-    assert_eq!(applied.restart_required, [RestartOnly::Listen]);
     assert_eq!(
         active.file().listen.addresses,
         [ListenValue::Explicit(
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 5)),
             Some(7443)
         )]
     );

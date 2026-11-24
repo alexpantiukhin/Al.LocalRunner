@@ -43,7 +43,7 @@ impl NodeRole {
 pub fn policy_template(user: &str) -> String {
     format!(
         "# Broker policy (spec 3.5). `localrunner policy check` validates this file and\n\
-         # `localrunner policy reload` applies it; [listen] applies at start only.\n\
+         # `localrunner policy reload` applies it, [listen] included.\n\
          \n\
          # The broker listens on the network only on explicit addresses, and only while a join\n\
          # code is open or a machine has joined. Wildcard addresses are refused.\n\
