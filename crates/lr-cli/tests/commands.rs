@@ -4,11 +4,12 @@ use async_trait::async_trait;
 use lr_abstractions::fakes::{FakeNetwork, ManualClock};
 use lr_abstractions::{Dialer, Frame, Peer, PeerAccess};
 use lr_cli::admin::{serve, AdminApi};
+use lr_cli::commands::jobs::{missing_label_text, LabelLookup};
 use lr_cli::commands::view::{add_ages, status_json, status_text};
 use lr_core::{Endpoint, JobId, JobState, Timestamp};
 use lr_proto::{
-    AdminReply, AdminRequest, IpcChannel, IpcOpen, IpcOpenReply, JobSummary, PoolLoad, QueueItem,
-    RunningView, StatusView, WireSource, PROTOCOL_VERSION,
+    AdminReply, AdminRequest, IpcChannel, IpcOpen, IpcOpenReply, JobDetail, JobSummary, PoolLoad,
+    QueueItem, RunningView, StatusView, WireSource, PROTOCOL_VERSION,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -65,9 +66,73 @@ fn status_without_a_hub_says_so_briefly() {
     let out = localrunner(&["status"]);
     assert_eq!(out.status.code(), Some(1));
     let err = String::from_utf8_lossy(&out.stderr);
+    let note = format!(
+        "state directory: {} (from LOCALRUNNER_STATE_DIR)",
+        std::env::temp_dir().join("lr-cli-no-state").display()
+    );
     assert_eq!(
         err.trim(),
-        "error: the hub is not running; start it: localrunner up"
+        format!("{note}\nerror: the hub is not running; start it: localrunner up")
+    );
+}
+
+#[test]
+fn the_state_directory_note_goes_to_stderr_of_status_doctor_up_and_down_only() {
+    let dir = std::env::temp_dir().join("lr-cli-no-state");
+    for cmd in ["status", "doctor"] {
+        let out = localrunner(&[cmd]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.starts_with(&format!(
+                "state directory: {} (from LOCALRUNNER_STATE_DIR)\n",
+                dir.display()
+            )),
+            "{cmd}: {err}"
+        );
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("(from LOCALRUNNER_STATE_DIR)"));
+    }
+    let out = localrunner(&["jobs", "--as", "dev"]);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("state directory:"));
+    let out = Command::new(env!("CARGO_BIN_EXE_localrunner"))
+        .args(["status", "--state-dir"])
+        .arg(&dir)
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("LOCALRUNNER_STATE_DIR")
+        .output()
+        .expect("the binary runs");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.starts_with(&format!(
+            "state directory: {} (from --state-dir)\n",
+            dir.display()
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn the_state_directory_note_names_where_the_directory_came_from() {
+    let layout = lr_cli::paths::Layout::new("/tmp/s".into(), "/tmp/s".into());
+    let path = std::path::Path::new("/tmp/s");
+    let env = std::ffi::OsStr::new("/tmp/s");
+    assert_eq!(
+        layout.state_dir_note(Some(path), Some(env)).unwrap(),
+        format!(
+            "state directory: {} (from --state-dir)",
+            layout.root.display()
+        )
+    );
+    assert_eq!(
+        layout.state_dir_note(None, Some(env)).unwrap(),
+        format!(
+            "state directory: {} (from LOCALRUNNER_STATE_DIR)",
+            layout.root.display()
+        )
+    );
+    assert_eq!(layout.state_dir_note(None, None), None);
+    assert_eq!(
+        layout.state_dir_note(None, Some(std::ffi::OsStr::new(""))),
+        None
     );
 }
 
@@ -121,12 +186,14 @@ fn status_json_has_project_source_label() {
             summary: summary("j1", JobState::Running),
             steps: Vec::new(),
             last_lines: Vec::new(),
+            last_output_ago_ms: None,
         }],
         queue: vec![QueueItem {
             summary: summary("j2", JobState::Queued),
             position: 1,
             wait_reason: Some("runner busy".into()),
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -136,6 +203,7 @@ fn status_json_has_project_source_label() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let json = status_json(&[("local".to_string(), view)]);
     let brokers = json["brokers"].as_array().expect("brokers array");
@@ -148,6 +216,77 @@ fn status_json_has_project_source_label() {
         assert_eq!(item["label"], "agent-1", "{list}: {item}");
     }
     assert_eq!(brokers[0]["queue"][0]["wait_reason"], "runner busy");
+}
+
+fn queue_of(items: Vec<(&str, Option<i64>, &[&str])>) -> Vec<(String, StatusView)> {
+    let queue = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, (job, priority, labels))| {
+            let mut s = summary(job, JobState::Queued);
+            s.labels = labels.iter().map(|l| l.to_string()).collect();
+            QueueItem {
+                summary: s,
+                position: i as u32 + 1,
+                wait_reason: None,
+                wait_code: None,
+                priority,
+            }
+        })
+        .collect();
+    let view = StatusView {
+        running: Vec::new(),
+        queue,
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+        queue_total: None,
+    };
+    vec![("local".to_string(), view)]
+}
+
+#[test]
+fn status_shows_the_priority_of_each_queued_order_when_the_broker_sends_it() {
+    let views = queue_of(vec![("hi", Some(50), &["release"]), ("lo", Some(0), &[])]);
+    let text = status_text(&views, Timestamp(10_000));
+    let line_of = |job: &str| {
+        text.lines()
+            .find(|l| l.contains(&format!("  {job}  ")))
+            .unwrap_or_else(|| panic!("{job}: {text}"))
+            .to_string()
+    };
+    assert!(line_of("hi").ends_with("#1  priority 50"), "{text}");
+    assert!(line_of("lo").ends_with("#2  priority 0"), "{text}");
+    let json = status_json(&views);
+    let queue = &json["brokers"][0]["queue"];
+    assert_eq!(queue[0]["priority"], 50);
+    assert_eq!(queue[1]["priority"], 0);
+    assert_eq!(
+        queue[0]["label"], "agent-1",
+        "the JSON key of the client label stays"
+    );
+    assert_eq!(queue[0]["labels"], serde_json::json!(["release"]));
+}
+
+#[test]
+fn an_older_broker_sends_no_priority_and_status_prints_none() {
+    let views = queue_of(vec![("old", None, &[])]);
+    let text = status_text(&views, Timestamp(10_000));
+    assert!(!text.contains("priority"), "{text}");
+    let json = status_json(&views);
+    assert!(json["brokers"][0]["queue"][0]["priority"].is_null());
+    let wire = serde_json::json!({
+        "summary": serde_json::to_value(summary("w", JobState::Queued)).unwrap(),
+        "position": 1,
+        "wait_reason": null,
+    });
+    let item: QueueItem = serde_json::from_value(wire).expect("a queue item without the new field");
+    assert_eq!(item.priority, None);
 }
 
 #[test]
@@ -165,6 +304,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             position: 1,
             wait_reason: None,
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -174,6 +314,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let views = [("local".to_string(), view)];
     let now = Timestamp(195_000);
@@ -463,11 +604,24 @@ fn jobs_mine_prints_project_source_and_label_together() {
     use lr_cli::commands::jobs::mine_line;
     assert_eq!(
         mine_line(&summary("j1", JobState::Running)),
-        "j1\tRunning\tunit\towner/repo\tsession\tagent-1"
+        "j1\tRunning\tunit\towner/repo\tsession\tagent-1\t-\t-"
     );
     let mut bare = summary("j2", JobState::Queued);
     (bare.project, bare.source, bare.label) = (None, None, None);
-    assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-");
+    assert_eq!(mine_line(&bare), "j2\tQueued\tunit\t-\t-\t-\t-\t-");
+    let mut ran = summary("j3", JobState::Passed);
+    ran.started_at = Some(Timestamp(2000));
+    ran.finished_at = Some(Timestamp(9000));
+    let line = mine_line(&ran);
+    let cells: Vec<&str> = line.split('\t').collect();
+    assert_eq!(
+        cells[6],
+        lr_cli::commands::timefmt::format_time(Timestamp(2000))
+    );
+    assert_eq!(
+        cells[7],
+        lr_cli::commands::timefmt::format_time(Timestamp(9000))
+    );
 }
 
 #[test]
@@ -591,4 +745,119 @@ fn prepare_ipc_failure_names_the_directory() {
     let layout = lr_cli::paths::Layout::new(root.clone(), dir.path().join("config"));
     let e = layout.prepare_ipc().unwrap_err().to_string();
     assert!(e.contains(&root.join("ipc").display().to_string()), "{e}");
+}
+
+fn detail_with_label(label: Option<&str>) -> JobDetail {
+    let mut s = summary("j1", JobState::Running);
+    s.label = label.map(String::from);
+    JobDetail {
+        summary: s,
+        note: None,
+        branch: None,
+        cwd: None,
+        os_user: None,
+        source: None,
+        github_run_url: None,
+        steps: Vec::new(),
+        secrets: Vec::new(),
+        cancelled_by: None,
+        wait_reason: None,
+    }
+}
+
+#[test]
+fn cancel_parses_without_as_so_the_message_can_name_the_label() {
+    use clap::Parser;
+    let cli = lr_cli::commands::Cli::try_parse_from(["localrunner", "cancel", "j1"]).unwrap();
+    assert!(matches!(
+        cli.command,
+        lr_cli::commands::Command::Cancel { label: None, .. }
+    ));
+}
+
+#[test]
+fn cancel_without_as_names_the_label_of_a_known_job() {
+    let d = detail_with_label(Some("agent-1"));
+    assert_eq!(
+        missing_label_text(Some("j1"), LabelLookup::Known(Some(&d))),
+        "cancel: --as <LABEL> is required; the label of j1 is agent-1 (use --force for a job of another label)"
+    );
+}
+
+#[test]
+fn cancel_without_as_says_unknown_for_an_unknown_job() {
+    let text = missing_label_text(Some("j9"), LabelLookup::Unknown);
+    assert!(text.starts_with("cancel: --as <LABEL> is required; job j9 is not known"));
+    assert!(text.contains("label is unknown"), "{text}");
+}
+
+#[test]
+fn cancel_without_as_does_not_name_a_label_the_status_hides() {
+    let d = detail_with_label(None);
+    let text = missing_label_text(Some("j1"), LabelLookup::Known(Some(&d)));
+    assert!(text.contains("not shown to you"), "{text}");
+    assert!(!text.contains("agent-1"));
+    assert_eq!(
+        missing_label_text(Some("j1"), LabelLookup::Unasked),
+        "cancel: --as <LABEL> is required"
+    );
+    assert_eq!(
+        missing_label_text(None, LabelLookup::Unasked),
+        "cancel: --as <LABEL> is required"
+    );
+}
+
+fn status_with_output_age(ago: Option<u64>) -> Vec<(String, StatusView)> {
+    let view = StatusView {
+        running: vec![RunningView {
+            summary: summary("j1", JobState::Running),
+            steps: Vec::new(),
+            last_lines: Vec::new(),
+            last_output_ago_ms: ago,
+        }],
+        queue: Vec::new(),
+        recent: Vec::new(),
+        pool: PoolLoad {
+            used_mem_mb: 0,
+            total_mem_mb: 1024,
+            used_cpu: 0,
+            total_cpu: 1,
+        },
+        next: None,
+        queue_total: None,
+    };
+    vec![("local".to_string(), view)]
+}
+
+#[test]
+fn status_says_how_long_ago_a_running_job_last_wrote_to_its_log() {
+    let text = status_text(&status_with_output_age(Some(7_000)), Timestamp(10_000));
+    assert!(text.contains("  last output 7.0s ago"), "{text}");
+    let text = status_text(&status_with_output_age(Some(125_000)), Timestamp(10_000));
+    assert!(text.contains("  last output 2m05s ago"), "{text}");
+    let text = status_text(&status_with_output_age(None), Timestamp(10_000));
+    assert!(!text.contains("last output"), "{text}");
+}
+
+#[test]
+fn status_json_has_the_output_age_of_a_running_job_when_the_broker_gave_one() {
+    let json = status_json(&status_with_output_age(Some(7_000)));
+    assert_eq!(
+        json["brokers"][0]["running"][0]["last_output_ago_ms"],
+        7_000
+    );
+    let json = status_json(&status_with_output_age(None));
+    assert!(json["brokers"][0]["running"][0]["last_output_ago_ms"].is_null());
+}
+
+#[test]
+fn a_status_from_an_older_broker_has_no_output_age() {
+    let mut running = serde_json::to_value(&status_with_output_age(None)[0].1.running[0]).unwrap();
+    assert!(running.get("last_output_ago_ms").is_none(), "{running}");
+    running
+        .as_object_mut()
+        .unwrap()
+        .remove("last_output_ago_ms");
+    let back: RunningView = serde_json::from_value(running).unwrap();
+    assert_eq!(back.last_output_ago_ms, None);
 }

@@ -347,6 +347,7 @@ impl Engine {
             confirmed: false,
             gone_since: None,
             lost_floor: None,
+            last_output_at: None,
         }
     }
 

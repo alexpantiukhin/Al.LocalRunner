@@ -45,6 +45,7 @@ fn the_upgrade_cancel_prompt_counts_only_the_jobs_of_this_installation() {
     let job = |job: &str, runner: &str| RunningJob {
         job: job.into(),
         runner: Some(runner.into()),
+        running_ms: None,
     };
     let activity = Activity {
         running: vec!["j1".into(), "j2".into(), "j3".into()],

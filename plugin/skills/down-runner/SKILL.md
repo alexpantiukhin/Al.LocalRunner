@@ -14,4 +14,5 @@ Inputs: runner names (or `hub`, `broker`), `--drain` or `--cancel`. A runner is 
 3. A broker installed as an OS service is not stopped by `down`: its admin channel is open only to an administrator. For a running service `down broker` says so and prints the restart command to run from an elevated shell (code 1 for a named broker; a bare `down` prints it and keeps code 0); for an installed service that is not running it says that. Never run the elevated command without the user's go-ahead. A runner installed as an OS service that `down` cannot reach (Windows) is named with the stop command for an administrator, code 1; report it, never run it without the go-ahead. A named role that is not running gives code 1.
 4. Read `../../shared/os/<windows|linux|macos>.md` for the `ci` runner: after stopping it wait about 30 seconds before starting it again, or GitHub rejects the session as a conflict.
 5. Never stop processes this plugin did not start.
-6. Finish with `status-runner`.
+6. A stopped runner comes back with `localrunner up <name>` (see `up-runner`), without touching the others.
+7. Finish with `status-runner`.

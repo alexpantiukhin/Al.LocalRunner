@@ -582,3 +582,24 @@ fn the_canceller_and_the_recent_filter_are_optional_both_ways() {
     };
     assert_eq!(big.effective_count(10), STATUS_LIMIT_MAX);
 }
+
+#[test]
+fn programs_missing_is_optional_on_the_wire() {
+    let mut c = caps();
+    let v = serde_json::to_value(&c).unwrap();
+    assert!(
+        v.get("programs_missing").is_none(),
+        "an empty set is not sent"
+    );
+    c.programs_missing = ["cargo".to_string()].into();
+    let v = serde_json::to_value(&c).unwrap();
+    assert_eq!(v["programs_missing"], json!(["cargo"]));
+    assert_eq!(serde_json::from_value::<WireCapabilities>(v).unwrap(), c);
+    let mut old = serde_json::to_value(caps()).unwrap();
+    old.as_object_mut().unwrap().remove("programs_missing");
+    let read: WireCapabilities = serde_json::from_value(old).unwrap();
+    assert!(
+        read.programs_missing.is_empty(),
+        "a runner of an earlier version sends none"
+    );
+}

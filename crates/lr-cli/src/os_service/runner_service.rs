@@ -7,6 +7,8 @@
 use super::autostart::plist;
 use super::quote::{systemd_command_line, windows_command_line, xml};
 use super::{Action, Os, Tolerate};
+use crate::runner_config::SecretFrom;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// What `autostart on|off runner <name> --service` needs.
@@ -24,6 +26,9 @@ pub struct RunnerServiceInputs {
     pub config_dir: Option<PathBuf>,
     /// The OS user who installs: the account of the service on Linux and macOS.
     pub user: String,
+    /// The files of the `file:` sources of `[secret.*]`: the Windows service account gets read
+    /// access to each, as to its own key.
+    pub secret_files: Vec<PathBuf>,
 }
 
 /// The privileges the Windows service keeps: no impersonation, so a job of the runner cannot
@@ -825,11 +830,20 @@ pub fn local_runner_refusal(os: Os, name: &str, joined: bool) -> Option<String> 
     (os == Os::Windows && !joined).then(|| {
         format!(
             "runner {name} reaches its broker over this user's local channel, which a Windows \
-             service account cannot use; join it to the broker with its own key (`localrunner \
-             broker add --runners 1`, then `localrunner runner join <address> --name {name}`) \
-             or keep its login autostart"
+             service account cannot use; {}, or keep its login autostart",
+            join_steps(name)
         )
     })
+}
+
+/// The commands that give a local runner its own broker key, after which it may become a
+/// service: `broker add`, `runner join`, then `autostart on runner <name> --service`.
+pub fn join_steps(name: &str) -> String {
+    format!(
+        "join it to the broker with its own key (`localrunner broker add --runners 1`, then \
+         `localrunner runner join <address> --name {name}`, then `localrunner autostart on \
+         runner {name} --service`)"
+    )
 }
 
 /// Why runner `name` gets no service: its directory is missing (a typo, or the elevated run
@@ -1031,6 +1045,118 @@ pub fn network_identity_note(i: &RunnerServiceInputs) -> String {
     )
 }
 
+/// What a runner of `needs` (its tags, platforms and services) and `secrets` (its
+/// `[secret.*]` sources) should know before it becomes the OS service of `i`, one line each:
+/// the service has no `PATH` of the user and (on Windows) reaches the network as the computer
+/// account, stopping it ends running jobs without a drain, an `env:` secret is invisible to
+/// it, and a `docker` tag asks for the Docker engine. Names and variable names only, never a
+/// value.
+pub fn service_notes(
+    i: &RunnerServiceInputs,
+    needs: &[String],
+    secrets: &BTreeMap<String, SecretFrom>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if i.os == Os::Windows {
+        out.push(
+            "the service account does not have your PATH or the tools installed for your user \
+             only: jobs see only tools installed for all users"
+                .to_string(),
+        );
+        out.push(network_identity_note(i));
+    }
+    out.push(format!(
+        "stopping the service ends running jobs at once, without a drain; use `localrunner down \
+         {}` first where it reaches the runner",
+        i.name
+    ));
+    for (secret, from) in secrets {
+        match from {
+            SecretFrom::Env(var) => out.push(format!(
+                "[secret.{secret}] from = \"env:{var}\": the service does not see the \
+                 variables of your shell or user ({}); the secret will be missing for its jobs; \
+                 use from = \"file:PATH\" with a file only the service account reads",
+                service_env_hint(i.os)
+            )),
+            SecretFrom::File(path) => out.extend(file_secret_notes(i, secret, path)),
+            SecretFrom::Keychain(_) => {}
+        }
+    }
+    if needs.iter().any(|n| {
+        n.to_ascii_lowercase()
+            .split(['-', '_', '.', ' '])
+            .any(|w| w == "docker")
+    }) {
+        out.push(format!(
+            "runner {} declares `docker`: {}",
+            i.name,
+            docker_hint(i)
+        ));
+    }
+    out
+}
+
+fn file_secret_notes(i: &RunnerServiceInputs, secret: &str, path: &Path) -> Vec<String> {
+    let shown = path.display();
+    if !path.is_file() {
+        return vec![format!(
+            "[secret.{secret}] from = \"file:{shown}\": the file does not exist; create it \
+             before a job asks for the secret, which otherwise ends with secret_missing"
+        )];
+    }
+    let mut out = Vec::new();
+    if i.os == Os::Windows {
+        out.push(format!(
+            "[secret.{secret}] from = \"file:{shown}\": the service account gets read access to \
+             the file, and `autostart off` takes it back; remove the access of other users \
+             yourself, the file holds the secret"
+        ));
+    }
+    if group_or_other_can_use(path) {
+        out.push(format!(
+            "[secret.{secret}] from = \"file:{shown}\": other users can read the file; \
+             restrict it to {} (chmod 600)",
+            i.user
+        ));
+    }
+    out
+}
+
+#[cfg(unix)]
+fn group_or_other_can_use(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o077 != 0)
+}
+
+#[cfg(not(unix))]
+fn group_or_other_can_use(_path: &Path) -> bool {
+    false
+}
+
+fn service_env_hint(os: Os) -> &'static str {
+    match os {
+        Os::Windows => "only machine-level variables reach a Windows service",
+        Os::Linux => "only what the systemd unit sets reaches it",
+        Os::MacOs => "only what the LaunchDaemon plist sets reaches it",
+    }
+}
+
+fn docker_hint(i: &RunnerServiceInputs) -> String {
+    match i.os {
+        Os::Windows => "the service account is not you and cannot open the pipe of Docker \
+            Desktop, which is the signed-in user's: its jobs may not reach the Docker engine"
+            .to_string(),
+        Os::Linux => format!(
+            "`{}` must be in the `docker` group when the service starts, or its jobs cannot \
+             reach the Docker engine",
+            i.user
+        ),
+        Os::MacOs => "a LaunchDaemon does not see the Docker Desktop socket of your home, so \
+            its jobs may not reach the Docker engine"
+            .to_string(),
+    }
+}
+
 /// A right the Windows service account gets on one path for as long as the service exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
@@ -1067,6 +1193,9 @@ pub fn windows_grants(i: &RunnerServiceInputs) -> Vec<Grant> {
     ];
     if let Some(root) = job_root(i) {
         out.insert(1, grant(root, "(OI)(CI)M", false));
+    }
+    for file in &i.secret_files {
+        out.push(grant(file.clone(), "(R)", true));
     }
     match &i.config_dir {
         Some(c) => out.push(grant(c.clone(), "(OI)(CI)RX", false)),

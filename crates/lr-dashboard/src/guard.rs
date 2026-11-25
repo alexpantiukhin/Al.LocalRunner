@@ -12,25 +12,60 @@ pub const CSRF_HEADER: &str = "x-lr-csrf";
 pub(crate) struct AppState<D> {
     pub(crate) source: Arc<D>,
     pub(crate) user: String,
-    pub(crate) launch_token: Arc<Mutex<Option<String>>>,
+    pub(crate) launch_token: Arc<LaunchTokens>,
     pub(crate) session: String,
     pub(crate) csrf: String,
     pub(crate) port: u16,
     pub(crate) stop: watch::Receiver<bool>,
 }
 
-impl<D> AppState<D> {
-    /// Spends the launch token: true once for the right token, false for a wrong one and for
-    /// every exchange after the first.
+/// How many unspent launch tokens the dashboard keeps; a new link beyond it retires the oldest.
+pub(crate) const MAX_UNSPENT: usize = 8;
+
+/// The launch tokens nobody has exchanged for a session yet. Each is good once.
+#[derive(Default)]
+pub(crate) struct LaunchTokens(Mutex<Vec<String>>);
+
+impl LaunchTokens {
+    pub(crate) fn with(first: String) -> LaunchTokens {
+        LaunchTokens(Mutex::new(vec![first]))
+    }
+
+    pub(crate) fn add(&self, token: String) {
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if all.len() >= MAX_UNSPENT {
+            all.remove(0);
+        }
+        all.push(token);
+    }
+
+    pub(crate) fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     pub(crate) fn redeem(&self, token: &str) -> bool {
-        let mut slot = self.launch_token.lock().unwrap_or_else(|e| e.into_inner());
-        match slot.as_deref() {
-            Some(expected) if ct_eq(token.as_bytes(), expected.as_bytes()) => {
-                *slot = None;
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut found = None;
+        for (i, expected) in all.iter().enumerate() {
+            if ct_eq(token.as_bytes(), expected.as_bytes()) {
+                found = Some(i);
+            }
+        }
+        match found {
+            Some(i) => {
+                all.remove(i);
                 true
             }
-            _ => false,
+            None => false,
         }
+    }
+}
+
+impl<D> AppState<D> {
+    /// Spends a launch token: true once for each token the dashboard issued, false for a wrong
+    /// one and for every exchange after the first with the same token.
+    pub(crate) fn redeem(&self, token: &str) -> bool {
+        self.launch_token.redeem(token)
     }
 
     pub(crate) fn cookie_name(&self) -> String {

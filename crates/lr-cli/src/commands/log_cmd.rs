@@ -22,6 +22,7 @@ const MAX_PENDING: usize = 64 * 1024;
 pub struct LogPrinter {
     redactor: Arc<Redactor>,
     pending: String,
+    named: bool,
 }
 
 /// The redactor of CLI output: the built-in sensitive names plus `[redact] fields` of
@@ -42,11 +43,36 @@ impl Default for LogPrinter {
 }
 
 impl LogPrinter {
-    /// A printer that masks with `redactor`.
+    /// A printer that masks with `redactor` and names the rule of a value masked by a sensitive
+    /// name (`***(name: command)`).
     pub fn new(redactor: Arc<Redactor>) -> LogPrinter {
         LogPrinter {
             redactor,
             pending: String::new(),
+            named: true,
+        }
+    }
+
+    /// A printer that masks with `redactor` and shows every mask as `***`.
+    pub fn plain(redactor: Arc<Redactor>) -> LogPrinter {
+        LogPrinter {
+            named: false,
+            ..LogPrinter::new(redactor)
+        }
+    }
+
+    fn fresh(&self) -> LogPrinter {
+        LogPrinter {
+            redactor: self.redactor.clone(),
+            pending: String::new(),
+            named: self.named,
+        }
+    }
+
+    fn redact(&self, text: &str) -> String {
+        match self.named {
+            true => self.redactor.redact_job_text(text),
+            false => self.redactor.redact_text(text),
         }
     }
 
@@ -59,13 +85,13 @@ impl LogPrinter {
             None => return String::new(),
         };
         let done: String = self.pending.drain(..cut).collect();
-        self.redactor.redact_text(&done)
+        self.redact(&done)
     }
 
     /// The redacted rest after the last line end.
     pub fn finish(&mut self) -> String {
         let rest = std::mem::take(&mut self.pending);
-        self.redactor.redact_text(&rest)
+        self.redact(&rest)
     }
 }
 
@@ -91,6 +117,17 @@ pub async fn find_log(
     redactor: &Arc<Redactor>,
     out: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
+    find_log_with(client, broker, q, LogPrinter::new(redactor.clone()), out).await
+}
+
+/// [`find_log`] with the printer that masks the text.
+pub async fn find_log_with(
+    client: &IpcClient,
+    broker: Option<&str>,
+    q: &LogQuery,
+    printer: LogPrinter,
+    out: &mut dyn FnMut(&str),
+) -> Result<String, String> {
     let (names, mut problems) = reachable(client, broker).await?;
     for b in names {
         let req = CliRequest::Read(CliRead {
@@ -104,7 +141,7 @@ pub async fn find_log(
             },
         });
         client.send(&req).await?;
-        let mut printer = LogPrinter::new(redactor.clone());
+        let mut printer = printer.fresh();
         loop {
             match client.recv::<CliReply>().await? {
                 CliReply::LogChunk { text, end, .. } => {

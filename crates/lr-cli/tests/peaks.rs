@@ -94,6 +94,7 @@ fn status_json_carries_peaks_of_recent_jobs() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let mut json = status_json(&[("local".to_string(), view)]);
     add_ages(&mut json, Timestamp(10_000));
@@ -125,6 +126,7 @@ fn runners_list_shows_enforcement() {
         enforcement: enforcement.map(str::to_string),
         version: None,
         enforce_limit: false,
+        programs_missing: Default::default(),
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
         name: name.into(),
@@ -152,13 +154,12 @@ fn runners_list_shows_enforcement() {
     .join("\n");
     assert_eq!(text.matches("enforcement").count(), 3, "{text}");
     assert!(
-        text.contains("    enforcement watcher (limit mode not supported: runs as warn)\n"),
+        text.contains("    enforcement watcher (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)\n"),
         "{text}"
     );
     assert!(
         text.contains(
-            "    enforcement unknown (limit mode not supported: runs as warn)
-"
+            "    enforcement unknown (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)\n"
         ),
         "{text}"
     );

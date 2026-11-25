@@ -16,6 +16,8 @@ pub fn show(layout: &Layout, name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("runner {name} has no runner.toml: run `localrunner init`"))?;
     let kind = if path == own_path(layout, name) {
         "its own copy; edits of the template do not reach it"
+    } else if crate::host::in_container() {
+        "the mounted file of this container; it is read directly, a copy of the runner is ignored"
     } else {
         "the template; every runner without an own copy reads it"
     };

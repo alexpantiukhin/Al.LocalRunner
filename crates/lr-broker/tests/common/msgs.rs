@@ -56,6 +56,7 @@ pub fn caps(platforms: &[&str], mem_mb: u64, cpu: u32) -> WireCapabilities {
         enforcement: None,
         version: None,
         enforce_limit: false,
+        programs_missing: Default::default(),
     }
 }
 
@@ -177,6 +178,7 @@ pub fn result(job: &str, seq: u64, state: lr_core::JobState, exit: i32) -> Runne
         detail: None,
         peak_disk_mb: None,
         peak_mem_mb: None,
+        finished_at: None,
     })
 }
 

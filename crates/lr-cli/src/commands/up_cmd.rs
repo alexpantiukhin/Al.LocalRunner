@@ -189,7 +189,7 @@ fn keep_std_handles_from_children() {
     }
 }
 
-fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
+pub(crate) fn spawn(exe: &Path, args: &[String]) -> std::io::Result<u32> {
     let mut cmd = Command::new(exe);
     cmd.args(args)
         .env(
@@ -310,9 +310,82 @@ pub fn service_runner_line(os: crate::os_service::Os, name: &str, running: Optio
     }
 }
 
-/// `up [role]`: [`up_with`] that starts the roles as background processes of this binary and
-/// waits for them at most 15 s.
-pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
+/// What `up` starts: the roles and, when it names runners, only those of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    /// The roles to start.
+    pub roles: Vec<NodeRole>,
+    /// Only these runners when the command named some; every runner of the role otherwise.
+    pub runners: Option<BTreeSet<String>>,
+}
+
+/// The selection of `up names`, with the same names as `down`: `hub`, `broker`, `runner` (every
+/// runner), a runner of this installation (also as `local:<name>`), and `all`. Without names the
+/// roles `init` created. An unknown name is an error that lists the names of this installation.
+pub fn selection(layout: &Layout, names: &[String]) -> Result<Selection, String> {
+    if names.is_empty() {
+        return Ok(Selection {
+            roles: chosen_roles(layout, None)?,
+            runners: None,
+        });
+    }
+    let known = layout.runner_names();
+    let mut roles: Vec<NodeRole> = Vec::new();
+    let mut runners: BTreeSet<String> = BTreeSet::new();
+    let mut every_runner = false;
+    let mut unknown = Vec::new();
+    let mut add = |role: NodeRole| {
+        if !roles.contains(&role) {
+            roles.push(role);
+        }
+    };
+    for name in names {
+        let bare = match name.strip_prefix("local:") {
+            Some(rest) if !rest.is_empty() => rest,
+            _ => name.as_str(),
+        };
+        match bare {
+            "hub" => add(NodeRole::Hub),
+            "broker" => add(NodeRole::Broker),
+            "runner" => {
+                add(NodeRole::Runner);
+                every_runner = true;
+            }
+            "all" => {
+                for role in NodeRole::ALL {
+                    add(role);
+                }
+                every_runner = true;
+            }
+            n if known.iter().any(|k| k == n) => {
+                add(NodeRole::Runner);
+                runners.insert(n.to_string());
+            }
+            _ => unknown.push(name.as_str()),
+        }
+    }
+    if !unknown.is_empty() {
+        let mut available = vec![
+            "hub".to_string(),
+            "broker".to_string(),
+            "runner".to_string(),
+        ];
+        available.extend(known);
+        return Err(format!(
+            "no role or runner with this name: {}; names of this installation: {}",
+            unknown.join(", "),
+            available.join(", ")
+        ));
+    }
+    Ok(Selection {
+        roles,
+        runners: (!every_runner && !runners.is_empty()).then_some(runners),
+    })
+}
+
+/// `up [names]`: [`up_selected`] that starts the roles as background processes of this binary
+/// and waits for them at most 15 s.
+pub async fn up(layout: &Layout, names: Vec<String>) -> Result<i32, String> {
     let start = |argv: &[String]| -> std::io::Result<u32> {
         let exe = std::env::current_exe()
             .map_err(|e| std::io::Error::new(e.kind(), format!("cannot find this binary: {e}")))?;
@@ -320,7 +393,14 @@ pub async fn up(layout: &Layout, role: Option<RoleArg>) -> Result<i32, String> {
         keep_std_handles_from_children();
         spawn(&exe, argv)
     };
-    up_with(layout, role, STARTED_WITHIN, &start).await
+    up_selected(
+        layout,
+        || selection(layout, &names),
+        STARTED_WITHIN,
+        &start,
+        true,
+    )
+    .await
 }
 
 /// A starter of roles that runs `exe` detached, for [`up_with`].
@@ -356,6 +436,24 @@ pub async fn up_with_services(
     start: Spawn<'_>,
     stopped_service_fails: bool,
 ) -> Result<i32, String> {
+    let select = || {
+        Ok(Selection {
+            roles: chosen_roles(layout, role)?,
+            runners: None,
+        })
+    };
+    up_selected(layout, select, within, start, stopped_service_fails).await
+}
+
+/// [`up_with_services`] for a [`Selection`] that `select` makes once the upgrade lock has been
+/// checked.
+pub async fn up_selected(
+    layout: &Layout,
+    select: impl FnOnce() -> Result<Selection, String>,
+    within: Duration,
+    start: Spawn<'_>,
+    stopped_service_fails: bool,
+) -> Result<i32, String> {
     if let Some(lock) = crate::upgrade_lock::blocking_here(layout) {
         eprintln!(
             "{}: nothing is started; wait for it to finish (`localrunner status`) instead of running `up` again",
@@ -366,7 +464,10 @@ pub async fn up_with_services(
     if let Ok(me) = std::env::current_exe() {
         crate::os_service::remove_leftover(&me);
     }
-    let chosen = chosen_roles(layout, role)?;
+    let select = select()?;
+    let only = select.runners;
+    let wanted = |name: &str| only.as_ref().is_none_or(|set| set.contains(name));
+    let chosen = select.roles;
     let service = chosen.contains(&NodeRole::Broker) && layout.broker_is_service();
     let roles = startable(chosen, service);
     let before = running_roles(layout).await;
@@ -374,6 +475,9 @@ pub async fn up_with_services(
     let mut code = 0;
     if roles.contains(&NodeRole::Runner) {
         for (name, running) in runner_services(layout, &before).await {
+            if !wanted(&name) {
+                continue;
+            }
             let line = service_runner_line(crate::os_service::Os::current(), &name, running);
             if running == Some(true) {
                 println!("{line}");
@@ -402,7 +506,7 @@ pub async fn up_with_services(
             eprintln!("{line}");
         }
     }
-    for r in &before.runners {
+    for r in before.runners.iter().filter(|r| wanted(r)) {
         println!("runner {r}: already running");
         if let Some(line) = crate::link_report::runner_line(layout, r).await {
             eprintln!("{line}");
@@ -418,6 +522,9 @@ pub async fn up_with_services(
             return true;
         }
         let name = planned_runner(layout, argv);
+        if !wanted(&name) {
+            return false;
+        }
         match runner_start_verdict(layout, &name) {
             Ok(None) => true,
             Ok(Some(risk)) => {

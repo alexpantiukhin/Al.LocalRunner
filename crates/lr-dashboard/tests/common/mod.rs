@@ -78,6 +78,7 @@ fn job(
         },
         stale: false,
         wait_code: None,
+        priority: None,
     }
 }
 
@@ -124,6 +125,8 @@ pub fn snapshot() -> DashboardSnapshot {
             profiles: vec![],
             clients: vec![],
         },
+        history_page: None,
+        queue_count: None,
     }
 }
 

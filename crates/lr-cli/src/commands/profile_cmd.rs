@@ -80,6 +80,17 @@ pub fn report(profiles: &[Profile], machine: &Machine) -> (Vec<String>, bool) {
                             "    runner {runner}: env:{var} is not set in this shell; the variable must exist in the environment of the runner process"
                         ));
                     }
+                    Some(SecretFrom::File(path)) if path.is_file() => out.push(format!(
+                        "    runner {runner}: file:{} exists (not read by this check)",
+                        path.display()
+                    )),
+                    Some(SecretFrom::File(path)) => {
+                        ok = false;
+                        out.push(format!(
+                            "    runner {runner}: file:{} does not exist; create it before the runner needs the secret",
+                            path.display()
+                        ));
+                    }
                     Some(SecretFrom::Keychain(entry)) => {
                         out.push(format!("    runner {runner}: keychain:{entry} (not read by this check)"));
                     }

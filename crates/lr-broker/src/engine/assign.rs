@@ -250,6 +250,7 @@ impl Engine {
             detail,
             peak_mem_mb: peaks.0,
             peak_disk_mb: peaks.1,
+            finished_at: Some(self.now()),
         });
         self.notify_hub(&key.client, &key.job, OutboxKind::JobResult, &msg)
             .await;
@@ -362,6 +363,7 @@ impl Engine {
                     return;
                 };
                 let key = self.active[i].key.clone();
+                self.active[i].last_output_at = Some(now);
                 let limit = self.log_limit();
                 if let Err(e) = self
                     .store

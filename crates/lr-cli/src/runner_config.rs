@@ -30,6 +30,10 @@ pub struct ProgramSpec {
 pub enum SecretFrom {
     /// `env:VAR`: an environment variable of the runner process.
     Env(String),
+    /// `file:PATH`: the contents of a file (an absolute path), read at each request; one trailing
+    /// line break is dropped. The way for an OS service, which does not see the environment of
+    /// the user: the file is readable by the service account (spec 3.13).
+    File(PathBuf),
     /// `keychain:ENTRY`: the OS credential store.
     Keychain(String),
 }
@@ -76,13 +80,34 @@ pub struct RunnerConfig {
 fn secret_from(name: &str, text: &str) -> Result<SecretFrom, SettingsError> {
     match text.split_once(':') {
         Some(("env", var)) if !var.is_empty() => Ok(SecretFrom::Env(var.to_string())),
+        Some(("file", path)) if Path::new(path).is_absolute() => {
+            Ok(SecretFrom::File(PathBuf::from(path)))
+        }
+        Some(("file", _)) => Err(SettingsError(format!(
+            "[secret.{name}] from = \"{text}\": file: takes an absolute path"
+        ))),
         Some(("keychain", entry)) if !entry.is_empty() => {
             Ok(SecretFrom::Keychain(entry.to_string()))
         }
         _ => Err(SettingsError(format!(
-            "[secret.{name}] from = \"{text}\": use env:VARIABLE or keychain:ENTRY"
+            "[secret.{name}] from = \"{text}\": use env:VARIABLE, file:PATH or keychain:ENTRY"
         ))),
     }
+}
+
+/// The `[secret.*]` sources of an already parsed `runner.toml`; an entry that does not read
+/// (a mistake `RunnerConfig::parse` reports) is left out.
+pub fn secret_sources(table: &toml::Table) -> BTreeMap<String, SecretFrom> {
+    let Some(secrets) = table.get("secret").and_then(toml::Value::as_table) else {
+        return BTreeMap::new();
+    };
+    secrets
+        .iter()
+        .filter_map(|(name, entry)| {
+            let from = entry.get("from")?.as_str()?;
+            Some((name.clone(), secret_from(name, from).ok()?))
+        })
+        .collect()
 }
 
 impl RunnerConfig {
@@ -182,18 +207,23 @@ impl RunnerConfig {
     }
 
     /// Runs the `[programs]` lookups and checks in the `PATH` jobs get (`[env] path`) and keeps
-    /// only the programs that passed; returns one line per program that failed.
+    /// only the programs that passed; returns one line per program that failed. A program with a
+    /// `check` and no `path` is not looked up by name: the exit code of the check decides.
     pub fn check_programs(&mut self) -> Vec<String> {
         let search = self.settings.path.clone();
         let env = self.settings.base_env();
         let mut problems = Vec::new();
         self.settings.programs.clear();
+        self.settings.programs_missing.clear();
         for (name, spec) in &self.programs {
             match check_program(name, spec, search.as_deref(), &env) {
                 Ok(()) => {
                     self.settings.programs.insert(name.clone());
                 }
-                Err(why) => problems.push(format!("program {name}: {why}")),
+                Err(why) => {
+                    self.settings.programs_missing.insert(name.clone());
+                    problems.push(format!("program {name}: {why}"));
+                }
             }
         }
         problems
@@ -305,6 +335,7 @@ fn check_program(
     match (&spec.path, search) {
         (Some(p), _) if !p.is_file() => return Err(format!("{} does not exist", p.display())),
         (Some(_), _) => {}
+        (None, _) if spec.check.is_some() => {}
         (None, None) => {
             return Err("not looked up: runner.toml has no [env] path, the PATH of jobs".into())
         }

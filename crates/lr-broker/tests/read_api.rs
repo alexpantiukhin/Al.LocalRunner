@@ -22,7 +22,7 @@ async fn pool_with_jobs(h: &Harness) -> (Conn, Conn) {
 
 fn status(reply: ReadReply) -> StatusView {
     match reply {
-        ReadReply::Status(s) => s,
+        ReadReply::Status(s) => *s,
         other => panic!("expected status, got {other:?}"),
     }
 }
@@ -616,6 +616,11 @@ async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
     alex.send(&order("j2", req(512, 1, 60))).await;
     alex.accepted().await;
     let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
+    let seen_by_ci = seen_by_ci
+        .split("; priority:")
+        .next()
+        .unwrap_or_default()
+        .to_string();
     assert!(seen_by_ci.contains("the runner is busy"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("j1"), "{seen_by_ci}");
     assert!(!seen_by_ci.contains("order"), "{seen_by_ci}");
@@ -728,6 +733,111 @@ async fn recent_lists_cancelled_withdrawn_and_rejected_orders_with_actor_and_rea
     assert!(
         theirs.recent.iter().all(|j| j.cancelled_by.is_none()),
         "the canceller is hidden at summary visibility"
+    );
+}
+
+#[tokio::test]
+async fn history_offset_skips_runs_and_the_answer_counts_them_all() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    h.clock.advance(TEN_S);
+    alex.send(&cancel("j2", 2)).await;
+    cancel_acked(&mut alex).await;
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    let page = |limit: u64, offset: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            limit: Some(limit),
+            offset,
+            ..HistoryFilter::default()
+        })
+    };
+    let ReadReply::History { jobs, next, total } = alex.read(page(1, Some(1))).await else {
+        panic!("history")
+    };
+    let ids: Vec<&str> = jobs.iter().map(|j| j.job.0.as_str()).collect();
+    assert_eq!(ids, ["j2"], "the second most recently finished");
+    assert_eq!((next.as_deref(), total), (Some("2"), Some(3)));
+    let ReadReply::History { jobs, next, total } = alex.read(page(2, Some(2))).await else {
+        panic!("history")
+    };
+    let ids: Vec<&str> = jobs.iter().map(|j| j.job.0.as_str()).collect();
+    assert_eq!(ids, ["j3"]);
+    assert_eq!((next, total), (None, Some(3)));
+    let ReadReply::History { jobs, total, .. } = alex.read(page(5, Some(50))).await else {
+        panic!("history")
+    };
+    assert!(jobs.is_empty(), "past the end");
+    assert_eq!(total, Some(3));
+    let ReadReply::Details { jobs, total, .. } = alex
+        .read(ReadRequest::HistoryDetails(HistoryFilter {
+            limit: Some(1),
+            offset: Some(2),
+            ..HistoryFilter::default()
+        }))
+        .await
+    else {
+        panic!("details")
+    };
+    assert_eq!(jobs.len(), 1);
+    assert_eq!(total, Some(3));
+}
+
+#[tokio::test]
+async fn status_counts_the_whole_queue_whatever_the_size_of_the_list() {
+    let h = Harness::start("");
+    let (_r, mut alex) = pool_with_jobs(&h).await;
+    alex.send(&order("j3", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let s = status(
+        alex.read(ReadRequest::Status(StatusFilter {
+            limit: Some(1),
+            ..StatusFilter::default()
+        }))
+        .await,
+    );
+    assert_eq!(s.queue.len(), 1);
+    assert!(s.next.is_some(), "the list was cut");
+    assert_eq!(s.queue_total, Some(2), "j2 and j3 wait");
+}
+
+#[tokio::test]
+async fn history_window_keeps_the_runs_that_were_running_in_it() {
+    let h = Harness::start("");
+    let (r, mut alex) = pool_with_jobs(&h).await;
+    let ids =
+        |jobs: Vec<JobSummary>| -> Vec<String> { jobs.into_iter().map(|j| j.job.0).collect() };
+    let at = |ms: u64| Some(lr_core::Timestamp(START + ms));
+    let window = |since: Option<u64>, until: Option<u64>| {
+        ReadRequest::History(HistoryFilter {
+            ran_since: since.and_then(at),
+            ran_until: until.and_then(at),
+            ..HistoryFilter::default()
+        })
+    };
+    assert_eq!(
+        ids(history(alex.read(window(Some(5_000), None)).await)),
+        ["j1"],
+        "a run still going overlaps; an order that never started does not"
+    );
+    h.clock.advance(TEN_S);
+    r.send(&result("j1", 3, JobState::Passed, 0)).await;
+    h.until_state(ALEX, "j1", JobState::Passed).await;
+    assert_eq!(
+        ids(history(alex.read(window(Some(5_000), Some(8_000))).await)),
+        ["j1"]
+    );
+    assert!(history(alex.read(window(Some(60_000), None)).await).is_empty());
+    let before = ReadRequest::History(HistoryFilter {
+        ran_until: Some(lr_core::Timestamp(START - 1)),
+        ..HistoryFilter::default()
+    });
+    assert!(
+        history(alex.read(before).await).is_empty(),
+        "nothing had started before the window ended"
     );
 }
 

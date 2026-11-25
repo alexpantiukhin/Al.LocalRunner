@@ -194,6 +194,41 @@ fn listed<'a>(items: impl Iterator<Item = &'a String>) -> String {
     }
 }
 
+/// `programs not found: a, b`: what `runners` and `status` say next to a runner that declares
+/// programs it did not find; the runner still shows as online.
+pub fn missing_programs_text(missing: &std::collections::BTreeSet<String>) -> String {
+    format!(
+        "programs not found: {}",
+        missing
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Whether a runner that reports `runner` as its version lags behind `current`: it is older,
+/// or it reports none (a runner of an earlier version). A version that does not parse is not
+/// judged.
+pub fn version_behind(runner: Option<&str>, current: &str) -> bool {
+    use super::upgrade_cmd::parse_version;
+    let Some(current) = parse_version(current) else {
+        return false;
+    };
+    match runner {
+        None => true,
+        Some(v) => parse_version(v).is_some_and(|v| v.number < current.number),
+    }
+}
+
+/// What `runners` and `status` say about a runner whose version lags behind.
+pub fn behind_text(runner: Option<&str>, current: &str) -> String {
+    format!(
+        "version {} is behind {current}: run `localrunner upgrade` on its machine",
+        runner.unwrap_or("unknown")
+    )
+}
+
 fn liveness_text(r: &RunnerInfo) -> String {
     match (r.liveness, r.online) {
         (Some(RunnerLiveness::Stale), _) => match r.silent_for_s {
@@ -232,6 +267,12 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         listed(c.tags.iter()),
         listed(c.programs.iter()),
     ));
+    if !c.programs_missing.is_empty() {
+        out.push(format!(
+            "    {}",
+            missing_programs_text(&c.programs_missing)
+        ));
+    }
     if let (Some(busy), Some(can)) = (r.busy, r.can_start_now) {
         out.push(format!(
             "    {}; can start a job now: {}",
@@ -245,10 +286,16 @@ fn runner_block(r: &RunnerInfo, out: &mut Vec<String>) {
         Some(v) => out.push(format!("    version {v} (this binary: {mine})")),
         None => out.push(format!("    version unknown (this binary: {mine})")),
     }
+    if version_behind(c.version.as_deref(), mine) {
+        out.push(format!("    {}", behind_text(c.version.as_deref(), mine)));
+    }
     let older = if c.enforce_limit {
         ""
     } else {
-        " (limit mode not supported: runs as warn)"
+        match c.enforcement.as_deref() {
+            Some("watcher") => " (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)",
+            _ => " (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)",
+        }
     };
     out.push(format!(
         "    enforcement {}{older}",

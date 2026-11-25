@@ -19,6 +19,16 @@ pub struct CancelRequest {
     pub reason: Option<String>,
 }
 
+/// Which part of the history a snapshot carries: `limit` runs from run number `offset` (from 0,
+/// newest first). The default is the first page of the source's own size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HistoryWindow {
+    /// Runs to skip.
+    pub offset: u64,
+    /// Runs to carry; the source's default size when `None`.
+    pub limit: Option<u64>,
+}
+
 /// Why the data source could not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataError {
@@ -58,6 +68,13 @@ pub trait DataSource: Send + Sync {
 
     /// A fresh snapshot.
     async fn snapshot(&self) -> Result<Self::Snapshot, DataError>;
+
+    /// A fresh snapshot whose history is the part `history` names. A source that cannot page
+    /// serves its first page, which is what this default does.
+    async fn snapshot_page(&self, history: HistoryWindow) -> Result<Self::Snapshot, DataError> {
+        let _ = history;
+        self.snapshot().await
+    }
 
     /// Live updates from now on, for one subscriber (one SSE connection).
     async fn subscribe(&self) -> Result<Box<dyn EventStream<Self::Event>>, DataError>;

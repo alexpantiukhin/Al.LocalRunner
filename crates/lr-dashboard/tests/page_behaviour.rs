@@ -369,6 +369,93 @@ fn the_history_grid_has_a_finished_column_sorted_by_finish_time_until_a_header_i
     assert_eq!(out["explicit"][0], "queued-first", "{out}");
 }
 
+#[test]
+fn the_history_pager_shows_the_position_and_asks_the_server_for_the_page_wanted() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    let mut done = v["jobs"][0].clone();
+    done["list"] = serde_json::json!("history");
+    v["jobs"].as_array_mut().unwrap().push(done);
+    v["history_page"] = serde_json::json!({"offset": 0, "limit": 100, "total": 250});
+    v["queue_count"] = serde_json::json!({"shown": 1, "total": 7});
+    let scenario = r##"
+      var urls = [], plainFetch = globalThis.fetch;
+      globalThis.fetch = function (u) { urls.push(String(u)); return plainFetch(u); };
+      sources[0].onopen(); await tick();
+      urls.length = 0;
+      out.note = $("queue-note").textContent;
+      out.noteHidden = $("queue-note").hidden;
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.text = $("hp-text").textContent;
+      out.prevDisabled = $("hp-prev").disabled;
+      out.nextDisabled = $("hp-next").disabled;
+      $("hp-next").fire("click"); await tick();
+      out.next = urls.slice();
+      $("hp-size").value = "50";
+      $("hp-size").fire("change"); await tick();
+      out.size = urls.slice(1);
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "history_pager",
+    ) else {
+        return;
+    };
+    assert_eq!(
+        out["note"], "shown 1 of 7 queued orders; the broker's list limit cut the rest",
+        "{out}"
+    );
+    assert_eq!(out["noteHidden"], false, "{out}");
+    assert_eq!(out["text"], "shown 1 of 250 runs, page 1 of 3", "{out}");
+    assert_eq!(out["prevDisabled"], true, "{out}");
+    assert_eq!(out["nextDisabled"], false, "{out}");
+    assert_eq!(
+        out["next"][0], "/api/snapshot?history_offset=100&history_limit=100",
+        "{out}"
+    );
+    assert_eq!(
+        out["size"][0], "/api/snapshot?history_offset=0&history_limit=50",
+        "a new page size starts from the first page: {out}"
+    );
+}
+
+#[test]
+fn without_a_total_the_history_cannot_page_and_a_complete_queue_has_no_note() {
+    let mut v: Value = serde_json::from_str(&running(
+        StepState::Queued,
+        StepState::Queued,
+        JobState::Passed,
+    ))
+    .unwrap();
+    v["queue_count"] = serde_json::json!({"shown": 3, "total": 3});
+    let scenario = r##"
+      sources[0].onopen(); await tick();
+      out.noteHidden = $("queue-note").hidden;
+      location.hash = "#tab=history";
+      handlers.hashchange();
+      out.prevDisabled = $("hp-prev").disabled;
+      out.nextDisabled = $("hp-next").disabled;
+    "##;
+    let Some(out) = run_snapshot(
+        "{ live: true, logs: {} }",
+        &v.to_string(),
+        scenario,
+        "history_without_total",
+    ) else {
+        return;
+    };
+    assert_eq!(out["noteHidden"], true, "{out}");
+    assert_eq!(out["prevDisabled"], true, "{out}");
+    assert_eq!(out["nextDisabled"], true, "{out}");
+}
+
 const FOLLOW_SETUP: &str = r#"
   var logFetches = 0;
   var plainFetch = globalThis.fetch;

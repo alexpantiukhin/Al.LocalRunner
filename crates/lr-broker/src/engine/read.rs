@@ -98,7 +98,7 @@ impl Engine {
     pub(crate) async fn read(&mut self, conn: ConnId, client: &Client, call: ReadCall) {
         let viewer = Self::viewer(client);
         let reply = match call.request {
-            ReadRequest::Status(f) => ReadReply::Status(self.status(&viewer, f).await),
+            ReadRequest::Status(f) => ReadReply::Status(Box::new(self.status(&viewer, f).await)),
             ReadRequest::History(f) => self.history(&viewer, f).await,
             ReadRequest::HistoryDetails(f) => self.history_details(&viewer, f).await,
             ReadRequest::HistoryShow { job, client } => {
@@ -215,6 +215,11 @@ impl Engine {
                 ),
                 _ => Vec::new(),
             };
+            let last_output_ago_ms = a
+                .sees_fields()
+                .then_some(job.last_output_at)
+                .flatten()
+                .map(|at| self.now().0.saturating_sub(at.0));
             let last_lines = if a.sees_log() {
                 self.tail(&job.key, 5).await
             } else {
@@ -224,6 +229,7 @@ impl Engine {
                 summary,
                 steps,
                 last_lines,
+                last_output_ago_ms,
             });
         }
         running.truncate(limit);
@@ -254,8 +260,12 @@ impl Engine {
                     .sees_fields()
                     .then(|| self.wait_codes.get(&job.key).map(|c| c.to_string()))
                     .flatten(),
+                priority: a
+                    .sees_fields()
+                    .then(|| self.policy.policy().priority_origin(&job.entry).priority),
             });
         }
+        let queue_total = u32::try_from(queue.len()).unwrap_or(u32::MAX);
         let (queue, next) = page(queue, &f.cursor, limit as u64);
         let recent = self.recent(viewer, &f, limit as u64).await;
         let used = self.running_jobs();
@@ -271,6 +281,7 @@ impl Engine {
                 total_cpu: pool.cpu,
             },
             next,
+            queue_total: Some(queue_total),
         }
     }
 
@@ -379,6 +390,13 @@ impl Engine {
         let text = match self.find(key) {
             Some(j) if a.sees_fields() && !j.spec.labels.is_empty() => {
                 format!("{text}; profile labels: {}", j.spec.labels.join(", "))
+            }
+            _ => text,
+        };
+        let text = match self.find(key) {
+            Some(j) if a.sees_fields() && j.started_at.is_none() => {
+                let origin = self.policy.policy().priority_origin(&j.entry);
+                format!("{text}; priority: {}", origin.describe())
             }
             _ => text,
         };

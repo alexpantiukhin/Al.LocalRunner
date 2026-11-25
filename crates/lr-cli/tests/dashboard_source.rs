@@ -92,12 +92,14 @@ fn status(name: &str) -> StatusView {
             summary: summary(&format!("run-{name}"), JobState::Running),
             steps: Vec::new(),
             last_lines: vec![format!("{name} api_token=hunter2hunter2")],
+            last_output_ago_ms: None,
         }],
         queue: vec![QueueItem {
             summary: summary(&format!("wait-{name}"), JobState::Queued),
             position: 1,
             wait_reason: Some(format!("runner of {name} busy")),
             wait_code: None,
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -107,6 +109,7 @@ fn status(name: &str) -> StatusView {
             total_cpu: 4,
         },
         next: None,
+        queue_total: None,
     }
 }
 
@@ -179,7 +182,7 @@ fn hub(
                 }
             }
             let reply = match &r.request {
-                ReadRequest::Status(_) => ReadReply::Status(status(&name)),
+                ReadRequest::Status(_) => ReadReply::Status(Box::new(status(&name))),
                 ReadRequest::History(_) => ReadReply::History {
                     jobs: vec![
                         JobSummary {
@@ -189,6 +192,7 @@ fn hub(
                         summary(&format!("still-{name}"), JobState::Running),
                     ],
                     next: None,
+                    total: None,
                 },
                 ReadRequest::Runners => ReadReply::Runners {
                     runners: vec![],
@@ -310,6 +314,209 @@ async fn snapshot_collects_queue_runners_and_history_from_every_broker() {
         [Some(100), Some(100)],
         "up to 100 finished per broker"
     );
+}
+
+fn pages(inner: Answer, total: Option<u64>, queue_total: Option<u32>) -> Answer {
+    Box::new(move |req| {
+        let CliRequest::Read(r) = req else {
+            return inner(req);
+        };
+        let name = r.broker.clone().unwrap();
+        let reply = match &r.request {
+            ReadRequest::History(f) => ReadReply::History {
+                jobs: vec![summary(
+                    &format!("page-{name}-{}", f.offset.unwrap_or(0)),
+                    JobState::Passed,
+                )],
+                next: None,
+                total,
+            },
+            ReadRequest::Status(_) => ReadReply::Status(Box::new(StatusView {
+                queue_total,
+                ..status(&name)
+            })),
+            _ => return inner(req),
+        };
+        CliReply::Read {
+            broker: name,
+            reply,
+        }
+    })
+}
+
+fn history_requests(seen: &Arc<Mutex<Vec<CliRequest>>>) -> Vec<(Option<u64>, Option<u64>)> {
+    seen.lock()
+        .unwrap()
+        .iter()
+        .filter_map(|r| match r {
+            CliRequest::Read(r) => match &r.request {
+                ReadRequest::History(h) => Some((h.offset, h.limit)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_history_page_asks_every_broker_for_the_offset_and_adds_the_totals_up() {
+    use lr_abstractions::HistoryWindow;
+    use lr_cli::dashboard::build_snapshot_page;
+    use lr_proto::{GridCount, HistoryPage};
+    let answer = pages(
+        hub(&["home", "office"], &[], Vec::new()),
+        Some(250),
+        Some(80),
+    );
+    let (client, seen) = fake_hub(answer).await;
+    let window = HistoryWindow {
+        offset: 100,
+        limit: Some(50),
+    };
+    let snap = build_snapshot_page(
+        &client,
+        &StatusFilter::default(),
+        Some(window),
+        &Redactor::new(&[]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        history_requests(&seen),
+        [(Some(100), Some(50)), (Some(100), Some(50))]
+    );
+    let done: Vec<String> = snap
+        .jobs
+        .iter()
+        .filter(|j| j.list == DashboardList::History)
+        .map(|j| j.detail.summary.job.0.clone())
+        .collect();
+    assert_eq!(done, ["page-home-100", "page-office-100"]);
+    assert_eq!(
+        snap.history_page,
+        Some(HistoryPage {
+            offset: 100,
+            limit: 50,
+            total: 500
+        })
+    );
+    assert_eq!(
+        snap.queue_count,
+        Some(GridCount {
+            shown: 2,
+            total: 160
+        }),
+        "one order shown of 80 on each broker"
+    );
+    let first = build_snapshot_page(
+        &client,
+        &StatusFilter::default(),
+        Some(HistoryWindow::default()),
+        &Redactor::new(&[]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        history_requests(&seen)[2..],
+        [(None, Some(100)), (None, Some(100))],
+        "the first page asks for no offset"
+    );
+    assert_eq!(
+        first.history_page.map(|p| (p.offset, p.limit)),
+        Some((0, 100))
+    );
+    let huge = HistoryWindow {
+        offset: 0,
+        limit: Some(1_000_000),
+    };
+    build_snapshot_page(
+        &client,
+        &StatusFilter::default(),
+        Some(huge),
+        &Redactor::new(&[]),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        history_requests(&seen)[4].1,
+        Some(500),
+        "the size is bounded"
+    );
+}
+
+#[tokio::test]
+async fn a_broker_that_does_not_report_totals_gives_its_first_page_and_no_paging() {
+    use lr_abstractions::HistoryWindow;
+    use lr_cli::dashboard::build_snapshot_page;
+    let answer = pages(hub(&["old"], &[], Vec::new()), None, None);
+    let (client, _) = fake_hub(answer).await;
+    let first = build_snapshot_page(
+        &client,
+        &StatusFilter::default(),
+        Some(HistoryWindow::default()),
+        &Redactor::new(&[]),
+    )
+    .await
+    .unwrap();
+    assert!(first.jobs.iter().any(|j| j.list == DashboardList::History));
+    assert_eq!(first.history_page, None);
+    assert_eq!(first.queue_count, None);
+    let later = build_snapshot_page(
+        &client,
+        &StatusFilter::default(),
+        Some(HistoryWindow {
+            offset: 100,
+            limit: None,
+        }),
+        &Redactor::new(&[]),
+    )
+    .await
+    .unwrap();
+    assert!(
+        later.jobs.iter().all(|j| j.list != DashboardList::History),
+        "an older broker ignores the offset, so its first page is not shown again as page two"
+    );
+    assert_eq!(later.history_page, None);
+}
+
+#[tokio::test]
+async fn the_priority_of_a_queued_order_reaches_the_grid_and_an_older_broker_leaves_it_empty() {
+    let with = |priority: Option<i64>| -> Answer {
+        let inner = hub(&["home"], &[], Vec::new());
+        Box::new(move |req| match req {
+            CliRequest::Read(r) if matches!(r.request, ReadRequest::Status(_)) => {
+                let name = r.broker.clone().unwrap();
+                let mut view = status(&name);
+                view.queue[0].priority = priority;
+                view.queue[0].summary.labels = vec!["release".into()];
+                CliReply::Read {
+                    broker: name,
+                    reply: ReadReply::Status(Box::new(view)),
+                }
+            }
+            other => inner(other),
+        })
+    };
+    for (sent, shown) in [(Some(50), Some(50)), (None, None)] {
+        let (client, _) = fake_hub(with(sent)).await;
+        let snap = build_snapshot(
+            &client,
+            &StatusFilter::default(),
+            false,
+            &Redactor::new(&[]),
+        )
+        .await
+        .unwrap();
+        let queued = snap
+            .jobs
+            .iter()
+            .find(|j| j.list == DashboardList::Queued)
+            .unwrap();
+        assert_eq!(queued.priority, shown);
+        assert_eq!(queued.detail.summary.labels, ["release"]);
+        let json = serde_json::to_value(queued).unwrap();
+        assert_eq!(json.get("priority").is_some(), shown.is_some(), "{json}");
+    }
 }
 
 #[tokio::test]

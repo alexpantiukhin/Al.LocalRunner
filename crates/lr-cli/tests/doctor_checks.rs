@@ -312,6 +312,7 @@ fn doctor_warns_that_a_login_autostart_stops_at_logout() {
             service: None,
             login: true,
             linger,
+            local_channel: false,
         };
         let c = autostart_check("box", &found).unwrap();
         assert_eq!(c.name, "runner box autostart");
@@ -327,11 +328,37 @@ fn doctor_warns_that_a_login_autostart_stops_at_logout() {
         service: None,
         login: false,
         linger: Some(true),
+        local_channel: false,
     };
     assert_eq!(
         autostart_check("box", &nothing),
         None,
         "no autostart, nothing to say"
+    );
+}
+
+#[test]
+fn doctor_sends_a_local_channel_runner_to_join_before_a_service() {
+    use lr_cli::doctor::{autostart_check, AutostartFound};
+    let local = AutostartFound {
+        service: None,
+        login: true,
+        linger: None,
+        local_channel: true,
+    };
+    let c = autostart_check("box", &local).unwrap();
+    assert_eq!(c.status, Status::Warn, "{c:?}");
+    assert!(c.detail.starts_with(LOGIN_ONLY), "{c:?}");
+    for part in [
+        "broker add --runners 1",
+        "runner join <address> --name box",
+        "autostart on runner box --service",
+    ] {
+        assert!(c.detail.contains(part), "{part}: {c:?}");
+    }
+    assert!(
+        c.detail.contains("would be refused"),
+        "the plain service advice is not given: {c:?}"
     );
 }
 
@@ -345,6 +372,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: None,
         login: true,
         linger: parse_linger("Linger=yes\n"),
+        local_channel: false,
     };
     let c = autostart_check("box", &lingering).unwrap();
     assert_eq!(c.status, Status::Ok, "{c:?}");
@@ -354,6 +382,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
             service: Some(running),
             login: false,
             linger: None,
+            local_channel: false,
         };
         let c = autostart_check("box", &service).unwrap();
         assert_eq!(c.status, Status::Ok, "{c:?}");
@@ -363,6 +392,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: Some(Some(false)),
         login: false,
         linger: None,
+        local_channel: false,
     };
     let c = autostart_check("box", &stopped).unwrap();
     assert_eq!(c.status, Status::Warn, "{c:?}");
@@ -371,6 +401,7 @@ fn doctor_says_ok_for_a_service_or_a_lingering_user_unit() {
         service: Some(Some(true)),
         login: true,
         linger: None,
+        local_channel: false,
     };
     let c = autostart_check("box", &both).unwrap();
     assert_eq!(c.status, Status::Warn, "{c:?}");
@@ -426,6 +457,7 @@ fn runners_on_another_version_are_named_per_broker() {
             enforcement: None,
             version: version.map(str::to_string),
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1)),
         free_mem_mb: 0,
@@ -456,4 +488,61 @@ fn runners_on_another_version_are_named_per_broker() {
         found[0].detail
     );
     assert!(runner_version_checks(&per[..1], "1.2.0").is_empty());
+}
+
+#[test]
+fn doctor_warns_about_runners_of_a_broker_that_miss_programs_but_not_about_its_own() {
+    use lr_cli::doctor::{runner_program_checks, Status};
+    use lr_core::Timestamp;
+    use lr_proto::{RunnerInfo, WireCapabilities};
+    let runner = |name: &str, missing: &[&str]| RunnerInfo {
+        name: name.into(),
+        online: true,
+        caps: WireCapabilities {
+            platforms: Default::default(),
+            mem_mb: 1,
+            cpu: 1,
+            disk_mb: 1,
+            programs: Default::default(),
+            tags: Default::default(),
+            max_job_timeout_s: None,
+            services: Default::default(),
+            machine: None,
+            accept_min_mem_mb: None,
+            accept_min_free_disk_mb: None,
+            cache_max_mb: None,
+            cache_used_mb: None,
+            service_mem_mb: Default::default(),
+            commands: Default::default(),
+            enforcement: None,
+            version: None,
+            enforce_limit: false,
+            programs_missing: missing.iter().map(|m| m.to_string()).collect(),
+        },
+        last_seen: Some(Timestamp(1)),
+        free_mem_mb: 0,
+        free_cpu: 0,
+        held_tags: Vec::new(),
+        services: Vec::new(),
+        unmet: Vec::new(),
+        liveness: None,
+        silent_for_s: None,
+        kind: None,
+        pool: None,
+        can_start_now: None,
+        busy: None,
+    };
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            runner("far", &["cargo", "npm"]),
+            runner("ok", &[]),
+            runner("local:mine", &["git"]),
+        ],
+    )];
+    let checks = runner_program_checks(&per, &["mine".to_string()]);
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert_eq!(checks[0].name, "broker office runner far");
+    assert_eq!(checks[0].status, Status::Warn);
+    assert_eq!(checks[0].detail, "programs not found: cargo, npm");
 }

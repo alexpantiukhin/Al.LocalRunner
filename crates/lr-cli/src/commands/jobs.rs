@@ -13,7 +13,7 @@ use lr_proto::{
     CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, ReasonCode, SubmitRequest,
 };
 use std::collections::BTreeMap;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -212,28 +212,39 @@ pub fn print_warnings(warnings: &[String], err: &mut impl Write) {
     }
 }
 
-/// The line printed to stderr when an order is submitted without `--detach`, without `--wait`
-/// and without a terminal.
-pub const DETACH_WARNING: &str = "warning: without --detach this order is cancelled when this process exits; pass --detach and then run \"localrunner wait <job-id>\", or use \"localrunner run\"";
-
-/// Writes `DETACH_WARNING` to `err` only when the order is neither detached, nor waited for,
-/// nor submitted from a terminal.
-pub fn warn_if_orphaned(detach: bool, wait: bool, terminal: bool, err: &mut impl Write) {
-    if !detach && !wait && !terminal {
-        let _ = writeln!(err, "{DETACH_WARNING}");
-    }
+/// Whether an order outlives its sending process: always with `--detach`, and by default for
+/// a `submit` that does not wait, unless `--no-detach` asks for the old behavior.
+pub fn effective_detach(detach: bool, no_detach: bool, wait: bool) -> bool {
+    detach || (!wait && !no_detach)
 }
 
-/// `submit` (and `run` = `submit --wait`).
+/// The hint block printed to stderr after a detached `submit`: the order and ready-to-copy
+/// commands to follow, read and cancel it.
+pub fn detach_hint(job: &JobId, profile: Option<&str>, label: &str) -> String {
+    let profile = profile.unwrap_or("default");
+    format!(
+        "queued {job} (profile {profile}, label {label})\n\
+         follow:  localrunner wait {job}   (run it as a background task; interrupting it cancels nothing)\n\
+         result:  localrunner log {job} --tail 50   (never read the whole log)\n\
+         cancel:  localrunner cancel {job} --as {label}\n"
+    )
+}
+
+/// `submit` (and `run` = `submit --wait`). A `submit` without `--wait` detaches unless
+/// `no_detach`; `quiet` and `json` keep stderr free of the hint block.
 pub async fn submit(
     layout: &Layout,
     args: OrderArgs,
     wait: bool,
     json: bool,
+    no_detach: bool,
+    quiet: bool,
 ) -> Result<i32, String> {
     let identity = identity(args.label.as_deref(), args.note.as_deref())?;
     let client = hub(layout).await?;
-    let detach = args.detach;
+    let detach = effective_detach(args.detach, no_detach, wait);
+    let label = identity.label.clone();
+    let profile = args.profile.clone();
     let req = SubmitRequest {
         identity,
         profile: args.profile,
@@ -247,18 +258,23 @@ pub async fn submit(
         wait,
     };
     let mut stdout = std::io::stdout();
+    let mut placed: Option<String> = None;
     let code = submit_on(client, req, json, &cli_redactor(layout), &mut |text| {
         let _ = stdout.write_all(text.as_bytes());
         let _ = stdout.flush();
+        if !wait {
+            placed = Some(text.trim().to_string());
+        }
     })
     .await?;
-    if code == 0 {
-        warn_if_orphaned(
-            detach,
-            wait,
-            std::io::stdin().is_terminal(),
-            &mut std::io::stderr(),
-        );
+    if code == 0 && detach && !wait && !json && !quiet {
+        if let Some(job) = placed {
+            let _ = write!(
+                std::io::stderr(),
+                "{}",
+                detach_hint(&JobId(job), profile.as_deref(), &label)
+            );
+        }
     }
     Ok(code)
 }
@@ -534,16 +550,18 @@ pub async fn jobs(
 }
 
 /// One line of `jobs --mine`: job, state, profile, then project, source and label together
-/// (spec 7.2); an unknown value is `-`.
+/// (spec 7.2), then the start and the end time; an unknown value is `-`.
 pub fn mine_line(j: &lr_proto::JobSummary) -> String {
     let mut line = format!(
-        "{}\t{:?}\t{}\t{}\t{}\t{}",
+        "{}\t{:?}\t{}\t{}\t{}\t{}\t{}\t{}",
         j.job,
         j.state,
         j.profile.as_deref().unwrap_or("-"),
         j.project.as_deref().unwrap_or("-"),
         super::view::source_name(j.source),
-        j.label.as_deref().unwrap_or("-")
+        j.label.as_deref().unwrap_or("-"),
+        super::history_cmd::when(j.started_at),
+        super::history_cmd::when(j.finished_at)
     );
     if j.peak_mem_mb.is_some() || j.peak_disk_mb.is_some() {
         let mb = |v: Option<u64>| v.map_or("-".to_string(), |v| v.to_string());
@@ -560,15 +578,67 @@ pub fn mine_line(j: &lr_proto::JobSummary) -> String {
 pub async fn cancel_cli(
     layout: &Layout,
     job: Option<String>,
-    label: &str,
+    label: Option<String>,
     mine: bool,
     force: bool,
     reason: Option<String>,
     yes: bool,
 ) -> Result<i32, String> {
+    let Some(label) = label else {
+        return Err(missing_label_error(layout, job.as_deref()).await);
+    };
+    let label = label.as_str();
     let mut stdio = Stdio::new();
     let mut console = stdio.console();
     cancel_asked(layout, job, label, mine, force, reason, yes, &mut console).await
+}
+
+/// What `status` found out about the job named by `cancel` without `--as`.
+#[derive(Debug, Clone, Copy)]
+pub enum LabelLookup<'a> {
+    /// No job was named, or the hub could not be asked.
+    Unasked,
+    /// No broker of the hub knows the job.
+    Unknown,
+    /// The record the brokers show to this user; its label may be hidden from them.
+    Known(Option<&'a lr_proto::JobDetail>),
+}
+
+/// The error of `cancel` without `--as`: names the label of the job when `status` would show it
+/// to the same user.
+async fn missing_label_error(layout: &Layout, job: Option<&str>) -> String {
+    let Some(job) = job else {
+        return missing_label_text(None, LabelLookup::Unasked);
+    };
+    let Ok(client) = hub(layout).await else {
+        return missing_label_text(Some(job), LabelLookup::Unasked);
+    };
+    let found = super::view::find_job(&client, &JobId(job.to_string()), None, None).await;
+    client.close().await;
+    match &found {
+        Ok((_, _, detail)) => missing_label_text(Some(job), LabelLookup::Known(detail.as_ref())),
+        Err(_) => missing_label_text(Some(job), LabelLookup::Unknown),
+    }
+}
+
+/// The text of the `cancel` error when `--as` is missing; the label of `job` is named only
+/// when the broker shows it to this user.
+pub fn missing_label_text(job: Option<&str>, lookup: LabelLookup<'_>) -> String {
+    let base = "cancel: --as <LABEL> is required";
+    let (Some(job), LabelLookup::Known(_) | LabelLookup::Unknown) = (job, lookup) else {
+        return base.to_string();
+    };
+    match lookup {
+        LabelLookup::Known(detail) => match detail.and_then(|d| d.summary.label.as_deref()) {
+            Some(label) => format!(
+                "{base}; the label of {job} is {label} (use --force for a job of another label)"
+            ),
+            None => format!(
+                "{base}; the label of {job} is not shown to you (use --force for a job of another label)"
+            ),
+        },
+        _ => format!("{base}; job {job} is not known to the brokers of this hub, so its label is unknown"),
+    }
 }
 
 /// [`cancel`] that, for `--mine` (it can cancel several jobs), first asks (`yes` answers); a

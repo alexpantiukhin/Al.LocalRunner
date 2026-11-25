@@ -106,11 +106,13 @@ fn status() -> StatusView {
                 summary: summary("mine", JobState::Running, true),
                 steps: vec![step(0, StepState::Running, Some(2_000))],
                 last_lines: Vec::new(),
+                last_output_ago_ms: None,
             },
             RunningView {
                 summary: summary("theirs", JobState::Running, false),
                 steps: Vec::new(),
                 last_lines: Vec::new(),
+                last_output_ago_ms: None,
             },
         ],
         queue: vec![QueueItem {
@@ -118,6 +120,7 @@ fn status() -> StatusView {
             position: 1,
             wait_reason: Some("needs memory".into()),
             wait_code: Some("memory".into()),
+            priority: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -127,6 +130,7 @@ fn status() -> StatusView {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     }
 }
 
@@ -140,14 +144,16 @@ fn finished_detail() -> JobDetail {
 
 async fn snapshot(details: bool) -> DashboardSnapshot {
     let client = fake_hub(Box::new(move |req| match req {
-        ReadRequest::Status(_) => Some(ReadReply::Status(status())),
+        ReadRequest::Status(_) => Some(ReadReply::Status(Box::new(status()))),
         ReadRequest::HistoryDetails(_) if details => Some(ReadReply::Details {
             jobs: vec![finished_detail()],
             next: None,
+            total: None,
         }),
         ReadRequest::History(_) => Some(ReadReply::History {
             jobs: vec![finished_detail().summary],
             next: None,
+            total: None,
         }),
         ReadRequest::Runners => Some(ReadReply::Runners {
             runners: vec![],

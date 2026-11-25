@@ -25,9 +25,12 @@ pub fn read_requests() -> Vec<ReadRequest> {
             platform: None,
             runner: Some("r-1".into()),
             since: Some(Timestamp(5)),
+            ran_since: Some(Timestamp(6)),
+            ran_until: Some(Timestamp(7)),
             active_only: true,
             limit: Some(20),
             cursor: Some("c2".into()),
+            offset: Some(40),
             mine: true,
         }),
         ReadRequest::HistoryShow {
@@ -62,17 +65,19 @@ pub fn read_requests() -> Vec<ReadRequest> {
 
 pub fn read_replies() -> Vec<ReadReply> {
     vec![
-        ReadReply::Status(StatusView {
+        ReadReply::Status(Box::new(StatusView {
             running: vec![RunningView {
                 summary: summary(),
                 steps: vec![step_view()],
                 last_lines: vec!["line".into()],
+                last_output_ago_ms: None,
             }],
             queue: vec![QueueItem {
                 summary: summary(),
                 position: 1,
                 wait_reason: Some("runner busy".into()),
                 wait_code: None,
+                priority: None,
             }],
             recent: vec![JobSummary {
                 state: JobState::Cancelled,
@@ -86,10 +91,12 @@ pub fn read_replies() -> Vec<ReadReply> {
                 total_cpu: 4,
             },
             next: Some("q2".into()),
-        }),
+            queue_total: None,
+        })),
         ReadReply::History {
             jobs: vec![summary()],
             next: None,
+            total: None,
         },
         ReadReply::Job(Box::new(JobDetail {
             summary: summary(),

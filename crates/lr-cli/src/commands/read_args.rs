@@ -80,9 +80,18 @@ pub struct HistoryFilters {
     /// Only runs that ended (or stand) so.
     #[arg(long, value_enum)]
     pub result: Option<ResultArg>,
-    /// Only runs queued since: an age (`30m`, `2h`, `7d`) or a UTC date (`2026-11-01`).
+    /// Only runs queued since: an age (`30m`, `2h`, `7d`) or a UTC date (`2026-11-01`). It is
+    /// the enqueue time; for what ran in a window use `--ran-since` and `--ran-until`.
     #[arg(long, value_parser = parse_since)]
     pub since: Option<Since>,
+    /// Only runs that were running at some moment since: started, and not finished before it (a
+    /// run still going counts, an order that never started does not). An age or a UTC date.
+    #[arg(long, value_parser = parse_since, value_name = "SINCE")]
+    pub ran_since: Option<Since>,
+    /// Only runs that started at or before this time. With `--ran-since` the pair is a window:
+    /// the runs that overlap it. An age or a UTC date.
+    #[arg(long, value_parser = parse_since, value_name = "UNTIL")]
+    pub ran_until: Option<Since>,
     /// At most this many runs.
     #[arg(long)]
     pub limit: Option<u64>,

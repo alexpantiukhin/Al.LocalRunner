@@ -151,7 +151,14 @@ async fn queue_page_lists_jobs_with_project_source_label() {
     let row = &page[row..row + page[row..].find("</tr>").unwrap()];
     assert!(row.contains("<td data-col=\"project\">alpha</td>"), "{row}");
     assert!(row.contains("<td data-col=\"source\">github</td>"), "{row}");
-    assert!(row.contains("<td data-col=\"label\">agent-1</td>"), "{row}");
+    assert!(
+        row.contains("<td data-col=\"client_label\">agent-1</td>"),
+        "{row}"
+    );
+    assert!(
+        row.contains("<td data-col=\"priority\"></td>"),
+        "no priority from an older broker: {row}"
+    );
     assert!(page.contains("data-job=\"j-run\""));
     assert!(
         !page.contains("<script>alert"),
@@ -169,6 +176,51 @@ async fn queue_page_lists_jobs_with_project_source_label() {
     assert!(json.contains("\"agent-1\""));
     let (status, _, _) = send(&router, get("/api/snapshot", &host())).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn the_snapshot_route_passes_the_history_window_to_the_source() {
+    use lr_abstractions::HistoryWindow;
+    let source = common::source();
+    let dash = dashboard(source.clone());
+    let token = dash.launch_token().to_string();
+    let router = dash.router(PORT);
+    let cookie = session(&router, &token).await;
+    let ask = |uri: &str| {
+        Request::get(uri.to_string())
+            .header(header::HOST, host())
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap()
+    };
+    for uri in [
+        "/api/snapshot",
+        "/api/snapshot?history_offset=100&history_limit=50",
+        "/api/snapshot?history_offset=7",
+    ] {
+        assert_eq!(send(&router, ask(uri)).await.0, StatusCode::OK, "{uri}");
+    }
+    assert_eq!(
+        send(&router, ask("/api/snapshot?history_offset=-1"))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST,
+        "a negative offset is not a number of runs"
+    );
+    assert_eq!(
+        source.pages(),
+        [
+            HistoryWindow::default(),
+            HistoryWindow {
+                offset: 100,
+                limit: Some(50)
+            },
+            HistoryWindow {
+                offset: 7,
+                limit: None
+            },
+        ]
+    );
 }
 
 #[tokio::test]

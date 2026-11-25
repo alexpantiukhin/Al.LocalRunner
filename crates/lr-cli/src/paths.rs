@@ -162,6 +162,25 @@ impl Layout {
         Ok(Layout::new(root, config))
     }
 
+    /// The line that says where the state directory came from when it was not the default:
+    /// `state directory: <path> (from --state-dir)` or `(from LOCALRUNNER_STATE_DIR)`; `None`
+    /// when neither was given.
+    pub fn state_dir_note(
+        &self,
+        flag: Option<&Path>,
+        env: Option<&std::ffi::OsStr>,
+    ) -> Option<String> {
+        let from = match (flag, env.filter(|v| !v.is_empty())) {
+            (Some(_), _) => "--state-dir",
+            (None, Some(_)) => STATE_DIR_ENV,
+            (None, None) => return None,
+        };
+        Some(format!(
+            "state directory: {} (from {from})",
+            self.root.display()
+        ))
+    }
+
     /// A configuration file of the installation.
     pub fn config_file(&self, name: &str) -> PathBuf {
         self.config.join(name)
@@ -212,6 +231,11 @@ impl Layout {
     /// The CLI channel of the hub of OS principal `principal` (SID on Windows).
     pub fn hub_ipc(&self, principal: &str) -> String {
         self.ipc_in(&self.own_ipc_dir, &format!("hub-{principal}"))
+    }
+
+    /// The local channel of the dashboard of OS principal `principal`.
+    pub fn dashboard_ipc(&self, principal: &str) -> String {
+        self.ipc_in(&self.own_ipc_dir, &format!("dashboard-{principal}"))
     }
 
     /// The broker's IPC for hubs and runners of this machine; for the default layout of a

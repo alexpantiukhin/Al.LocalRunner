@@ -4,7 +4,7 @@
 //! read through the hub and masked by the secret redactor.
 
 use super::jobs::hub;
-use super::log_cmd::{cli_redactor, find_log, LogQuery};
+use super::log_cmd::{cli_redactor, find_log_with, LogPrinter, LogQuery};
 use super::{SnapshotArgs, SourceArg};
 use crate::dashboard::build_snapshot;
 use crate::ipc_client::IpcClient;
@@ -49,9 +49,13 @@ pub async fn readable_logs(
             follow: false,
         };
         let mut text = String::new();
-        if find_log(client, Some(broker), &q, redactor, &mut |t| {
-            text.push_str(t)
-        })
+        if find_log_with(
+            client,
+            Some(broker),
+            &q,
+            LogPrinter::plain(redactor.clone()),
+            &mut |t| text.push_str(t),
+        )
         .await
         .is_ok()
         {

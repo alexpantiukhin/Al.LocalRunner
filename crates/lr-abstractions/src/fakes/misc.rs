@@ -1,4 +1,4 @@
-use crate::datasource::{CancelRequest, DataError, DataSource, EventStream};
+use crate::datasource::{CancelRequest, DataError, DataSource, EventStream, HistoryWindow};
 use crate::logsink::{LogSink, Record};
 use crate::meter::Meter;
 use crate::secrets::{SecretError, SecretSource, SecretValue};
@@ -302,6 +302,7 @@ struct Feed<S, E> {
     subscribers: Vec<mpsc::UnboundedSender<E>>,
     logs: HashMap<JobId, Vec<u8>>,
     cancels: Vec<(JobId, CancelRequest)>,
+    pages: Vec<HistoryWindow>,
     unavailable: Option<String>,
 }
 
@@ -319,6 +320,7 @@ impl<S: Clone + Send + 'static, E: Clone + Send + 'static> FakeDataSource<S, E> 
                 subscribers: Vec::new(),
                 logs: HashMap::new(),
                 cancels: Vec::new(),
+                pages: Vec::new(),
                 unavailable: None,
             })),
         }
@@ -346,6 +348,11 @@ impl<S: Clone + Send + 'static, E: Clone + Send + 'static> FakeDataSource<S, E> 
     /// Makes every call fail with `Unavailable(reason)`, or serve again with `None`.
     pub fn set_unavailable(&self, reason: Option<String>) {
         self.feed.lock().unwrap().unavailable = reason;
+    }
+
+    /// The history windows asked for so far through `snapshot_page`.
+    pub fn pages(&self) -> Vec<HistoryWindow> {
+        self.feed.lock().unwrap().pages.clone()
     }
 
     /// Cancels requested so far.
@@ -382,6 +389,13 @@ where
     async fn snapshot(&self) -> Result<S, DataError> {
         self.check()?;
         Ok(self.feed.lock().unwrap().snapshot.clone())
+    }
+
+    async fn snapshot_page(&self, history: HistoryWindow) -> Result<S, DataError> {
+        self.check()?;
+        let mut feed = self.feed.lock().unwrap();
+        feed.pages.push(history);
+        Ok(feed.snapshot.clone())
     }
 
     async fn subscribe(&self) -> Result<Box<dyn EventStream<E>>, DataError> {

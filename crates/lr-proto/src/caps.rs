@@ -96,6 +96,11 @@ pub struct WireCapabilities {
     /// sends `warn` instead.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub enforce_limit: bool,
+    /// Programs of `[programs]` that the runner did not find or whose check failed: they are
+    /// not in `programs`, and the runner still serves; absent from runners of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub programs_missing: BTreeSet<String>,
 }
 
 impl From<&Capabilities> for WireCapabilities {
@@ -129,6 +134,7 @@ impl From<&Capabilities> for WireCapabilities {
             enforcement: None,
             version: None,
             enforce_limit: false,
+            programs_missing: BTreeSet::new(),
         }
     }
 }

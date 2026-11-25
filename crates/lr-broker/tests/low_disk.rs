@@ -23,7 +23,7 @@ fn guarded(min_free_disk_mb: u64) -> WireCapabilities {
 
 fn status(reply: ReadReply) -> StatusView {
     match reply {
-        ReadReply::Status(s) => s,
+        ReadReply::Status(s) => *s,
         other => panic!("expected status, got {other:?}"),
     }
 }

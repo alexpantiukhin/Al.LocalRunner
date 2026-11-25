@@ -100,7 +100,9 @@ pub struct OrderArgs {
     /// Shorthand for `--zones` from local up to this zone.
     #[arg(long = "max-zone", value_name = "ZONE", value_parser = args::parse_zone)]
     pub max_zone: Option<lr_core::Zone>,
-    /// Without it the order is cancelled when the sending process exits; with it the order outlives the sending process.
+    /// Make the order outlive the sending process; `submit` without `--wait` already does, so it
+    /// only matters for `submit --wait` and `run`, where the order is otherwise cancelled when
+    /// the sending process exits.
     #[arg(long)]
     pub detach: bool,
 }
@@ -128,6 +130,13 @@ pub enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// The order is cancelled when the sending process exits (the behavior before `submit`
+        /// detached by default).
+        #[arg(long, conflicts_with = "detach")]
+        no_detach: bool,
+        /// Do not print the follow, result and cancel hints to stderr.
+        #[arg(long)]
+        quiet: bool,
     },
     /// `submit --wait`: place an order, stream its output, return its exit code.
     Run {
@@ -168,8 +177,8 @@ pub enum Command {
         /// The job.
         job: Option<String>,
         /// Submitter label of the canceller.
-        #[arg(long = "as", value_name = "LABEL", required = true)]
-        label: String,
+        #[arg(long = "as", value_name = "LABEL")]
+        label: Option<String>,
         /// All own active jobs.
         #[arg(long)]
         mine: bool,
@@ -234,9 +243,9 @@ pub enum Command {
     Runners(RunnersArgs),
     /// Start the hub, the broker and the runners as separate processes, except those running.
     Up {
-        /// The role; the roles `init` created when omitted.
-        #[arg(value_enum)]
-        role: Option<RoleArg>,
+        /// Runner names (also `local:<name>`), `runner` (every runner), `hub`, `broker` or `all`;
+        /// the roles `init` created when omitted.
+        names: Vec<String>,
     },
     /// Running roles reread their settings files without a restart: runners `runner.toml`, the
     /// hub `hub-policy.toml`, the broker `policy.toml`.
@@ -253,8 +262,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Live dashboard on loopback.
-    Dashboard,
+    /// Live dashboard on loopback: starts it in the background when it does not run and prints
+    /// the link (one line, with a new one-time token), then exits; `down` stops it.
+    Dashboard {
+        /// Serve in this terminal until Ctrl+C instead of in the background.
+        #[arg(long)]
+        foreground: bool,
+        /// Started by `dashboard` itself: hide or create the console.
+        #[arg(long, hide = true, requires = "foreground")]
+        background: bool,
+    },
     /// Stop runners, the hub and the broker: runners finish the current job (default) or
     /// cancel it.
     Down {
@@ -504,6 +521,7 @@ pub async fn run(cli: Cli) -> i32 {
             return 2;
         }
     }
+    let state_flag = cli.state_dir.clone();
     let layout = match Layout::resolve(cli.state_dir, cli.config_dir) {
         Ok(l) => l,
         Err(e) => {
@@ -511,9 +529,24 @@ pub async fn run(cli: Cli) -> i32 {
             return 2;
         }
     };
+    if matches!(
+        cli.command,
+        Command::Status { .. } | Command::Doctor { .. } | Command::Up { .. } | Command::Down { .. }
+    ) {
+        let env = std::env::var_os(crate::paths::STATE_DIR_ENV);
+        if let Some(note) = layout.state_dir_note(state_flag.as_deref(), env.as_deref()) {
+            eprintln!("{note}");
+        }
+    }
     let result = match cli.command {
-        Command::Submit { order, wait, json } => jobs::submit(&layout, order, wait, json).await,
-        Command::Run { order } => jobs::submit(&layout, order, true, false).await,
+        Command::Submit {
+            order,
+            wait,
+            json,
+            no_detach,
+            quiet,
+        } => jobs::submit(&layout, order, wait, json, no_detach, quiet).await,
+        Command::Run { order } => jobs::submit(&layout, order, true, false, false, false).await,
         Command::Wait { jobs, label, json } => jobs::wait_jobs(&layout, jobs, label, json).await,
         Command::Jobs {
             label,
@@ -528,7 +561,7 @@ pub async fn run(cli: Cli) -> i32 {
             force,
             reason,
             yes,
-        } => jobs::cancel_cli(&layout, job, &label, mine, force, reason, yes).await,
+        } => jobs::cancel_cli(&layout, job, label, mine, force, reason, yes).await,
         Command::Status {
             job,
             client,
@@ -563,9 +596,12 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Log(a) => log_cmd::log(&layout, a).await,
         Command::Stats(a) => read_cmd::stats(&layout, a).await,
         Command::Runners(a) => read_cmd::runners(&layout, a).await,
-        Command::Up { role } => up_cmd::up(&layout, role).await,
+        Command::Up { names } => up_cmd::up(&layout, names).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
-        Command::Dashboard => crate::dashboard::run(&layout).await,
+        Command::Dashboard {
+            foreground,
+            background,
+        } => crate::dashboard::run(&layout, foreground, background).await,
         Command::Reload { role, name } => reload_cmd::reload(&layout, role, name).await,
         Command::Down {
             names,

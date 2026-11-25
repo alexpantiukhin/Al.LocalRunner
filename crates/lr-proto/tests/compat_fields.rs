@@ -61,6 +61,7 @@ fn the_history_details_request_and_reply_round_trip() {
     let reply = ReadReply::Details {
         jobs: Vec::new(),
         next: Some("c1".into()),
+        total: None,
     };
     let text = serde_json::to_string(&reply).unwrap();
     assert_eq!(serde_json::from_str::<ReadReply>(&text).unwrap(), reply);

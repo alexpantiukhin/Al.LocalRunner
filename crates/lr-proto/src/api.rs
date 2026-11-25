@@ -101,12 +101,26 @@ pub struct HistoryFilter {
     pub runner: Option<String>,
     /// Only runs queued at or after this time.
     pub since: Option<Timestamp>,
+    /// Only runs that were running at some moment at or after this time: started, and not
+    /// finished before it (a run still going counts). Absent from older senders, and an older
+    /// broker ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_since: Option<Timestamp>,
+    /// Only runs that started at or before this time. Absent from older senders, and an older
+    /// broker ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_until: Option<Timestamp>,
     /// Only runs that are not final.
     pub active_only: bool,
     /// Maximum number of runs; bounded by [`HISTORY_LIMIT_MAX`].
     pub limit: Option<u64>,
     /// Continue after the `next` token of the previous answer.
     pub cursor: Option<String>,
+    /// Skip this many runs of the list, newest first; wins over `cursor`. Absent from older
+    /// senders, and an older broker ignores it and answers the first page (it also leaves
+    /// `total` out of the answer, which tells the sender so).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
     /// Only runs of the asking client (`history` without `--all` or `--client`); the broker
     /// puts the asker's key in place of `client`. Absent from older senders.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -337,6 +351,11 @@ pub struct RunningView {
     pub steps: Vec<StepView>,
     /// Last lines of the current step.
     pub last_lines: Vec<String>,
+    /// How long before this answer the log of the run last received output, in milliseconds on
+    /// the broker clock; absent while it has had none, for a reader who does not see the
+    /// order fields, and from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_output_ago_ms: Option<u64>,
 }
 
 /// A queued order.
@@ -352,6 +371,11 @@ pub struct QueueItem {
     /// `offline`, `reserved`), hidden with the reason. Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_code: Option<String>,
+    /// The effective priority the policy gives the order, greater first (the first matching
+    /// rule that sets one, else 0), hidden from a reader who may not see the order's fields.
+    /// Absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
 }
 
 /// Pool load.
@@ -380,6 +404,10 @@ pub struct StatusView {
     pub pool: PoolLoad,
     /// Token for the next part of the queue, `None` at the end.
     pub next: Option<String>,
+    /// How many orders the filter matches in the whole queue, whatever the size of the list;
+    /// absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_total: Option<u32>,
 }
 
 /// A tag held by a running job.
@@ -485,14 +513,18 @@ pub struct PoolInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReadReply {
-    /// Answer to `status`.
-    Status(StatusView),
+    /// Answer to `status`; boxed so that the answers that carry an error stay small.
+    Status(Box<StatusView>),
     /// Answer to `history`.
     History {
         /// Runs, newest first.
         jobs: Vec<JobSummary>,
         /// Token for the next page, `None` at the end.
         next: Option<String>,
+        /// How many runs the filter matches in all (at most what the broker scans), for the
+        /// reader who pages; absent from an older broker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
     },
     /// Answer to `history_show`.
     Job(Box<JobDetail>),
@@ -502,6 +534,9 @@ pub enum ReadReply {
         jobs: Vec<JobDetail>,
         /// Token for the next page, `None` at the end.
         next: Option<String>,
+        /// As in [`ReadReply::History`]; absent from an older broker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total: Option<u64>,
     },
     /// Answer to `explain`.
     Explain {

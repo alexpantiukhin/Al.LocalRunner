@@ -206,7 +206,12 @@ async fn every_answer_is_kept_out_of_indexes_caches_and_type_sniffing() {
 
 #[tokio::test]
 async fn queue_row_shows_place_wait_reason_and_where_the_job_runs() {
-    let dash = dashboard(common::source());
+    let source = common::source();
+    let mut snap = common::snapshot();
+    snap.jobs[1].priority = Some(50);
+    snap.jobs[1].detail.summary.labels = vec!["release".into(), "night".into()];
+    source.set_snapshot(snap);
+    let dash = dashboard(source);
     let token = dash.launch_token().to_string();
     let router = dash.router(PORT);
     let (cookie, _) = login(&router, &token).await;
@@ -221,8 +226,9 @@ async fn queue_row_shows_place_wait_reason_and_where_the_job_runs() {
     assert_eq!(
         row,
         "<tr data-job=\"j-queued\"><td data-col=\"position\">1</td><td data-col=\"job\">j-queued</td>\
-         <td data-col=\"state\">queued</td><td data-col=\"project\">alpha</td>\
-         <td data-col=\"source\">github</td><td data-col=\"label\">agent-1</td>\
+         <td data-col=\"state\">queued</td><td data-col=\"priority\">50</td>\
+         <td data-col=\"project\">alpha</td><td data-col=\"source\">github</td>\
+         <td data-col=\"client_label\">agent-1</td><td data-col=\"labels\">release, night</td>\
          <td data-col=\"profile\">unit</td><td data-col=\"cwd\">D:/work/alpha</td>\
          <td data-col=\"runner\"></td><td data-col=\"broker\">home</td>\
          <td data-col=\"wait\">runner busy</td></tr>"

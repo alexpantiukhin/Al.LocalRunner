@@ -90,6 +90,35 @@ pub struct Rule {
     pub weight: Option<u32>,
 }
 
+/// The rule that set the priority of an order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorityRule {
+    /// Name of the rule, else its 1-based number.
+    pub name: String,
+    /// Its `when` condition as `policy check` prints it, naming the attributes that matched.
+    pub when: String,
+}
+
+/// The priority of an order and where the number comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PriorityOrigin {
+    /// The effective priority, greater first.
+    pub priority: i64,
+    /// The first matching rule that sets a priority; `None` when no rule does.
+    pub rule: Option<PriorityRule>,
+}
+
+impl PriorityOrigin {
+    /// The text `explain` prints: the number and the rule with its condition, or that no rule
+    /// sets a priority.
+    pub fn describe(&self) -> String {
+        match &self.rule {
+            Some(r) => format!("{} from rule {} (when {})", self.priority, r.name, r.when),
+            None => format!("no rule sets a priority: {}", self.priority),
+        }
+    }
+}
+
 /// The decisions the broker's planner asks the owner's policy (spec 3.5).
 pub trait Policy {
     /// Indices of `queue` in dispatch order at `now`.
@@ -107,6 +136,14 @@ pub trait Policy {
     /// `[admission]`: how the real load of a runner machine gates a start.
     fn admission(&self) -> Admission {
         Admission::default()
+    }
+    /// The priority of `entry` and the rule that set it; 0 without a rule by default.
+    fn priority_origin(&self, entry: &QueueEntry) -> PriorityOrigin {
+        let _ = entry;
+        PriorityOrigin {
+            priority: 0,
+            rule: None,
+        }
     }
 }
 
@@ -193,6 +230,22 @@ impl RulePolicy {
 }
 
 impl Policy for RulePolicy {
+    fn priority_origin(&self, entry: &QueueEntry) -> PriorityOrigin {
+        match self.first(&entry.order, &entry.client, |r| r.priority) {
+            Some((i, priority)) => PriorityOrigin {
+                priority,
+                rule: Some(PriorityRule {
+                    name: self.rule_name(i),
+                    when: self.rules[i].when.describe(),
+                }),
+            },
+            None => PriorityOrigin {
+                priority: 0,
+                rule: None,
+            },
+        }
+    }
+
     fn order(&self, queue: &[QueueEntry], served: &ServeLog, now: Timestamp) -> Vec<usize> {
         dispatch_order(self, queue, served, now)
     }

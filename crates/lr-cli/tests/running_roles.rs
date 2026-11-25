@@ -2,7 +2,7 @@ mod common;
 
 use common::hub_events::HANG;
 use common::TempDir;
-use lr_cli::commands::up_cmd::{running_roles, up_plan, up_with};
+use lr_cli::commands::up_cmd::{running_roles, selection, up_plan, up_selected, up_with};
 use lr_cli::commands::RoleArg;
 use lr_cli::init::NodeRole;
 use lr_cli::paths::Layout;
@@ -182,4 +182,49 @@ async fn up_leaves_the_hub_down_without_waiting_when_the_broker_could_not_start(
         took < Duration::from_secs(1),
         "nothing is waited for: {took:?}"
     );
+}
+
+fn with_second_runner(layout: &Layout) {
+    std::fs::create_dir_all(layout.root.join("runner").join("r2")).unwrap();
+}
+
+#[test]
+fn up_takes_the_names_of_down_and_lists_the_known_ones_for_an_unknown_name() {
+    let dir = TempDir::new("up-names");
+    let layout = layout(&dir);
+    with_second_runner(&layout);
+    let one = selection(&layout, &["r2".to_string()]).unwrap();
+    assert_eq!(one.roles, vec![NodeRole::Runner]);
+    assert_eq!(one.runners, Some(BTreeSet::from(["r2".to_string()])));
+    let local = selection(&layout, &["local:r1".to_string(), "hub".to_string()]).unwrap();
+    assert_eq!(local.roles, vec![NodeRole::Runner, NodeRole::Hub]);
+    assert_eq!(local.runners, Some(BTreeSet::from(["r1".to_string()])));
+    let every = selection(&layout, &["runner".to_string(), "r1".to_string()]).unwrap();
+    assert_eq!(every.runners, None);
+    let broker = selection(&layout, &["broker".to_string()]).unwrap();
+    assert_eq!(broker.roles, vec![NodeRole::Broker]);
+    let err = selection(&layout, &["r3".to_string(), "r2".to_string()]).unwrap_err();
+    assert!(err.contains("r3"), "{err}");
+    assert!(
+        err.ends_with("names of this installation: hub, broker, runner, r1, r2"),
+        "{err}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn up_with_a_runner_name_starts_that_runner_only() {
+    let dir = TempDir::new("up-one-runner");
+    let layout = layout(&dir);
+    with_second_runner(&layout);
+    let started = std::sync::Mutex::new(Vec::new());
+    let spawn = |argv: &[String]| -> std::io::Result<u32> {
+        started.lock().unwrap().push(argv[..4].join(" "));
+        Ok(4242)
+    };
+    let select = selection(&layout, &["r2".to_string()]).unwrap();
+    let code = up_selected(&layout, || Ok(select), Duration::from_secs(2), &spawn, true)
+        .await
+        .unwrap();
+    assert_eq!(code, 1, "the started runner does not answer in the test");
+    assert_eq!(started.into_inner().unwrap(), vec!["runner run --name r2"]);
 }

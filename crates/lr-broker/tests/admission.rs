@@ -21,7 +21,7 @@ fn load(free_mem_mb: u64, cpu_busy_percent: u8) -> RunnerToBroker {
 
 fn status(reply: ReadReply) -> StatusView {
     match reply {
-        ReadReply::Status(s) => s,
+        ReadReply::Status(s) => *s,
         other => panic!("expected status, got {other:?}"),
     }
 }

@@ -4,7 +4,10 @@
 use lr_abstractions::{Dialer, Frame, Transport, TransportError};
 use lr_net::{IpcDialer, ServerIdentity};
 use lr_proto::PROTOCOL_VERSION;
-use lr_proto::{receive, IpcChannel, IpcOpen, IpcOpenReply, Message, PeerKind, Received};
+use lr_proto::{
+    receive, IpcChannel, IpcOpen, IpcOpenReply, Message, PeerKind, ProtocolError,
+    ProtocolErrorCode, Received,
+};
 use std::time::Duration;
 
 /// How long the CLI waits for the server to open the channel.
@@ -17,6 +20,41 @@ pub struct IpcClient {
 
 fn io(e: TransportError) -> String {
     e.to_string()
+}
+
+const PROTOCOL_REFUSED: &str = "refused: protocol ";
+
+/// Whether `error`, a failure of [`IpcClient::connect`] or [`IpcClient::open`], is the role
+/// refusing this binary's protocol major version: the role runs, on another major version.
+pub fn protocol_refusal(error: &str) -> bool {
+    error.contains(PROTOCOL_REFUSED)
+}
+
+/// The text of a refused opening: for `unsupported_version` it names the protocol the role
+/// answers on, the one this binary speaks and what to do about the difference.
+pub fn refusal_text(e: &ProtocolError) -> String {
+    if e.code != ProtocolErrorCode::UnsupportedVersion {
+        return format!("refused: {}", e.message);
+    }
+    let ours = PROTOCOL_VERSION;
+    let Some(theirs) = e.supported else {
+        return format!(
+            "refused: {}; the role answers on another protocol than this binary ({}.{})",
+            e.message, ours.major, ours.minor
+        );
+    };
+    let fix = if theirs.major > ours.major {
+        "this binary is older than the role: update it with `localrunner upgrade`"
+    } else {
+        "restart the role with this binary: a broker that runs as an OS service has its own \
+         copy, update it with `localrunner broker update-service` (administrator rights); \
+         another role is stopped by the version that started it (or its process is ended), then \
+         start it again with `localrunner up`"
+    };
+    format!(
+        "refused: {}; the role answers on protocol {}.{}, this binary speaks {}.{}: {fix}",
+        e.message, theirs.major, theirs.minor, ours.major, ours.minor
+    )
 }
 
 impl IpcClient {
@@ -64,7 +102,7 @@ impl IpcClient {
             .map_err(io)?;
         match lr_proto::decode::<IpcOpenReply>(reply.as_bytes()).map_err(|e| e.to_string())? {
             IpcOpenReply::Ready { .. } => Ok(client),
-            IpcOpenReply::Refused(e) => Err(format!("refused: {}", e.message)),
+            IpcOpenReply::Refused(e) => Err(refusal_text(&e)),
         }
     }
 

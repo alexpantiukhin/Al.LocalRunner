@@ -23,6 +23,10 @@ pub struct JobFilter {
     pub runner: Option<String>,
     /// Only runs queued at or after this time.
     pub since: Option<Timestamp>,
+    /// Only runs that started and did not finish before this time (a run still going counts).
+    pub ran_since: Option<Timestamp>,
+    /// Only runs that started at or before this time.
+    pub ran_until: Option<Timestamp>,
     /// Only runs that are not final.
     pub active_only: bool,
     /// Maximum number of runs, taken in the order of the result.
@@ -54,6 +58,12 @@ impl JobFilter {
                 .as_ref()
                 .is_none_or(|r| job.runner.as_ref() == Some(r))
             && self.since.is_none_or(|s| job.queued_at >= s)
+            && self
+                .ran_since
+                .is_none_or(|s| job.started_at.is_some() && job.finished_at.is_none_or(|f| f >= s))
+            && self
+                .ran_until
+                .is_none_or(|u| job.started_at.is_some_and(|s| s <= u))
             && (!self.active_only || !job.state.is_final())
     }
 }

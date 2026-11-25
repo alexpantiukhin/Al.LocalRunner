@@ -98,16 +98,9 @@ impl Activity {
             self.running_jobs.push(RunningJob {
                 job: s.job.0.clone(),
                 runner: s.runner.clone(),
+                running_ms: s.started_at.map(|t| now().0.saturating_sub(t.0)),
             });
         }
-    }
-
-    /// The lines shown while `upgrade` waits: a line per running job, then the time waited.
-    pub fn waiting_lines(&self, elapsed: std::time::Duration) -> Vec<String> {
-        let ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
-        let mut out = self.running.clone();
-        out.push(format!("waited {}", format_ms(ms)));
-        out
     }
 
     /// The lines shown before the question.
@@ -164,7 +157,7 @@ pub async fn activity(layout: &Layout) -> Activity {
                     match read(client, name, ReadRequest::Status(filter)).await? {
                         ReadReply::Status(v) => {
                             let next = v.next.clone();
-                            Ok((v, next))
+                            Ok((*v, next))
                         }
                         other => Err(format!("broker {name}: {other:?}")),
                     }
@@ -193,6 +186,77 @@ pub struct RunningJob {
     pub job: String,
     /// The runner, as the broker names it.
     pub runner: Option<String>,
+    /// How long it has run, in ms, when known.
+    pub running_ms: Option<u64>,
+}
+
+const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What `upgrade` prints while it waits for the running jobs: the lines at the start, then one
+/// line when the set of running jobs changes and one line every minute, so a long wait stays
+/// short in a terminal and in a log.
+#[derive(Debug, Clone)]
+pub struct WaitProgress {
+    jobs: BTreeSet<String>,
+    printed: std::time::Duration,
+}
+
+impl WaitProgress {
+    /// The progress of a wait that starts with `activity`, and the lines printed at its start:
+    /// what is waited for, that no new job is taken meanwhile, and a line per running job.
+    pub fn start(activity: &Activity) -> (Self, Vec<String>) {
+        let n = activity.running.len();
+        let mut lines = vec![format!(
+            "waiting for {} to finish; new jobs are not taken while upgrade waits (Ctrl+C stops waiting, nothing is replaced)",
+            jobs_word(n)
+        )];
+        lines.extend(activity.running.iter().map(|l| format!("  {l}")));
+        let jobs = activity
+            .running_jobs
+            .iter()
+            .map(|j| j.job.clone())
+            .collect();
+        let progress = Self {
+            jobs,
+            printed: std::time::Duration::ZERO,
+        };
+        (progress, lines)
+    }
+
+    /// The line to print for the jobs running `elapsed` after the wait began: when the set of
+    /// jobs changed or a minute passed since the last line; otherwise nothing.
+    pub fn observe(&mut self, jobs: &[RunningJob], elapsed: std::time::Duration) -> Option<String> {
+        let ids: BTreeSet<String> = jobs.iter().map(|j| j.job.clone()).collect();
+        if ids == self.jobs && elapsed < self.printed + PROGRESS_EVERY {
+            return None;
+        }
+        self.jobs = ids;
+        self.printed = elapsed;
+        if jobs.is_empty() {
+            return Some("the jobs have finished, waiting for the runners to stop".into());
+        }
+        let longest = jobs.iter().filter_map(|j| j.running_ms).max();
+        Some(match longest {
+            Some(ms) => format!("waiting for {}, running {}", jobs_word(jobs.len()), age(ms)),
+            None => format!("waiting for {}", jobs_word(jobs.len())),
+        })
+    }
+}
+
+fn jobs_word(n: usize) -> String {
+    match n {
+        1 => "1 job".into(),
+        n => format!("{n} jobs"),
+    }
+}
+
+fn age(ms: u64) -> String {
+    let minutes = ms / 60_000;
+    match ms {
+        0..=59_999 => format!("{} s", ms / 1000),
+        _ if minutes < 60 => format!("{minutes} min"),
+        _ => format!("{} h {:02} min", minutes / 60, minutes % 60),
+    }
 }
 
 /// Every page of a paged answer: `ask` gets the token of the previous page (`None` first) and

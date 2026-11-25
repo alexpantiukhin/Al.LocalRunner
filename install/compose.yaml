@@ -1,8 +1,19 @@
 name: al-localrunner
 
+# Start: `docker compose up -d broker`, then `docker compose exec broker localrunner broker add
+# --runners 1 --address broker:7443`, then join (the code is a secret: keep it off the command
+# line, give it in the environment as below, or with `--code-file`):
+#   docker compose run --rm -e LOCALRUNNER_JOIN_CODE runner localrunner runner join broker:7443 \
+#     --config /etc/al-localrunner/runner.toml --name runner
+# and `docker compose up -d runner`.
+# Docker Desktop: the runner sees the memory of the Docker virtual machine, not of the host, so
+# `mem_mb` of runner.toml must fit it (raise it with `memory=` in .wslconfig: a change restarts
+# WSL and every container). A broker that runs on the host (`[listen] address = "127.0.0.1:7443"`)
+# is reached as host.docker.internal:7443 instead of broker:7443.
+
 services:
   broker:
-    # Both services run the image al-localrunner:<version> with an explicit tag (never latest).
+    # The broker runs the image al-localrunner:<version> with an explicit tag (never latest).
     # `build` makes it from the repository: its context is the repository root (`..` from
     # install/). With the published image and no repository, remove `build`; the image is pulled.
     image: al-localrunner:0.8.0
@@ -20,12 +31,37 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
   runner:
-    image: al-localrunner:0.8.0
+    # The runner is built here, on the OS and with the packages you pick: the published image has
+    # only the binary, and a system tool such as git or python cannot come from a mounted
+    # directory (shared libraries, libexec). Edit the base and the package line, then
+    # `docker compose build runner`. The binary is static and runs on debian, ubuntu, alpine, ...
+    # (alpine: `FROM alpine:3.21` and `RUN apk add --no-cache ca-certificates git python3`).
+    # Heavy toolchains (node, java, rust) are better kept out of the image: mount them and name the
+    # directory in `[env] tools_dir`, see below.
+    # The binary comes from the published image of the same version. A checkout of an unreleased
+    # version has no such tag yet: take the binary from the image built by `broker` instead
+    # (`COPY --from=al-localrunner:<version>`, after `docker compose build broker`).
+    build:
+      dockerfile_inline: |
+        FROM debian:bookworm-slim
+        RUN apt-get update \
+            && apt-get install -y --no-install-recommends ca-certificates git python3 \
+            && rm -rf /var/lib/apt/lists/*
+        COPY --from=ghcr.io/alexpantiukhin/al.localrunner:0.8.0 /usr/local/bin/localrunner /usr/local/bin/localrunner
+        RUN mkdir -p /var/lib/al-localrunner /etc/al-localrunner /run/al-localrunner \
+            && chown 65532:65532 /var/lib/al-localrunner /etc/al-localrunner /run/al-localrunner
+        ENV LOCALRUNNER_STATE_DIR=/var/lib/al-localrunner LOCALRUNNER_CONFIG_DIR=/etc/al-localrunner
+        USER 65532:65532
     command: ["localrunner", "runner", "run"]
     user: "65532:65532"
     hostname: runner
+    # In a container the limit is set by Docker, not by `[limits] enforce = "limit"` (it needs
+    # systemd): the memory and the cores of the whole runner. `runners` shows `runs as warn`.
+    # mem_limit: 8g
+    # cpus: 4
     volumes:
       - runner-state:/var/lib/al-localrunner
+      # Read directly by the runner: an edit of the file is picked up by `localrunner reload` or a restart.
       - ./runner.toml:/etc/al-localrunner/runner.toml:ro
       # Tools of jobs (node, java, cargo, ...): a directory with `<tool>/bin`, see `[env] tools_dir`.
       # - ./tools:/opt/tools:ro

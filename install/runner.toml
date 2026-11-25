@@ -1,6 +1,12 @@
-# Runner settings in a container (spec 3.10, 10.4). The image has only localrunner (on a glibc
-# base): tools of jobs come from a mounted directory, see tools_dir.
+# Runner settings in a container (spec 3.10, 10.4). System tools of jobs (git, python) are packages
+# of the runner image built by compose.yaml (dockerfile_inline); heavy toolchains come from a
+# mounted directory, see tools_dir.
 platforms = ["linux"]
+
+# mem_mb and cpu default to what the container sees: on Docker Desktop that is the memory of the
+# Docker virtual machine (see .wslconfig), and a mem_mb above it stops the runner.
+# This file is read directly (mounted by compose.yaml): `localrunner reload` or a restart picks up
+# an edit made in place.
 
 [env]
 path = "/usr/local/bin:/usr/bin:/bin"

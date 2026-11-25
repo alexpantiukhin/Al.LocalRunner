@@ -88,6 +88,7 @@ fn result_msg(job: &JobId, f: Final) -> RunnerToBroker {
         detail: f.detail,
         peak_disk_mb: f.peak_disk_mb,
         peak_mem_mb: f.peak_mem_mb,
+        finished_at: None,
     })
 }
 

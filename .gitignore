@@ -8,3 +8,4 @@ secrets/
 target/
 .playwright-mcp/
 *.stackdump
+__pycache__/

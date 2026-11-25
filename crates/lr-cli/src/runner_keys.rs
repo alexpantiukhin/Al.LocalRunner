@@ -25,6 +25,8 @@ const TOP: [&str; 19] = [
     "commands",
 ];
 
+const DEPRECATED: [(&str, &str); 1] = [("workspace", "0.7.0")];
+
 const RETENTION: [&str; 3] = ["max_size_gb", "retention_days", "evict"];
 
 fn section_keys(section: &str) -> Option<&'static [&'static str]> {
@@ -56,7 +58,16 @@ fn unknown_in(path: &str, table: &Table, known: &[&str], out: &mut Vec<String>) 
 pub fn unknown_keys(table: &Table) -> Vec<String> {
     let mut out = Vec::new();
     for (key, value) in table {
-        if !TOP.contains(&key.as_str()) {
+        if let Some((_, since)) = DEPRECATED.iter().find(|(name, _)| name == key) {
+            let shown = if matches!(value, Value::Table(_)) {
+                format!("[{key}]")
+            } else {
+                key.clone()
+            };
+            out.push(format!(
+                "`{shown}` is deprecated since {since}, remove it (it is read without an error and has no effect)"
+            ));
+        } else if !TOP.contains(&key.as_str()) {
             let what =
                 if matches!(value, Value::Table(_) | Value::Array(_)) && !is_plain_list(value) {
                     "section"

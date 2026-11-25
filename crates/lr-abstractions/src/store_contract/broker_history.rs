@@ -130,6 +130,47 @@ pub async fn history_by_finish_time_keeps_a_late_finish_under_the_limit(store: &
     }
 }
 
+/// The window filters keep the runs that were running at some moment of it: started at or before
+/// its end and not finished before its start; a run still going overlaps, an order that never
+/// started does not.
+pub async fn run_window_keeps_runs_that_overlap_it(store: &dyn BrokerStore) {
+    finished(store, "c1", "a", "check", (1, 10, 20), JobState::Passed).await;
+    finished(store, "c1", "b", "check", (2, 30, 40), JobState::Passed).await;
+    finished(store, "c2", "c", "check", (3, 15, 50), JobState::Failed).await;
+    let d = intake("c1", "d", "check", at(4));
+    let key = d.job.key.clone();
+    store.accept(d).await.unwrap();
+    store.grant(&key, "r1").await.unwrap();
+    store
+        .transition(&key, Transition::to(JobState::Running, at(60)))
+        .await
+        .unwrap();
+    store
+        .accept(intake("c1", "z", "check", at(5)))
+        .await
+        .unwrap();
+    let ids = |rows: Vec<crate::store::JobRecord>| {
+        let mut ids: Vec<String> = rows.into_iter().map(|r| r.job.key.job.0).collect();
+        ids.sort();
+        ids
+    };
+    let window = |since: Option<u64>, until: Option<u64>| JobFilter {
+        ran_since: since.map(at),
+        ran_until: until.map(at),
+        ..JobFilter::default()
+    };
+    let both = store.jobs(&window(Some(25), Some(35))).await.unwrap();
+    assert_eq!(ids(both), ["b", "c"]);
+    let from = store.jobs(&window(Some(45), None)).await.unwrap();
+    assert_eq!(ids(from), ["c", "d"], "a run still going overlaps");
+    let to = store.jobs(&window(None, Some(12))).await.unwrap();
+    assert_eq!(ids(to), ["a"]);
+    let edge = store.jobs(&window(Some(20), Some(30))).await.unwrap();
+    assert_eq!(ids(edge), ["a", "b", "c"], "both ends are inclusive");
+    let none = store.jobs(&window(Some(61), Some(5))).await.unwrap();
+    assert!(none.is_empty());
+}
+
 /// Statistics count final runs per profile and client with median and p95 of wait and
 /// duration; runs still active are not counted.
 pub async fn stats_count_final_runs_with_median_and_p95(store: &dyn BrokerStore) {

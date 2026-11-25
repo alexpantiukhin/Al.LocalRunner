@@ -277,23 +277,31 @@ impl Redactor {
     /// Masks registered values, known secret formats and sensitive `name=value` pairs in text.
     pub fn redact_text(&self, text: &str) -> String {
         let out = self.matcher().mask(text);
-        self.scan(&out)
+        self.scan(&out, false)
+    }
+
+    /// [`Redactor::redact_text`] for the output of a job: a value masked by a sensitive name is
+    /// shown as `***(name: <name>)`, so a reader can tell the masker from the program's output.
+    /// What is masked is the same.
+    pub fn redact_job_text(&self, text: &str) -> String {
+        let out = self.matcher().mask(text);
+        self.scan(&out, true)
     }
 
     fn bounded(&self, text: &str, max: usize) -> String {
         let matcher = self.matcher();
         let cut = matcher.cut(text, max);
         let input = cut.map_or(text, |at| &text[..at]);
-        let out = self.scan(&matcher.mask(input));
+        let out = self.scan(&matcher.mask(input), false);
         truncate(out, max, cut.is_some())
     }
 
-    fn scan(&self, text: &str) -> String {
+    fn scan(&self, text: &str, named: bool) -> String {
         let out = scan::private_keys(text);
         let out = scan::join_codes(&out);
         let out = scan::url_credentials(&out);
         let out = scan::auth_schemes(&out);
-        scan::key_values(&out, |w| self.is_sensitive_field(w))
+        scan::key_values(&out, named, |w| self.is_sensitive_field(w))
     }
 
     /// The record with every secret masked and every value bounded.

@@ -70,6 +70,18 @@ pub fn down_targets(layout: &Layout, names: &[String]) -> Vec<Target> {
     out
 }
 
+/// What a role that did not open its channel means for `down`: `Ok(false)` when it does not
+/// run, the report of a role that runs on another major protocol version (it cannot be told
+/// to stop from here) as an error.
+pub fn not_reached(error: &str) -> Result<bool, String> {
+    match crate::ipc_client::protocol_refusal(error) {
+        true => Err(format!(
+            "it is running and answers on the old protocol, so `down` cannot stop it: {error}"
+        )),
+        false => Ok(false),
+    }
+}
+
 async fn answers(address: &str, channel: IpcChannel) -> bool {
     match IpcClient::connect(address, channel).await {
         Err(_) => false,
@@ -117,8 +129,9 @@ async fn runner(
 ) -> Result<bool, String> {
     crate::runner_config::check_runner_name(name)?;
     let address = layout.runner_ipc(principal, name);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::RunnerControl).await else {
-        return Ok(false);
+    let c = match IpcClient::connect(&address, IpcChannel::RunnerControl).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e),
     };
     match c
         .call::<_, ControlReply>(&RunnerControl::Down { mode, reason })
@@ -134,8 +147,9 @@ async fn runner(
 
 async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
     let address = layout.hub_ipc(principal);
-    let Ok(c) = IpcClient::connect(&address, IpcChannel::Cli).await else {
-        return Ok(false);
+    let c = match IpcClient::connect(&address, IpcChannel::Cli).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e),
     };
     match c.call::<_, CliReply>(&CliRequest::Shutdown).await {
         Ok(CliReply::Stopping) | Err(_) => {}
@@ -155,8 +169,9 @@ async fn hub(layout: &Layout, principal: &str) -> Result<bool, String> {
 /// stopping.
 pub async fn stop_broker(layout: &Layout) -> Result<Option<Vec<String>>, String> {
     let address = layout.admin_ipc();
-    let Ok(c) = IpcClient::connect_broker_admin(&address).await else {
-        return Ok(None);
+    let c = match IpcClient::connect_broker_admin(&address).await {
+        Ok(c) => c,
+        Err(e) => return not_reached(&e).map(|_| None),
     };
     let warnings = match c.call::<_, AdminReply>(&AdminRequest::Shutdown).await {
         Ok(AdminReply::Ok { warnings }) => warnings,
@@ -303,6 +318,10 @@ pub trait Roles: Send + Sync {
     async fn running_jobs(&self) -> Option<Vec<String>> {
         None
     }
+    /// The running jobs with their runners and run times, or `None` when they are not known.
+    async fn running_job_list(&self) -> Option<Vec<super::upgrade_jobs::RunningJob>> {
+        None
+    }
     /// Whether runner `name` runs a job, from [`Roles::running_jobs`]; `None` when not known.
     async fn runner_has_job(&self, name: &str) -> Option<bool> {
         let on = format!(" on {name} (");
@@ -319,6 +338,10 @@ pub trait Roles: Send + Sync {
     async fn runner_answers(&self, name: &str) -> bool;
     /// Stops the hub; `false` when it does not run.
     async fn stop_hub(&self) -> Result<bool, String>;
+    /// Asks the dashboard of this user to stop; `false` when none runs.
+    async fn stop_dashboard(&self) -> bool {
+        false
+    }
     /// Stops the broker as [`stop_broker`] does.
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String>;
     /// Whether the broker runs under the OS service manager.
@@ -412,6 +435,11 @@ impl Roles for IpcRoles<'_> {
         seen.note.is_none().then_some(seen.running)
     }
 
+    async fn running_job_list(&self) -> Option<Vec<super::upgrade_jobs::RunningJob>> {
+        let seen = super::upgrade_jobs::activity(self.layout).await;
+        seen.note.is_none().then_some(seen.running_jobs)
+    }
+
     async fn runner_answers(&self, name: &str) -> bool {
         let address = self.layout.runner_ipc(&self.principal, name);
         answers(&address, IpcChannel::RunnerControl).await
@@ -419,6 +447,10 @@ impl Roles for IpcRoles<'_> {
 
     async fn stop_hub(&self) -> Result<bool, String> {
         hub(self.layout, &self.principal).await
+    }
+
+    async fn stop_dashboard(&self) -> bool {
+        crate::dashboard_channel::stop_running(self.layout).await
     }
 
     async fn stop_broker(&self) -> Result<Option<Vec<String>>, String> {
@@ -721,14 +753,19 @@ pub async fn stop_targets(
                     code = 1;
                 }
             },
-            Target::Hub => match roles.stop_hub().await {
-                Ok(true) => println!("hub: stopped"),
-                Ok(false) => not_running("hub", &mut code),
-                Err(e) => {
-                    eprintln!("hub: {e}");
-                    code = 1;
+            Target::Hub => {
+                match roles.stop_hub().await {
+                    Ok(true) => println!("hub: stopped"),
+                    Ok(false) => not_running("hub", &mut code),
+                    Err(e) => {
+                        eprintln!("hub: {e}");
+                        code = 1;
+                    }
                 }
-            },
+                if roles.stop_dashboard().await {
+                    println!("dashboard: stopped");
+                }
+            }
             Target::Broker => {
                 if !stopping.is_empty() && (cancel || !service) {
                     eprintln!(

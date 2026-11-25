@@ -1,10 +1,13 @@
 use clap::Parser;
-use lr_cli::commands::history_cmd::{history_filter, history_lines, newest_first, show_lines};
+use lr_cli::commands::history_cmd::{
+    history_filter, history_lines, newest_first, overlaps, show_lines,
+};
 use lr_cli::commands::log_cmd::LogPrinter;
 use lr_cli::commands::read_cmd::{pool_runner_lines, runner_lines, runners_document, stats_lines};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::view::{
-    add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines, runners_of,
+    add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines,
+    runner_note_lines, runner_note_lines_for, runners_of,
 };
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
 use lr_core::{JobId, JobState, StepState, Timestamp};
@@ -154,9 +157,12 @@ fn history_flags_become_the_brokers_filter() {
             platform: Some("linux".into()),
             runner: Some("r1".into()),
             since: Some(Timestamp(8 * H)),
+            ran_since: None,
+            ran_until: None,
             active_only: false,
             limit: Some(5),
             cursor: None,
+            offset: None,
             mine: false,
         }
     );
@@ -188,6 +194,135 @@ fn history_flags_become_the_brokers_filter() {
 }
 
 #[test]
+fn history_window_flags_are_their_own_pair_and_since_keeps_meaning_queued() {
+    let Command::History(h) = parse(&[
+        "history",
+        "--since",
+        "2h",
+        "--ran-since",
+        "3h",
+        "--ran-until",
+        "1h",
+    ]) else {
+        panic!("history");
+    };
+    let f = history_filter(&h.filters, Timestamp(10 * H));
+    assert_eq!(
+        f.since,
+        Some(Timestamp(8 * H)),
+        "--since is still the enqueue time"
+    );
+    assert_eq!(f.ran_since, Some(Timestamp(7 * H)));
+    assert_eq!(f.ran_until, Some(Timestamp(9 * H)));
+    let Command::History(bare) = parse(&["history"]) else {
+        panic!("history");
+    };
+    let f = history_filter(&bare.filters, Timestamp(10 * H));
+    assert_eq!((f.ran_since, f.ran_until), (None, None));
+    let err = Cli::try_parse_from(["localrunner", "history", "--ran-since", "soon"])
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("2h"), "{err}");
+}
+
+#[test]
+fn a_run_overlaps_the_window_when_it_started_before_its_end_and_did_not_end_before_its_start() {
+    let run = |started: Option<u64>, finished: Option<u64>| JobSummary {
+        started_at: started.map(Timestamp),
+        finished_at: finished.map(Timestamp),
+        ..summary("j", 0)
+    };
+    let (from, to) = (Some(Timestamp(100)), Some(Timestamp(200)));
+    assert!(
+        overlaps(&run(Some(50), Some(150)), from, to),
+        "starts before, ends inside"
+    );
+    assert!(
+        overlaps(&run(Some(150), Some(250)), from, to),
+        "starts inside, ends after"
+    );
+    assert!(
+        overlaps(&run(Some(10), Some(500)), from, to),
+        "spans the window"
+    );
+    assert!(
+        overlaps(&run(Some(150), None), from, to),
+        "a running run overlaps"
+    );
+    assert!(
+        overlaps(&run(Some(200), Some(300)), from, to),
+        "the end is inclusive"
+    );
+    assert!(
+        overlaps(&run(Some(10), Some(100)), from, to),
+        "the start is inclusive"
+    );
+    assert!(
+        !overlaps(&run(Some(10), Some(99)), from, to),
+        "ended before the window"
+    );
+    assert!(
+        !overlaps(&run(Some(201), None), from, to),
+        "started after the window"
+    );
+    assert!(!overlaps(&run(None, Some(150)), from, to), "never started");
+    assert!(
+        overlaps(&run(None, None), None, None),
+        "no window keeps everything"
+    );
+    assert!(overlaps(&run(Some(5), None), from, None));
+    assert!(!overlaps(&run(Some(5), Some(50)), from, None));
+}
+
+#[test]
+fn the_card_names_the_client_label_and_lists_the_profile_labels() {
+    let mut run = summary("j", 0);
+    run.labels = vec!["release".into(), "night".into()];
+    let detail = JobDetail {
+        summary: run,
+        note: None,
+        branch: None,
+        cwd: None,
+        os_user: None,
+        source: None,
+        github_run_url: None,
+        steps: Vec::new(),
+        secrets: Vec::new(),
+        cancelled_by: None,
+        wait_reason: None,
+    };
+    let text = show_lines("local", &detail).join("\n");
+    assert!(text.contains("client_label agent-1"), "{text}");
+    assert!(text.contains("labels    release, night"), "{text}");
+    assert!(!text.contains("\nlabel     "), "{text}");
+}
+
+#[test]
+fn history_shows_when_each_run_started_and_finished() {
+    let never = JobSummary {
+        started_at: None,
+        finished_at: None,
+        ..summary("waiting", 5 * H)
+    };
+    let rows = vec![
+        ("local".to_string(), summary("done", H)),
+        ("local".to_string(), never),
+    ];
+    let lines = history_lines(&rows);
+    let header: Vec<&str> = lines[0].split('\t').collect();
+    let started = header
+        .iter()
+        .position(|c| *c == "STARTED")
+        .expect("STARTED");
+    assert_eq!(header[started + 1], "FINISHED");
+    let done: Vec<&str> = lines[1].split('\t').collect();
+    assert_eq!(done[started], format_time(Timestamp(H + 1000)));
+    assert_eq!(done[started + 1], format_time(Timestamp(H + 63_000)));
+    let waiting: Vec<&str> = lines[2].split('\t').collect();
+    assert_eq!((waiting[started], waiting[started + 1]), ("-", "-"));
+}
+
+#[test]
 fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     let rows = newest_first(
         vec![
@@ -209,7 +344,7 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     let lines = history_lines(&rows);
     assert_eq!(lines.len(), 4, "a header and one line per run: {lines:?}");
     assert!(
-        lines[0].contains("PROFILE	PROJECT	SOURCE	LABEL	"),
+        lines[0].contains("PROFILE	PROJECT	SOURCE	CLIENT_LABEL	CLIENT	"),
         "{}",
         lines[0]
     );
@@ -292,7 +427,8 @@ fn history_sorts_by_finish_time_with_ties_by_job_and_unfinished_last() {
         .iter()
         .position(|c| *c == "FINISHED")
         .expect("a FINISHED column");
-    assert_eq!(header[col - 1], "QUEUED");
+    assert_eq!(header[col - 1], "STARTED");
+    assert_eq!(header[col - 2], "QUEUED");
     let cells: Vec<&str> = lines[1].split('\t').collect();
     assert_eq!(cells[col], format_time(Timestamp(9 * H)));
     let waiting: Vec<&str> = lines[5].split('\t').collect();
@@ -339,6 +475,15 @@ fn history_show_prints_the_card_with_steps_and_no_secret_values() {
     ] {
         assert!(text.contains(needed), "{needed} missing:\n{text}");
     }
+}
+
+#[test]
+fn log_printer_names_the_rule_of_a_masked_value() {
+    let mut p = LogPrinter::default();
+    assert_eq!(
+        p.push("test prints command: cargo test\n"),
+        format!("test prints command: {}(name: command)\n", lr_obs::MASK)
+    );
 }
 
 #[test]
@@ -465,6 +610,7 @@ fn stats_and_runners_print_per_broker() {
             enforcement: None,
             version: None,
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 1024,
@@ -584,10 +730,14 @@ fn read_commands_parse_their_flags() {
         Cli::try_parse_from(["localrunner", "status", "--with-logs"]).is_err(),
         "--with-logs needs --html"
     );
-    let Command::Up { role } = parse(&["up", "hub"]) else {
+    let Command::Up { names } = parse(&["up", "hub", "local:r1"]) else {
         panic!("up");
     };
-    assert_eq!(role, Some(lr_cli::commands::RoleArg::Hub));
+    assert_eq!(names, vec!["hub".to_string(), "local:r1".to_string()]);
+    let Command::Up { names } = parse(&["up"]) else {
+        panic!("up");
+    };
+    assert!(names.is_empty());
 }
 
 #[test]
@@ -622,6 +772,7 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
         last_lines: Vec::new(),
         stale: false,
         wait_code: None,
+        priority: None,
     };
     let snap = DashboardSnapshot {
         taken_at: Timestamp(0),
@@ -637,6 +788,8 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
             profiles: Vec::new(),
             clients: Vec::new(),
         },
+        history_page: None,
+        queue_count: None,
     };
     assert_eq!(
         log_targets(&snap),
@@ -659,7 +812,7 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     )];
     let lines = history_lines(&rows);
     let cols: Vec<&str> = lines[1].split('\t').collect();
-    assert_eq!(cols[9], "-", "{}", lines[1]);
+    assert_eq!(cols[10], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
 }
 
@@ -729,6 +882,7 @@ fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo 
             enforcement: None,
             version: None,
             enforce_limit: false,
+            programs_missing: Default::default(),
         },
         last_seen: Some(Timestamp(1_700_000_000_000)),
         free_mem_mb: 0,
@@ -964,6 +1118,7 @@ fn status_recent_lines_name_the_end_the_reason_and_who() {
             total_cpu: 0,
         },
         next: None,
+        queue_total: None,
     };
     let text = recent_lines(&[("local".into(), view.clone())]).join("\n");
     for needed in [
@@ -1008,6 +1163,7 @@ fn recent_rows_of_a_broker_that_ignores_the_filter_are_cut_on_this_side() {
             total_cpu: 0,
         },
         next: None,
+        queue_total: None,
     };
     let ids = |v: &StatusView| v.recent.iter().map(|s| s.job.0.clone()).collect::<Vec<_>>();
     let mut counted = view.clone();
@@ -1221,4 +1377,103 @@ fn runners_json_carries_pools() {
     assert_eq!(broker["runners"][0]["can_start_now"], false);
     let wire: ReadReply = serde_json::from_str(r#"{"type":"runners","runners":[]}"#).unwrap();
     assert!(matches!(wire, ReadReply::Runners { pools, .. } if pools.is_empty()));
+}
+
+fn without_programs(name: &str, missing: &[&str]) -> RunnerInfo {
+    let mut r = runner_info(name, RunnerLiveness::Online, 3);
+    r.caps.version = Some(env!("CARGO_PKG_VERSION").to_string());
+    r.caps.programs_missing = missing.iter().map(|m| m.to_string()).collect();
+    r
+}
+
+#[test]
+fn runners_prints_programs_not_found_next_to_an_online_runner() {
+    let r = without_programs("r1", &["npm", "cargo"]);
+    let text = runner_lines(&[("office".into(), vec![r])]).join("\n");
+    assert!(text.contains("online"), "the runner stays online:\n{text}");
+    assert!(text.contains("programs not found: cargo, npm"), "{text}");
+    let fine = runner_lines(&[("office".into(), vec![without_programs("r2", &[])])]).join("\n");
+    assert!(!fine.contains("not found"), "{fine}");
+}
+
+#[test]
+fn status_names_runners_with_programs_not_found_and_keeps_them_online() {
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            without_programs("r1", &["cargo"]),
+            without_programs("r2", &[]),
+        ],
+    )];
+    let text = runner_note_lines(&per).join("\n");
+    assert!(
+        text.contains("office")
+            && text.contains("r1")
+            && text.contains("programs not found: cargo"),
+        "{text}"
+    );
+    assert!(!text.contains("r2"), "{text}");
+    assert!(
+        not_serving_lines(&per).is_empty(),
+        "a runner without a program still serves"
+    );
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "office" }] });
+    add_runners(&mut doc, &per);
+    let notes = doc["brokers"][0]["runner_notes"].as_array().expect("notes");
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0]["name"], "r1");
+    assert_eq!(notes[0]["programs_missing"][0], "cargo");
+    assert!(runner_note_lines(&[]).is_empty());
+}
+
+fn on_version(name: &str, version: Option<&str>) -> RunnerInfo {
+    let mut r = runner_info(name, RunnerLiveness::Online, 3);
+    r.caps.version = version.map(str::to_string);
+    r
+}
+
+#[test]
+fn a_runner_on_an_older_version_is_marked_in_runners_and_status() {
+    let current = env!("CARGO_PKG_VERSION");
+    let old = on_version("old", Some("0.1.0"));
+    let text = runner_lines(&[("office".into(), vec![old.clone()])]).join("\n");
+    assert!(
+        text.contains("version 0.1.0 is behind") && text.contains("localrunner upgrade"),
+        "{text}"
+    );
+    let same = on_version("same", Some(current));
+    let text = runner_lines(&[("office".into(), vec![same])]).join("\n");
+    assert!(!text.contains("is behind"), "{text}");
+    let per = vec![(
+        "office".to_string(),
+        vec![
+            old,
+            on_version("same", Some("0.8.0")),
+            on_version("newer", Some("0.9.0")),
+            on_version("unknown", None),
+        ],
+    )];
+    let text = runner_note_lines_for(&per, "0.8.0").join("\n");
+    assert!(
+        text.contains("old  version 0.1.0 is behind 0.8.0"),
+        "{text}"
+    );
+    assert!(
+        text.contains("unknown  version unknown is behind 0.8.0"),
+        "a runner that reports no version is an earlier one: {text}"
+    );
+    assert!(!text.contains("same") && !text.contains("newer"), "{text}");
+    assert!(
+        not_serving_lines(&per).is_empty(),
+        "a lagging runner still serves"
+    );
+    let mut doc = serde_json::json!({ "brokers": [{ "broker": "office" }] });
+    add_runners(&mut doc, &per);
+    let notes = doc["brokers"][0]["runner_notes"].as_array().expect("notes");
+    assert!(notes
+        .iter()
+        .any(|n| n["name"] == "old" && n["version_behind"] == "0.1.0"));
+    assert!(notes
+        .iter()
+        .any(|n| n["name"] == "unknown" && n["version_behind"] == "unknown"));
 }

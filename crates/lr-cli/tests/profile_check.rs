@@ -76,3 +76,22 @@ fn an_unreadable_policy_is_said_not_guessed() {
     assert!(ok);
     assert!(lines.join("\n").contains("policy: not checked"));
 }
+
+#[test]
+fn a_file_source_is_checked_for_existence_and_never_read() {
+    let dir = std::env::temp_dir().join(format!("lr-profile-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let present = dir.join("token");
+    std::fs::write(&present, "fake-value-not-for-output").unwrap();
+    let m = machine("dev", Some(SecretFrom::File(present.clone())), |_| false);
+    let (lines, ok) = report(&profiles(), &m);
+    let text = lines.join("\n");
+    assert!(ok, "{text}");
+    assert!(text.contains("exists (not read by this check)"), "{text}");
+    assert!(!text.contains("fake-value-not-for-output"), "{text}");
+    let m = machine("dev", Some(SecretFrom::File(dir.join("gone"))), |_| false);
+    let (lines, ok) = report(&profiles(), &m);
+    assert!(!ok);
+    assert!(lines.join("\n").contains("does not exist"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

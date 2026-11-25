@@ -47,6 +47,7 @@ fn snapshot() -> DashboardSnapshot {
                 last_lines: vec!["tail".into()],
                 stale: i % 2 == 0,
                 wait_code: None,
+                priority: None,
             })
             .collect(),
         runners: vec![BrokerRunners {
@@ -61,6 +62,15 @@ fn snapshot() -> DashboardSnapshot {
             stale: true,
         }],
         stats: stats(),
+        history_page: Some(HistoryPage {
+            offset: 100,
+            limit: 100,
+            total: 250,
+        }),
+        queue_count: Some(GridCount {
+            shown: 50,
+            total: 80,
+        }),
     }
 }
 

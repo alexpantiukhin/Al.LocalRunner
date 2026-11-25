@@ -92,9 +92,23 @@ fn elevation_and_secret_sources_are_read() {
     );
     assert_eq!(c.secrets["signing"], SecretFrom::Keychain("release".into()));
     assert!(!parse("", None).allow_elevated);
-    let bad = with_path("[secret.x]\nfrom = \"file:/etc/x\"\n");
+    let bad = with_path("[secret.x]\nfrom = \"vault:x\"\n");
     let e = RunnerConfig::parse(&bad, None, "h", PathBuf::new(), HOST).unwrap_err();
     assert!(e.to_string().contains("secret.x"), "{e}");
+    assert!(e.to_string().contains("file:PATH"), "{e}");
+}
+
+#[test]
+fn a_file_secret_source_takes_an_absolute_path() {
+    let path = std::env::temp_dir().join("fake-token");
+    let from = toml::Value::String(format!("file:{}", path.display()));
+    let c = parse(&format!("[secret.token]\nfrom = {from}\n"), None);
+    assert_eq!(c.secrets["token"], SecretFrom::File(path));
+    for relative in ["file:token", "file:", "file:./token"] {
+        let bad = with_path(&format!("[secret.token]\nfrom = \"{relative}\"\n"));
+        let e = RunnerConfig::parse(&bad, None, "h", PathBuf::new(), HOST).unwrap_err();
+        assert!(e.to_string().contains("absolute path"), "{relative}: {e}");
+    }
 }
 
 #[test]
@@ -117,6 +131,55 @@ fn programs_that_fail_their_lookup_or_check_are_not_offered() {
     assert!(!c.settings.programs.contains("surely-missing-program-xyz"));
     assert!(!c.settings.programs.contains("failing"));
     assert_eq!(problems.len(), 2, "{problems:?}");
+    let reported = c.settings.capabilities(None);
+    assert_eq!(
+        reported.programs_missing.iter().collect::<Vec<_>>(),
+        ["failing", "surely-missing-program-xyz"],
+        "the runner tells the broker which programs it declared and did not find"
+    );
+    assert!(reported.programs.contains("git"));
+    assert!(!reported.programs_missing.contains("git"));
+}
+
+#[test]
+fn a_capability_with_a_check_and_no_path_is_decided_by_the_check_alone() {
+    let (ok, fail) = if cfg!(windows) {
+        ("exit 0", "exit 3")
+    } else {
+        ("true", "false")
+    };
+    let text = format!(
+        "[programs]\nandroid-emulator = {{ check = \"{ok}\" }}\n\
+         gradle = {{ check = \"{fail}\" }}\n\
+         no-such-program-xyz = {{}}\n{}",
+        common::env_path_toml()
+    );
+    let mut c = parse(&text, None);
+    let problems = c.check_programs();
+    assert!(
+        c.settings.programs.contains("android-emulator"),
+        "{problems:?}"
+    );
+    assert!(!c.settings.programs.contains("gradle"));
+    assert!(!c.settings.programs.contains("no-such-program-xyz"));
+    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.starts_with("program gradle: check")),
+        "{problems:?}"
+    );
+    assert!(
+        problems
+            .iter()
+            .any(|p| p == "program no-such-program-xyz: not found in PATH"),
+        "{problems:?}"
+    );
+    let reported = c.settings.capabilities(None);
+    assert_eq!(
+        reported.programs_missing.iter().collect::<Vec<_>>(),
+        ["gradle", "no-such-program-xyz"]
+    );
 }
 
 #[test]
@@ -205,6 +268,30 @@ fn unknown_keys_and_sections_are_warnings_not_errors() {
         assert!(all.contains(needle), "{needle}: {all}");
     }
     assert!(all.contains("known"), "{all}");
+}
+
+#[test]
+fn a_workspace_section_is_deprecated_not_unknown_and_not_an_error() {
+    let c = parse("[workspace]\nroot = \"/work\"\n", None);
+    assert_eq!(c.warnings.len(), 1, "{:?}", c.warnings);
+    let w = &c.warnings[0];
+    assert!(
+        w.contains("`[workspace]`") && w.contains("deprecated since 0.7.0, remove it"),
+        "{w}"
+    );
+    assert!(!w.contains("unknown"), "{w}");
+    let key = parse("workspace = \"x\"\n", None);
+    assert!(
+        key.warnings[0].contains("deprecated since 0.7.0, remove it"),
+        "{:?}",
+        key.warnings
+    );
+    let other = parse("[wrkspace]\nroot = 1\n", None);
+    assert!(
+        other.warnings[0].contains("unknown section"),
+        "{:?}",
+        other.warnings
+    );
 }
 
 #[test]

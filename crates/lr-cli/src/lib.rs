@@ -9,6 +9,7 @@ pub mod config_drift;
 pub mod config_edit;
 pub mod control;
 pub mod dashboard;
+pub mod dashboard_channel;
 pub mod dashboard_model;
 pub mod doctor;
 pub mod facts;

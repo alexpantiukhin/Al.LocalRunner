@@ -142,6 +142,7 @@ fn status_masks_the_last_lines_of_running_jobs() {
             summary,
             steps: Vec::new(),
             last_lines: vec!["login api_token=hunter2hunter2".into(), "ok".into()],
+            last_output_ago_ms: None,
         }],
         queue: Vec::new(),
         recent: Vec::new(),
@@ -152,6 +153,7 @@ fn status_masks_the_last_lines_of_running_jobs() {
             total_cpu: 1,
         },
         next: None,
+        queue_total: None,
     };
     let mut views = vec![("local".to_string(), view)];
     mask_status(&mut views, &Redactor::new(&[]));

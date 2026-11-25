@@ -308,6 +308,16 @@ fn service_for<R>(
     user: &str,
     run: impl FnOnce(&ServiceContext) -> R,
 ) -> R {
+    service_saying(layout, f, user, &|_| {}, run)
+}
+
+fn service_saying<R>(
+    layout: &Layout,
+    f: &Fake,
+    user: &str,
+    say: &dyn Fn(&str),
+    run: impl FnOnce(&ServiceContext) -> R,
+) -> R {
     let principal = |u: &str| -> Option<String> {
         let bare = u.rsplit('\\').next().unwrap_or(u).to_ascii_lowercase();
         Some(match bare.as_str() {
@@ -336,6 +346,7 @@ fn service_for<R>(
                     state_dir: layout.root.clone(),
                     config_dir: (layout.config != layout.root).then(|| layout.config.clone()),
                     user: owner,
+                    secret_files: Vec::new(),
                 });
                 if !named {
                     ours.command = ours.command.replace(" --owner nobody", "");
@@ -361,8 +372,43 @@ fn service_for<R>(
         service: &service,
         confirm_started: &started,
         confirm_stopped: &stopped,
+        say,
     };
     run(&ctx)
+}
+
+#[test]
+fn the_service_notes_come_before_the_rights_are_asked_for_and_in_a_dry_run() {
+    let dir = TempDir::new("runner-service-notes");
+    let layout = Layout::new(dir.path().join("state"), dir.path().join("config"));
+    joined_runner(&layout, "box");
+    std::fs::write(
+        layout.runner_dir("box").join("runner.toml"),
+        "tags = [\"docker\"]\n[secret.registry]\nfrom = \"env:LR_FAKE_REGISTRY_TOKEN\"\n",
+    )
+    .unwrap();
+    let user = installing_user();
+    let said = std::cell::RefCell::new(Vec::<String>::new());
+    let say = |line: &str| said.borrow_mut().push(line.to_string());
+    for (dry_run, elevated) in [(false, false), (true, false), (true, true)] {
+        said.borrow_mut().clear();
+        let f = Fake { elevated, ..fake() };
+        let result = service_saying(&layout, &f, &user, &say, |ctx| {
+            runner_service_for(&layout, Switch::On, "box", dry_run, ctx)
+        });
+        assert_eq!(result.is_ok(), dry_run, "{result:?}");
+        let text = said.borrow().join("\n");
+        assert!(text.contains("without a drain"), "{text}");
+        assert!(text.contains("env:LR_FAKE_REGISTRY_TOKEN"), "{text}");
+        assert!(text.contains("docker"), "{text}");
+        assert_eq!(text.contains("DOMAIN"), cfg!(windows), "{text}");
+    }
+    said.borrow_mut().clear();
+    let off = service_saying(&layout, &fake(), &user, &say, |ctx| {
+        runner_service_for(&layout, Switch::Off, "box", true, ctx)
+    });
+    assert_eq!(off, Ok(0));
+    assert!(said.borrow().is_empty(), "off has no notes");
 }
 
 #[test]

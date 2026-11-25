@@ -57,6 +57,10 @@ impl Policy for HeldPool<'_> {
     fn admission(&self) -> lr_core::Admission {
         self.inner.admission()
     }
+
+    fn priority_origin(&self, entry: &QueueEntry) -> lr_core::PriorityOrigin {
+        self.inner.priority_origin(entry)
+    }
 }
 
 fn live(state: ServiceState) -> bool {

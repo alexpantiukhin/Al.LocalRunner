@@ -3,19 +3,21 @@
 
 use crate::commands::view::{known_brokers, read};
 use crate::ipc_client::IpcClient;
+use lr_abstractions::HistoryWindow;
 use lr_core::{JobState, Timestamp};
 use lr_obs::Redactor;
 use lr_proto::{
-    BrokerRunners, CliReply, CliRequest, DashboardJob, DashboardList, DashboardSnapshot,
-    HistoryFilter, HubOrder, JobDetail, JobSummary, ReadReply, ReadRequest, StatsFilter, StatsView,
-    StatusFilter, StepView,
+    effective_limit, BrokerRunners, CliReply, CliRequest, DashboardJob, DashboardList,
+    DashboardSnapshot, GridCount, HistoryFilter, HistoryPage, HubOrder, JobDetail, JobSummary,
+    ReadReply, ReadRequest, StatsFilter, StatsView, StatusFilter, StepView, HISTORY_LIMIT_MAX,
 };
 use std::time::Duration;
 
 /// How long the dashboard waits for the hub's list of its orders.
 pub const ORDERS_WAIT: Duration = Duration::from_secs(5);
 
-/// How many finished runs of a broker the model carries.
+/// How many finished runs of a broker the model carries by default; a page may ask for more, up
+/// to what the broker serves at most.
 pub const HISTORY_LIMIT: u64 = 100;
 
 /// A card from a list summary: the order fields the summary carries (source, directory, note,
@@ -45,6 +47,7 @@ fn job(broker: &str, list: DashboardList, detail: JobDetail) -> DashboardJob {
         last_lines: Vec::new(),
         stale: false,
         wait_code: None,
+        priority: None,
     }
 }
 
@@ -68,21 +71,34 @@ pub async fn finished_runs(
     broker: &str,
     filter: HistoryFilter,
 ) -> Vec<JobDetail> {
+    finished_page(client, broker, filter).await.0
+}
+
+/// As [`finished_runs`], with how many runs the broker holds in all for the filter; `None` from
+/// a broker that does not report it, which also ignores an offset.
+pub async fn finished_page(
+    client: &IpcClient,
+    broker: &str,
+    filter: HistoryFilter,
+) -> (Vec<JobDetail>, Option<u64>) {
     let details = read(client, broker, ReadRequest::HistoryDetails(filter.clone())).await;
-    let cards = match details {
-        Ok(ReadReply::Details { jobs, .. }) => jobs,
+    let (cards, total) = match details {
+        Ok(ReadReply::Details { jobs, total, .. }) => (jobs, total),
         _ => match read(client, broker, ReadRequest::History(filter)).await {
-            Ok(ReadReply::History { jobs, .. }) => jobs
-                .into_iter()
-                .map(|s| detail_of(s, Vec::new(), None))
-                .collect(),
-            _ => Vec::new(),
+            Ok(ReadReply::History { jobs, total, .. }) => (
+                jobs.into_iter()
+                    .map(|s| detail_of(s, Vec::new(), None))
+                    .collect(),
+                total,
+            ),
+            _ => (Vec::new(), None),
         },
     };
-    cards
+    let cards = cards
         .into_iter()
         .filter(|d| d.summary.state.is_final())
-        .collect()
+        .collect();
+    (cards, total)
 }
 
 /// The model of the dashboard and of `status --html` from every reachable broker: running jobs
@@ -94,7 +110,29 @@ pub async fn build_snapshot(
     history: bool,
     redactor: &Redactor,
 ) -> Result<DashboardSnapshot, String> {
+    let window = history.then(HistoryWindow::default);
+    build_snapshot_page(client, filter, window, redactor).await
+}
+
+/// As [`build_snapshot`], with the part of the history that `window` names (none without
+/// history). Every broker is asked for the same offset and size; the totals add up. A broker
+/// that does not report its total cannot page: it gives its first page only, and the snapshot
+/// then carries no paging.
+pub async fn build_snapshot_page(
+    client: &IpcClient,
+    filter: &StatusFilter,
+    window: Option<HistoryWindow>,
+    redactor: &Redactor,
+) -> Result<DashboardSnapshot, String> {
     let brokers = known_brokers(client).await?;
+    let limit = effective_limit(
+        window.and_then(|w| w.limit),
+        HISTORY_LIMIT,
+        HISTORY_LIMIT_MAX,
+    );
+    let offset = window.map_or(0, |w| w.offset);
+    let (mut queue_shown, mut queue_all, mut queue_known) = (0u64, 0u64, true);
+    let (mut history_all, mut history_known, mut history_asked) = (0u64, true, false);
     let mut snap = DashboardSnapshot {
         taken_at: now(),
         brokers: brokers.clone(),
@@ -104,6 +142,8 @@ pub async fn build_snapshot(
             profiles: Vec::new(),
             clients: Vec::new(),
         },
+        history_page: None,
+        queue_count: None,
     };
     for b in brokers.iter().filter(|b| b.available) {
         let name = b.name.as_str();
@@ -111,6 +151,7 @@ pub async fn build_snapshot(
         let Ok(ReadReply::Status(status)) = status else {
             continue;
         };
+        let status = *status;
         for r in status.running {
             let mut j = job(
                 name,
@@ -124,6 +165,11 @@ pub async fn build_snapshot(
                 .collect();
             snap.jobs.push(j);
         }
+        queue_shown += status.queue.len() as u64;
+        match status.queue_total {
+            Some(t) => queue_all += u64::from(t),
+            None => queue_known = false,
+        }
         for q in status.queue {
             let mut j = job(
                 name,
@@ -132,18 +178,28 @@ pub async fn build_snapshot(
             );
             j.position = Some(q.position);
             j.wait_code = q.wait_code;
+            j.priority = q.priority;
             snap.jobs.push(j);
         }
-        if history {
+        if window.is_some() {
             let finished = HistoryFilter {
                 project: filter.project.clone(),
                 source: filter.source,
                 label: filter.label.clone(),
-                limit: Some(HISTORY_LIMIT),
+                limit: Some(limit),
+                offset: (offset > 0).then_some(offset),
                 ..HistoryFilter::default()
             };
-            for d in finished_runs(client, name, finished).await {
-                snap.jobs.push(job(name, DashboardList::History, d));
+            let (cards, total) = finished_page(client, name, finished).await;
+            history_asked = true;
+            match total {
+                Some(t) => history_all += t,
+                None => history_known = false,
+            }
+            if offset == 0 || total.is_some() {
+                for d in cards {
+                    snap.jobs.push(job(name, DashboardList::History, d));
+                }
             }
         }
         if let Ok(ReadReply::Runners { runners, .. }) =
@@ -161,6 +217,19 @@ pub async fn build_snapshot(
         {
             merge_stats(&mut snap.stats, s);
         }
+    }
+    if queue_known && brokers.iter().any(|b| b.available) {
+        snap.queue_count = Some(GridCount {
+            shown: queue_shown,
+            total: queue_all,
+        });
+    }
+    if history_asked && history_known {
+        snap.history_page = Some(HistoryPage {
+            offset,
+            limit,
+            total: history_all,
+        });
     }
     add_hub_orders(&mut snap, hub_orders(client).await, filter);
     Ok(snap)
@@ -215,6 +284,7 @@ pub fn add_hub_orders(snap: &mut DashboardSnapshot, orders: Vec<HubOrder>, filte
             last_lines: Vec::new(),
             stale,
             wait_code: None,
+            priority: None,
         });
     }
 }

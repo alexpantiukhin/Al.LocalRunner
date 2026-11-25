@@ -37,10 +37,12 @@ pub fn status_json(views: &[(String, StatusView)]) -> Value {
                 "running": v.running.iter().map(|r| item(&r.summary, json!({
                     "steps": r.steps,
                     "last_lines": r.last_lines,
+                    "last_output_ago_ms": r.last_output_ago_ms,
                 }))).collect::<Vec<_>>(),
                 "queue": v.queue.iter().map(|q| item(&q.summary, json!({
                     "position": q.position,
                     "wait_reason": q.wait_reason,
+                    "priority": q.priority,
                 }))).collect::<Vec<_>>(),
                 "recent": v.recent.iter().map(|s| item(s, Value::Object(Map::new()))).collect::<Vec<_>>(),
             })
@@ -54,7 +56,7 @@ pub fn mask_status(views: &mut [(String, StatusView)], redactor: &Redactor) {
     for (_, v) in views.iter_mut() {
         for r in v.running.iter_mut() {
             for l in r.last_lines.iter_mut() {
-                *l = redactor.redact_text(l);
+                *l = redactor.redact_job_text(l);
             }
         }
     }
@@ -139,7 +141,11 @@ pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
                 .find(|s| s.started_at.is_some())
                 .map(|s| format!("  step {}", s.name))
                 .unwrap_or_default();
-            out.push(line(&r.summary, &step, now));
+            let quiet = r
+                .last_output_ago_ms
+                .map(|ms| format!("  last output {} ago", format_ms(ms)))
+                .unwrap_or_default();
+            out.push(line(&r.summary, &format!("{step}{quiet}"), now));
         }
         for q in &v.queue {
             let why = q
@@ -147,7 +153,11 @@ pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
                 .as_deref()
                 .map(|w| format!("  #{} waits: {w}", q.position))
                 .unwrap_or_else(|| format!("  #{}", q.position));
-            out.push(line(&q.summary, &why, now));
+            let priority = q
+                .priority
+                .map(|p| format!("  priority {p}"))
+                .unwrap_or_default();
+            out.push(line(&q.summary, &format!("{why}{priority}"), now));
         }
         if v.running.is_empty() && v.queue.is_empty() {
             out.push("  (no jobs)".into());
@@ -274,7 +284,70 @@ pub fn add_runners(doc: &mut Value, per: &[(String, Vec<RunnerInfo>)]) {
             })
             .collect();
         b["runners"] = json!(listed);
+        let current = env!("CARGO_PKG_VERSION");
+        let notes: Vec<Value> = runners
+            .iter()
+            .filter(|r| !runner_notes(r, current).is_empty())
+            .map(|r| {
+                let mut note = json!({ "name": r.name });
+                if !r.caps.programs_missing.is_empty() {
+                    note["programs_missing"] = json!(r.caps.programs_missing);
+                }
+                if super::read_cmd::version_behind(r.caps.version.as_deref(), current) {
+                    note["version_behind"] = json!(r.caps.version.as_deref().unwrap_or("unknown"));
+                }
+                note
+            })
+            .collect();
+        if !notes.is_empty() {
+            b["runner_notes"] = json!(notes);
+        }
     }
+}
+
+/// What `status` says about one runner besides its liveness: the programs it declared and did
+/// not find, and a version that lags behind `current`. The runner stays online.
+fn runner_notes(r: &RunnerInfo, current: &str) -> Vec<String> {
+    let mut notes = Vec::new();
+    if !r.caps.programs_missing.is_empty() {
+        notes.push(super::read_cmd::missing_programs_text(
+            &r.caps.programs_missing,
+        ));
+    }
+    if super::read_cmd::version_behind(r.caps.version.as_deref(), current) {
+        notes.push(super::read_cmd::behind_text(
+            r.caps.version.as_deref(),
+            current,
+        ));
+    }
+    notes
+}
+
+/// The lines of `status` about runners that serve but have a problem (programs not found, a
+/// version behind this binary), one block per broker; empty when none has.
+pub fn runner_note_lines(per: &[(String, Vec<RunnerInfo>)]) -> Vec<String> {
+    runner_note_lines_for(per, env!("CARGO_PKG_VERSION"))
+}
+
+/// [`runner_note_lines`] against version `current`.
+pub fn runner_note_lines_for(per: &[(String, Vec<RunnerInfo>)], current: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (broker, runners) in per {
+        let lines: Vec<String> = runners
+            .iter()
+            .flat_map(|r| {
+                runner_notes(r, current)
+                    .into_iter()
+                    .map(move |n| format!("  {}  {n}", r.name))
+            })
+            .collect();
+        if lines.is_empty() {
+            continue;
+        }
+        out.push(format!("broker {broker}: runners with a problem"));
+        out.extend(lines);
+    }
+    out
 }
 
 /// The lines of `status` for runners that are `stale` or `offline`; empty when all serve.
@@ -335,7 +408,7 @@ pub async fn status_job(
     Ok(0)
 }
 
-async fn find_job(
+pub async fn find_job(
     client: &IpcClient,
     job: &JobId,
     broker: Option<&str>,
@@ -475,7 +548,8 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
             continue;
         }
         match read(&client, &b.name, ReadRequest::Status(filter.clone())).await {
-            Ok(ReadReply::Status(mut v)) => {
+            Ok(ReadReply::Status(v)) => {
+                let mut v = *v;
                 if let Some(r) = &filter.recent {
                     clip_recent(&mut v, r);
                 }
@@ -523,6 +597,9 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
             }
         }
         for line in not_serving_lines(&per_runners) {
+            println!("{line}");
+        }
+        for line in runner_note_lines(&per_runners) {
             println!("{line}");
         }
         for line in &drift {

@@ -365,6 +365,10 @@ pub struct AutostartFound {
     pub login: bool,
     /// Linux: `Linger` of the user (`loginctl show-user -p Linger`), `None` when unknown.
     pub linger: Option<bool>,
+    /// The runner reaches its broker over the user's local channel and this OS gives such a
+    /// runner no service (a Windows service account cannot use that channel): it has to be
+    /// joined to the broker with its own key first.
+    pub local_channel: bool,
 }
 
 /// `Linger` from `loginctl show-user -p Linger` output: `None` when the output has no such line.
@@ -409,6 +413,15 @@ pub fn autostart_check(name: &str, found: &AutostartFound) -> Option<Check> {
             Status::Ok,
             "user unit with lingering (loginctl enable-linger): survives logout and starts after a reboot"
                 .to_string(),
+        ),
+        (None, true) if found.local_channel => (
+            Status::Warn,
+            format!(
+                "starts at login only: it stops at logout and does not start after a reboot \
+                 until someone logs in; it uses the local channel of this user, which a service \
+                 cannot use, so `autostart on runner {name} --service` would be refused: {}",
+                crate::os_service::runner_service::join_steps(name)
+            ),
         ),
         (None, true) => (
             Status::Warn,
@@ -478,7 +491,9 @@ fn autostart(layout: &Layout, out: &mut Vec<Check>) {
         let service =
             runner_service::installed(os, &name).then(|| runner_service::running(os, &name));
         let login = login_entry(os, &name);
+        let joined = layout.runner_dir(&name).join(BROKER_FILE).is_file();
         let found = AutostartFound {
+            local_channel: runner_service::local_runner_refusal(os, &name, joined).is_some(),
             service,
             login,
             linger: if login { linger(os) } else { None },
@@ -599,12 +614,40 @@ pub fn runner_version_checks(
         .collect()
 }
 
+/// One warning per runner that a broker lists with declared programs it did not find, for the
+/// runners of other machines too; a runner named in `own` is left out, its `runner.toml` is
+/// checked by `runners`. The runner stays online and keeps taking the orders it fits.
+pub fn runner_program_checks(
+    per: &[(String, Vec<lr_proto::RunnerInfo>)],
+    own: &[String],
+) -> Vec<Check> {
+    per.iter()
+        .flat_map(|(broker, runners)| {
+            runners
+                .iter()
+                .filter(|r| !r.caps.programs_missing.is_empty())
+                .filter(|r| {
+                    !own.iter()
+                        .any(|n| crate::commands::upgrade_pool::is_own_name(&r.name, n))
+                })
+                .map(move |r| {
+                    check(
+                        format!("broker {broker} runner {}", r.name),
+                        Status::Warn,
+                        crate::commands::read_cmd::missing_programs_text(&r.caps.programs_missing),
+                    )
+                })
+        })
+        .collect()
+}
+
 async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     let Ok(client) = crate::commands::jobs::hub(layout).await else {
         return;
     };
     if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
         out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
+        out.extend(runner_program_checks(&per, &layout.runner_names()));
     }
     client.close().await;
 }

@@ -6,7 +6,7 @@
   var params = new URLSearchParams(location.search);
   var S = {
     data: JSON.parse($("lr-data").textContent), tab: "queue", sort: { col: "", dir: 1 },
-    sel: -1, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
+    sel: -1, hp: { offset: 0, limit: 100 }, open: null, paused: false, missed: 0, log: "", logGen: 0, stick: false, step: "", stepAuto: true, as: params.get("as") || ""
   };
   var FILTERS = ["text", "project", "source", "label", "runner", "profile", "state", "period"];
   var FINAL = ["passed", "failed", "timeout", "cancelled", "lost"];
@@ -41,8 +41,8 @@
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
       : (d.wait_reason || "") + (s.started_at ? "" : " (" + dur(t - s.queued_at) + ")");
     return {
-      j: j, position: j.position || "", job: s.job, state: shown(s), project: s.project || "",
-      source: d.source || "", label: s.label || "", profile: s.profile || "", cwd: d.cwd || "",
+      j: j, position: j.position || "", job: s.job, state: shown(s), priority: j.priority == null ? null : j.priority, project: s.project || "",
+      source: d.source || "", client_label: s.label || "", labels: (s.labels || []).join(", "), profile: s.profile || "", cwd: d.cwd || "",
       runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
       queued: s.queued_at, finished: s.finished_at == null ? null : s.finished_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
@@ -52,10 +52,10 @@
     function has(v, q) { return !q || String(v).toLowerCase().indexOf(q.toLowerCase()) >= 0; }
     if (f.source && r.source !== f.source) return false;
     if (f.period && r.queued < t - Number(f.period) * 1000) return false;
-    if (!has(r.project, f.project) || !has(r.label, f.label) || !has(r.runner, f.runner)) return false;
+    if (!has(r.project, f.project) || !has(r.client_label, f.label) || !has(r.runner, f.runner)) return false;
     if (!has(r.profile, f.profile) || !has(r.state, f.state)) return false;
     if (f.text) {
-      var all = [r.job, r.project, r.label, r.profile, r.cwd, r.runner, r.broker, r.wait, r.j.detail.note || "", r.j.detail.branch || ""].join(" ");
+      var all = [r.job, r.project, r.client_label, r.labels, r.profile, r.cwd, r.runner, r.broker, r.wait, r.j.detail.note || "", r.j.detail.branch || ""].join(" ");
       if (!has(all, f.text)) return false;
     }
     return true;
@@ -63,7 +63,7 @@
   function sorted(rows) {
     var c = S.sort.col, d = S.sort.dir;
     rows.sort(function (a, b) {
-      var pin = S.tab === "queue" && S.as, pa = pin && a.label === S.as ? 0 : 1, pb = pin && b.label === S.as ? 0 : 1;
+      var pin = S.tab === "queue" && S.as, pa = pin && a.client_label === S.as ? 0 : 1, pb = pin && b.client_label === S.as ? 0 : 1;
       if (pa !== pb) return pa - pb;
       if (!c) return 0;
       var x = a[c], y = b[c];
@@ -91,7 +91,7 @@
     S.waitCells = [];
     body.replaceChildren.apply(body, rows.map(function (r, i) {
       var tr = el("tr", { "data-job": r.job, tabindex: "-1" }, cols.map(function (c) {
-        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : String(r[c]);
+        var v = c === "queued" ? when(r.queued) : c === "finished" ? when(r.finished) : c === "duration" ? dur(r.duration) : r[c] == null ? "" : String(r[c]);
         var td = el("td", { "data-col": c, text: v });
         if (c === "wait") S.waitCells.push({ td: td, j: r.j });
         if (c === "state") td.className = "state-" + r.state;
@@ -100,15 +100,15 @@
         }
         return td;
       }));
-      if (S.as && r.label === S.as) tr.classList.add("pinned");
+      if (S.as && r.client_label === S.as) tr.classList.add("pinned");
       if (r.j.stale) tr.classList.add("stale");
       if (i === S.sel) tr.classList.add("sel");
       tr.addEventListener("click", function () { S.sel = i; openCard(r.j); });
       return tr;
     }));
   }
-  var QCOLS = ["position", "job", "state", "project", "source", "label", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "label", "profile", "cwd", "runner", "queued", "finished", "duration"];
+  var QCOLS = ["position", "job", "state", "priority", "project", "source", "client_label", "labels", "profile", "cwd", "runner", "broker", "wait"];
+  var HCOLS = ["job", "state", "project", "source", "client_label", "profile", "cwd", "runner", "queued", "finished", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
@@ -182,15 +182,37 @@
     root.replaceChildren(el("div", { cls: "scroll" }, [t]));
   }
 
+  function renderPager() {
+    var hp = S.data.history_page, text = $("hp-text");
+    var shown = S.data.jobs.filter(function (j) { return j.list === "history"; }).length;
+    $("hp-prev").disabled = !hp || hp.offset <= 0;
+    $("hp-next").disabled = !hp || hp.offset + hp.limit >= hp.total;
+    if (!hp) { text.textContent = shown + " runs"; return; }
+    var page = Math.floor(hp.offset / hp.limit) + 1, pages = Math.max(1, Math.ceil(hp.total / hp.limit));
+    text.textContent = "shown " + shown + " of " + hp.total + " runs, page " + page + " of " + pages;
+  }
+  function renderQueueNote() {
+    var qc = S.data.queue_count, note = $("queue-note");
+    var cut = !!qc && qc.total > qc.shown;
+    note.hidden = !cut;
+    note.textContent = cut ? "shown " + qc.shown + " of " + qc.total + " queued orders; the broker's list limit cut the rest" : "";
+  }
+  function pageTo(offset, limit) {
+    S.hp = { offset: Math.max(0, offset), limit: limit };
+    S.sel = -1;
+    refresh(true);
+  }
+
   function render() {
     document.querySelectorAll(".tabs button").forEach(function (b) { b.setAttribute("aria-selected", String(b.dataset.tab === S.tab)); });
     document.querySelectorAll(".tab").forEach(function (t) { t.hidden = t.id !== "tab-" + S.tab; });
+    var shownSort = S.sort.col || S.tab !== "history" ? S.sort : { col: "finished", dir: -1 };
     document.querySelectorAll("th[data-sort]").forEach(function (th) {
-      th.classList.toggle("asc", th.dataset.sort === S.sort.col && S.sort.dir > 0);
-      th.classList.toggle("desc", th.dataset.sort === S.sort.col && S.sort.dir < 0);
+      th.classList.toggle("asc", th.dataset.sort === shownSort.col && shownSort.dir > 0);
+      th.classList.toggle("desc", th.dataset.sort === shownSort.col && shownSort.dir < 0);
     });
-    if (S.tab === "queue") renderTable($("queue-body"), QCOLS);
-    if (S.tab === "history") renderTable($("history-body"), HCOLS);
+    if (S.tab === "queue") { renderTable($("queue-body"), QCOLS); renderQueueNote(); }
+    if (S.tab === "history") { renderTable($("history-body"), HCOLS); renderPager(); }
     if (S.tab === "stats") renderStats();
     if (S.tab === "runners") renderRunners();
     if (S.tab === "brokers") renderBrokers();
@@ -215,7 +237,7 @@
     S.filters = {};
     FILTERS.forEach(function (k) { S.filters[k] = (fromHash ? h.get(k) : saved[k]) || ""; $("f-" + k).value = S.filters[k]; });
     S.tab = h.get("tab") || "queue";
-    var sort = h.get("sort") || "";
+    var sort = (h.get("sort") || "").replace(/^(-?)label$/, "$1client_label");
     S.sort = { col: sort.replace(/^-/, ""), dir: sort.charAt(0) === "-" ? -1 : 1 };
   }
 
@@ -227,7 +249,7 @@
       S.step = live ? live.name : "";
     }
     $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
-    var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Label", s.label], ["Client", s.client_label], ["Note", d.note],
+    var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Client label (--as)", s.label], ["Profile labels", (s.labels || []).join(", ")], ["Priority", j.priority], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
       ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
       ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
@@ -365,10 +387,10 @@
   }
 
   var timer = null;
-  function refresh() {
+  function refresh(force) {
     if (!config.live) return;
-    fetch("/api/snapshot", { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) { if (d && !S.paused) { S.data = d; render(); } }).catch(function () { return; });
+    fetch("/api/snapshot?history_offset=" + S.hp.offset + "&history_limit=" + S.hp.limit, { credentials: "same-origin" }).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && (force === true || !S.paused)) { S.data = d; render(); } }).catch(function () { return; });
     if (S.open && $("log-follow").checked) loadLog();
   }
   function schedule() { if (!timer) timer = setTimeout(function () { timer = null; refresh(); }, 300); }
@@ -409,6 +431,9 @@
     th.addEventListener("click", function () { var c = th.dataset.sort; S.sort = { col: c, dir: S.sort.col === c ? -S.sort.dir : 1 }; saveState(); render(); });
   });
   FILTERS.forEach(function (k) { $("f-" + k).addEventListener("input", function (e) { S.filters[k] = e.target.value; S.sel = -1; saveState(); render(); }); });
+  $("hp-prev").addEventListener("click", function () { pageTo(S.hp.offset - S.hp.limit, S.hp.limit); });
+  $("hp-next").addEventListener("click", function () { pageTo(S.hp.offset + S.hp.limit, S.hp.limit); });
+  $("hp-size").addEventListener("change", function (e) { pageTo(0, Number(e.target.value) || 100); });
   $("card-close").addEventListener("click", closeCard);
   $("card-cancel").addEventListener("click", function () { if (S.open) askCancel([S.open]); });
   $("cancel-filtered").addEventListener("click", function () {
