@@ -183,6 +183,7 @@ impl FakeBroker {
                 zone,
                 heartbeat_s: 15,
                 broker_lost_kill_s: Some(180),
+                broker_version: None,
             }),
         )
         .await;

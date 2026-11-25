@@ -199,6 +199,11 @@ pub struct StatsArgs {
 /// `runners`.
 #[derive(Args, Debug)]
 pub struct RunnersArgs {
+    /// Show everything known about the runner of this name instead of the table.
+    pub name: Option<String>,
+    /// Add the programs, enforcement and cache columns.
+    #[arg(long)]
+    pub wide: bool,
     /// Only this broker.
     #[arg(long)]
     pub broker: Option<String>,

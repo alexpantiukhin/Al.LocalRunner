@@ -40,6 +40,7 @@ impl Engine {
                 zone: Some(self.zone_of_peer(endpoint)),
                 heartbeat_s: HEARTBEAT_INTERVAL_S,
                 broker_lost_kill_s: Some(self.lost_kill_s()),
+                broker_version: self.version.clone(),
             }),
         );
     }

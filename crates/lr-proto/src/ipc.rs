@@ -163,6 +163,10 @@ pub struct BrokerStatus {
     /// When `available` last changed; the hub start while it never connected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<Timestamp>,
+    /// The release of the broker, as it told the hub when it connected; absent for one that
+    /// never connected or is older.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 /// An active order of a hub (answer to [`CliRequest::Orders`]).

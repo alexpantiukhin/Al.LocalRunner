@@ -84,6 +84,7 @@ pub fn cli_replies() -> Vec<CliReply> {
                 available: true,
                 outbox: 2,
                 since: Some(lr_core::Timestamp(5)),
+                version: None,
             }],
         },
         CliReply::Jobs { jobs: vec![] },

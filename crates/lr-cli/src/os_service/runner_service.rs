@@ -29,6 +29,39 @@ pub struct RunnerServiceInputs {
     /// The files of the `file:` sources of `[secret.*]`: the Windows service account gets read
     /// access to each, as to its own key.
     pub secret_files: Vec<PathBuf>,
+    /// The files an earlier `autostart on` gave the Windows service account read access to
+    /// ([`read_grants_record`]): taken back by `on` and `off` even when `runner.toml` no
+    /// longer lists them.
+    pub granted_files: Vec<PathBuf>,
+}
+
+/// Where `autostart on` records the secret files it gave read access to: outside the
+/// directories of the service account, so a job cannot change the list.
+pub fn grants_record(i: &RunnerServiceInputs) -> PathBuf {
+    i.state_dir
+        .join("service-grants")
+        .join(format!("{}.json", i.name))
+}
+
+/// The files of the record at `path`; none when it is missing or unreadable.
+pub fn read_grants_record(path: &Path) -> Vec<PathBuf> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<String>>(&text).ok())
+        .map(|files| files.into_iter().map(PathBuf::from).collect())
+        .unwrap_or_default()
+}
+
+fn record_text(files: &[&PathBuf]) -> String {
+    let files: Vec<String> = files.iter().map(|f| s(f)).collect();
+    serde_json::to_string_pretty(&files).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn stale_grants(i: &RunnerServiceInputs) -> Vec<&PathBuf> {
+    i.granted_files
+        .iter()
+        .filter(|f| !i.secret_files.contains(f))
+        .collect()
 }
 
 /// The privileges the Windows service keeps: no impersonation, so a job of the runner cannot
@@ -1284,6 +1317,19 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             ],
         ));
     }
+    let stale = stale_grants(i);
+    if !i.secret_files.is_empty() || !i.granted_files.is_empty() {
+        let mut both: Vec<&PathBuf> = i.granted_files.iter().collect();
+        both.extend(
+            i.secret_files
+                .iter()
+                .filter(|f| !i.granted_files.contains(f)),
+        );
+        out.push(Action::WriteFile {
+            path: grants_record(i),
+            contents: record_text(&both),
+        });
+    }
     for g in windows_grants(i) {
         out.push(
             Action::run(
@@ -1292,6 +1338,18 @@ fn windows(i: &RunnerServiceInputs) -> Vec<Action> {
             )
             .tolerating(tolerated(g.optional)),
         );
+    }
+    if !stale.is_empty() {
+        for file in &stale {
+            out.push(
+                Action::run("icacls", &[&s(file), "/remove", &account])
+                    .tolerating(Tolerate::Anything),
+            );
+        }
+        out.push(Action::WriteFile {
+            path: grants_record(i),
+            contents: record_text(&i.secret_files.iter().collect::<Vec<_>>()),
+        });
     }
     out.extend(key_to(i, &account, &i.user));
     out.extend([
@@ -1440,9 +1498,16 @@ pub fn uninstall(i: &RunnerServiceInputs, restore_key: bool) -> Vec<Action> {
                     Action::run("icacls", &[&s(&g.path), "/remove", &account]).tolerating(tolerate),
                 );
             }
+            for file in stale_grants(i) {
+                out.push(
+                    Action::run("icacls", &[&s(file), "/remove", &account])
+                        .tolerating(Tolerate::Anything),
+                );
+            }
             out.push(
                 Action::run("sc.exe", &["delete", &name]).tolerating(Tolerate::Codes(vec![1060])),
             );
+            out.push(Action::RemoveFile(grants_record(i)));
             out
         }
         Os::Linux => vec![

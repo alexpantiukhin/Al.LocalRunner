@@ -83,6 +83,7 @@ fn broker(name: &str, available: bool) -> BrokerStatus {
         available,
         outbox: 0,
         since: None,
+        version: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn status(name: &str) -> StatusView {
             steps: Vec::new(),
             last_lines: vec![format!("{name} api_token=hunter2hunter2")],
             last_output_ago_ms: None,
+            requested: None,
         }],
         queue: vec![QueueItem {
             summary: summary(&format!("wait-{name}"), JobState::Queued),
@@ -100,6 +102,8 @@ fn status(name: &str) -> StatusView {
             wait_reason: Some(format!("runner of {name} busy")),
             wait_code: None,
             priority: None,
+            requested: None,
+            detail: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {

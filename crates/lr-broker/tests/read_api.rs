@@ -302,7 +302,7 @@ async fn explain_names_the_rule_that_holds_the_order() {
     alex.send(&order("j2", req(512, 2, 60))).await;
     let waiting = alex.accepted().await.waiting.unwrap();
     assert!(waiting.contains("ci-reserve"), "{waiting}");
-    let ReadReply::Explain { job, text } = alex
+    let ReadReply::Explain { job, text, .. } = alex
         .read(ReadRequest::Explain {
             job: JobId("j2".into()),
             client: None,
@@ -596,9 +596,79 @@ async fn explain_names_the_job_that_holds_the_only_slot() {
     pass_time_heard(&h, &mut r, &mut alex, 9).await;
     let text = explain_text(alex.read(explain_of("j2")).await);
     assert!(
-        text.contains("the runner is busy with order j1 (3 min)"),
+        text.contains("the runner is busy with order j1 (profile "),
         "{text}"
     );
+    assert!(text.contains("3 min of 1 min"), "{text}");
+    assert!(text.contains("; no later than "), "{text}");
+}
+
+#[tokio::test]
+async fn explain_gives_the_structured_detail_and_the_upper_bound_of_the_wait() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 600))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.send(&order("j2", req(512, 1, 300))).await;
+    alex.accepted().await;
+    alex.send(&order("j3", req(512, 1, 120))).await;
+    alex.accepted().await;
+    pass_time_heard(&h, &mut r, &mut alex, 9).await;
+    let ReadReply::Explain { detail, .. } = alex.read(explain_of("j3")).await else {
+        panic!("explain")
+    };
+    let detail = detail.expect("a job that waits for the runner has a detail");
+    let running: Vec<_> = detail.blocking.iter().filter(|b| b.running).collect();
+    assert_eq!(running.len(), 1, "{detail:?}");
+    assert_eq!(running[0].job.0, "j1");
+    assert_eq!(running[0].timeout_s, 600);
+    assert!(running[0].elapsed_s >= 180, "{detail:?}");
+    assert_eq!(
+        detail.bound_s,
+        (600 - running[0].elapsed_s) + 300,
+        "the rest of j1 plus the whole timeout of j2 ahead, not the own timeout of j3"
+    );
+    assert_eq!(detail.unnamed, 0);
+    let mut line = None;
+    let ReadReply::Status(status) = alex
+        .read(ReadRequest::Status(StatusFilter::default()))
+        .await
+    else {
+        panic!("status")
+    };
+    for q in &status.queue {
+        if q.summary.job.0 == "j3" {
+            line = q.detail.clone();
+            assert!(q.requested.is_some());
+        }
+    }
+    assert_eq!(line, Some(detail));
+    assert!(status.running[0].requested.is_some());
+}
+
+#[tokio::test]
+async fn the_bound_sums_foreign_jobs_a_client_may_not_see_without_naming_them() {
+    let h = Harness::start("[visibility]\nothers_orders = \"none\"\n");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    let mut ci = h.member_hub("ci-box", "ci", "10.0.0.20").await;
+    alex.send(&order("j1", req(512, 1, 600))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    ci.send(&order("c1", req(512, 1, 120))).await;
+    ci.accepted().await;
+    let ReadReply::Explain { detail, text, .. } = ci.read(explain_of("c1")).await else {
+        panic!("explain")
+    };
+    let detail = detail.expect("detail");
+    assert!(detail.blocking.is_empty(), "{detail:?}");
+    assert_eq!(detail.unnamed, 1);
+    assert!(detail.bound_s > 0 && detail.bound_s <= 600, "{detail:?}");
+    assert!(!text.contains("j1"), "{text}");
 }
 
 #[tokio::test]
@@ -618,6 +688,9 @@ async fn explain_says_nothing_of_a_foreign_holder_a_client_may_not_see() {
     let seen_by_ci = explain_text(ci.read(explain_of("c1")).await);
     let seen_by_ci = seen_by_ci
         .split("; priority:")
+        .next()
+        .unwrap_or_default()
+        .split("; no later than")
         .next()
         .unwrap_or_default()
         .to_string();

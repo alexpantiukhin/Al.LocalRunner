@@ -12,7 +12,7 @@ use lr_obs::Redactor;
 use lr_proto::{
     CancelRequest, CancelTarget, CliReply, CliRequest, IpcChannel, ReasonCode, SubmitRequest,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -204,6 +204,73 @@ async fn follow_to_stdout(layout: &Layout, client: &IpcClient, job: &JobId) -> R
     .await
 }
 
+/// How many last lines of the log `wait` prints without `--full`.
+pub const WAIT_TAIL_LINES: usize = 50;
+
+/// The last lines of an output that arrives in pieces; older lines are only counted.
+pub struct Tail {
+    cap: usize,
+    lines: VecDeque<String>,
+    partial: String,
+    dropped: usize,
+}
+
+impl Tail {
+    /// An empty tail that keeps the last `cap` lines.
+    pub fn new(cap: usize) -> Tail {
+        Tail {
+            cap,
+            lines: VecDeque::new(),
+            partial: String::new(),
+            dropped: 0,
+        }
+    }
+
+    fn add(&mut self, line: String) {
+        if self.lines.len() == self.cap {
+            self.lines.pop_front();
+            self.dropped += 1;
+        }
+        self.lines.push_back(line);
+    }
+
+    /// Takes the next piece of output; a line is complete at its newline.
+    pub fn push(&mut self, text: &str) {
+        self.partial.push_str(text);
+        while let Some(end) = self.partial.find('\n') {
+            let line: String = self.partial.drain(..=end).collect();
+            self.add(line.trim_end_matches(['\n', '\r']).to_string());
+        }
+    }
+
+    /// The kept lines, one per line, and the hint on reading the rest, `None` when nothing
+    /// was left out.
+    pub fn finish(mut self, job: &JobId) -> (String, Option<String>) {
+        if !self.partial.is_empty() {
+            let rest = std::mem::take(&mut self.partial);
+            self.add(rest);
+        }
+        let mut body = String::new();
+        if self.dropped > 0 {
+            body.push_str(&format!(
+                "... {} earlier lines left out ...\n",
+                self.dropped
+            ));
+        }
+        for line in &self.lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+        let hint = (self.dropped > 0).then(|| {
+            format!(
+                "showing the last {} lines of the log; all of it: localrunner wait {job} --full, or localrunner log {job} --tail 200\n",
+                self.cap
+            )
+        });
+        (body, hint)
+    }
+}
+
 /// Writes the hub's warnings about a placed order to `err` (stderr), one per line, so the
 /// JobId on stdout stays alone.
 pub fn print_warnings(warnings: &[String], err: &mut impl Write) {
@@ -316,21 +383,48 @@ pub async fn submit_on(
     follow(&client, &job, redactor, out).await
 }
 
-/// `wait <job> [--json]`: with `--json` the output goes to stderr and stdout gets one line,
+/// `wait <job> [--json] [--full]`: the status line, the last [`WAIT_TAIL_LINES`] lines of the
+/// log and, when lines were left out, a hint on reading all of it; `full` streams the whole
+/// log instead. With `--json` the output goes to stderr and stdout gets one line,
 /// [`ended_json`].
-pub async fn wait(layout: &Layout, job: &str, json: bool) -> Result<i32, String> {
+pub async fn wait(layout: &Layout, job: &str, json: bool, full: bool) -> Result<i32, String> {
     let job = JobId(job.to_string());
     let client = hub(layout).await?;
     client.send(&CliRequest::Wait { job: job.clone() }).await?;
-    if !json {
+    if full && !json {
         return follow_to_stdout(layout, &client, &job).await;
     }
+    let redactor = cli_redactor(layout);
     let mut stderr = std::io::stderr();
-    let ended = follow_to_end(&client, &job, &cli_redactor(layout), &mut |text| {
-        let _ = stderr.write_all(text.as_bytes());
-    })
-    .await?;
-    println!("{}", ended_json(&job, &ended));
+    let mut tail = Tail::new(WAIT_TAIL_LINES);
+    let ended = if full {
+        follow_to_end(&client, &job, &redactor, &mut |text| {
+            let _ = stderr.write_all(text.as_bytes());
+        })
+        .await
+    } else {
+        follow_to_end(&client, &job, &redactor, &mut |text| tail.push(text)).await
+    };
+    if !full {
+        let (body, hint) = tail.finish(&job);
+        match json {
+            true => {
+                let _ = stderr.write_all(body.as_bytes());
+            }
+            false => {
+                let mut stdout = std::io::stdout();
+                let _ = stdout.write_all(body.as_bytes());
+                let _ = stdout.flush();
+            }
+        }
+        if let Some(hint) = hint {
+            let _ = stderr.write_all(hint.as_bytes());
+        }
+    }
+    let ended = ended?;
+    if json {
+        println!("{}", ended_json(&job, &ended));
+    }
     Ok(ended.process_code())
 }
 
@@ -415,12 +509,14 @@ pub fn wait_result(
 
 /// `wait [jobs...] [--as LABEL] [--json]`. One job: [`wait`] (its output, its exit code).
 /// Several: waits for all of them at once and prints a line per job when it ends, without the
-/// log (`log <job>` has it); the code is the first non-zero one, else 0.
+/// log (`log <job>` has it; `full` changes nothing there); the code is the first non-zero one,
+/// else 0.
 pub async fn wait_jobs(
     layout: &Layout,
     ids: Vec<String>,
     label: Option<String>,
     json: bool,
+    full: bool,
 ) -> Result<i32, String> {
     let (active, recent) = match &label {
         Some(l) => (
@@ -431,7 +527,7 @@ pub async fn wait_jobs(
     };
     let targets = wait_targets(&ids, label.as_deref(), &active, &recent)?;
     if let [(job, _)] = targets.as_slice() {
-        return wait(layout, &job.0, json).await;
+        return wait(layout, &job.0, json, full).await;
     }
     let redactor = cli_redactor(layout);
     let local = tokio::task::LocalSet::new();

@@ -456,6 +456,7 @@ fn runner_service(os: Os, name: &str) -> RunnerServiceInputs {
         config_dir: None,
         user: "alex".into(),
         secret_files: Vec::new(),
+        granted_files: Vec::new(),
     }
 }
 
@@ -2097,6 +2098,84 @@ fn a_file_secret_is_read_by_the_windows_service_account_and_taken_back() {
         assert_eq!(on.contains(&grant), os == Os::Windows, "{os:?}: {on}");
         assert_eq!(off.contains(&remove), os == Os::Windows, "{os:?}: {off}");
     }
+}
+
+#[test]
+fn a_secret_file_taken_out_of_the_config_is_still_taken_back_from_the_service_account() {
+    let kept = PathBuf::from("/secure/kept.token");
+    let gone = PathBuf::from("/secure/gone.token");
+    let i = RunnerServiceInputs {
+        secret_files: vec![kept.clone()],
+        granted_files: vec![kept.clone(), gone.clone()],
+        ..runner_service(Os::Windows, "box")
+    };
+    let account = runner_service::account(&i);
+    let remove_gone = format!("icacls {} /remove {account}", gone.display());
+    let record = runner_service::grants_record(&i);
+    let on = runner_service::install(&i);
+    assert!(runs(&on).contains(&remove_gone), "{on:?}");
+    let writes = written(&on);
+    let first = &writes
+        .iter()
+        .find(|(p, _)| *p == record)
+        .expect("the record is written")
+        .1;
+    assert!(
+        first.contains("gone.token") && first.contains("kept.token"),
+        "{first}"
+    );
+    let last = &writes.iter().rfind(|(p, _)| *p == record).unwrap().1;
+    assert!(
+        last.contains("kept.token") && !last.contains("gone.token"),
+        "{last}"
+    );
+    let off = runner_service::uninstall(&i, false);
+    assert!(runs(&off).contains(&remove_gone), "{off:?}");
+    assert!(runs(&off).contains(&format!("icacls {} /remove {account}", kept.display())));
+    assert_eq!(off.last(), Some(&Action::RemoveFile(record)));
+    let nothing = runner_service(Os::Windows, "box");
+    assert!(
+        written(&runner_service::install(&nothing))
+            .iter()
+            .all(|(p, _)| *p != runner_service::grants_record(&nothing)),
+        "no secret files, no record"
+    );
+    for os in [Os::Linux, Os::MacOs] {
+        let plan = runner_service::install(&RunnerServiceInputs {
+            granted_files: vec![gone.clone()],
+            ..runner_service(os, "box")
+        });
+        assert!(!runs(&plan).iter().any(|r| r.contains("icacls")), "{os:?}");
+    }
+}
+
+#[test]
+fn the_record_of_granted_files_survives_a_round_trip_and_a_missing_or_broken_one_is_empty() {
+    let dir = std::env::temp_dir().join(format!("lr-grants-record-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let i = RunnerServiceInputs {
+        state_dir: dir.clone(),
+        secret_files: vec![PathBuf::from("/a b/c.token")],
+        ..runner_service(Os::Windows, "box")
+    };
+    let record = runner_service::grants_record(&i);
+    assert_eq!(
+        runner_service::read_grants_record(&record),
+        Vec::<PathBuf>::new()
+    );
+    for (path, contents) in written(&runner_service::install(&i)) {
+        if path == record {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, contents).unwrap();
+        }
+    }
+    assert_eq!(
+        runner_service::read_grants_record(&record),
+        vec![PathBuf::from("/a b/c.token")]
+    );
+    std::fs::write(&record, "not json").unwrap();
+    assert!(runner_service::read_grants_record(&record).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

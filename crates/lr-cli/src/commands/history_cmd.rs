@@ -8,6 +8,7 @@ use super::view::{print_json, problem, reachable, read, source_name};
 use super::{HistoryFilters, ResultArg, ShowArgs, SourceArg};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use crate::render::{Card, Cell, Out, Table, Tone};
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{
     HistoryFilter, JobDetail, JobSummary, ReadReply, ReadRequest, ReasonCode, WireSource,
@@ -120,37 +121,72 @@ fn span(from: Option<Timestamp>, to: Option<Timestamp>) -> String {
     }
 }
 
-/// A header and one tab-separated line per run.
+/// A header and one line per run, without colors; see [`history_lines_for`].
 pub fn history_lines(rows: &[(String, JobSummary)]) -> Vec<String> {
-    let mut out = vec![
-        "JOB\tSTATE\tQUEUED\tSTARTED\tFINISHED\tDURATION\tPROFILE\tPROJECT\tSOURCE\tCLIENT_LABEL\tCLIENT\tRUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"
-            .into(),
-    ];
+    history_lines_for(rows, &Out::plain())
+}
+
+/// A table of the runs: a header and one line per run, the state in its color.
+pub fn history_lines_for(rows: &[(String, JobSummary)], out: &Out) -> Vec<String> {
+    let mut table = Table::new(&[
+        "JOB",
+        "STATE",
+        "QUEUED",
+        "STARTED",
+        "FINISHED",
+        "DURATION",
+        "PROFILE",
+        "PROJECT",
+        "SOURCE",
+        "CLIENT_LABEL",
+        "CLIENT",
+        "RUNNER",
+        "PEAK_MEM_MB",
+        "PEAK_DISK_MB",
+        "BROKER",
+        "REASON",
+    ])
+    .fixed(0)
+    .fixed(1)
+    .fixed(2)
+    .fixed(3)
+    .fixed(4)
+    .fixed(5)
+    .right(12)
+    .right(13);
     for (b, s) in rows {
-        out.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{b}\t{}",
-            s.job,
-            shown_state(s),
-            format_time(s.queued_at),
-            when(s.started_at),
-            when(s.finished_at),
-            span(s.started_at, s.finished_at),
-            dash(&s.profile),
-            dash(&s.project),
-            source_name(s.source),
-            dash(&s.label),
-            if s.client_label.is_empty() {
-                "-"
-            } else {
-                &s.client_label
-            },
-            dash(&s.runner),
-            mb(s.peak_mem_mb),
-            mb(s.peak_disk_mb),
-            reason_text(s),
-        ));
+        let state = shown_state(s);
+        let tone = match state.as_str() {
+            "passed" => Tone::Ok,
+            "failed" | "timeout" | "lost" => Tone::Bad,
+            "cancelled" | "rejected" => Tone::Warn,
+            _ => Tone::Plain,
+        };
+        let client = if s.client_label.is_empty() {
+            "-"
+        } else {
+            &s.client_label
+        };
+        table.row(vec![
+            Cell::plain(s.job.to_string()),
+            Cell::new(state, tone),
+            Cell::plain(format_time(s.queued_at)),
+            Cell::plain(when(s.started_at)),
+            Cell::plain(when(s.finished_at)),
+            Cell::plain(span(s.started_at, s.finished_at)),
+            Cell::plain(dash(&s.profile)),
+            Cell::plain(dash(&s.project)),
+            Cell::plain(source_name(s.source)),
+            Cell::plain(dash(&s.label)),
+            Cell::plain(client),
+            Cell::plain(dash(&s.runner)),
+            Cell::plain(mb(s.peak_mem_mb)),
+            Cell::plain(mb(s.peak_disk_mb)),
+            Cell::plain(b.clone()),
+            Cell::plain(reason_text(s)),
+        ]);
     }
-    out
+    table.lines(out)
 }
 
 fn labels_text(labels: &[String]) -> String {
@@ -170,8 +206,13 @@ pub fn when(t: Option<Timestamp>) -> String {
     t.map_or("-".into(), format_time)
 }
 
-/// The card of `history show`.
+/// The card of `history show` without colors; see [`show_lines_for`].
 pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
+    show_lines_for(broker, d, &Out::plain())
+}
+
+/// The card of `history show`: a label and a value per line, then a table of the steps.
+pub fn show_lines_for(broker: &str, d: &JobDetail, out: &Out) -> Vec<String> {
     let s = &d.summary;
     let source = source_name(d.source.or(s.source));
     let exit = s.exit_code.map_or("-".into(), |c| c.to_string());
@@ -179,65 +220,80 @@ pub fn show_lines(broker: &str, d: &JobDetail) -> Vec<String> {
         .reason
         .as_ref()
         .map_or(String::new(), |r| format!(", {r}"));
-    let mut out = vec![
-        format!("job       {} (broker {broker})", s.job),
-        format!("state     {}, exit {exit}{reason}", shown_state(s)),
-        format!("project   {}", dash(&s.project)),
-        format!("client_label {}", dash(&s.label)),
-        format!("client    {}", s.client_label),
-        format!("profile   {}", dash(&s.profile)),
-        format!("labels    {}", labels_text(&s.labels)),
-        format!("source    {source}"),
-        format!("note      {}", dash(&d.note)),
-        format!("branch    {}", dash(&d.branch)),
-        format!("directory {}", dash(&d.cwd)),
-        format!("os user   {}", dash(&d.os_user)),
-        format!("platform  {}", dash(&s.platform)),
-        format!("runner    {}", dash(&s.runner)),
-        format!("queued    {}", format_time(s.queued_at)),
-        format!("started   {}", when(s.started_at)),
-        format!("finished  {}", when(s.finished_at)),
-    ];
+    let state = shown_state(s);
+    let tone = match state.as_str() {
+        "passed" => Tone::Ok,
+        "failed" | "timeout" | "lost" => Tone::Bad,
+        "cancelled" | "rejected" => Tone::Warn,
+        _ => Tone::Plain,
+    };
+    let mut card = Card::new();
+    card.row("job", format!("{} (broker {broker})", s.job));
+    card.row(
+        "state",
+        Cell::new(format!("{state}, exit {exit}{reason}"), tone),
+    );
+    card.row("project", dash(&s.project));
+    card.row("client_label", dash(&s.label));
+    card.row("client", s.client_label.clone());
+    card.row("profile", dash(&s.profile));
+    card.row("labels", labels_text(&s.labels));
+    card.row("source", source);
+    card.row("note", dash(&d.note));
+    card.row("branch", dash(&d.branch));
+    card.row("directory", dash(&d.cwd));
+    card.row("os user", dash(&d.os_user));
+    card.row("platform", dash(&s.platform));
+    card.row("runner", dash(&s.runner));
+    card.row("queued", format_time(s.queued_at));
+    card.row("started", when(s.started_at));
+    card.row("finished", when(s.finished_at));
     if let Some(m) = s.peak_mem_mb {
-        out.push(format!("peak mem  {m} MB"));
+        card.row("peak mem", format!("{m} MB"));
     }
     if let Some(m) = s.peak_disk_mb {
-        out.push(format!("peak disk {m} MB"));
+        card.row("peak disk", format!("{m} MB"));
     }
-    let optional = [
-        ("github    ", &d.github_run_url),
-        (
-            "cancelled ",
-            &d.cancelled_by.clone().filter(|b| !b.is_empty()),
-        ),
-        ("waits     ", &d.wait_reason),
-    ];
-    for (name, value) in optional {
-        if let Some(v) = value {
-            out.push(format!("{name}{v}"));
-        }
-    }
+    card.row_opt("github", d.github_run_url.clone());
+    card.row_opt(
+        "cancelled",
+        d.cancelled_by.clone().filter(|b| !b.is_empty()),
+    );
+    card.row_opt("waits", d.wait_reason.clone());
     if !d.secrets.is_empty() {
-        out.push(format!("secrets   {}", d.secrets.join(", ")));
+        card.row("secrets", d.secrets.join(", "));
     }
+    let mut lines = card.lines(out);
     if !d.steps.is_empty() {
-        out.push("steps".into());
+        lines.push(out.paint("steps", Tone::Head));
+        let mut table = Table::new(&["#", "STEP", "STATE", "EXIT", "TIME", "TIMEOUT"])
+            .fixed(0)
+            .fixed(2)
+            .fixed(3)
+            .fixed(4)
+            .fixed(5);
+        for st in &d.steps {
+            let state = serde_json::to_value(st.state)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default();
+            let tone = match state.as_str() {
+                "passed" => Tone::Ok,
+                "failed" | "timeout" | "lost" => Tone::Bad,
+                _ => Tone::Plain,
+            };
+            table.row(vec![
+                Cell::plain(st.ord.to_string()),
+                Cell::plain(st.name.clone()),
+                Cell::new(state, tone),
+                Cell::plain(st.exit_code.map_or("-".into(), |c| c.to_string())),
+                Cell::plain(span(st.started_at, st.finished_at)),
+                Cell::plain(format!("{}s", st.timeout_s)),
+            ]);
+        }
+        lines.extend(table.lines(out).into_iter().map(|l| format!("  {l}")));
     }
-    for st in &d.steps {
-        let state = serde_json::to_value(st.state)
-            .ok()
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_default();
-        out.push(format!(
-            "  {} {}\t{state}\texit {}\t{}\t(timeout {}s)",
-            st.ord,
-            st.name,
-            st.exit_code.map_or("-".into(), |c| c.to_string()),
-            span(st.started_at, st.finished_at),
-            st.timeout_s
-        ));
-    }
-    out
+    lines
 }
 
 /// Runs per reachable broker (only `broker` when given) and a line per broker that failed.
@@ -296,7 +352,7 @@ pub async fn history(layout: &Layout, f: HistoryFilters) -> Result<i32, String> 
             .collect();
         print_json(&json!({ "jobs": jobs, "problems": problems }))?;
     } else {
-        for line in history_lines(&rows) {
+        for line in history_lines_for(&rows, &Out::detect()) {
             println!("{line}");
         }
         for p in &problems {
@@ -341,7 +397,7 @@ pub async fn show(layout: &Layout, a: ShowArgs) -> Result<i32, String> {
     if a.json {
         print_json(&json!({ "broker": broker, "job": detail }))?;
     } else {
-        for line in show_lines(&broker, &detail) {
+        for line in show_lines_for(&broker, &detail, &Out::detect()) {
             println!("{line}");
         }
     }

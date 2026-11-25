@@ -260,11 +260,18 @@ pub(crate) fn held_line(ex: &Exceeded) -> String {
 }
 
 pub(crate) fn kill_line(ex: &Exceeded) -> String {
-    let (_, key) = names(ex.resource);
+    let (what, key) = names(ex.resource);
     let declared = ex.declared_mb.unwrap_or(ex.limit_mb);
     format!(
-        "localrunner: killed: declared {key} exceeded: declared {declared} MB, ceiling {} MB, peak {} MB (raise {key} in the profile)\n",
+        "localrunner: killed: {what} ceiling {} MB exceeded (declared {key} {declared} MB, peak {} MB; raise {key} in the profile)\n",
         ex.limit_mb, ex.peak_mb
+    )
+}
+
+pub(crate) fn timeout_line(limit: std::time::Duration) -> String {
+    format!(
+        "localrunner: killed: timeout {} s exceeded\n",
+        limit.as_secs()
     )
 }
 
@@ -585,7 +592,7 @@ mod tests {
         );
         assert_eq!(
             kill_line(&ex),
-            "localrunner: killed: declared mem_mb exceeded: declared 1000 MB, ceiling 1250 MB, peak 1500 MB (raise mem_mb in the profile)\n"
+            "localrunner: killed: memory ceiling 1250 MB exceeded (declared mem_mb 1000 MB, peak 1500 MB; raise mem_mb in the profile)\n"
         );
         assert_eq!(
             held_line(&ex),
@@ -596,6 +603,10 @@ mod tests {
             declared_mb: None,
             ..ex
         };
+        assert_eq!(
+            timeout_line(std::time::Duration::from_millis(600_400)),
+            "localrunner: killed: timeout 600 s exceeded\n"
+        );
         assert!(warn_line(&disk).starts_with("localrunner: disk peak 1500 MB exceeds the ceiling"));
     }
 }

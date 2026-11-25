@@ -203,6 +203,7 @@ impl Broker {
             zone: None,
             heartbeat_s: 15,
             broker_lost_kill_s: lost_kill,
+            broker_version: None,
         }))
         .await;
         b

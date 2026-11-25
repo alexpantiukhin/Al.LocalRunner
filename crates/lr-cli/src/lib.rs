@@ -27,6 +27,7 @@ pub mod os_service;
 pub mod paths;
 pub mod purge;
 pub mod release;
+pub mod render;
 pub mod roles;
 pub mod runner_config;
 pub mod runner_keys;

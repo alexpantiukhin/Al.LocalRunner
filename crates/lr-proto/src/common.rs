@@ -119,6 +119,9 @@ pub struct Welcome {
     /// Seconds after which a runner kills its jobs when the broker is unreachable; given at
     /// registration, a runner may only shorten it.
     pub broker_lost_kill_s: Option<u64>,
+    /// The release of the broker; absent from an older one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broker_version: Option<String>,
 }
 
 /// Broker's answer to [`Join`]: the code is redeemed and the key registered. It is the only

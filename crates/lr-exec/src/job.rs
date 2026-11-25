@@ -1,4 +1,4 @@
-use crate::limits::{held_line, kill_line};
+use crate::limits::{held_line, kill_line, timeout_line};
 use crate::log::{cancel_line, header_line, SOFT_STOP_NOT_DELIVERED};
 use crate::spawn::{spawn_step, Launch};
 use crate::step::{supervise, Emitter, Ended, Limits};
@@ -110,7 +110,10 @@ impl<'a> Job<'a> {
             Ended::Exceeded => (StepState::Failed, None),
             Ended::Exited(0) => (StepState::Passed, Some(0)),
             Ended::Exited(code) => (StepState::Failed, Some(code)),
-            Ended::Timeout => (StepState::Timeout, None),
+            Ended::Timeout => {
+                self.line(index, &timeout_line(limit), stop).await;
+                (StepState::Timeout, None)
+            }
             Ended::Cancelled => (StepState::Cancelled, None),
         }
     }

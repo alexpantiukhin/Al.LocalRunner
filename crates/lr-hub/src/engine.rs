@@ -90,6 +90,7 @@ pub(crate) struct CliEvent {
 pub(crate) enum BrokerEvent {
     Connected {
         zone: Option<Zone>,
+        version: Option<String>,
         out: mpsc::Sender<Frame>,
         kill: Arc<Notify>,
     },

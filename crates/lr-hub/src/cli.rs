@@ -358,6 +358,7 @@ impl Engine {
             ReadRequest::Explain { .. } => lr_proto::ReadReply::Explain {
                 job: job.clone(),
                 text: format!("rejected: {detail} ({})", code.as_str()),
+                detail: None,
             },
             _ => lr_proto::ReadReply::Job(Box::new(lr_proto::JobDetail {
                 summary: f.summary.clone(),
@@ -492,6 +493,7 @@ impl Engine {
                     available: l.out.is_some(),
                     outbox: u64::try_from(outbox).unwrap_or(u64::MAX),
                     since: l.since,
+                    version: l.version.clone(),
                 }
             })
             .collect();

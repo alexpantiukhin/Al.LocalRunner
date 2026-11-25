@@ -8,10 +8,21 @@ use crate::MAX_SUBSCRIPTIONS;
 use lr_abstractions::{Frame, JobFilter, JobKey, JobRecord, JobRow, StatsQuery};
 use lr_core::{JobId, JobState};
 use lr_proto::{
-    split_text, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer, ReadCall,
-    ReadReply, ReadRequest, ReasonCode, RejectReason, RunnerLiveness, RunningView, StatsFilter,
-    StatusFilter, StatusView, WireSource, CHUNK_TEXT_LIMIT,
+    split_text, BlockingJob, BrokerToHub, JobSummary, LogChunk, PoolLoad, QueueItem, ReadAnswer,
+    ReadCall, ReadReply, ReadRequest, ReasonCode, RejectReason, Requested, RunnerLiveness,
+    RunningView, StatsFilter, StatusFilter, StatusView, WaitDetail, WireSource, CHUNK_TEXT_LIMIT,
 };
+
+const CAPACITY_WAITS: [&str; 4] = ["runner_busy", "memory", "cpu", "tag"];
+
+fn requested_of(job: &super::Job) -> Requested {
+    let want = &job.entry.order.requirements;
+    Requested {
+        mem_mb: want.mem_mb,
+        cpu: want.cpu,
+        tags: want.tags.iter().cloned().collect(),
+    }
+}
 
 pub(super) const SCAN_LIMIT: usize = 10_000;
 const TAIL_BYTES: u64 = 64 * 1024;
@@ -230,6 +241,7 @@ impl Engine {
                 steps,
                 last_lines,
                 last_output_ago_ms,
+                requested: a.sees_fields().then(|| requested_of(job)),
             });
         }
         running.truncate(limit);
@@ -263,6 +275,11 @@ impl Engine {
                 priority: a
                     .sees_fields()
                     .then(|| self.policy.policy().priority_origin(&job.entry).priority),
+                requested: a.sees_fields().then(|| requested_of(job)),
+                detail: a
+                    .sees_fields()
+                    .then(|| self.wait_detail(viewer, &job.key))
+                    .flatten(),
             });
         }
         let queue_total = u32::try_from(queue.len()).unwrap_or(u32::MAX);
@@ -372,11 +389,18 @@ impl Engine {
         let text = match self.find(key) {
             Some(j) if j.runner.is_none() => match (a.sees_fields(), self.waits.get(key)) {
                 (true, Some(w)) => {
-                    let holders = match self.wait_codes.get(key) {
-                        Some(&"runner_busy") => self.holders_text(viewer),
+                    let detail = self.wait_detail(viewer, key);
+                    let holders = match (self.wait_codes.get(key), &detail) {
+                        (Some(&"runner_busy"), Some(d)) if !d.blockers().is_empty() => {
+                            format!(" with {}", d.blockers())
+                        }
                         _ => String::new(),
                     };
-                    format!("waits: {w}{holders}")
+                    let bound = detail
+                        .as_ref()
+                        .map(|d| format!("; {}", d.bound()))
+                        .unwrap_or_default();
+                    format!("waits: {w}{holders}{bound}")
                 }
                 _ => "waits in the queue".to_string(),
             },
@@ -400,32 +424,52 @@ impl Engine {
             }
             _ => text,
         };
-        ReadReply::Explain { job, text }
+        let detail = match self.find(key) {
+            Some(j) if j.runner.is_none() && a.sees_fields() => self.wait_detail(viewer, key),
+            _ => None,
+        };
+        ReadReply::Explain { job, text, detail }
     }
 
-    fn holders_text(&self, viewer: &Viewer) -> String {
-        let now = self.now();
-        let holders: Vec<String> = self
-            .active
-            .iter()
-            .filter(|h| h.runner.is_some())
-            .filter(|h| self.access_to(viewer, &h.key.client) != Access::Hidden)
-            .map(|h| {
-                let since = h.started_at.unwrap_or(h.assigned_at);
-                let mut text = format!("order {}", h.key.job);
-                let age = age_text(now.millis_since(since));
-                if h.started_at.is_some() {
-                    text.push_str(&format!(" ({age})"));
-                } else {
-                    text.push_str(&format!(" (assigned, not started, {age})"));
-                }
-                text
-            })
-            .collect();
-        if holders.is_empty() {
-            return String::new();
+    /// Who the queued order `key` waits for and the upper bound of its wait, when it waits for
+    /// capacity: the jobs that hold a runner and the orders ahead of it in the queue. Jobs the
+    /// viewer may not see are summed and not named.
+    fn wait_detail(&self, viewer: &Viewer, key: &JobKey) -> Option<WaitDetail> {
+        let code = self.wait_codes.get(key)?;
+        if !CAPACITY_WAITS.contains(code) {
+            return None;
         }
-        format!(" with {}", holders.join(", "))
+        let now = self.now();
+        let entries: Vec<_> = self.queue.iter().map(|j| j.entry.clone()).collect();
+        let order = self.policy.policy().order(&entries, &self.served, now);
+        let place = order.iter().position(|&i| &self.queue[i].key == key)?;
+        let mut detail = WaitDetail::default();
+        let mut add = |job: &super::Job, running: bool| {
+            let timeout_s = job.entry.order.requirements.timeout_s;
+            let elapsed_s = match (running, job.started_at) {
+                (true, Some(at)) => now.millis_since(at) / 1000,
+                _ => 0,
+            };
+            detail.bound_s += timeout_s.saturating_sub(elapsed_s);
+            match self.access_to(viewer, &job.key.client).sees_fields() {
+                true => detail.blocking.push(BlockingJob {
+                    job: job.key.job.clone(),
+                    label: Some(job.spec.identity.label.clone()),
+                    profile: Some(job.spec.profile.clone()),
+                    running,
+                    elapsed_s,
+                    timeout_s,
+                }),
+                false => detail.unnamed += 1,
+            }
+        };
+        for job in self.active.iter().filter(|h| h.runner.is_some()) {
+            add(job, true);
+        }
+        for &i in &order[..place] {
+            add(&self.queue[i], false);
+        }
+        Some(detail)
     }
 
     fn granted_text(&self, j: &super::Job) -> String {

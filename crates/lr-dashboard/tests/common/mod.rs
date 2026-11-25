@@ -79,6 +79,7 @@ fn job(
         stale: false,
         wait_code: None,
         priority: None,
+        requested: None,
     }
 }
 
@@ -93,6 +94,7 @@ pub fn snapshot() -> DashboardSnapshot {
             available: true,
             outbox: 0,
             since: None,
+            version: None,
         }],
         jobs: vec![
             job(

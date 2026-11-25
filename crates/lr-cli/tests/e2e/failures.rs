@@ -27,7 +27,7 @@ async fn kill_runner_mid_job_is_noticed_and_the_job_waits_for_its_deadline() {
         .expect("r1 starts");
     runner_online(&layout, "r1").await;
 
-    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &gate, 10));
+    let repo = repo(&dir, &helper_profile("held", Mode::Wait, &gate, 120));
     let mut events = broker.broker_events().expect("broker events");
     let (held_client, held) = submit(&layout, &repo, "held", None).await;
     broker_event(&mut events, "the held job to start", |e| match e {

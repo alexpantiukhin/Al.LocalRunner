@@ -35,6 +35,7 @@ fn snapshot() -> DashboardSnapshot {
             available: false,
             outbox: 1,
             since: None,
+            version: None,
         }],
         jobs: lists
             .iter()
@@ -48,6 +49,7 @@ fn snapshot() -> DashboardSnapshot {
                 stale: i % 2 == 0,
                 wait_code: None,
                 priority: None,
+                requested: None,
             })
             .collect(),
         runners: vec![BrokerRunners {
