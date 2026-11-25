@@ -69,7 +69,7 @@ steps = [
 ]
 
 [profile.rust-test]
-command   = "cargo test --locked --no-fail-fast {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}"
+command   = "cargo test --locked --no-fail-fast -j 2 {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}"
 timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
