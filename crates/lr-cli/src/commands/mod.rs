@@ -761,7 +761,15 @@ pub async fn run(cli: Cli) -> i32 {
                 action: OutboxAction::Drop { runner, job },
             } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
             RunnerAction::List => {
-                admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await
+                let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await;
+                let need = rights::Need {
+                    what: "runner list",
+                    why: "open the admin channel of the broker",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.extend(["runner".into(), "list".into()]);
+                let session = rights::session(false, no_elevate, elevated_child);
+                rights::retry_if_denied(result, &need, &session, &args)
             }
             RunnerAction::Remove { name, yes } => {
                 let req = lr_proto::AdminRequest::RunnerRemove { name };
@@ -770,7 +778,15 @@ pub async fn run(cli: Cli) -> i32 {
         },
         Command::Client { action } => match action {
             ClientAction::List => {
-                admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientList).await
+                let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientList).await;
+                let need = rights::Need {
+                    what: "client list",
+                    why: "open the admin channel of the broker",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.extend(["client".into(), "list".into()]);
+                let session = rights::session(false, no_elevate, elevated_child);
+                rights::retry_if_denied(result, &need, &session, &args)
             }
             ClientAction::Remove { name, yes } => {
                 let req = lr_proto::AdminRequest::ClientRemove { name };

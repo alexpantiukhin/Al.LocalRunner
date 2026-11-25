@@ -224,17 +224,22 @@ pub async fn policy_reload(layout: &Layout) -> Result<i32, String> {
     Ok(code)
 }
 
-/// The error for an admin channel that cannot be opened: a refused access names the cause and
-/// what to do about it.
-pub fn unreachable_message(cause: &str) -> String {
-    let denied = [
+/// Whether `cause` says the OS refused access (not that nothing listens).
+pub fn access_denied(cause: &str) -> bool {
+    [
         "os error 5",
         "os error 13",
         "ermission denied",
         "ccess is denied",
     ]
     .iter()
-    .any(|m| cause.contains(m));
+    .any(|m| cause.contains(m))
+}
+
+/// The error for an admin channel that cannot be opened: a refused access names the cause and
+/// what to do about it.
+pub fn unreachable_message(cause: &str) -> String {
+    let denied = access_denied(cause);
     let base = format!("the broker admin channel is not reachable: {cause}");
     if denied {
         format!(

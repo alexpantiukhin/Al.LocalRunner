@@ -113,6 +113,26 @@ pub fn ask_for_rights(
     )))
 }
 
+/// A command that failed because the OS refused it the admin channel of the broker: with a
+/// terminal it asks for the rights and runs `args` elevated, and the exit code is the re-run's.
+/// Any other failure, or no terminal, `--no-elevate`, or a no, keeps the original result.
+pub fn retry_if_denied(
+    result: Result<i32, String>,
+    need: &Need<'_>,
+    session: &Session,
+    args: &[String],
+) -> Result<i32, String> {
+    let denied = matches!(&result, Err(e)
+        if e.starts_with("the broker admin channel is not reachable") && super::admin_cmd::access_denied(e));
+    if !denied {
+        return result;
+    }
+    match offer(need, session, args) {
+        Some(code) => Ok(code),
+        None => result,
+    }
+}
+
 fn this_binary() -> Result<std::path::PathBuf, String> {
     std::env::current_exe().map_err(|e| format!("cannot find this binary: {e}"))
 }

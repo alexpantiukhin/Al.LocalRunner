@@ -1,5 +1,5 @@
 use lr_cli::commands::confirm::Console;
-use lr_cli::commands::rights::{ask_for_rights, Need, Outcome, Session};
+use lr_cli::commands::rights::{ask_for_rights, retry_if_denied, Need, Outcome, Session};
 use lr_cli::config_edit::Elevator;
 use lr_cli::os_service::Os;
 use std::cell::RefCell;
@@ -149,4 +149,38 @@ fn a_refused_prompt_is_reported_with_the_command_and_code_one() {
     let e = fake(Err("the UAC prompt was refused".into()));
     let (r, _) = ask(plain(), true, "yes\n", &e, Os::Windows);
     assert_eq!(r, Ok(Outcome::Elevated(1)));
+}
+
+const DENIED: &str =
+    "the broker admin channel is not reachable: x: Permission denied (os error 13)";
+
+#[test]
+fn only_a_refused_admin_channel_is_retried_and_other_results_stay() {
+    let session = Session {
+        no_elevate: true,
+        ..plain()
+    };
+    let args = vec!["runner".to_string(), "list".to_string()];
+    assert_eq!(retry_if_denied(Ok(0), &NEED, &session, &args), Ok(0));
+    let other = Err("the broker admin channel is not reachable: x: no such file".to_string());
+    assert_eq!(
+        retry_if_denied(other.clone(), &NEED, &session, &args),
+        other
+    );
+    let unrelated = Err("name is taken".to_string());
+    assert_eq!(
+        retry_if_denied(unrelated.clone(), &NEED, &session, &args),
+        unrelated
+    );
+}
+
+#[test]
+fn a_refused_admin_channel_without_a_way_to_ask_keeps_its_error() {
+    let session = Session {
+        no_elevate: true,
+        ..plain()
+    };
+    let args = vec!["client".to_string(), "list".to_string()];
+    let result = retry_if_denied(Err(DENIED.to_string()), &NEED, &session, &args);
+    assert_eq!(result, Err(DENIED.to_string()));
 }
