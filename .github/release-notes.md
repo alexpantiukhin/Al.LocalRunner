@@ -1,5 +1,0 @@
-**Changed:** `status`, `runners`, `brokers`, `history`, `stats`, `doctor`, `explain`, `runner list`, `client list`, `policy check` and `upgrade` print in one style: aligned tables, cards for one item, and reports with `ok`, `warn` and `fail` markers; colored on a terminal, plain in a pipe or with `NO_COLOR`. The tab-separated output of `history`, `stats` and `status` is gone: parse `--json` instead.
-
-**Added:** commands that need administrator rights ask for them in the ordinary terminal and re-run only that step elevated (a UAC prompt on Windows, `sudo` elsewhere): `broker install-service`, `broker update-service`, `autostart on|off broker`, `autostart ... runner <name> --service`, and `runner list` / `client list` when the OS refuses the admin channel. `upgrade` offers `broker update-service` at its end. Nothing is elevated without a terminal or with the global `--no-elevate`. `doctor --elevate` also reads the `policy.toml` of the broker service.
-
-**Added:** a VERSION column in `brokers` (an older hub shows `-`), `wait --full`, and limits with kill and timeout details in `explain`, `wait` and the dashboard.
