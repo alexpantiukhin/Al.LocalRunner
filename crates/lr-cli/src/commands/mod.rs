@@ -16,6 +16,7 @@ pub mod profile_summary;
 pub mod read_args;
 pub mod read_cmd;
 pub mod reload_cmd;
+pub mod rights;
 pub mod roles_cmd;
 pub mod runner_config_cmd;
 pub mod runner_outbox_cmd;
@@ -62,6 +63,10 @@ pub struct Cli {
     /// command writes nothing when the file no longer has it. Hidden.
     #[arg(long, hide = true, require_equals = true, value_name = "SHA256")]
     pub expect_before: Option<String>,
+    /// Never ask for administrator rights: a command that needs them fails and prints the
+    /// command to run with them.
+    #[arg(long, global = true)]
+    pub no_elevate: bool,
     /// The command.
     #[command(subcommand)]
     pub command: Command,
@@ -144,8 +149,8 @@ pub enum Command {
         #[command(flatten)]
         order: OrderArgs,
     },
-    /// Watch jobs; interrupting cancels nothing. One job streams its output and ends with its
-    /// exit code; several jobs (or `--as` alone) print one result line per job.
+    /// Watch jobs; interrupting cancels nothing. One job prints the last 50 lines of its log
+    /// (`--full`: all of it) and ends with its exit code; several jobs (or `--as` alone) print one result line per job.
     Wait {
         /// The jobs; with none, the active jobs of `--as` (else its last job).
         #[arg(required_unless_present = "label")]
@@ -156,6 +161,9 @@ pub enum Command {
         /// Print JSON: the output goes to stderr, stdout gets the final state (one line per job).
         #[arg(long)]
         json: bool,
+        /// One job: print the whole log, not its last 50 lines and a hint.
+        #[arg(long)]
+        full: bool,
     },
     /// Own jobs (label `--as` and OS user).
     Jobs {
@@ -405,6 +413,10 @@ pub enum Command {
         /// Print JSON.
         #[arg(long)]
         json: bool,
+        /// Also check the policy.toml of the broker service, which needs administrator rights:
+        /// asks for them (not with --json).
+        #[arg(long, conflicts_with = "json")]
+        elevate: bool,
     },
 }
 
@@ -514,6 +526,7 @@ async fn policy(
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let elevated_child = cli.is_elevated_child();
+    let no_elevate = cli.no_elevate;
     let expect_before = cli.expect_before.clone();
     if let Some(channel) = cli.elevated_child.as_deref().filter(|c| !c.is_empty()) {
         if let Err(e) = crate::config_edit::attach_elevated_output(channel) {
@@ -547,7 +560,12 @@ pub async fn run(cli: Cli) -> i32 {
             quiet,
         } => jobs::submit(&layout, order, wait, json, no_detach, quiet).await,
         Command::Run { order } => jobs::submit(&layout, order, true, false, false, false).await,
-        Command::Wait { jobs, label, json } => jobs::wait_jobs(&layout, jobs, label, json).await,
+        Command::Wait {
+            jobs,
+            label,
+            json,
+            full,
+        } => jobs::wait_jobs(&layout, jobs, label, json, full).await,
         Command::Jobs {
             label,
             active,
@@ -637,9 +655,29 @@ pub async fn run(cli: Cli) -> i32 {
                 service,
             } => roles_cmd::broker_run(&layout, background, service).await,
             BrokerAction::InstallService { dry_run } => {
-                service_cmd::install_service(&layout, dry_run)
+                let need = rights::Need {
+                    what: "broker install-service",
+                    why: "install the broker as an OS service under its own account",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.extend(["broker".into(), "install-service".into()]);
+                let session = rights::session(dry_run, no_elevate, elevated_child);
+                rights::run_with_rights(&need, &session, &args, || {
+                    service_cmd::install_service(&layout, dry_run)
+                })
             }
-            BrokerAction::UpdateService { dry_run } => service_cmd::update_service(dry_run),
+            BrokerAction::UpdateService { dry_run } => {
+                let need = rights::Need {
+                    what: "broker update-service",
+                    why: "replace the broker service's copy of the binary and restart the service",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.extend(["broker".into(), "update-service".into()]);
+                let session = rights::session(dry_run, no_elevate, elevated_child);
+                rights::run_with_rights(&need, &session, &args, || {
+                    service_cmd::update_service(dry_run)
+                })
+            }
             BrokerAction::Add {
                 name,
                 label,
@@ -746,7 +784,23 @@ pub async fn run(cli: Cli) -> i32 {
             allow_elevated,
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
-        Command::Upgrade(a) => upgrade_cmd::upgrade(&layout, a).await,
+        Command::Upgrade(a) => {
+            let dry_run = a.dry_run;
+            let code = upgrade_cmd::upgrade(&layout, a).await;
+            match code {
+                Ok(0) if !dry_run && layout.broker_is_service() => {
+                    let need = rights::Need {
+                        what: "broker update-service",
+                        why: "replace the broker service's copy of the binary and restart the service",
+                    };
+                    let mut args = rights::layout_args(&layout);
+                    args.extend(["broker".into(), "update-service".into()]);
+                    let session = rights::session(false, no_elevate, elevated_child);
+                    Ok(rights::offer(&need, &session, &args).unwrap_or(0))
+                }
+                other => other,
+            }
+        }
         Command::Uninstall {
             purge,
             yes,
@@ -759,9 +813,60 @@ pub async fn run(cli: Cli) -> i32 {
             runner,
             service,
             dry_run,
-        } => service_cmd::autostart(&layout, switch, role, runner, service, dry_run),
+        } => {
+            let word = if switch == Switch::On { "on" } else { "off" };
+            let session = rights::session(dry_run, no_elevate, elevated_child);
+            let mut args = rights::layout_args(&layout);
+            args.extend(["autostart".into(), word.into()]);
+            match (service, role, runner.clone()) {
+                (true, Some(RoleArg::Runner), Some(name)) => {
+                    let need = rights::Need {
+                        what: "autostart --service",
+                        why: "install or remove the runner as an OS service under its own account",
+                    };
+                    args.extend(["runner".into(), name, "--service".into()]);
+                    rights::run_with_rights(&need, &session, &args, || {
+                        service_cmd::autostart(&layout, switch, role, runner, service, dry_run)
+                    })
+                }
+                _ => {
+                    let pending = !service
+                        && runner.is_none()
+                        && service_cmd::broker_step_pending(&layout, role, dry_run);
+                    let code =
+                        service_cmd::autostart(&layout, switch, role, runner, service, dry_run);
+                    match code {
+                        Ok(code) if pending => {
+                            let need = rights::Need {
+                                what: "autostart broker",
+                                why: "install or remove the broker as an OS service under its own account",
+                            };
+                            args.extend(["broker".into()]);
+                            Ok(code.max(rights::offer(&need, &session, &args).unwrap_or(0)))
+                        }
+                        other => other,
+                    }
+                }
+            }
+        }
         Command::Profile { action } => profile_cmd::run(&layout, action),
-        Command::Doctor { json } => crate::doctor::run(&layout, json).await,
+        Command::Doctor { json, elevate } => {
+            if elevate {
+                let need = rights::Need {
+                    what: "doctor --elevate",
+                    why: "read the policy.toml of the broker service",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.push("doctor".into());
+                let session = rights::session(false, no_elevate, elevated_child);
+                match rights::run_with_rights(&need, &session, &args, || Ok(-1)) {
+                    Ok(-1) => crate::doctor::run(&layout, json).await,
+                    other => other,
+                }
+            } else {
+                crate::doctor::run(&layout, json).await
+            }
+        }
     };
     match result {
         Ok(code) => code,

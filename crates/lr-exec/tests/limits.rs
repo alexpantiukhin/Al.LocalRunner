@@ -98,7 +98,7 @@ async fn kill_mode_ends_a_job_over_the_memory_ceiling() {
     let text = events_text(&events);
     assert!(
         text.contains(
-            "localrunner: killed: declared mem_mb exceeded: declared 100 MB, ceiling 150 MB, peak"
+            "localrunner: killed: memory ceiling 150 MB exceeded (declared mem_mb 100 MB, peak"
         ),
         "{text}"
     );
@@ -155,7 +155,9 @@ async fn kill_mode_ends_a_job_over_the_disk_ceiling() {
     assert!(ex.peak_mb > ex.limit_mb);
     assert_eq!(outcome.state, JobState::Failed);
     assert!(outcome.usage.peak_disk_mb.unwrap() > 5);
-    assert!(events_text(&events).contains("killed: declared disk_mb exceeded: declared 4 MB"));
+    assert!(
+        events_text(&events).contains("killed: disk ceiling 5 MB exceeded (declared disk_mb 4 MB")
+    );
 }
 
 #[tokio::test]
@@ -241,7 +243,7 @@ async fn a_fast_allocation_killed_by_the_os_backstop_is_still_an_excess() {
     assert_eq!(outcome.state, JobState::Failed);
     assert!(outcome.usage.peak_mem_mb.unwrap() > ex.limit_mb);
     assert!(
-        text.contains("localrunner: killed: declared mem_mb exceeded: declared 100 MB"),
+        text.contains("localrunner: killed: memory ceiling"),
         "{text}"
     );
 }

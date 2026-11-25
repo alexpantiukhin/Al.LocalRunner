@@ -259,10 +259,10 @@ enum Token<'a> {
     Code(&'a str),
 }
 
-fn units(text: &str) -> Vec<String> {
+fn units(text: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
-    let mut current: Option<String> = None;
-    for line in text.lines() {
+    let mut current: Option<(usize, String)> = None;
+    for (index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             out.extend(current.take());
@@ -275,13 +275,13 @@ fn units(text: &str) -> Vec<String> {
                 .split_once(". ")
                 .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
         match current.as_mut() {
-            Some(unit) if !starts => {
+            Some((_, unit)) if !starts => {
                 unit.push(' ');
                 unit.push_str(line);
             }
             _ => {
                 out.extend(current.take());
-                current = Some(line.to_string());
+                current = Some((index + 1, line.to_string()));
             }
         }
     }
@@ -321,11 +321,11 @@ fn tokens(clause: &str) -> Vec<Token<'_>> {
         .collect()
 }
 
-fn is_hand_edit(clause: &str) -> bool {
+fn is_hand_edit(clause: &str) -> Option<String> {
     let tokens = tokens(clause);
-    let unbound_verb = tokens.iter().enumerate().any(|(i, token)| {
+    let unbound_verb = tokens.iter().enumerate().find_map(|(i, token)| {
         let Token::Word(word) = token else {
-            return false;
+            return None;
         };
         let negated =
             i > 0 && matches!(&tokens[i - 1], Token::Word(w) if w == "never" || w == "not");
@@ -337,12 +337,22 @@ fn is_hand_edit(clause: &str) -> bool {
             tokens.get(i + 1 + filler),
             Some(Token::Code(code)) if changes_through_the_cli(code)
         );
-        HAND_EDITS.contains(&word.as_str()) && !negated && !object_is_cli
+        (HAND_EDITS.contains(&word.as_str()) && !negated && !object_is_cli).then(|| {
+            format!(
+                "the verb `{word}` names a config file and its object is not a `localrunner config` or `localrunner policy` command"
+            )
+        })
     });
-    let assignment = tokens.iter().any(
-        |t| matches!(t, Token::Code(code) if !changes_through_the_cli(code) && code.contains(" = ")),
-    );
-    unbound_verb || assignment
+    unbound_verb.or_else(|| {
+        tokens.iter().find_map(|t| match t {
+            Token::Code(code) if !changes_through_the_cli(code) && code.contains(" = ") => {
+                Some(format!(
+                    "the code span `{code}` assigns a value (contains ` = `) next to a config file"
+                ))
+            }
+            _ => None,
+        })
+    })
 }
 
 fn names_a_config(clause: &str) -> bool {
@@ -354,17 +364,25 @@ fn names_a_config(clause: &str) -> bool {
             .any(changes_through_the_cli)
 }
 
-fn hand_edits(text: &str) -> Vec<String> {
+struct HandEdit {
+    line: usize,
+    clause: String,
+    rule: String,
+}
+
+fn hand_edits(text: &str) -> Vec<HandEdit> {
     units(text)
         .iter()
-        .flat_map(|unit| {
+        .flat_map(|(line, unit)| {
             unit.split(". ")
                 .flat_map(|s| s.split("; "))
-                .map(str::to_string)
+                .map(|s| (*line, s.to_string()))
                 .collect::<Vec<_>>()
         })
-        .filter(|c| names_a_config(c))
-        .filter(|c| is_hand_edit(c))
+        .filter(|(_, c)| names_a_config(c))
+        .filter_map(|(line, clause)| {
+            is_hand_edit(&clause).map(|rule| HandEdit { line, clause, rule })
+        })
         .collect()
 }
 
@@ -395,7 +413,7 @@ fn no_skill_edits_a_config_file_by_hand() {
         .flat_map(|(path, text)| {
             hand_edits(&text)
                 .into_iter()
-                .map(move |c| format!("{path}: {c}"))
+                .map(move |e| format!("{path}:{}: `{}`\n    rule: {}", e.line, e.clause, e.rule))
         })
         .collect();
     assert!(
@@ -408,6 +426,15 @@ fn no_skill_edits_a_config_file_by_hand() {
 #[test]
 fn the_hand_edit_check_tells_edits_from_descriptions() {
     assert_eq!(hand_edits("Set `[env] path` in `runner.toml`.").len(), 1);
+    let located = hand_edits("Intro.\n\nEdit `runner.toml` by hand.");
+    assert_eq!(located[0].line, 3);
+    assert!(located[0].rule.contains("`edit`"), "{}", located[0].rule);
+    let assigned = hand_edits("`[env] a = 1` in `runner.toml` appends.");
+    assert!(
+        assigned[0].rule.contains("[env] a = 1"),
+        "{}",
+        assigned[0].rule
+    );
     assert_eq!(
         hand_edits("Edit `runner.toml`, then run `localrunner config set runner:a k v`.").len(),
         1

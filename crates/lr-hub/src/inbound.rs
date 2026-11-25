@@ -50,13 +50,19 @@ impl Engine {
 
     pub(crate) async fn on_broker(&mut self, name: &str, ev: BrokerEvent) {
         match ev {
-            BrokerEvent::Connected { zone, out, kill } => {
+            BrokerEvent::Connected {
+                zone,
+                version,
+                out,
+                kill,
+            } => {
                 let link = self.links.entry(name.to_string()).or_default();
                 link.out = Some(out);
                 link.kill = Some(kill);
                 link.sent.clear();
                 link.refused = None;
                 link.since = Some(self.s.clock.now());
+                link.version = version;
                 if let Some(z) = zone {
                     link.zone = Some(z);
                     if name != LOCAL_BROKER {

@@ -768,7 +768,11 @@ fn report_of(o: &Outcome) -> String {
     let at = o
         .said
         .iter()
-        .position(|l| l.starts_with("upgraded to"))
+        .position(|l| {
+            l.trim_start_matches("ok")
+                .trim_start()
+                .starts_with("upgraded to")
+        })
         .unwrap_or_else(|| panic!("no report in {:?}", o.said));
     o.said[at..].join("\n")
 }

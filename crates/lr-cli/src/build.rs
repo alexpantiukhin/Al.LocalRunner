@@ -208,6 +208,7 @@ pub async fn broker(layout: &Layout, foreground: bool) -> Result<BrokerParts, St
         secrets: Arc::new(ConfigSecrets::default()),
         policy,
         meter: logger.metrics(),
+        version: Some(env!("CARGO_PKG_VERSION").to_string()),
     })
     .with_local_admission(Arc::new(
         NetAdmission::new(vec![owner]).with_admins(Arc::new(lr_net::is_machine_admin)),

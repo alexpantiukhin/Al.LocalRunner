@@ -629,7 +629,10 @@ pub fn runner_service_for(
                 _ => None,
             })
             .collect(),
+        granted_files: Vec::new(),
     };
+    inputs.granted_files =
+        runner_service::read_grants_record(&runner_service::grants_record(&inputs));
     let key = runner_service::key_path(&inputs);
     let account = runner_service::account(&inputs);
     let user_id = (ctx.principal)(&ctx.user);
@@ -827,6 +830,13 @@ pub fn runner_service_for(
 /// (`all` or the roles of `init`), so the user part still goes ahead, and the shell cannot do it.
 pub fn broker_left_for_admin(requested: Option<RoleArg>, dry_run: bool, elevated: bool) -> bool {
     !dry_run && !elevated && requested != Some(RoleArg::Broker)
+}
+
+/// Whether `autostart` leaves the broker service step for an administrator in this session.
+pub fn broker_step_pending(layout: &Layout, role: Option<RoleArg>, dry_run: bool) -> bool {
+    let elevated = crate::host::is_elevated();
+    chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))
+        && broker_left_for_admin(role, dry_run, elevated)
 }
 
 /// The hint `autostart on` prints on Linux once the user units are in place: without

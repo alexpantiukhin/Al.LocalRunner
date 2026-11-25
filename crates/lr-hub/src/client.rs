@@ -176,25 +176,26 @@ async fn session(
         t.close().await;
         return false;
     }
-    let zone: Option<Zone> = match first_frame(shared, t.as_ref()).await {
-        Some(BrokerToHub::Welcome(w)) => w.zone,
-        Some(BrokerToHub::Error(e)) => {
-            shared.diag(
-                Level::Warn,
-                "broker refused the hub",
-                &[("broker", &target.name), ("error", &e.message)],
-            );
-            let _ = events
-                .send(Event::Broker(target.name.clone(), BrokerEvent::Refused(e)))
-                .await;
-            t.close().await;
-            return false;
-        }
-        _ => {
-            t.close().await;
-            return false;
-        }
-    };
+    let (zone, version): (Option<Zone>, Option<String>) =
+        match first_frame(shared, t.as_ref()).await {
+            Some(BrokerToHub::Welcome(w)) => (w.zone, w.broker_version),
+            Some(BrokerToHub::Error(e)) => {
+                shared.diag(
+                    Level::Warn,
+                    "broker refused the hub",
+                    &[("broker", &target.name), ("error", &e.message)],
+                );
+                let _ = events
+                    .send(Event::Broker(target.name.clone(), BrokerEvent::Refused(e)))
+                    .await;
+                t.close().await;
+                return false;
+            }
+            _ => {
+                t.close().await;
+                return false;
+            }
+        };
     shared.diag(Level::Info, "broker connected", &[("broker", &target.name)]);
     let (out_tx, out_rx) = mpsc::channel(OUT_FRAMES);
     if let Some(f) = crate::bus::subscription(shared) {
@@ -203,6 +204,7 @@ async fn session(
     let kill = Arc::new(Notify::new());
     let connected = BrokerEvent::Connected {
         zone,
+        version,
         out: out_tx,
         kill: kill.clone(),
     };

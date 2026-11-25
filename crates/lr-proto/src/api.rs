@@ -356,6 +356,113 @@ pub struct RunningView {
     /// order fields, and from an older broker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_output_ago_ms: Option<u64>,
+    /// What the job asked for; absent for a reader who does not see the order fields and from
+    /// an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<Requested>,
+}
+
+/// What an order asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Requested {
+    /// Memory in MB.
+    pub mem_mb: u64,
+    /// CPU cores.
+    pub cpu: u32,
+    /// Tags it needs, sorted.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl Requested {
+    /// `4096 MB, 2 CPU, tags a, b`.
+    pub fn describe(&self) -> String {
+        let mut text = format!("{} MB, {} CPU", self.mem_mb, self.cpu);
+        if !self.tags.is_empty() {
+            text.push_str(&format!(", tags {}", self.tags.join(", ")));
+        }
+        text
+    }
+}
+
+/// A job ahead of a waiting order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockingJob {
+    /// The job.
+    pub job: JobId,
+    /// Its `--as` label.
+    pub label: Option<String>,
+    /// Its profile.
+    pub profile: Option<String>,
+    /// Whether it holds the runner now (else it is queued ahead).
+    pub running: bool,
+    /// Seconds since it started; 0 for a job that is not running.
+    pub elapsed_s: u64,
+    /// Its timeout in seconds.
+    pub timeout_s: u64,
+}
+
+/// Who a waiting order waits for and for how long at most.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct WaitDetail {
+    /// The jobs ahead whose fields the reader may see, running ones first.
+    pub blocking: Vec<BlockingJob>,
+    /// How many jobs ahead the reader may not see: they are in the bound, not named.
+    #[serde(default)]
+    pub unnamed: u32,
+    /// The remaining timeouts of the running jobs ahead plus the full timeouts of the queued
+    /// jobs ahead, in seconds: the wait is no longer than this, and with several runners or
+    /// jobs that run in parallel it is shorter.
+    pub bound_s: u64,
+}
+
+fn span(s: u64) -> String {
+    match s {
+        0..=59 => format!("{s} s"),
+        60..=3599 => format!("{} min", s / 60),
+        _ => format!("{} h {} min", s / 3600, s / 60 % 60),
+    }
+}
+
+impl WaitDetail {
+    /// The running jobs ahead as `order j1 (profile p, label l, 3 min of 30 min)`, joined by
+    /// commas, then how many more are ahead; empty when nothing is ahead.
+    pub fn blockers(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        for b in self.blocking.iter().filter(|b| b.running) {
+            parts.push(format!(
+                "order {} ({}{}{} of {})",
+                b.job,
+                b.profile
+                    .as_deref()
+                    .map(|p| format!("profile {p}, "))
+                    .unwrap_or_default(),
+                b.label
+                    .as_deref()
+                    .map(|l| format!("label {l}, "))
+                    .unwrap_or_default(),
+                span(b.elapsed_s),
+                span(b.timeout_s)
+            ));
+        }
+        let queued = self.blocking.iter().filter(|b| !b.running).count() as u32 + self.unnamed;
+        let mut text = parts.join(", ");
+        if queued > 0 {
+            if !text.is_empty() {
+                text.push_str(" and ");
+            }
+            text.push_str(&format!("{queued} more ahead"));
+        }
+        text
+    }
+
+    /// `no later than 31 min: ...`, worded as a bound and not as a forecast.
+    pub fn bound(&self) -> String {
+        format!(
+            "no later than {}: the remaining timeouts of the running jobs ahead plus the timeouts of the queued ones, shorter with several runners",
+            span(self.bound_s)
+        )
+    }
 }
 
 /// A queued order.
@@ -376,6 +483,15 @@ pub struct QueueItem {
     /// Absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i64>,
+    /// What the order asks for, hidden from a reader who may not see its fields. Absent from
+    /// older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<Requested>,
+    /// Who it waits for and the upper bound of the wait, for an order that waits for capacity
+    /// (`runner_busy`, `memory`, `cpu`, `tag`), hidden with the reason. Absent from older
+    /// peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<WaitDetail>,
 }
 
 /// Pool load.
@@ -544,6 +660,10 @@ pub enum ReadReply {
         job: JobId,
         /// The explanation, naming the rule that fired.
         text: String,
+        /// Who the order waits for and the upper bound of the wait, for an order that waits
+        /// for capacity; absent otherwise and from an older broker.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<WaitDetail>,
     },
     /// Answer to `stats`.
     Stats(StatsView),

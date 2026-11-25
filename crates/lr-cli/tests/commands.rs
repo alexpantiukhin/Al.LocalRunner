@@ -187,6 +187,7 @@ fn status_json_has_project_source_label() {
             steps: Vec::new(),
             last_lines: Vec::new(),
             last_output_ago_ms: None,
+            requested: None,
         }],
         queue: vec![QueueItem {
             summary: summary("j2", JobState::Queued),
@@ -194,6 +195,8 @@ fn status_json_has_project_source_label() {
             wait_reason: Some("runner busy".into()),
             wait_code: None,
             priority: None,
+            requested: None,
+            detail: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -231,6 +234,8 @@ fn queue_of(items: Vec<(&str, Option<i64>, &[&str])>) -> Vec<(String, StatusView
                 wait_reason: None,
                 wait_code: None,
                 priority,
+                requested: None,
+                detail: None,
             }
         })
         .collect();
@@ -305,6 +310,8 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
             wait_reason: None,
             wait_code: None,
             priority: None,
+            requested: None,
+            detail: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {
@@ -320,7 +327,7 @@ fn status_shows_note_branch_directory_and_age_of_each_job() {
     let now = Timestamp(195_000);
     let text = status_text(&views, now);
     assert!(
-        text.contains("  j2  Queued  owner/repo  session  agent-1  local:r1  3m05s  #1"),
+        text.contains("j2   Queued  owner/repo  session  agent-1  local:r1  3m05s  #1"),
         "{text}"
     );
     assert!(
@@ -682,6 +689,44 @@ fn wait_follows_the_given_ids_the_active_jobs_of_a_label_or_its_last_job() {
 }
 
 #[test]
+fn wait_keeps_the_last_lines_and_hints_how_to_read_the_rest() {
+    use lr_cli::commands::jobs::Tail;
+    let job = JobId("j1".into());
+    let mut tail = Tail::new(3);
+    tail.push("one\ntw");
+    tail.push("o\r\nthree\nfour\nfi");
+    tail.push("ve");
+    let (body, hint) = tail.finish(&job);
+    assert_eq!(
+        body,
+        "... 2 earlier lines left out ...\nthree\nfour\nfive\n"
+    );
+    let hint = hint.expect("lines were left out");
+    assert!(hint.contains("last 3 lines"), "{hint}");
+    assert!(hint.contains("localrunner wait j1 --full"), "{hint}");
+    assert!(hint.contains("localrunner log j1 --tail 200"), "{hint}");
+
+    let mut short = Tail::new(3);
+    short.push("a\nb\n");
+    assert_eq!(short.finish(&job), ("a\nb\n".to_string(), None));
+}
+
+#[test]
+fn wait_takes_full_for_one_job_and_it_changes_nothing_for_several() {
+    use clap::Parser;
+    use lr_cli::commands::Cli;
+    for args in [
+        &["wait", "j1", "--full"][..],
+        &["wait", "--as", "agent-1", "--full"][..],
+        &["wait", "j1", "--full", "--json"][..],
+    ] {
+        let mut line = vec!["localrunner"];
+        line.extend_from_slice(args);
+        assert!(Cli::try_parse_from(line).is_ok(), "{args:?}");
+    }
+}
+
+#[test]
 fn a_wait_line_names_the_job_the_profile_and_the_state() {
     use lr_cli::commands::jobs::{wait_line, Ended};
     let ended = |state| Ended::Exit {
@@ -814,6 +859,7 @@ fn status_with_output_age(ago: Option<u64>) -> Vec<(String, StatusView)> {
             steps: Vec::new(),
             last_lines: Vec::new(),
             last_output_ago_ms: ago,
+            requested: None,
         }],
         queue: Vec::new(),
         recent: Vec::new(),

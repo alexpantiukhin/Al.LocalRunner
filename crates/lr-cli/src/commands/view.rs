@@ -8,11 +8,12 @@ use super::timefmt::{format_ms, format_time, Recent};
 use super::SourceArg;
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use crate::render::{Cell, Out, Table, Tone};
 use lr_core::{JobId, Timestamp};
 use lr_obs::Redactor;
 use lr_proto::{
-    BrokerStatus, CliRead, CliReply, CliRequest, JobDetail, JobSummary, ReadReply, ReadRequest,
-    RecentFilter, RunnerInfo, RunnerLiveness, StatusFilter, StatusView, WireSource,
+    BrokerStatus, CliRead, CliReply, CliRequest, JobDetail, JobSummary, QueueItem, ReadReply,
+    ReadRequest, RecentFilter, RunnerInfo, RunnerLiveness, StatusFilter, StatusView, WireSource,
 };
 use serde_json::{json, Map, Value};
 
@@ -38,11 +39,14 @@ pub fn status_json(views: &[(String, StatusView)]) -> Value {
                     "steps": r.steps,
                     "last_lines": r.last_lines,
                     "last_output_ago_ms": r.last_output_ago_ms,
+                    "requested": r.requested,
                 }))).collect::<Vec<_>>(),
                 "queue": v.queue.iter().map(|q| item(&q.summary, json!({
                     "position": q.position,
                     "wait_reason": q.wait_reason,
                     "priority": q.priority,
+                    "requested": q.requested,
+                    "detail": q.detail,
                 }))).collect::<Vec<_>>(),
                 "recent": v.recent.iter().map(|s| item(s, Value::Object(Map::new()))).collect::<Vec<_>>(),
             })
@@ -93,18 +97,27 @@ pub(crate) fn source_name(source: Option<WireSource>) -> &'static str {
     }
 }
 
-fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
-    let mut out = format!(
-        "  {}  {:?}  {}  {}  {}  {}  {}{}",
-        s.job,
-        s.state,
-        s.project.as_deref().unwrap_or("-"),
-        source_name(s.source),
-        s.label.as_deref().unwrap_or("-"),
-        s.runner.as_deref().unwrap_or("-"),
-        format_ms(age_ms(s, now)),
-        tail
-    );
+fn job_row(s: &JobSummary, detail: String, now: Timestamp) -> (Vec<Cell>, Option<String>) {
+    let state = format!("{:?}", s.state);
+    let tone = if state == "Running" {
+        Tone::Ok
+    } else {
+        Tone::Plain
+    };
+    let dash = |v: Option<&str>| match v {
+        Some(v) => Cell::plain(v),
+        None => Cell::dim("-"),
+    };
+    let row = vec![
+        Cell::plain(s.job.to_string()),
+        Cell::new(state, tone),
+        dash(s.project.as_deref()),
+        Cell::plain(source_name(s.source)),
+        dash(s.label.as_deref()),
+        dash(s.runner.as_deref()),
+        Cell::plain(format_ms(age_ms(s, now))),
+        Cell::plain(detail.trim().to_string()),
+    ];
     let mut details = Vec::new();
     if let Some(b) = &s.branch {
         details.push(format!("branch {b}"));
@@ -118,74 +131,138 @@ fn line(s: &JobSummary, tail: &str, now: Timestamp) -> String {
     if !s.labels.is_empty() {
         details.push(format!("labels: {}", s.labels.join(", ")));
     }
-    if !details.is_empty() {
-        out.push_str(&format!("\n      {}", details.join("  ")));
-    }
-    out
+    (row, (!details.is_empty()).then(|| details.join("  ")))
 }
 
-/// The text of `status` at `now`: per broker the pool load, then running and queued jobs, each
-/// with its age and, where known, branch, directory and note.
+/// The text of `status` at `now` without colors; see [`status_lines`].
 pub fn status_text(views: &[(String, StatusView)], now: Timestamp) -> String {
-    let mut out = Vec::new();
+    status_lines(views, now, &Out::plain()).join("\n")
+}
+
+/// The lines of `status` at `now`: per broker the pool load, then a table of the running and
+/// queued jobs with their age and step or wait reason; where known, the branch, directory and
+/// note of a job follow on a dimmed line under it.
+pub fn status_lines(views: &[(String, StatusView)], now: Timestamp, out: &Out) -> Vec<String> {
+    let mut lines = Vec::new();
     for (broker, v) in views {
-        out.push(format!(
-            "broker {broker}: memory {}/{} MB, cpu {}/{}",
-            v.pool.used_mem_mb, v.pool.total_mem_mb, v.pool.used_cpu, v.pool.total_cpu
+        lines.push(format!(
+            "{}: memory {}/{} MB, cpu {}/{}",
+            out.paint(&format!("broker {broker}"), Tone::Head),
+            v.pool.used_mem_mb,
+            v.pool.total_mem_mb,
+            v.pool.used_cpu,
+            v.pool.total_cpu
         ));
+        if v.running.is_empty() && v.queue.is_empty() {
+            lines.push("  (no jobs)".into());
+            continue;
+        }
+        let mut table = Table::new(&[
+            "JOB",
+            "STATE",
+            "PROJECT",
+            "SOURCE",
+            "LABEL",
+            "RUNNER",
+            "AGE",
+            "STEP OR WAIT",
+        ])
+        .fixed(0)
+        .fixed(1)
+        .fixed(3)
+        .fixed(6);
+        let mut notes = Vec::new();
         for r in &v.running {
             let step = r
                 .steps
                 .iter()
                 .rev()
                 .find(|s| s.started_at.is_some())
-                .map(|s| format!("  step {}", s.name))
+                .map(|s| format!("step {}", s.name))
                 .unwrap_or_default();
             let quiet = r
                 .last_output_ago_ms
                 .map(|ms| format!("  last output {} ago", format_ms(ms)))
                 .unwrap_or_default();
-            out.push(line(&r.summary, &format!("{step}{quiet}"), now));
+            let (row, note) = job_row(&r.summary, format!("{step}{quiet}"), now);
+            table.row(row);
+            notes.push(note);
         }
         for q in &v.queue {
             let why = q
                 .wait_reason
                 .as_deref()
-                .map(|w| format!("  #{} waits: {w}", q.position))
-                .unwrap_or_else(|| format!("  #{}", q.position));
+                .map(|w| format!("#{} waits: {w}{}", q.position, wait_tail(q)))
+                .unwrap_or_else(|| format!("#{}", q.position));
             let priority = q
                 .priority
                 .map(|p| format!("  priority {p}"))
                 .unwrap_or_default();
-            out.push(line(&q.summary, &format!("{why}{priority}"), now));
+            let (row, note) = job_row(&q.summary, format!("{why}{priority}"), now);
+            table.row(row);
+            notes.push(note);
         }
-        if v.running.is_empty() && v.queue.is_empty() {
-            out.push("  (no jobs)".into());
+        let rendered = table.lines(out);
+        lines.push(format!("  {}", rendered[0]));
+        for (row, note) in rendered[1..].iter().zip(notes) {
+            lines.push(format!("  {row}"));
+            if let Some(n) = note {
+                lines.push(format!("    {}", out.paint(&n, Tone::Dim)));
+            }
         }
     }
-    out.join("\n")
+    lines
 }
 
-/// The `recent` block of `status --recent`: per broker the orders that left the queue, newest
-/// end first, each with its final state, the reason and who ended it, and when.
+/// What follows the reason of a waiting order in `status`: who holds the runner and the upper
+/// bound of the wait; empty without a detail.
+pub fn wait_tail(q: &QueueItem) -> String {
+    let Some(d) = &q.detail else {
+        return String::new();
+    };
+    let holders = match (q.wait_code.as_deref(), d.blockers()) {
+        (Some("runner_busy"), b) if !b.is_empty() => format!(" with {b}"),
+        _ => String::new(),
+    };
+    format!("{holders}; {}", d.bound())
+}
+
+/// The `recent` block of `status --recent` without colors; see [`recent_lines_for`].
 pub fn recent_lines(views: &[(String, StatusView)]) -> Vec<String> {
-    let mut out = Vec::new();
+    recent_lines_for(views, &Out::plain())
+}
+
+/// The `recent` block of `status --recent`: per broker a table of the orders that left the
+/// queue, newest end first, each with its final state, the reason and who ended it, and when.
+pub fn recent_lines_for(views: &[(String, StatusView)], out: &Out) -> Vec<String> {
+    let mut lines = Vec::new();
     for (broker, v) in views {
-        out.push(format!("broker {broker}: recent"));
-        for s in &v.recent {
-            out.push(format!(
-                "  {}  {}  {}  ended {}",
-                s.job,
-                shown_state(s),
-                reason_text(s),
-                s.finished_at.map_or("-".into(), format_time)
-            ));
-        }
+        lines.push(out.paint(&format!("broker {broker}: recent"), Tone::Head));
         if v.recent.is_empty() {
-            out.push("  (none)".into());
+            lines.push("  (none)".into());
+            continue;
         }
+        let mut table = Table::new(&["JOB", "STATE", "REASON", "ENDED"])
+            .fixed(0)
+            .fixed(1)
+            .fixed(3);
+        for s in &v.recent {
+            let state = shown_state(s);
+            let tone = match state.as_str() {
+                "Completed" | "Passed" => Tone::Ok,
+                "Failed" | "Timeout" | "Lost" => Tone::Bad,
+                _ => Tone::Plain,
+            };
+            table.row(vec![
+                Cell::plain(s.job.to_string()),
+                Cell::new(state, tone),
+                Cell::plain(reason_text(s)),
+                Cell::plain(s.finished_at.map_or("-".into(), format_time)),
+            ]);
+        }
+        lines.extend(table.lines(out).into_iter().map(|l| format!("  {l}")));
     }
-    out
+    lines
 }
 
 /// The hub's known brokers.
@@ -587,12 +664,12 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
         if let Some(lock) = crate::upgrade_lock::live_here(layout) {
             println!("{}", crate::upgrade_lock::describe(&lock));
         }
-        let text = status_text(&views, now);
-        if !text.is_empty() {
-            println!("{text}");
+        let out = Out::detect();
+        for line in status_lines(&views, now, &out) {
+            println!("{line}");
         }
         if recent.is_some() {
-            for line in recent_lines(&views) {
+            for line in recent_lines_for(&views, &out) {
                 println!("{line}");
             }
         }
@@ -612,6 +689,50 @@ pub async fn status(layout: &Layout, args: StatusArgs, json_out: bool) -> Result
     Ok(0)
 }
 
+/// The table of `brokers`: name, zone, state, version, outbox. A version other than this
+/// binary's is highlighted.
+pub fn brokers_lines(list: &[BrokerStatus], out: &Out) -> Vec<String> {
+    let mine = env!("CARGO_PKG_VERSION");
+    let mut table = Table::new(&["NAME", "ZONE", "STATE", "VERSION", "OUTBOX"])
+        .right(4)
+        .fixed(1)
+        .fixed(2)
+        .fixed(3);
+    for b in list {
+        let zone = b
+            .zone
+            .map_or("-".to_string(), |z| format!("{z:?}").to_lowercase());
+        let state = if b.available {
+            Cell::ok("available")
+        } else {
+            Cell::bad("unreachable")
+        };
+        let version = match b.version.as_deref() {
+            Some(v) if v == mine => Cell::plain(v),
+            Some(v) => Cell::warn(v),
+            None => Cell::dim("-"),
+        };
+        table.row(vec![
+            Cell::plain(b.name.clone()),
+            Cell::plain(zone),
+            state,
+            version,
+            Cell::plain(b.outbox.to_string()),
+        ]);
+    }
+    let mut lines = table.lines(out);
+    let others: Vec<&str> = list
+        .iter()
+        .filter_map(|b| b.version.as_deref())
+        .filter(|v| *v != mine)
+        .collect();
+    if !others.is_empty() {
+        let note = format!("a version other than this binary's ({mine}) is highlighted");
+        lines.push(out.paint(&note, Tone::Warn));
+    }
+    lines
+}
+
 /// `brokers`.
 pub async fn brokers(layout: &Layout, json_out: bool) -> Result<i32, String> {
     let client = hub(layout).await?;
@@ -622,19 +743,9 @@ pub async fn brokers(layout: &Layout, json_out: bool) -> Result<i32, String> {
             serde_json::to_string_pretty(&list).map_err(|e| e.to_string())?
         );
     } else {
-        for b in &list {
-            println!(
-                "{}\t{}\t{}\toutbox {}",
-                b.name,
-                b.zone
-                    .map_or("-".to_string(), |z| format!("{z:?}").to_lowercase()),
-                if b.available {
-                    "available"
-                } else {
-                    "unreachable"
-                },
-                b.outbox
-            );
+        let out = Out::detect();
+        for line in brokers_lines(&list, &out) {
+            println!("{line}");
         }
     }
     Ok(0)

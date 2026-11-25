@@ -184,6 +184,7 @@ impl Harness {
             secrets: Arc::new(MemorySecrets::new()),
             policy: active,
             meter: meter.clone(),
+            version: Some("0.0.0-test".to_string()),
         })
         .with_local_admission(Arc::new(ExactLocalUsers::with_owners(
             owners.iter().map(|s| s.to_string()),

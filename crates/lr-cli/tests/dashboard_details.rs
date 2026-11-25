@@ -39,6 +39,7 @@ async fn fake_hub(answer: Answer) -> IpcClient {
                         available: true,
                         outbox: 0,
                         since: None,
+                        version: None,
                     }],
                 },
                 CliRequest::Orders => CliReply::Orders {
@@ -107,12 +108,14 @@ fn status() -> StatusView {
                 steps: vec![step(0, StepState::Running, Some(2_000))],
                 last_lines: Vec::new(),
                 last_output_ago_ms: None,
+                requested: None,
             },
             RunningView {
                 summary: summary("theirs", JobState::Running, false),
                 steps: Vec::new(),
                 last_lines: Vec::new(),
                 last_output_ago_ms: None,
+                requested: None,
             },
         ],
         queue: vec![QueueItem {
@@ -121,6 +124,8 @@ fn status() -> StatusView {
             wait_reason: Some("needs memory".into()),
             wait_code: Some("memory".into()),
             priority: None,
+            requested: None,
+            detail: None,
         }],
         recent: Vec::new(),
         pool: PoolLoad {

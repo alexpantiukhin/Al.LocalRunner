@@ -71,6 +71,7 @@ pub fn read_replies() -> Vec<ReadReply> {
                 steps: vec![step_view()],
                 last_lines: vec!["line".into()],
                 last_output_ago_ms: None,
+                requested: None,
             }],
             queue: vec![QueueItem {
                 summary: summary(),
@@ -78,6 +79,8 @@ pub fn read_replies() -> Vec<ReadReply> {
                 wait_reason: Some("runner busy".into()),
                 wait_code: None,
                 priority: None,
+                requested: None,
+                detail: None,
             }],
             recent: vec![JobSummary {
                 state: JobState::Cancelled,
@@ -114,6 +117,18 @@ pub fn read_replies() -> Vec<ReadReply> {
         ReadReply::Explain {
             job: job(1),
             text: "waits for rule 2".into(),
+            detail: Some(lr_proto::WaitDetail {
+                blocking: vec![lr_proto::BlockingJob {
+                    job: job(2),
+                    label: Some("claude:x".into()),
+                    profile: Some("rust-unit".into()),
+                    running: true,
+                    elapsed_s: 180,
+                    timeout_s: 1800,
+                }],
+                unnamed: 1,
+                bound_s: 3000,
+            }),
         },
         ReadReply::Stats(stats()),
         ReadReply::Runners {

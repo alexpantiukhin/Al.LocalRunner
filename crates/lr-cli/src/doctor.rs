@@ -4,6 +4,7 @@
 
 use crate::build::{BROKER_FILE, KEY_FILE};
 use crate::paths::Layout;
+use crate::render::{Level, Out, Report};
 use crate::runner_config::RunnerConfig;
 use lr_abstractions::{Dialer, HubStore};
 use lr_net::TlsDialer;
@@ -678,6 +679,20 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     out
 }
 
+/// The report of `doctor`: a marked line per check, then the counts.
+pub fn report_lines(all: &[Check], out: &Out) -> Vec<String> {
+    let mut report = Report::new();
+    for c in all {
+        let level = match c.status {
+            Status::Ok => Level::Ok,
+            Status::Warn => Level::Warn,
+            Status::Fail => Level::Fail,
+        };
+        report.line(level, format!("{}: {}", c.name, c.detail));
+    }
+    report.lines(out)
+}
+
 /// `doctor [--json]`: exit code 1 when a check failed.
 pub async fn run(layout: &Layout, json: bool) -> Result<i32, String> {
     let all = checks(layout).await;
@@ -687,13 +702,8 @@ pub async fn run(layout: &Layout, json: bool) -> Result<i32, String> {
             serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?
         );
     } else {
-        for c in &all {
-            let tag = match c.status {
-                Status::Ok => "ok  ",
-                Status::Warn => "warn",
-                Status::Fail => "FAIL",
-            };
-            println!("{tag} {}: {}", c.name, c.detail);
+        for line in report_lines(&all, &Out::detect()) {
+            println!("{line}");
         }
     }
     Ok(i32::from(all.iter().any(|c| c.status == Status::Fail)))

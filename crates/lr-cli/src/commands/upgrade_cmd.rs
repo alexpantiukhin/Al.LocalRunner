@@ -13,6 +13,7 @@ use super::upgrade_jobs::{activity, choose, Activity, Mode, WaitProgress};
 use super::upgrade_pool::{plan_lines, pool, reconnected, report_lines, PoolRunner, Reconnected};
 use crate::os_service::{apply_all, Action, DryRun, OsSystem, System};
 use crate::paths::Layout;
+use crate::render::{Card, Level, Out, Report};
 use crate::upgrade_lock::{write, UpgradeLock};
 use lr_proto::DrainReason;
 use std::future::Future;
@@ -305,7 +306,12 @@ impl Job<'_> {
         interrupt: impl Future<Output = ()>,
     ) -> Result<i32, String> {
         let old_text = self.old.map_or("unknown", |v| v.text.as_str());
-        println!("installed: {old_text}\nnew:       {}", self.new.text);
+        let mut versions = Card::new();
+        versions.row("installed", old_text);
+        versions.row("new", self.new.text.clone());
+        for line in versions.lines(&Out::detect()) {
+            println!("{line}");
+        }
         let protocol_changed = match verdict(self.old, self.new) {
             Verdict::UpToDate => {
                 println!("already up to date");
@@ -413,11 +419,18 @@ impl Job<'_> {
         }
         replaced?;
         let restarted = self.reconnects(roles, &services).await;
-        roles.say(&format!(
-            "upgraded to {}; check the node: localrunner doctor",
-            self.new.text
-        ));
+        let mut summary = Report::new();
+        summary.line(
+            Level::Ok,
+            format!(
+                "upgraded to {}; check the node: localrunner doctor",
+                self.new.text
+            ),
+        );
         for line in report_lines(self.pool, &restarted, self.new, protocol_changed) {
+            summary.line(Level::Warn, line);
+        }
+        for line in summary.lines(&Out::detect()) {
             roles.say(&line);
         }
         Ok(code)

@@ -306,6 +306,7 @@ pub fn welcome() -> Welcome {
         zone: Some(Zone::Lan),
         heartbeat_s: HEARTBEAT_INTERVAL_S,
         broker_lost_kill_s: Some(180),
+        broker_version: None,
     }
 }
 

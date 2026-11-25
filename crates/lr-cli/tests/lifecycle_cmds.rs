@@ -143,6 +143,7 @@ fn status_masks_the_last_lines_of_running_jobs() {
             steps: Vec::new(),
             last_lines: vec!["login api_token=hunter2hunter2".into(), "ok".into()],
             last_output_ago_ms: None,
+            requested: None,
         }],
         queue: Vec::new(),
         recent: Vec::new(),

@@ -4,9 +4,30 @@
 use super::confirm::{proceed, Console, Stdio};
 use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
+use crate::render::{Card, Cell, Level, Out, Report, Table};
 use lr_broker::policy::{check, explain_rules, load};
 use lr_proto::{AdminReply, AdminRequest};
 use std::path::{Path, PathBuf};
+
+fn print_findings(
+    warnings: &[impl std::fmt::Display],
+    rules: &[impl std::fmt::Display],
+    last: Option<(Level, String)>,
+) {
+    let mut report = Report::new();
+    for w in warnings {
+        report.line(Level::Warn, w.to_string());
+    }
+    for r in rules {
+        report.line(Level::Info, format!("rule: {r}"));
+    }
+    if let Some((level, text)) = last {
+        report.line(level, text);
+    }
+    for line in report.lines(&Out::detect()) {
+        println!("{line}");
+    }
+}
 
 /// What the running broker says about its policy file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,13 +143,8 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
                     warnings,
                     rules,
                 }) => {
-                    for w in warnings {
-                        println!("warning: {w}");
-                    }
-                    for r in rules {
-                        println!("rule: {r}");
-                    }
-                    println!("{path}: valid (the file the running broker uses)");
+                    let last = format!("{path}: valid (the file the running broker uses)");
+                    print_findings(&warnings, &rules, Some((Level::Ok, last)));
                     Ok(0)
                 }
                 Err(e) => {
@@ -149,7 +165,7 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
                 std::fs::read_to_string(p)
             })?;
             if let Some(note) = note {
-                println!("warning: {note}");
+                print_findings(&[note], &[] as &[String], None);
             }
             (path, text)
         }
@@ -160,13 +176,10 @@ pub async fn policy_check(layout: &Layout, file: Option<PathBuf>) -> Result<i32,
             Ok(1)
         }
         Ok(policy) => {
-            for w in check(&policy, &crate::host::resources()) {
-                println!("warning: {w}");
-            }
-            for r in explain_rules(&policy) {
-                println!("rule: {r}");
-            }
-            println!("{}: valid", path.display());
+            let warnings = check(&policy, &crate::host::resources());
+            let rules = explain_rules(&policy);
+            let last = format!("{}: valid", path.display());
+            print_findings(&warnings, &rules, Some((Level::Ok, last)));
             Ok(0)
         }
     }
@@ -279,10 +292,11 @@ pub async fn simple(layout: &Layout, req: AdminRequest) -> Result<i32, String> {
 fn show(reply: AdminReply, code_file: Option<&Path>) -> Result<i32, String> {
     match reply {
         AdminReply::Ok { warnings } => {
-            for w in warnings {
-                println!("warning: {w}");
-            }
-            println!("ok");
+            print_findings(
+                &warnings,
+                &[] as &[String],
+                Some((Level::Ok, "done".into())),
+            );
             Ok(0)
         }
         AdminReply::Policy {
@@ -290,13 +304,11 @@ fn show(reply: AdminReply, code_file: Option<&Path>) -> Result<i32, String> {
             warnings,
             rules,
         } => {
-            for w in warnings {
-                println!("warning: {w}");
-            }
-            for r in rules {
-                println!("rule: {r}");
-            }
-            println!("policy: {path}");
+            print_findings(
+                &warnings,
+                &rules,
+                Some((Level::Info, format!("policy: {path}"))),
+            );
             Ok(0)
         }
         AdminReply::JoinCode {
@@ -305,21 +317,33 @@ fn show(reply: AdminReply, code_file: Option<&Path>) -> Result<i32, String> {
             fingerprint,
             expires_at,
         } => {
-            println!("address:     {address}");
+            let mut card = Card::new();
+            card.row("address", address);
             match code_file {
                 Some(path) => {
                     write_code_file(path, &code)?;
-                    println!("code:        written to {}", path.display());
+                    card.row("code", format!("written to {}", path.display()));
                 }
-                None => println!("code:        {code}"),
+                None => card.row("code", code),
             }
-            println!("fingerprint: {fingerprint}");
-            println!("expires at:  {} (unix ms)", expires_at.0);
+            card.row("fingerprint", fingerprint);
+            card.row("expires at", format!("{} (unix ms)", expires_at.0));
+            for line in card.lines(&Out::detect()) {
+                println!("{line}");
+            }
             Ok(0)
         }
         AdminReply::Names { names } => {
+            let mut table = Table::new(&["NAME"]);
             for n in names {
-                println!("{n}");
+                table.row(vec![Cell::plain(n)]);
+            }
+            let lines = table.lines(&Out::detect());
+            if lines.is_empty() {
+                println!("(none)");
+            }
+            for line in lines {
+                println!("{line}");
             }
             Ok(0)
         }

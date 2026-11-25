@@ -92,6 +92,8 @@ pub struct BrokerDeps {
     pub policy: ActivePolicy,
     /// Metrics of spec 12.2.
     pub meter: Arc<dyn Meter>,
+    /// The version of the binary the broker runs from, told to every hub in the welcome.
+    pub version: Option<String>,
 }
 
 pub(crate) fn site_of(file: &PolicyFile) -> Site {
@@ -132,6 +134,7 @@ impl Broker {
                 local: Arc::new(ExactLocalUsers::default()),
                 log: Arc::new(NoLog),
                 meter: deps.meter,
+                version: deps.version,
                 gauges: metrics::Gauges::default(),
                 bus: broadcast::channel(1024).0,
                 conns: HashMap::new(),
@@ -346,6 +349,7 @@ pub(crate) struct Engine {
     pub(crate) local: Arc<dyn LocalAdmission>,
     pub(crate) log: Arc<dyn LogSink>,
     pub(crate) meter: Arc<dyn Meter>,
+    pub(crate) version: Option<String>,
     pub(crate) gauges: metrics::Gauges,
     pub(crate) bus: broadcast::Sender<BusEvent>,
     pub(crate) conns: HashMap<ConnId, Conn>,

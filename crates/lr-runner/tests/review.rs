@@ -67,6 +67,7 @@ async fn huge_welcome_values_are_clamped_without_panic() {
             zone: None,
             heartbeat_s: u64::MAX,
             broker_lost_kill_s: Some(u64::MAX),
+            broker_version: None,
         }))
         .unwrap(),
     )
@@ -308,6 +309,7 @@ async fn stalled_broker_is_dropped_and_a_large_outbox_replayed() {
             zone: None,
             heartbeat_s: 15,
             broker_lost_kill_s: None,
+            broker_version: None,
         }))
         .unwrap(),
     )

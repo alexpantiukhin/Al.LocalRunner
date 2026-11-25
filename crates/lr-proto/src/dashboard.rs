@@ -45,6 +45,9 @@ pub struct DashboardJob {
     /// The effective priority of a queued job, as [`crate::QueueItem::priority`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i64>,
+    /// What the job asked for, as [`crate::QueueItem::requested`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<crate::Requested>,
 }
 
 /// The runners of one broker with its pool load.

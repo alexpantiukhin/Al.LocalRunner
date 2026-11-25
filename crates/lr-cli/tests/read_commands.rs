@@ -3,13 +3,16 @@ use lr_cli::commands::history_cmd::{
     history_filter, history_lines, newest_first, overlaps, show_lines,
 };
 use lr_cli::commands::log_cmd::LogPrinter;
-use lr_cli::commands::read_cmd::{pool_runner_lines, runner_lines, runners_document, stats_lines};
+use lr_cli::commands::read_cmd::{
+    pool_runner_lines, runner_card, runner_lines, runners_document, stats_lines,
+};
 use lr_cli::commands::timefmt::{format_ms, format_time, parse_since, Since};
 use lr_cli::commands::view::{
     add_runners, is_plain_missing, job_lines, missing_job_error, not_serving_lines,
     runner_note_lines, runner_note_lines_for, runners_of,
 };
 use lr_cli::commands::{Cli, Command, HistoryAction, OutboxAction, RunnerAction};
+use lr_cli::render::Out;
 use lr_core::{JobId, JobState, StepState, Timestamp};
 use lr_proto::{
     HistoryFilter, JobDetail, JobSummary, PoolInfo, ProfileStatsView, ReadReply, RunnerInfo,
@@ -56,6 +59,26 @@ fn masked(job: &str, queued: u64) -> JobSummary {
         client_label: "other-team".into(),
         ..summary(job, queued)
     }
+}
+
+fn has_cells(text: &str, words: &[&str]) -> bool {
+    text.lines()
+        .any(|l| cells(l).windows(words.len()).any(|w| w == words))
+}
+
+fn has_words(text: &str, words: &[&str]) -> bool {
+    text.lines().any(|l| {
+        let tokens: Vec<&str> = l.split_whitespace().collect();
+        tokens.windows(words.len()).any(|w| w == words)
+    })
+}
+
+fn cells(line: &str) -> Vec<String> {
+    line.split("  ")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 #[test]
@@ -292,8 +315,8 @@ fn the_card_names_the_client_label_and_lists_the_profile_labels() {
         wait_reason: None,
     };
     let text = show_lines("local", &detail).join("\n");
-    assert!(text.contains("client_label agent-1"), "{text}");
-    assert!(text.contains("labels    release, night"), "{text}");
+    assert!(has_words(&text, &["client_label", "agent-1"]), "{text}");
+    assert!(has_words(&text, &["labels", "release,", "night"]), "{text}");
     assert!(!text.contains("\nlabel     "), "{text}");
 }
 
@@ -309,17 +332,18 @@ fn history_shows_when_each_run_started_and_finished() {
         ("local".to_string(), never),
     ];
     let lines = history_lines(&rows);
-    let header: Vec<&str> = lines[0].split('\t').collect();
+    let header = cells(&lines[0]);
     let started = header
         .iter()
         .position(|c| *c == "STARTED")
         .expect("STARTED");
     assert_eq!(header[started + 1], "FINISHED");
-    let done: Vec<&str> = lines[1].split('\t').collect();
+    let done = cells(&lines[1]);
     assert_eq!(done[started], format_time(Timestamp(H + 1000)));
     assert_eq!(done[started + 1], format_time(Timestamp(H + 63_000)));
-    let waiting: Vec<&str> = lines[2].split('\t').collect();
-    assert_eq!((waiting[started], waiting[started + 1]), ("-", "-"));
+    let waiting = cells(&lines[2]);
+    assert_eq!(waiting[started], "-");
+    assert_eq!(waiting[started + 1], "-");
 }
 
 #[test]
@@ -344,12 +368,16 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
     let lines = history_lines(&rows);
     assert_eq!(lines.len(), 4, "a header and one line per run: {lines:?}");
     assert!(
-        lines[0].contains("PROFILE	PROJECT	SOURCE	CLIENT_LABEL	CLIENT	"),
+        cells(&lines[0])
+            .windows(5)
+            .any(|w| w == ["PROFILE", "PROJECT", "SOURCE", "CLIENT_LABEL", "CLIENT"]),
         "{}",
         lines[0]
     );
     assert!(
-        lines[1].contains("	owner/repo	session	agent-1	"),
+        cells(&lines[1])
+            .windows(3)
+            .any(|w| w == ["owner/repo", "session", "agent-1"]),
         "{}",
         lines[1]
     );
@@ -422,16 +450,16 @@ fn history_sorts_by_finish_time_with_ties_by_job_and_unfinished_last() {
         "a limit keeps the latest finished"
     );
     let lines = history_lines(&rows);
-    let header: Vec<&str> = lines[0].split('\t').collect();
+    let header = cells(&lines[0]);
     let col = header
         .iter()
         .position(|c| *c == "FINISHED")
         .expect("a FINISHED column");
     assert_eq!(header[col - 1], "STARTED");
     assert_eq!(header[col - 2], "QUEUED");
-    let cells: Vec<&str> = lines[1].split('\t').collect();
-    assert_eq!(cells[col], format_time(Timestamp(9 * H)));
-    let waiting: Vec<&str> = lines[5].split('\t').collect();
+    let first = cells(&lines[1]);
+    assert_eq!(first[col], format_time(Timestamp(9 * H)));
+    let waiting = cells(&lines[5]);
     assert_eq!(waiting[col], "-");
     let json = serde_json::to_value(&rows[0].1).unwrap();
     assert_eq!(json["finished_at"], 9 * H);
@@ -625,14 +653,11 @@ fn stats_and_runners_print_per_broker() {
         can_start_now: None,
         busy: None,
     };
-    let text = runner_lines(&[("office".into(), vec![runner.clone()])]).join("\n");
+    let text = runner_card(&runner).lines(&Out::plain()).join("\n");
     for needed in [
-        "office",
         "r1",
         "stale (silent 40 s)",
         "linux",
-        "memory 4096 MB, free in the pool 1024 MB",
-        "cpu 4, free in the pool 2",
         "gpu",
         "git",
         "program docker",
@@ -640,6 +665,17 @@ fn stats_and_runners_print_per_broker() {
     ] {
         assert!(text.contains(needed), "{needed}:\n{text}");
     }
+    assert!(
+        has_words(
+            &text,
+            &["memory", "4096", "MB,", "free", "in", "the", "pool", "1024", "MB"]
+        ),
+        "{text}"
+    );
+    assert!(
+        has_words(&text, &["cpu", "4,", "free", "in", "the", "pool", "2"]),
+        "{text}"
+    );
     let mut gone = runner.clone();
     gone.name = "r2".into();
     gone.online = false;
@@ -649,8 +685,8 @@ fn stats_and_runners_print_per_broker() {
     old.liveness = None;
     old.silent_for_s = None;
     let text = runner_lines(&[("office".into(), vec![gone, old])]).join("\n");
-    assert!(text.contains("r2\toffline"), "{text}");
-    assert!(text.contains("r3\tonline"), "{text}");
+    assert!(has_cells(&text, &["r2", "offline"]), "{text}");
+    assert!(has_cells(&text, &["r3", "online"]), "{text}");
 }
 
 #[test]
@@ -663,10 +699,10 @@ fn runners_marks_local_and_joined() {
     unknown.kind = Some(RunnerKind::Unknown);
     let old = runner_info("old", RunnerLiveness::Online, 0);
     let text = runner_lines(&[("b".into(), vec![local, joined, unknown, old])]).join("\n");
-    assert!(text.contains("local:r1\tonline\tlocal\t"), "{text}");
-    assert!(text.contains("office\tonline\tjoined\t"), "{text}");
-    assert!(text.contains("odd\tonline\t?\t"), "{text}");
-    assert!(text.contains("old\tonline\tlast seen"), "{text}");
+    assert!(has_cells(&text, &["local:r1", "online", "local"]), "{text}");
+    assert!(has_cells(&text, &["office", "online", "joined"]), "{text}");
+    assert!(has_cells(&text, &["odd", "online", "?"]), "{text}");
+    assert!(has_cells(&text, &["old", "online", "-"]), "{text}");
     let wire: RunnerInfo = serde_json::from_str(
         &serde_json::to_string(&runner_info("x", RunnerLiveness::Online, 0))
             .unwrap()
@@ -773,6 +809,7 @@ fn a_snapshot_asks_logs_of_running_and_finished_jobs_on_their_broker() {
         stale: false,
         wait_code: None,
         priority: None,
+        requested: None,
     };
     let snap = DashboardSnapshot {
         taken_at: Timestamp(0),
@@ -811,7 +848,7 @@ fn history_prints_a_dash_for_an_empty_client_label() {
         },
     )];
     let lines = history_lines(&rows);
-    let cols: Vec<&str> = lines[1].split('\t').collect();
+    let cols = cells(&lines[1]);
     assert_eq!(cols[10], "-", "{}", lines[1]);
     assert!(cols.iter().all(|c| !c.is_empty()), "{}", lines[1]);
 }
@@ -830,7 +867,7 @@ fn a_cancelled_run_with_a_rejection_reason_is_shown_and_filtered_as_rejected() {
     assert_eq!(shown_state(&refused), "rejected");
     assert_eq!(shown_state(&plain), "cancelled");
     let lines = history_lines(&[("local".into(), refused)]);
-    assert!(lines[1].contains("\trejected\t"), "{}", lines[1]);
+    assert!(has_cells(&lines[1], &["rejected"]), "{}", lines[1]);
     let parsed = Cli::try_parse_from(["localrunner", "history", "--result", "rejected"]);
     assert!(parsed.is_ok());
 }
@@ -1121,15 +1158,16 @@ fn status_recent_lines_name_the_end_the_reason_and_who() {
         queue_total: None,
     };
     let text = recent_lines(&[("local".into(), view.clone())]).join("\n");
-    for needed in [
-        "broker local: recent",
-        "j7  cancelled  cancelled by upgrade: runner_stopped",
-        "j6  rejected  rejected_no_matching_runner",
-        "j5  cancelled  cancelled by agent-1: sender_gone",
-        "j4  passed  -",
-        "1970-01-01 01:01:03Z",
-    ] {
+    for needed in ["broker local: recent", "1970-01-01 01:01:03Z"] {
         assert!(text.contains(needed), "{needed} missing:\n{text}");
+    }
+    for needed in [
+        ["j7", "cancelled", "cancelled by upgrade: runner_stopped"],
+        ["j6", "rejected", "rejected_no_matching_runner"],
+        ["j5", "cancelled", "cancelled by agent-1: sender_gone"],
+        ["j4", "passed", "-"],
+    ] {
+        assert!(has_cells(&text, &needed), "{needed:?} missing:\n{text}");
     }
     let empty = StatusView {
         recent: Vec::new(),
@@ -1218,18 +1256,21 @@ fn history_shows_actor_and_reason() {
         ("local".to_string(), summary("j1", H)),
     ];
     let lines = history_lines(&rows);
-    assert!(lines[0].ends_with("\tBROKER\tREASON"), "{}", lines[0]);
+    assert!(has_cells(&lines[0], &["BROKER", "REASON"]), "{}", lines[0]);
     assert!(
-        lines[1].ends_with("\tlocal\tcancelled by upgrade: runner_stopped"),
+        has_cells(
+            &lines[1],
+            &["local", "cancelled by upgrade: runner_stopped"]
+        ),
         "{}",
         lines[1]
     );
     assert!(
-        lines[2].ends_with("\tlocal\trejected_pool_memory"),
+        has_cells(&lines[2], &["local", "rejected_pool_memory"]),
         "{}",
         lines[2]
     );
-    assert!(lines[3].ends_with("\tlocal\t-"), "{}", lines[3]);
+    assert!(has_cells(&lines[3], &["local", "-"]), "{}", lines[3]);
     let v = serde_json::to_value(&rows[0].1).unwrap();
     assert_eq!(v["cancelled_by"], "upgrade");
 }
@@ -1272,20 +1313,17 @@ fn runners_are_grouped_by_pool_under_one_header_with_idle_and_can_start() {
         "  pool default: memory 12/32 GB free, cpu 6/16 free, tags held: gradle"
     );
     let text = lines.join("\n");
-    let at = |needle: &str| {
-        text.find(needle)
-            .unwrap_or_else(|| panic!("{needle}:\n{text}"))
+    let at = |name: &str| {
+        lines
+            .iter()
+            .position(|l| has_cells(l, &[name, "online"]))
+            .unwrap_or_else(|| panic!("{name}:\n{text}"))
     };
-    assert!(at("pool default") < at("r1\tonline") && at("r1\tonline") < at("r2\tonline"));
-    assert!(text.contains("busy; can start a job now: no"), "{text}");
-    assert!(text.contains("idle; can start a job now: no"), "{text}");
+    assert!(1 < at("r1") && at("r1") < at("r2"), "{text}");
+    assert!(lines[at("r1")].trim_end().ends_with("busy"), "{text}");
+    assert!(lines[at("r2")].trim_end().ends_with("no"), "{text}");
     assert_eq!(text.matches("pool default").count(), 1, "{text}");
-    assert!(text.contains("\n    r1\tonline"), "{text}");
-    assert!(text.contains("\n    r2\tonline"), "{text}");
-    assert!(
-        text.contains("\n      busy; can start a job now: no"),
-        "{text}"
-    );
+    assert!(lines[at("r1")].starts_with("  r1"), "{text}");
 
     let mut small = default_pool();
     small.mem_free_mb = 512;
@@ -1314,7 +1352,11 @@ fn runners_are_grouped_by_pool_under_one_header_with_idle_and_can_start() {
     )];
     let text = pool_runner_lines(&view).join("\n");
     assert!(text.contains("tags held: none"), "{text}");
-    assert!(text.contains("idle; can start a job now: yes"), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| has_cells(l, &["r1", "online"]) && l.trim_end().ends_with("yes")),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1332,9 +1374,15 @@ fn a_held_tag_whose_job_is_hidden_names_no_holder() {
             exclusive: false,
         },
     ];
-    let text = runner_lines(&[("office".into(), vec![r])]).join("\n");
-    assert!(text.contains("\n    tag gradle held, exclusive"), "{text}");
-    assert!(text.contains("\n    tag db held by j7"), "{text}");
+    let text = runner_card(&r).lines(&Out::plain()).join("\n");
+    assert!(
+        has_words(&text, &["tag", "gradle", "held,", "exclusive"]),
+        "{text}"
+    );
+    assert!(
+        has_words(&text, &["tag", "db", "held", "by", "j7"]),
+        "{text}"
+    );
     assert!(!text.contains("held by ,"), "{text}");
     assert!(!text.contains("held by \n"), "{text}");
 }
@@ -1349,7 +1397,7 @@ fn an_older_broker_without_pools_prints_the_flat_list() {
     let text = pool_runner_lines(&view).join("\n");
     assert!(!text.contains("\n  pool "), "{text}");
     assert!(!text.contains("can start"), "{text}");
-    assert!(text.contains("r1\tonline"), "{text}");
+    assert!(has_cells(&text, &["r1", "online"]), "{text}");
     assert_eq!(
         text,
         runner_lines(&[(
@@ -1391,7 +1439,10 @@ fn runners_prints_programs_not_found_next_to_an_online_runner() {
     let r = without_programs("r1", &["npm", "cargo"]);
     let text = runner_lines(&[("office".into(), vec![r])]).join("\n");
     assert!(text.contains("online"), "the runner stays online:\n{text}");
-    assert!(text.contains("programs not found: cargo, npm"), "{text}");
+    let card = runner_card(&without_programs("r1", &["npm", "cargo"]))
+        .lines(&Out::plain())
+        .join("\n");
+    assert!(card.contains("programs not found: cargo, npm"), "{card}");
     let fine = runner_lines(&[("office".into(), vec![without_programs("r2", &[])])]).join("\n");
     assert!(!fine.contains("not found"), "{fine}");
 }

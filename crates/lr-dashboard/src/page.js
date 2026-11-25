@@ -251,6 +251,8 @@
     $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Client label (--as)", s.label], ["Profile labels", (s.labels || []).join(", ")], ["Priority", j.priority], ["Client", s.client_label], ["Note", d.note],
       ["Branch", d.branch], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
+      ["Requests", j.requested ? j.requested.mem_mb + " MB, " + j.requested.cpu + " CPU" + (j.requested.tags && j.requested.tags.length ? ", tags " + j.requested.tags.join(", ") : "") : null],
+      ["Timeout", s.timeout_s ? dur(s.timeout_s * 1000) : null],
       ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
       ["Peak memory", s.peak_mem_mb != null ? s.peak_mem_mb + " MB" : null], ["Peak disk", s.peak_disk_mb != null ? s.peak_disk_mb + " MB" : null],
       ["Cancelled by", d.cancelled_by], ["Secrets", (d.secrets || []).join(", ")]];

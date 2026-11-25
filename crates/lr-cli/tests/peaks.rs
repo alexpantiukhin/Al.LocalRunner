@@ -1,7 +1,8 @@
 use lr_cli::commands::history_cmd::{history_lines, show_lines};
 use lr_cli::commands::jobs::mine_line;
-use lr_cli::commands::read_cmd::runner_lines;
+use lr_cli::commands::read_cmd::runner_card;
 use lr_cli::commands::view::{add_ages, status_json};
+use lr_cli::render::Out;
 use lr_core::{JobId, JobState, Timestamp};
 use lr_proto::{
     JobDetail, JobSummary, PoolLoad, ReasonCode, RunnerInfo, StatusView, WireCapabilities,
@@ -53,6 +54,11 @@ fn detail(s: JobSummary) -> JobDetail {
     }
 }
 
+fn has_run(line: &str, words: &[&str]) -> bool {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    tokens.windows(words.len()).any(|w| w == words)
+}
+
 #[test]
 fn history_has_peak_columns_with_dashes_for_unknown_values() {
     let rows = vec![
@@ -60,17 +66,40 @@ fn history_has_peak_columns_with_dashes_for_unknown_values() {
         ("local".to_string(), summary(None)),
     ];
     let lines = history_lines(&rows);
-    assert!(lines[0].contains("RUNNER\tPEAK_MEM_MB\tPEAK_DISK_MB\tBROKER\tREASON"));
-    assert!(lines[1].contains("r1\t900\t40\tlocal\t"), "{}", lines[1]);
-    assert!(lines[2].contains("r1\t-\t-\tlocal\t"), "{}", lines[2]);
+    assert!(
+        has_run(
+            &lines[0],
+            &["RUNNER", "PEAK_MEM_MB", "PEAK_DISK_MB", "BROKER", "REASON"]
+        ),
+        "{}",
+        lines[0]
+    );
+    assert!(
+        has_run(&lines[1], &["r1", "900", "40", "local"]),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        has_run(&lines[2], &["r1", "-", "-", "local"]),
+        "{}",
+        lines[2]
+    );
 }
 
 #[test]
 fn the_card_shows_the_reason_and_peaks_only_when_known() {
     let text = show_lines("local", &detail(summary(Some((900, 40))))).join("\n");
     assert!(text.contains("resource_exceeded"), "{text}");
-    assert!(text.contains("peak mem  900 MB"), "{text}");
-    assert!(text.contains("peak disk 40 MB"), "{text}");
+    assert!(
+        text.lines()
+            .any(|l| has_run(l, &["peak", "mem", "900", "MB"])),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|l| has_run(l, &["peak", "disk", "40", "MB"])),
+        "{text}"
+    );
     let bare = show_lines("local", &detail(summary(None))).join("\n");
     assert!(!bare.contains("peak"), "{bare}");
 }
@@ -147,25 +176,22 @@ fn runners_list_shows_enforcement() {
     };
     let mut current = runner("r3", Some("os"));
     current.caps.enforce_limit = true;
-    let text = runner_lines(&[(
-        "office".into(),
-        vec![runner("r1", Some("watcher")), runner("r2", None), current],
-    )])
-    .join("\n");
-    assert_eq!(text.matches("enforcement").count(), 3, "{text}");
-    assert!(
-        text.contains("    enforcement watcher (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)\n"),
-        "{text}"
+    let value = |r: &RunnerInfo| {
+        let lines = runner_card(r).lines(&Out::plain());
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with("enforcement"))
+            .unwrap_or_else(|| panic!("{lines:?}"))
+            .clone();
+        line.trim_start_matches("enforcement").trim().to_string()
+    };
+    assert_eq!(
+        value(&runner("r1", Some("watcher"))),
+        "watcher (limit mode not supported: runs as warn; no systemd here, so the memory of a job is not limited; in a container the total limit is set by Docker: mem_limit, cpus)"
     );
-    assert!(
-        text.contains(
-            "    enforcement unknown (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)\n"
-        ),
-        "{text}"
+    assert_eq!(
+        value(&runner("r2", None)),
+        "unknown (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)"
     );
-    let plain = text
-        .lines()
-        .filter(|l| l.starts_with("    enforcement os"))
-        .collect::<Vec<_>>();
-    assert_eq!(plain, ["    enforcement os"], "{text}");
+    assert_eq!(value(&current), "os");
 }
