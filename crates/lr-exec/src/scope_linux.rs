@@ -621,7 +621,17 @@ impl Scope {
     /// The job cgroup a process started by an earlier runner lives in, when it is one of ours.
     pub(crate) fn of_pid(pid: u32) -> Option<Scope> {
         let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
-        let dir = cgroup_dir(&text)?;
+        let own = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        Scope::of_cgroup(&text, &own)
+    }
+
+    /// The job cgroup named by the `/proc/<pid>/cgroup` text `theirs`, when it is one of ours;
+    /// `own` is the `/proc/self/cgroup` text of the calling process.
+    pub(crate) fn of_cgroup(theirs: &str, own: &str) -> Option<Scope> {
+        let dir = cgroup_dir(theirs)?;
+        if cgroup_dir(own).is_some_and(|mine| mine == dir) {
+            return None;
+        }
         let name = dir.file_name()?.to_str()?;
         if let Some(unit) = name.strip_suffix(".scope") {
             if !unit.starts_with(UNIT_PREFIX) {
@@ -785,6 +795,21 @@ mod tests {
     }
 
     const SERVICE: &str = "0::/system.slice/al-localrunner-runner-box.service\n";
+
+    const THEIR_SCOPE: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/lr-1500-2.scope\n";
+    const OWN_SCOPE: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/lr-1700-6.scope\n";
+
+    #[test]
+    fn a_process_of_another_job_scope_is_adopted() {
+        assert!(Scope::of_cgroup(THEIR_SCOPE, OWN_SCOPE).is_some());
+    }
+
+    #[test]
+    fn a_process_in_the_scope_of_the_caller_is_not_adopted() {
+        assert!(Scope::of_cgroup(OWN_SCOPE, OWN_SCOPE).is_none());
+    }
 
     fn limit(mem_mb: u64) -> ResourceLimits {
         ResourceLimits {
