@@ -621,7 +621,14 @@ impl Scope {
     /// The job cgroup a process started by an earlier runner lives in, when it is one of ours.
     pub(crate) fn of_pid(pid: u32) -> Option<Scope> {
         let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
-        let dir = cgroup_dir(&text)?;
+        let own = std::fs::read_to_string("/proc/self/cgroup").unwrap_or_default();
+        Scope::of_cgroup(&text, &own)
+    }
+
+    /// The job cgroup named by the `/proc/<pid>/cgroup` text `theirs`, when it is one of ours;
+    /// `own` is the `/proc/self/cgroup` text of the calling process.
+    pub(crate) fn of_cgroup(theirs: &str, _own: &str) -> Option<Scope> {
+        let dir = cgroup_dir(theirs)?;
         let name = dir.file_name()?.to_str()?;
         if let Some(unit) = name.strip_suffix(".scope") {
             if !unit.starts_with(UNIT_PREFIX) {
