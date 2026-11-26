@@ -627,8 +627,11 @@ impl Scope {
 
     /// The job cgroup named by the `/proc/<pid>/cgroup` text `theirs`, when it is one of ours;
     /// `own` is the `/proc/self/cgroup` text of the calling process.
-    pub(crate) fn of_cgroup(theirs: &str, _own: &str) -> Option<Scope> {
+    pub(crate) fn of_cgroup(theirs: &str, own: &str) -> Option<Scope> {
         let dir = cgroup_dir(theirs)?;
+        if cgroup_dir(own).is_some_and(|mine| mine == dir) {
+            return None;
+        }
         let name = dir.file_name()?.to_str()?;
         if let Some(unit) = name.strip_suffix(".scope") {
             if !unit.starts_with(UNIT_PREFIX) {
