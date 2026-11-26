@@ -4,6 +4,7 @@ timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
+cache     = ["target"]
 
 [profile.rust-build]
 command   = "cargo build -p lr-cli --locked"
@@ -11,6 +12,7 @@ timeout_s = 1200
 mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
+cache     = ["target"]
 
 [profile.rust-test-all]
 command   = "cargo test --workspace --locked --no-fail-fast -j 2"
@@ -18,6 +20,7 @@ timeout_s = 1800
 mem_mb    = 5120
 cpu       = 2
 tags      = ["cargo"]
+cache     = ["target"]
 
 [profile.skills-lint]
 command   = "cargo test -p lr-cli --locked --test skills_lint"
@@ -25,12 +28,14 @@ timeout_s = 600
 mem_mb    = 4096
 cpu       = 2
 tags      = ["cargo"]
+cache     = ["target"]
 
 [profile.rust-gate]
 timeout_s = 3600
 mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
+cache     = ["target"]
 steps = [
   { name = "fmt",    command = "cargo fmt --check",                                       timeout_s = 120 },
   { name = "clippy", command = "cargo clippy --workspace --all-targets --locked -- -D warnings", timeout_s = 1200 },
@@ -74,6 +79,7 @@ timeout_s = 1800
 mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
+cache     = ["target"]
 
 [profile.rust-deny]
 command   = "cargo deny check licenses"
@@ -103,3 +109,71 @@ timeout_s = 1200
 mem_mb    = 8192
 cpu       = 4
 tags      = ["cargo"]
+cache     = ["target"]
+
+# Remote zone: the VPS runner. The code is fetched from GitHub, so the branch must be pushed and
+# passed as --arg ref=<branch> (or a commit SHA).
+
+[profile.rust-fmt.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-clippy.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-unit.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-test-all.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-test.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-build.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-deny.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.skills-lint.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.ci-docs.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-gate.args.ref]
+pattern = "[A-Za-z0-9._/-]+"
+
+[profile.rust-fmt.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo fmt --check'
+
+[profile.rust-clippy.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings'
+
+[profile.rust-unit.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast'
+
+[profile.rust-test-all.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --workspace --locked --no-fail-fast -j 2'
+
+[profile.rust-test.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --locked --no-fail-fast -j 2 {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}'
+
+[profile.rust-build.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo build -p lr-cli --locked'
+
+[profile.rust-deny.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo deny check licenses'
+
+[profile.skills-lint.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test -p lr-cli --locked --test skills_lint'
+
+[profile.ci-docs.zone.remote]
+command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && python3 .github/scripts/docs_pair.py'
+
+[profile.rust-gate.zone.remote]
+steps = [
+  { name = "fmt",    command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo fmt --check', timeout_s = 300 },
+  { name = "clippy", command = 'export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings', timeout_s = 1200 },
+  { name = "test",   command = 'export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast', timeout_s = 1800 },
+]
