@@ -145,35 +145,35 @@ pattern = "[A-Za-z0-9._/-]+"
 pattern = "[A-Za-z0-9._/-]+"
 
 [profile.rust-fmt.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo fmt --check'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo fmt --check'
 
 [profile.rust-clippy.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings'
 
 [profile.rust-unit.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast'
 
 [profile.rust-test-all.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --workspace --locked --no-fail-fast -j 2'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --workspace --locked --no-fail-fast -j 2'
 
 [profile.rust-test.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --locked --no-fail-fast -j 2 {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test --locked --no-fail-fast -j 2 {? -p {pkg}} {? --features {features}} {? --{target}} {? --test {test}} {? {filter}}'
 
 [profile.rust-build.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo build -p lr-cli --locked'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo build -p lr-cli --locked'
 
 [profile.rust-deny.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo deny check licenses'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && cargo deny check licenses'
 
 [profile.skills-lint.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test -p lr-cli --locked --test skills_lint'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test -p lr-cli --locked --test skills_lint'
 
 [profile.ci-docs.zone.remote]
-command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && python3 .github/scripts/docs_pair.py'
+command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && python3 .github/scripts/docs_pair.py'
 
 [profile.rust-gate.zone.remote]
 steps = [
-  { name = "fmt",    command = 'git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo fmt --check', timeout_s = 300 },
-  { name = "clippy", command = 'export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings', timeout_s = 1200 },
-  { name = "test",   command = 'export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast', timeout_s = 1800 },
+  { name = "fmt",    command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo fmt --check', timeout_s = 300 },
+  { name = "clippy", command = 'umask 022 && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo clippy --workspace --all-targets --locked -- -D warnings', timeout_s = 1200 },
+  { name = "test",   command = 'umask 022 && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && python3 .github/scripts/test_budget.py cargo test --workspace --locked --no-fail-fast', timeout_s = 1800 },
 ]
