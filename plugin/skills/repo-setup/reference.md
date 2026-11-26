@@ -22,6 +22,24 @@ Only `[profile.<name>]` and `[needs.<name>]` are read at the top level; any othe
 - `needs`: the name of a `[needs.<name>]` set the profile inherits from, with field overrides.
 - `args.<name>`: a named argument filled with `--arg name=value`; keys `one_of` or `pattern`, `default`, `many`, `join`. A command uses `{name}`; `{? text {name}}` is an optional segment. Spaces at the edges of a segment are dropped, so put the separator outside it: `--no-fail-fast {? -p {pkg}}`, not `--no-fail-fast{? -p {pkg}}` (that glues to `--no-fail-fast-p core`). `profile check` prints the command expanded with every optional argument given and with none given; read it after writing a template.
 
+Example of one profile for the whole set and for a part of it:
+
+```toml
+[profile.test]
+command   = "cargo test --no-fail-fast {? -p {pkg}} {? {filter}}"
+timeout_s = 1800
+mem_mb    = 8192
+cpu       = 4
+
+[profile.test.args.pkg]
+pattern = "[a-z0-9_-]+"
+
+[profile.test.args.filter]
+pattern = "[A-Za-z0-9_:]+"
+```
+
+`localrunner run test --as <label>` runs everything, `localrunner run test --arg pkg=core --arg filter=parse --as <label>` one package and one name filter. An argument without a `default` and outside `{? ...}` is required.
+
 Step keys: `name`, `command`, `timeout_s`, `continue_on_failure`; also `mem_mb`, `cpu`, `tags`, `secrets`.
 
 `[needs.<name>]` takes the shared requirement keys: `timeout_s`, `mem_mb`, `cpu`, `disk_mb`, `programs`, `tags`, `exclusive`, `cache`, `services`, `secrets`, `zone`, `zones`, `platforms`.
