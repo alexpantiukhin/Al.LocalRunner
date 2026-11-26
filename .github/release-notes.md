@@ -1,0 +1,5 @@
+**Added:** the hub picks a broker that can start the order at once (the broker answers a capabilities query that carries the order with `start_now`): the nearest zone first, a farther zone when the nearer one is busy. A broker that does not say keeps the old choice.
+
+**Added:** a waiting order moves to a broker that became free. Every 15 seconds the hub asks the other brokers about each accepted, not started order and, when one would start it now, takes it back with the new `withdraw` message (the first broker records `cancelled by broker: moved`, the job id stays, the log gets `=== moved: ... ===`). A moved order is left alone for 60 seconds. Started orders and orders limited to the zone `local` are never moved; an older broker, which does not report `start_now`, is never asked to give an order back. Nothing to configure: to pin an order to a machine, limit its zones.
+
+**Changed:** the skills `run`, `status-runner` and `repo-setup` describe moved orders; `repo-setup` recommends profiles with arguments for a package, a filter or a ref instead of one profile per target.
