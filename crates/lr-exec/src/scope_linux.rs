@@ -793,6 +793,21 @@ mod tests {
 
     const SERVICE: &str = "0::/system.slice/al-localrunner-runner-box.service\n";
 
+    const THEIR_SCOPE: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/lr-1500-2.scope\n";
+    const OWN_SCOPE: &str =
+        "0::/user.slice/user-1000.slice/user@1000.service/app.slice/lr-1700-6.scope\n";
+
+    #[test]
+    fn a_process_of_another_job_scope_is_adopted() {
+        assert!(Scope::of_cgroup(THEIR_SCOPE, OWN_SCOPE).is_some());
+    }
+
+    #[test]
+    fn a_process_in_the_scope_of_the_caller_is_not_adopted() {
+        assert!(Scope::of_cgroup(OWN_SCOPE, OWN_SCOPE).is_none());
+    }
+
     fn limit(mem_mb: u64) -> ResourceLimits {
         ResourceLimits {
             mode: Enforce::Limit,
