@@ -1,11 +1,11 @@
-use crate::engine::{Engine, Event, LOCAL_BROKER};
+use crate::engine::{Engine, Event, LOCAL_BROKER, MOVE_CHECK_S, MOVE_PAUSE_S};
 use crate::limits::{Overflow, RECENT_MAX};
 use crate::orders::order_payload;
 use crate::select::{allowed_zones, broker_zone, Candidate, Choice, Decision};
 use crate::track::{Finished, Stage};
-use lr_abstractions::{Level, OutboxKind};
-use lr_core::{JobId, JobState};
-use lr_proto::{CliReply, ProtocolErrorCode, ReasonCode, RejectReason};
+use lr_abstractions::{Frame, Level, OutboxKind};
+use lr_core::{JobId, JobState, Timestamp};
+use lr_proto::{CliReply, HubToBroker, ProtocolErrorCode, ReasonCode, RejectReason, Withdraw};
 
 pub(crate) const UP_HINT: &str = "no runner on your installation, start it: localrunner up";
 
@@ -47,7 +47,8 @@ impl Engine {
         }
         let choice = Choice {
             policy: self.policy.brokers.clone(),
-            req: spec.requirements,
+            req: spec.requirements.clone(),
+            probe: Some(Box::new(spec)),
             candidates,
             shared: self.s.clone(),
         };
@@ -56,6 +57,106 @@ impl Engine {
             let decision = choice.run().await;
             let _ = tx.send(Event::Selected { job, gen, decision }).await;
         });
+    }
+
+    /// Looks for waiting orders that another broker would start now: asks the allowed brokers
+    /// about each and gives the order back from the one that holds it (spec 3.1).
+    pub(crate) fn check_moves(&mut self, now: Timestamp) {
+        let jobs: Vec<JobId> = self
+            .tracks
+            .iter()
+            .filter(|(_, t)| {
+                t.stage == Stage::Accepted
+                    && !t.cancelled
+                    && t.spec.is_some()
+                    && !t.local_only()
+                    && t.moved_until.is_none_or(|at| at <= now)
+                    && t.order
+                        .broker
+                        .as_ref()
+                        .and_then(|b| self.links.get(b))
+                        .is_some_and(|l| l.out.is_some())
+            })
+            .map(|(j, _)| j.clone())
+            .collect();
+        for job in jobs {
+            let Some(track) = self.tracks.get_mut(&job) else {
+                continue;
+            };
+            let (Some(spec), Some(from)) = (track.spec.clone(), track.order.broker.clone()) else {
+                continue;
+            };
+            track.moved_until = Some(now.plus_secs(MOVE_CHECK_S));
+            let gen = track.gen;
+            let candidates: Vec<Candidate> = self
+                .links
+                .iter()
+                .filter(|(n, _)| !track.excluded.contains(*n))
+                .map(|(n, l)| Candidate {
+                    name: n.clone(),
+                    zone: broker_zone(n, l.zone),
+                    out: l.out.clone(),
+                })
+                .collect();
+            let choice = Choice {
+                policy: self.policy.brokers.clone(),
+                req: spec.requirements.clone(),
+                probe: Some(Box::new(spec)),
+                candidates,
+                shared: self.s.clone(),
+            };
+            let tx = self.tx.clone();
+            tokio::spawn(async move {
+                let target = choice.move_target(&from).await;
+                let _ = tx
+                    .send(Event::MoveTarget {
+                        job,
+                        gen,
+                        from,
+                        target,
+                    })
+                    .await;
+            });
+        }
+    }
+
+    pub(crate) async fn on_move_target(
+        &mut self,
+        job: &JobId,
+        gen: u64,
+        from: &str,
+        target: Option<String>,
+    ) {
+        let now = self.now();
+        let Some(track) = self.tracks.get_mut(job) else {
+            return;
+        };
+        let Some(target) = target else {
+            return;
+        };
+        if track.gen != gen
+            || track.stage != Stage::Accepted
+            || track.cancelled
+            || track.order.broker.as_deref() != Some(from)
+        {
+            return;
+        }
+        let Some(out) = self.links.get(from).and_then(|l| l.out.clone()) else {
+            return;
+        };
+        let msg = HubToBroker::Withdraw(Withdraw { job: job.clone() });
+        let Ok(frame) = Frame::json(&msg) else {
+            return;
+        };
+        if out.try_send(frame).is_err() {
+            return;
+        }
+        track.moved_until = Some(now.plus_secs(MOVE_PAUSE_S));
+        self.s.diag(
+            Level::Info,
+            "a waiting order is asked back to start at another broker",
+            &[("job", &job.0), ("from", from), ("target", &target)],
+        );
     }
 
     fn locally_refused(&self) -> Option<String> {
@@ -126,6 +227,11 @@ impl Engine {
         code: ReasonCode,
         detail: String,
     ) {
+        if code == ReasonCode::Moved {
+            let line =
+                format!("=== moved: {from} gave the order back, it starts elsewhere now ===\n");
+            self.log_copy(job, &line).await;
+        }
         let Some(track) = self.tracks.get_mut(job) else {
             return;
         };
@@ -164,11 +270,13 @@ impl Engine {
             self.store_failed("storage failed: order not re-brokered", job, &e);
             return;
         }
-        track.excluded.insert(from.to_string());
         if let Some(l) = self.links.get_mut(from) {
             l.forget(job);
         }
-        track.last_rejection = Some((code, detail));
+        if code != ReasonCode::Moved {
+            track.excluded.insert(from.to_string());
+            track.last_rejection = Some((code, detail));
+        }
         track.order.broker = None;
         track.order.last_seq = 0;
         track.runner = None;

@@ -2,10 +2,10 @@ use super::conn::ConnId;
 use super::runners::RunnerSlot;
 use super::{Client, Engine};
 use crate::api::Viewer;
-use lr_core::{JobId, Requirements, Scheduler};
+use lr_core::{JobId, Requirements, Scheduler, Timestamp};
 use lr_proto::{
-    BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, PoolInfo, RunnerCaps, RunnerInfo,
-    RunnerKind, RunnerLiveness, WireCapabilities,
+    BrokerToHub, CapabilitiesQuery, CapabilitiesReply, HeldTag, OrderSpec, PoolInfo, RunnerCaps,
+    RunnerInfo, RunnerKind, RunnerLiveness, WireCapabilities,
 };
 use std::collections::BTreeSet;
 
@@ -147,9 +147,22 @@ impl Engine {
         }]
     }
 
+    /// Whether the planning pass would assign `spec` of `client` to a runner at once, when it
+    /// joined the queue now.
+    fn would_start_now(&self, client: &Client, mut spec: OrderSpec, now: Timestamp) -> bool {
+        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
+        let id = JobId("#probe".into());
+        let entry = self.queue_entry(client, &spec, id.clone());
+        self.plan_holding_with(now, self.service_mem_mb(), Some(entry))
+            .assignments
+            .iter()
+            .any(|a| a.job == id)
+    }
+
     pub(crate) fn capabilities(&self, conn: ConnId, client: &Client, q: CapabilitiesQuery) {
         let viewer = Self::viewer(client);
         let now = self.now();
+        let start_now = q.probe.map(|spec| self.would_start_now(client, *spec, now));
         let runners = self
             .runners
             .iter()
@@ -168,6 +181,7 @@ impl Engine {
                 req: q.req,
                 zone: self.zone_of_peer(&client.endpoint),
                 runners,
+                start_now,
             }),
         );
     }

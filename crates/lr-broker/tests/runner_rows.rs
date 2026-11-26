@@ -86,6 +86,7 @@ async fn after_a_restart_runners_are_offline_with_the_pool_as_capacity_and_remot
     before
         .send(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
             req: 1,
+            probe: None,
         }))
         .await;
     let zone = loop {
@@ -114,6 +115,7 @@ async fn after_a_restart_runners_are_offline_with_the_pool_as_capacity_and_remot
     let mut hub = h2.member_hub("hub2", "", "10.0.0.6").await;
     hub.send(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
         req: 2,
+        probe: None,
     }))
     .await;
     let reply = loop {

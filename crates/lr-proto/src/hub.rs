@@ -3,8 +3,8 @@ use crate::caps::WireCapabilities;
 use crate::common::{Ack, Bye, Hello, Join, Joined, ProtocolError, Resume, Welcome};
 use crate::frame::message;
 use crate::job::{
-    check_chunk, Accepted, CancelAck, CancelOutcome, Chunk, HubCancel, JobResult, Order, Rejected,
-    Returned, StartedNotice, StepResult, CHUNK_TEXT_LIMIT,
+    check_chunk, Accepted, CancelAck, CancelOutcome, Chunk, HubCancel, JobResult, Order, OrderSpec,
+    Rejected, Returned, StartedNotice, StepResult, Withdraw, CHUNK_TEXT_LIMIT,
 };
 use crate::seq::{final_result, seq_from_one, Direction, Sequenced};
 use lr_core::{JobId, Zone};
@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 pub struct CapabilitiesQuery {
     /// Correlation id echoed in the reply.
     pub req: u64,
+    /// The order the hub is about to place: the broker then also says whether it would start
+    /// now. Absent from senders of an earlier minor version and when the hub only asks for
+    /// capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<Box<OrderSpec>>,
 }
 
 /// One runner in a capabilities reply.
@@ -39,6 +44,12 @@ pub struct CapabilitiesReply {
     pub zone: Zone,
     /// The runners.
     pub runners: Vec<RunnerCaps>,
+    /// Whether the order of the query would be assigned to a runner right now, by the real
+    /// planning pass: queue, priority, quotas, reserves, memory, cores, tags and exclusivity
+    /// count. Absent when the query carried no order or the broker is of an earlier minor
+    /// version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_now: Option<bool>,
 }
 
 impl RunnerCaps {
@@ -100,6 +111,8 @@ pub enum HubToBroker {
     Order(Order),
     /// Cancel a job.
     Cancel(HubCancel),
+    /// Give a not yet started order back.
+    Withdraw(Withdraw),
     /// Last accepted seq of broker messages per job after a reconnect.
     Resume(Resume),
     /// Confirms broker messages up to `seq`.
@@ -167,6 +180,7 @@ message!(
         "capabilities_query",
         "order",
         "cancel",
+        "withdraw",
         "resume",
         "ack",
         "heartbeat",

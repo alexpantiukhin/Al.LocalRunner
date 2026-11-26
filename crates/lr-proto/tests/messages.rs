@@ -101,7 +101,8 @@ fn messages_are_tagged_by_type_in_snake_case() {
     );
     assert_eq!(
         tag_of(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
-            req: 1
+            req: 1,
+            probe: None,
         })),
         "capabilities_query"
     );

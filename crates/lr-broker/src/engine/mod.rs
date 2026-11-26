@@ -32,6 +32,7 @@ mod service_intake;
 mod services;
 mod start;
 mod wire;
+mod withdraw;
 
 pub use admin::BrokerHandle;
 pub use events::{BusEvent, BusEvents};

@@ -195,7 +195,23 @@ impl Engine {
     }
 
     pub(crate) fn plan_holding(&self, now: Timestamp, held_mb: u64) -> Plan {
-        let entries = self.planned_queue(now);
+        self.plan_holding_with(now, held_mb, None)
+    }
+
+    /// [`Engine::plan_holding`] with one more order at the end of the queue.
+    pub(crate) fn plan_holding_with(
+        &self,
+        now: Timestamp,
+        held_mb: u64,
+        extra: Option<QueueEntry>,
+    ) -> Plan {
+        let mut entries = self.planned_queue(now);
+        if let Some(entry) = extra {
+            let taking: Vec<&RunnerSlot> =
+                self.runners.values().filter(|s| s.serves(now)).collect();
+            let mb = cheapest_service_mb(taking, &entry.order.requirements, true);
+            entries.push(with_extra(entry, mb));
+        }
         let running = self.planned_running();
         let inner = self.policy.policy();
         let mut pool = inner.pool().clone();

@@ -31,17 +31,22 @@ impl Engine {
             .partition(|j| !self.has_live_runner(j));
         self.queue = keep;
         for job in gone {
-            if let Some(job) = self.give_back(job).await {
+            let code = ReasonCode::Rejected(RejectReason::NoRunnerOnMachine);
+            if let Some(job) = self.give_back(job, code, NO_RUNNER_HINT).await {
                 self.queue.push(job);
             }
         }
     }
 
-    async fn give_back(&mut self, job: Job) -> Option<Job> {
-        let code = ReasonCode::Rejected(RejectReason::NoRunnerOnMachine);
+    pub(super) async fn give_back(
+        &mut self,
+        job: Job,
+        code: ReasonCode,
+        hint: &str,
+    ) -> Option<Job> {
         let mut t = Transition::to(JobState::Cancelled, self.now());
         t.cancelled_by = Some("broker".into());
-        t.cancel_reason = Some(format!("{code}: {NO_RUNNER_HINT}"));
+        t.cancel_reason = Some(format!("{code}: {hint}"));
         match self.store.transition(&job.key, t).await {
             Ok(Applied::Changed) => {}
             Ok(Applied::Ignored) => return None,
@@ -65,7 +70,7 @@ impl Engine {
             job: job.key.job.clone(),
             seq: 0,
             code: code.clone(),
-            detail: Some(NO_RUNNER_HINT.into()),
+            detail: Some(hint.into()),
         });
         self.notify_hub(&job.key.client, &job.key.job, OutboxKind::JobResult, &msg)
             .await;

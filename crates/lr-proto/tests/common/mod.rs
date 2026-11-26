@@ -407,7 +407,10 @@ pub fn hub_to_broker() -> Vec<HubToBroker> {
     vec![
         HubToBroker::Hello(hello()),
         HubToBroker::Join(join(Role::Hub)),
-        HubToBroker::CapabilitiesQuery(CapabilitiesQuery { req: 1 }),
+        HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
+            req: 1,
+            probe: None,
+        }),
         HubToBroker::Order(Order {
             job: job(1),
             seq: 1,
@@ -422,6 +425,7 @@ pub fn hub_to_broker() -> Vec<HubToBroker> {
             reason: Some("stuck".into()),
             client: Some("local:bob".into()),
         }),
+        HubToBroker::Withdraw(Withdraw { job: job(1) }),
         HubToBroker::Resume(resume()),
         HubToBroker::Ack(ack(5)),
         HubToBroker::Heartbeat,
@@ -447,6 +451,7 @@ pub fn broker_to_hub() -> Vec<BrokerToHub> {
                 zone: Zone::Local,
                 caps: caps(),
             }],
+            start_now: None,
         }),
         BrokerToHub::Accepted(Accepted {
             job: job(1),

@@ -40,6 +40,8 @@ pub(crate) struct Track {
     pub(crate) started_at: Option<Timestamp>,
     pub(crate) finished_at: Option<Timestamp>,
     pub(crate) next_select: Option<Timestamp>,
+    /// Until when the order is left alone by the check that moves waiting orders.
+    pub(crate) moved_until: Option<Timestamp>,
 }
 
 impl Track {
@@ -63,6 +65,7 @@ impl Track {
             started_at: None,
             finished_at: None,
             next_select: None,
+            moved_until: None,
         }
     }
 

@@ -8,7 +8,8 @@ use lr_abstractions::{
     SourceKind, StepRow, StoreError, Transition,
 };
 use lr_core::{
-    ClientView, Declared, JobState, PoolLimits, QueueEntry, Reject, Requirements, Source, StepState,
+    ClientView, Declared, JobId, JobState, PoolLimits, QueueEntry, Reject, Requirements, Source,
+    StepState,
 };
 use lr_proto::{
     receive, Accepted, BrokerToHub, HubToBroker, Order, OrderSpec, ProtocolErrorCode, QueueEvent,
@@ -188,6 +189,7 @@ impl Engine {
         match msg {
             HubToBroker::Order(o) => self.order(conn, &client, o).await,
             HubToBroker::Cancel(c) => self.cancel(conn, &client, c).await,
+            HubToBroker::Withdraw(w) => self.withdraw(&client, w).await,
             HubToBroker::Resume(r) => self.resume(conn, &client, r).await,
             HubToBroker::Ack(a) => {
                 let _ = self.store.ack_results(&client.key, &a.job, a.seq).await;
@@ -313,13 +315,12 @@ impl Engine {
         ))
     }
 
-    fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
-        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
-        let requirements = spec.requirements.clone();
-        let entry = QueueEntry {
+    /// The order as the planner reads it; `spec.requirements.commands` is already filled.
+    pub(crate) fn queue_entry(&self, client: &Client, spec: &OrderSpec, id: JobId) -> QueueEntry {
+        QueueEntry {
             order: lr_core::Order {
-                job: self.internal_id(),
-                requirements,
+                job: id,
+                requirements: spec.requirements.clone(),
                 enqueued_at: spec.enqueued_at,
                 declared: Declared::from_spec(&spec.identity, &spec.labels),
                 wanted_priority: spec.wanted_priority,
@@ -331,7 +332,13 @@ impl Engine {
                 endpoint: client.endpoint.clone(),
             },
             accepted_at: self.now(),
-        };
+        }
+    }
+
+    fn job_of(&mut self, client: &Client, key: &JobKey, mut spec: OrderSpec) -> Job {
+        spec.requirements.commands = self.command_names(&client.key, &client.label, &spec);
+        let id = self.internal_id();
+        let entry = self.queue_entry(client, &spec, id);
         Job {
             key: key.clone(),
             internal: entry.order.job.clone(),

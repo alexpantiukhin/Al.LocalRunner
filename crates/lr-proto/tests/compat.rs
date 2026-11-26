@@ -603,3 +603,50 @@ fn programs_missing_is_optional_on_the_wire() {
         "a runner of an earlier version sends none"
     );
 }
+
+#[test]
+fn a_capabilities_query_and_reply_of_an_earlier_minor_version_carry_no_start_now_fields() {
+    let q: HubToBroker =
+        serde_json::from_value(json!({"type": "capabilities_query", "req": 4})).unwrap();
+    let HubToBroker::CapabilitiesQuery(q) = q else {
+        panic!("a query")
+    };
+    assert_eq!(q.req, 4);
+    assert!(q.probe.is_none());
+    let r: BrokerToHub = serde_json::from_value(
+        json!({"type": "capabilities_reply", "req": 4, "zone": "lan", "runners": []}),
+    )
+    .unwrap();
+    let BrokerToHub::CapabilitiesReply(r) = r else {
+        panic!("a reply")
+    };
+    assert_eq!(r.start_now, None);
+    let v = serde_json::to_value(BrokerToHub::CapabilitiesReply(r)).unwrap();
+    assert!(v.get("start_now").is_none());
+    let v = serde_json::to_value(HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
+        req: 4,
+        probe: None,
+    }))
+    .unwrap();
+    assert!(v.get("probe").is_none());
+}
+
+#[test]
+fn a_start_now_answer_round_trips() {
+    let v = serde_json::to_value(BrokerToHub::CapabilitiesReply(CapabilitiesReply {
+        req: 9,
+        zone: Zone::Remote,
+        runners: Vec::new(),
+        start_now: Some(true),
+    }))
+    .unwrap();
+    assert_eq!(v["start_now"], true);
+    let back: BrokerToHub = serde_json::from_value(v).unwrap();
+    assert!(matches!(
+        back,
+        BrokerToHub::CapabilitiesReply(CapabilitiesReply {
+            start_now: Some(true),
+            ..
+        })
+    ));
+}
