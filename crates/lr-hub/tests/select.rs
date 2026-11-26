@@ -461,3 +461,125 @@ async fn local_user_refused_by_broker_rejects_a_local_only_order() {
         other => panic!("{other:?}"),
     }
 }
+
+#[tokio::test]
+async fn a_farther_broker_that_starts_the_order_now_wins_over_a_busy_nearer_one() {
+    let mut rig = Rig::new();
+    rig.join("far").await;
+    rig.join("lan-a").await;
+    let far = rig.broker(
+        "far",
+        Zone::Remote,
+        Script::linux(Zone::Remote).start_now(true),
+    );
+    let lan = rig.broker(
+        "lan-a",
+        Zone::Lan,
+        Script::linux(Zone::Lan).start_now(false),
+    );
+    rig.start();
+    wait_connected(&[&far, &lan]).await;
+    rig.cli()
+        .await
+        .submit(submit("remote", Some("linux")))
+        .await;
+    until(&far, "order placed", || far.orders().len() == 1).await;
+    assert!(lan.orders().is_empty());
+    assert_eq!(lan.queries(), 1);
+    assert_eq!(far.queries(), 1);
+}
+
+#[tokio::test]
+async fn the_nearest_broker_wins_when_none_starts_the_order_now() {
+    let mut rig = Rig::new();
+    rig.join("far").await;
+    rig.join("lan-a").await;
+    let far = rig.broker(
+        "far",
+        Zone::Remote,
+        Script::linux(Zone::Remote).start_now(false),
+    );
+    let lan = rig.broker(
+        "lan-a",
+        Zone::Lan,
+        Script::linux(Zone::Lan).start_now(false),
+    );
+    rig.start();
+    wait_connected(&[&far, &lan]).await;
+    rig.cli()
+        .await
+        .submit(submit("remote", Some("linux")))
+        .await;
+    until(&lan, "order placed", || lan.orders().len() == 1).await;
+    assert!(far.orders().is_empty());
+}
+
+#[tokio::test]
+async fn a_nearer_broker_that_starts_the_order_now_keeps_it_without_querying_the_next_zone() {
+    let mut rig = Rig::new();
+    rig.join("far").await;
+    rig.join("lan-a").await;
+    let far = rig.broker(
+        "far",
+        Zone::Remote,
+        Script::linux(Zone::Remote).start_now(true),
+    );
+    let lan = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan).start_now(true));
+    rig.start();
+    wait_connected(&[&far, &lan]).await;
+    rig.cli()
+        .await
+        .submit(submit("remote", Some("linux")))
+        .await;
+    until(&lan, "order placed", || lan.orders().len() == 1).await;
+    settle().await;
+    assert_eq!(far.queries(), 0);
+}
+
+#[tokio::test]
+async fn a_broker_that_does_not_say_keeps_the_nearest_zone_choice() {
+    let mut rig = Rig::new();
+    rig.join("far").await;
+    rig.join("lan-a").await;
+    let far = rig.broker(
+        "far",
+        Zone::Remote,
+        Script::linux(Zone::Remote).start_now(true),
+    );
+    let lan = rig.broker("lan-a", Zone::Lan, Script::linux(Zone::Lan));
+    rig.start();
+    wait_connected(&[&far, &lan]).await;
+    rig.cli()
+        .await
+        .submit(submit("remote", Some("linux")))
+        .await;
+    until(&lan, "order placed", || lan.orders().len() == 1).await;
+    settle().await;
+    assert_eq!(far.queries(), 0);
+}
+
+#[tokio::test]
+async fn with_zone_query_all_a_farther_broker_that_starts_now_wins_over_a_busy_nearer_one() {
+    let mut rig = Rig::new();
+    rig.policy.brokers.zone_query = ZoneQuery::All;
+    rig.join("far").await;
+    rig.join("lan-a").await;
+    let far = rig.broker(
+        "far",
+        Zone::Remote,
+        Script::linux(Zone::Remote).start_now(true),
+    );
+    let lan = rig.broker(
+        "lan-a",
+        Zone::Lan,
+        Script::linux(Zone::Lan).start_now(false),
+    );
+    rig.start();
+    wait_connected(&[&far, &lan]).await;
+    rig.cli()
+        .await
+        .submit(submit("remote", Some("linux")))
+        .await;
+    until(&far, "order placed", || far.orders().len() == 1).await;
+    assert!(lan.orders().is_empty());
+}

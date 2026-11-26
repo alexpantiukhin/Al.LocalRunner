@@ -17,12 +17,20 @@ pub enum OnOrder {
     Silent,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OnWithdraw {
+    Return,
+    Ignore,
+}
+
 #[derive(Clone)]
 pub struct Script {
     pub runners: Vec<RunnerCaps>,
     pub answer_queries: bool,
     pub on_order: OnOrder,
     pub refuse: Option<ProtocolError>,
+    pub start_now: Option<bool>,
+    pub on_withdraw: OnWithdraw,
 }
 
 pub fn caps(platforms: &[&str], machine: Option<&str>) -> WireCapabilities {
@@ -61,6 +69,8 @@ impl Script {
             answer_queries: true,
             on_order: OnOrder::Accept,
             refuse: None,
+            start_now: None,
+            on_withdraw: OnWithdraw::Ignore,
         }
     }
 
@@ -75,7 +85,19 @@ impl Script {
             answer_queries: true,
             on_order: OnOrder::Accept,
             refuse: None,
+            start_now: None,
+            on_withdraw: OnWithdraw::Ignore,
         }
+    }
+
+    pub fn on_withdraw(mut self, on: OnWithdraw) -> Script {
+        self.on_withdraw = on;
+        self
+    }
+
+    pub fn start_now(mut self, now: bool) -> Script {
+        self.start_now = Some(now);
+        self
     }
 
     pub fn on_order(mut self, on: OnOrder) -> Script {
@@ -206,6 +228,7 @@ impl FakeBroker {
                         req: q.req,
                         zone: zone.unwrap_or(Zone::Remote),
                         runners: script.runners.clone(),
+                        start_now: q.probe.as_ref().and(script.start_now),
                     });
                     Self::reply(&t, &reply).await;
                 }
@@ -230,6 +253,16 @@ impl FakeBroker {
                     }
                     OnOrder::Silent => {}
                 },
+                HubToBroker::Withdraw(w) if script.on_withdraw == OnWithdraw::Return => {
+                    let seq = self.next_seq(&w.job);
+                    let back = BrokerToHub::Returned(Returned {
+                        job: w.job,
+                        seq,
+                        code: ReasonCode::Moved,
+                        detail: Some("given back".into()),
+                    });
+                    Self::reply(&t, &back).await;
+                }
                 HubToBroker::Cancel(c) => {
                     let ack = BrokerToHub::Ack(lr_proto::Ack {
                         job: c.job.clone(),
@@ -264,6 +297,13 @@ impl FakeBroker {
                 _ => None,
             })
             .collect()
+    }
+
+    pub fn withdraws(&self) -> usize {
+        self.received()
+            .iter()
+            .filter(|m| matches!(m, HubToBroker::Withdraw(_)))
+            .count()
     }
 
     pub fn queries(&self) -> usize {

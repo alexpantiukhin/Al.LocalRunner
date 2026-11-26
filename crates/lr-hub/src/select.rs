@@ -7,7 +7,9 @@ use crate::policy::{BrokerStrategy, BrokersPolicy, ZoneQuery};
 use crate::LOCAL_BROKER;
 use lr_abstractions::Frame;
 use lr_core::{satisfies, Requirements, Zone};
-use lr_proto::{BrokerToHub, CapabilitiesQuery, HubToBroker, ReasonCode, RejectReason, RunnerCaps};
+use lr_proto::{
+    BrokerToHub, CapabilitiesQuery, HubToBroker, OrderSpec, ReasonCode, RejectReason, RunnerCaps,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,8 +82,8 @@ pub fn suitable(runners: &[RunnerCaps], req: &Requirements) -> Result<usize, Str
 pub enum Answer {
     /// No reply within `query_timeout_s`, or not connected.
     Unavailable,
-    /// The broker's runners.
-    Runners(Vec<RunnerCaps>),
+    /// The broker's runners, and whether it would start the probed order now.
+    Runners(Vec<RunnerCaps>, Option<bool>),
 }
 
 /// Outcome of a broker choice.
@@ -105,6 +107,7 @@ pub(crate) struct Candidate {
 pub(crate) struct Choice {
     pub(crate) policy: BrokersPolicy,
     pub(crate) req: Requirements,
+    pub(crate) probe: Option<Box<OrderSpec>>,
     pub(crate) candidates: Vec<Candidate>,
     pub(crate) shared: Arc<Shared>,
 }
@@ -150,9 +153,12 @@ impl Choice {
             };
             let req = s.next_req();
             let rx = s.pending.register(req, &b.name);
-            let sent = Frame::json(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery { req }))
-                .ok()
-                .is_some_and(|f| tx.try_send(f).is_ok());
+            let sent = Frame::json(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
+                req,
+                probe: self.probe.clone(),
+            }))
+            .ok()
+            .is_some_and(|f| tx.try_send(f).is_ok());
             if sent {
                 waits.push((b.name.clone(), req, rx));
             } else {
@@ -165,7 +171,9 @@ impl Choice {
             let answer = tokio::select! {
                 biased;
                 r = rx => match r {
-                    Ok(BrokerToHub::CapabilitiesReply(reply)) => Answer::Runners(reply.runners),
+                    Ok(BrokerToHub::CapabilitiesReply(reply)) => {
+                        Answer::Runners(reply.runners, reply.start_now)
+                    }
                     _ => Answer::Unavailable,
                 },
                 _ = s.clock.sleep_until(deadline) => Answer::Unavailable,
@@ -176,11 +184,18 @@ impl Choice {
         out
     }
 
-    fn pick(&self, group: &[Candidate], answers: &BTreeMap<String, Answer>) -> Option<String> {
+    /// The broker of `group` to place the order at; with `only_now`, only one that said it
+    /// would start the order at once.
+    fn pick(
+        &self,
+        group: &[Candidate],
+        answers: &BTreeMap<String, Answer>,
+        only_now: bool,
+    ) -> Option<String> {
         let fits: Vec<(&str, usize)> = group
             .iter()
             .filter_map(|c| match answers.get(&c.name) {
-                Some(Answer::Runners(r)) => {
+                Some(Answer::Runners(r, now)) if !only_now || *now == Some(true) => {
                     suitable(r, &self.req).ok().map(|n| (c.name.as_str(), n))
                 }
                 _ => None,
@@ -207,13 +222,38 @@ impl Choice {
             let all: Vec<Candidate> = groups.iter().flatten().cloned().collect();
             answers = self.query(&all).await;
         }
-        for group in &groups {
+        let mut nearest = None;
+        for (i, group) in groups.iter().enumerate() {
             if self.policy.zone_query == ZoneQuery::Sequential {
                 answers.extend(self.query(group).await);
             }
-            if let Some(name) = self.pick(group, &answers) {
+            if let Some(name) = self.pick(group, &answers, true) {
                 return Pass::Chosen(name);
             }
+            if nearest.is_none() {
+                nearest = self.pick(group, &answers, false);
+            }
+            if nearest.is_none() {
+                continue;
+            }
+            let rest = &groups[i + 1..];
+            let busy = group.iter().any(|c| {
+                matches!(
+                    answers.get(&c.name),
+                    Some(Answer::Runners(r, Some(false))) if suitable(r, &self.req).is_ok()
+                )
+            });
+            if busy && self.policy.zone_query == ZoneQuery::Sequential && !rest.is_empty() {
+                let farther: Vec<Candidate> = rest.iter().flatten().cloned().collect();
+                answers.extend(self.query(&farther).await);
+            }
+            if let Some(name) = rest.iter().find_map(|g| self.pick(g, &answers, true)) {
+                return Pass::Chosen(name);
+            }
+            break;
+        }
+        if let Some(name) = nearest {
+            return Pass::Chosen(name);
         }
         let unavailable: Vec<String> = answers
             .iter()
@@ -229,11 +269,26 @@ impl Choice {
         let figures: Vec<String> = answers
             .iter()
             .filter_map(|(n, a)| match a {
-                Answer::Runners(r) => suitable(r, &self.req).err().map(|w| format!("{n}: {w}")),
+                Answer::Runners(r, _) => suitable(r, &self.req).err().map(|w| format!("{n}: {w}")),
                 Answer::Unavailable => None,
             })
             .collect();
         Pass::NoneSuitable(figures.join("; "))
+    }
+
+    /// The broker, other than `from`, that would start the order now, nearest zone first. Only
+    /// when `from` itself answers `start_now` (it knows `Withdraw`, as it knows the probe).
+    pub(crate) async fn move_target(&self, from: &str) -> Option<String> {
+        let groups = self.groups();
+        let all: Vec<Candidate> = groups.iter().flatten().cloned().collect();
+        let answers = self.query(&all).await;
+        if !matches!(answers.get(from), Some(Answer::Runners(_, Some(_)))) {
+            return None;
+        }
+        groups.iter().find_map(|group| {
+            let others: Vec<Candidate> = group.iter().filter(|c| c.name != from).cloned().collect();
+            self.pick(&others, &answers, true)
+        })
     }
 
     pub(crate) async fn run(self) -> Decision {

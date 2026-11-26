@@ -131,7 +131,7 @@ async fn connect(member: &Member, address: &str) -> Box<dyn Transport> {
 }
 
 async fn round_trip(live: &dyn Transport, req: u64) {
-    let query = HubToBroker::CapabilitiesQuery(CapabilitiesQuery { req });
+    let query = HubToBroker::CapabilitiesQuery(CapabilitiesQuery { req, probe: None });
     live.send(Frame::json(&query).unwrap()).await.unwrap();
     match next_message(live).await {
         Ok(BrokerToHub::CapabilitiesReply(r)) => assert_eq!(r.req, req),

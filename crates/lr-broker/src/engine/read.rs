@@ -587,6 +587,7 @@ fn reason_words(code: &ReasonCode) -> &'static str {
         ReasonCode::DiskInsufficient => "the runner ran out of disk",
         ReasonCode::ResourceExceeded => "declared resources exceeded",
         ReasonCode::RunnerDraining => "the runner was draining",
+        ReasonCode::Moved => "returned to the hub to run at another broker",
         ReasonCode::Rejected(RejectReason::NoMatchingRunner) => "no runner matches",
         ReasonCode::Rejected(RejectReason::NoRunnerOnMachine) => "no runner on the client machine",
         ReasonCode::Rejected(RejectReason::PoolMemory) => "asks for more memory than the pool has",

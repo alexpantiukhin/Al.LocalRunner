@@ -33,6 +33,8 @@ pub type ReloadPolicy = Arc<dyn Fn() -> Result<HubPolicy, String> + Send + Sync>
 
 const EVENT_QUEUE: usize = 1024;
 const TICK: Duration = Duration::from_secs(1);
+pub(crate) const MOVE_CHECK_S: u64 = 15;
+pub(crate) const MOVE_PAUSE_S: u64 = 60;
 const RELEASE_WAIT: Duration = Duration::from_secs(5);
 
 pub(crate) struct Shared {
@@ -108,6 +110,12 @@ pub(crate) enum Event {
         gen: u64,
         decision: Decision,
     },
+    MoveTarget {
+        job: JobId,
+        gen: u64,
+        from: String,
+        target: Option<String>,
+    },
     Tick,
     Shutdown,
 }
@@ -124,6 +132,7 @@ pub(crate) struct Engine {
     pub(crate) reaper: Reaper,
     pub(crate) tx: mpsc::Sender<Event>,
     pub(crate) next_outbox_sample: Timestamp,
+    pub(crate) next_move_check: Timestamp,
 }
 
 /// The hub role.
@@ -193,6 +202,7 @@ impl Hub {
             reaper: Reaper::new(d.clock.now()),
             tx: tx.clone(),
             next_outbox_sample: d.clock.now(),
+            next_move_check: d.clock.now(),
         };
         let targets = engine.targets(d.local_broker).await;
         engine.restore().await;
@@ -395,6 +405,12 @@ impl Engine {
             }
             Event::Broker(name, ev) => self.on_broker(&name, ev).await,
             Event::Selected { job, gen, decision } => self.on_decision(&job, gen, decision).await,
+            Event::MoveTarget {
+                job,
+                gen,
+                from,
+                target,
+            } => self.on_move_target(&job, gen, &from, target).await,
             Event::Tick => self.on_tick().await,
             Event::Shutdown => return false,
         }
@@ -418,6 +434,10 @@ impl Engine {
             .collect();
         for job in due {
             self.start_selection(&job);
+        }
+        if self.next_move_check <= now {
+            self.next_move_check = now.plus_secs(MOVE_CHECK_S);
+            self.check_moves(now);
         }
         let names: Vec<String> = self.links.keys().cloned().collect();
         for name in names {

@@ -418,6 +418,7 @@ async fn capabilities_query_reports_runner_zones_relative_to_the_hub() {
     let mut hub = h.member_hub("hub1", "", "10.0.0.5").await;
     hub.send(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
         req: 4,
+        probe: None,
     }))
     .await;
     let reply = loop {

@@ -111,6 +111,7 @@ async fn local_runner_machine_is_hidden_from_other_clients() {
         assert_eq!(machine_seen(&runners), expected, "{user}");
         c.send(&HubToBroker::CapabilitiesQuery(CapabilitiesQuery {
             req: 5,
+            probe: None,
         }))
         .await;
         let caps = loop {

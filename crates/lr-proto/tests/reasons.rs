@@ -2,7 +2,7 @@ use lr_proto::*;
 use std::collections::BTreeSet;
 use std::str::FromStr;
 
-const SPEC_15: [&str; 14] = [
+const SPEC_15: [&str; 15] = [
     "runner_stopped",
     "runner_removed",
     "broker_unavailable",
@@ -17,6 +17,7 @@ const SPEC_15: [&str; 14] = [
     "disk_insufficient",
     "resource_exceeded",
     "runner_draining",
+    "moved",
 ];
 
 #[test]

@@ -92,6 +92,15 @@ pub struct Order {
     pub spec: Box<OrderSpec>,
 }
 
+/// The hub asks a broker for a not yet started order back, to place it at another broker where
+/// it starts now. Not sequenced: a broker that still queues the order answers with
+/// `Returned` (code `moved`); one that already assigned it answers nothing, `Started` follows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Withdraw {
+    /// The job.
+    pub job: JobId,
+}
+
 /// Hub's cancel of a job (spec 7.1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HubCancel {
