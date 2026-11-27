@@ -746,6 +746,41 @@ pub fn runner_program_checks(
         .collect()
 }
 
+/// What `doctor` says about the free disk of a runner: it takes no orders below its `[accept]
+/// min_free_disk_mb`, and a warning comes before that, at twice the floor (at 2 GB when none
+/// is set).
+pub fn disk_note(free_mb: u64, floor_mb: Option<u64>) -> Option<String> {
+    match floor_mb {
+        Some(floor) if free_mb < floor => Some(format!(
+            "{free_mb} MB free, below min_free_disk_mb {floor}: takes no orders; clear it with: localrunner runner cache clean"
+        )),
+        Some(floor) if free_mb < floor.saturating_mul(2) => Some(format!(
+            "{free_mb} MB free, close to min_free_disk_mb {floor}: clear it with: localrunner runner cache clean"
+        )),
+        None if free_mb < 2048 => Some(format!(
+            "{free_mb} MB free and no [accept] min_free_disk_mb: jobs fail when the disk is full; set it and clear the cache with: localrunner runner cache clean"
+        )),
+        _ => None,
+    }
+}
+
+/// The disk warnings of the runners in `per`.
+pub fn runner_disk_checks(per: &[(String, Vec<lr_proto::RunnerInfo>)]) -> Vec<Check> {
+    per.iter()
+        .flat_map(|(broker, runners)| {
+            runners.iter().filter(|r| r.online).filter_map(move |r| {
+                disk_note(r.caps.disk_mb, r.caps.accept_min_free_disk_mb).map(|note| {
+                    check(
+                        format!("broker {broker} runner {} disk", r.name),
+                        Status::Warn,
+                        note,
+                    )
+                })
+            })
+        })
+        .collect()
+}
+
 async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     let Ok(client) = crate::commands::jobs::hub(layout).await else {
         return;
@@ -753,6 +788,7 @@ async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
         out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
         out.extend(runner_program_checks(&per, &layout.runner_names()));
+        out.extend(runner_disk_checks(&per));
     }
     client.close().await;
 }
