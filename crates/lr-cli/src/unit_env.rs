@@ -162,9 +162,7 @@ pub async fn process_variables(layout: &Layout, name: &str) -> Option<BTreeSet<S
     let c = crate::ipc_client::IpcClient::connect(&address, IpcChannel::RunnerControl)
         .await
         .ok()?;
-    let reply = c
-        .call::<_, ControlReply>(&RunnerControl::Environment)
-        .await;
+    let reply = c.call::<_, ControlReply>(&RunnerControl::Environment).await;
     c.close().await;
     match reply {
         Ok(ControlReply::Variables { names }) => Some(names.into_iter().collect()),

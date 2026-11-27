@@ -41,7 +41,7 @@ async fn runner(layout: &Layout, principal: &str, name: &str) -> Reload {
             | ControlReply::Reloaded { .. }
             | ControlReply::Dropped { .. }
             | ControlReply::Cleaned { .. }
-        | ControlReply::Variables { .. },
+            | ControlReply::Variables { .. },
         ) => Reload::Refused("unexpected answer to logging reload".into()),
     }
 }
