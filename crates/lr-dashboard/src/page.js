@@ -33,6 +33,10 @@
   function store(key, value) { try { localStorage.setItem("lr." + key, value); } catch (e) { return; } }
   function load(key) { try { return localStorage.getItem("lr." + key); } catch (e) { return null; } }
 
+  function runnerOf(b, r) {
+    r = r || "";
+    return r.indexOf("local:") === 0 && b && b !== "local" ? b + ":" + r.slice(6) : r;
+  }
   function row(j) {
     var d = j.detail, s = d.summary, steps = d.steps || [];
     var budget = s.timeout_s ? s.timeout_s * 1000 : steps.reduce(function (a, st) { return a + st.timeout_s * 1000; }, 0);
@@ -41,9 +45,9 @@
       ? dur(t - s.started_at) + (budget ? " / " + dur(budget) : "")
       : (d.wait_reason || "") + (s.started_at ? "" : " (" + dur(t - s.queued_at) + ")");
     return {
-      j: j, position: j.position || "", job: s.job, state: shown(s), priority: j.priority == null ? null : j.priority, project: s.project || "",
+      j: j, position: j.position || "", job: s.job, state: shown(s), priority: j.priority != null ? j.priority : (s.priority == null ? null : s.priority), zone: s.zone || "", project: s.project || "",
       source: d.source || "", client_label: s.label || "", labels: (s.labels || []).join(", "), profile: s.profile || "", cwd: d.cwd || "",
-      runner: s.runner || "", broker: j.broker || "", wait: info, list: j.list,
+      runner: runnerOf(j.broker, s.runner), broker: j.broker || "", wait: info, list: j.list,
       queued: s.queued_at, finished: s.finished_at == null ? null : s.finished_at, duration: s.finished_at && s.started_at ? s.finished_at - s.started_at : null
     };
   }
@@ -107,8 +111,8 @@
       return tr;
     }));
   }
-  var QCOLS = ["position", "job", "state", "priority", "project", "source", "client_label", "labels", "profile", "cwd", "runner", "broker", "wait"];
-  var HCOLS = ["job", "state", "project", "source", "client_label", "profile", "cwd", "runner", "queued", "finished", "duration"];
+  var QCOLS = ["position", "job", "state", "priority", "project", "source", "client_label", "labels", "profile", "cwd", "runner", "zone", "broker", "wait"];
+  var HCOLS = ["job", "state", "project", "source", "client_label", "profile", "cwd", "runner", "zone", "priority", "broker", "queued", "finished", "duration"];
 
   var bars = LRCharts.bars, meter = LRCharts.meter;
   function renderStats() {
@@ -250,7 +254,7 @@
     }
     $("card-title").textContent = s.job + " · " + shown(s) + (j.stale ? " (stale)" : "");
     var f = [["Project", s.project], ["Source", d.source], ["Run", d.github_run_url], ["Client label (--as)", s.label], ["Profile labels", (s.labels || []).join(", ")], ["Priority", j.priority], ["Client", s.client_label], ["Note", d.note],
-      ["Branch", d.branch], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", s.runner],
+      ["Branch", d.branch], ["Directory", d.cwd], ["Profile", s.profile], ["Platform", s.platform], ["Runner", runnerOf(j.broker, s.runner)], ["Zone", s.zone], ["Rule", s.rule],
       ["Requests", j.requested ? j.requested.mem_mb + " MB, " + j.requested.cpu + " CPU" + (j.requested.tags && j.requested.tags.length ? ", tags " + j.requested.tags.join(", ") : "") : null],
       ["Timeout", s.timeout_s ? dur(s.timeout_s * 1000) : null],
       ["Broker", j.broker], [isRejected(s) ? "Rejected because" : "Waiting because", d.wait_reason], ["Queued", when(s.queued_at)], ["Exit code", s.exit_code], ["Reason", s.reason],
