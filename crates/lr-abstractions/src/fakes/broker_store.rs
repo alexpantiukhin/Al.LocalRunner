@@ -2,8 +2,8 @@ use super::broker_jobs::BrokerState;
 use crate::store::{
     compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
     JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow, OutboxBacklog,
-    OutboxEntry, OutboxKind, Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats,
-    StatsQuery, StepUpdate, StoreError, Transition,
+    OutboxEntry, OutboxKind, Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState,
+    Stats, StatsQuery, StepUpdate, StoreError, Transition,
 };
 use async_trait::async_trait;
 use lr_core::{JobId, Timestamp};

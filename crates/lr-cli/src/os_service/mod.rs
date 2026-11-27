@@ -142,7 +142,11 @@ pub fn releases_standard_streams(env: impl Fn(&str) -> Option<String>) -> bool {
 #[cfg(unix)]
 fn detach_standard_streams() {
     use std::os::fd::AsRawFd;
-    if let Ok(null) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null") {
+    if let Ok(null) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")
+    {
         for fd in 0..=2 {
             unsafe {
                 libc::dup2(null.as_raw_fd(), fd);

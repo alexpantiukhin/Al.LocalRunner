@@ -953,11 +953,7 @@ pub fn autostart_status_json(rows: &[AutostartRow]) -> serde_json::Value {
 }
 
 /// `autostart status [role] [--json]`: reads the OS and changes nothing, no rights needed.
-pub fn autostart_status(
-    layout: &Layout,
-    role: Option<RoleArg>,
-    json: bool,
-) -> Result<i32, String> {
+pub fn autostart_status(layout: &Layout, role: Option<RoleArg>, json: bool) -> Result<i32, String> {
     let os = Os::current();
     let user = lr_net::current_os_user().map_err(|e| e.to_string())?;
     let mut rows = Vec::new();
@@ -1013,7 +1009,12 @@ pub fn broker_in_scope(role: Option<RoleArg>, on: bool) -> bool {
 }
 
 /// Whether `autostart` leaves the broker service step for an administrator in this session.
-pub fn broker_step_pending(layout: &Layout, role: Option<RoleArg>, on: bool, dry_run: bool) -> bool {
+pub fn broker_step_pending(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    on: bool,
+    dry_run: bool,
+) -> bool {
     let elevated = crate::host::is_elevated();
     broker_in_scope(role, on)
         && chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))

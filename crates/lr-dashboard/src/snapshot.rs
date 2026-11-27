@@ -129,11 +129,7 @@ fn queue_row(out: &mut String, job: &DashboardJob) {
         _ => opt(&s.runner),
     };
     cell(out, "runner", &runner);
-    cell(
-        out,
-        "zone",
-        s.zone.map(|z| z.as_str()).unwrap_or_default(),
-    );
+    cell(out, "zone", s.zone.map(|z| z.as_str()).unwrap_or_default());
     cell(out, "broker", &broker);
     cell(out, "wait", &opt(&d.wait_reason));
     out.push_str("</tr>");

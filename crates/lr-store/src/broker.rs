@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use lr_abstractions::{
     Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, JobSpecRow,
     Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
-    Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
-    StoreError, Transition,
+    Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery,
+    StepUpdate, StoreError, Transition,
 };
 use lr_core::{JobId, Timestamp};
 use std::any::Any;

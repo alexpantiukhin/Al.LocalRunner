@@ -16,9 +16,7 @@ fn linux_runner() -> RunnerFacts {
 }
 
 fn profile(variants: &str) -> lr_core::Profile {
-    let text = format!(
-        "[profile.p]\ncommand = \"true\"\ntimeout_s = 60\n{variants}"
-    );
+    let text = format!("[profile.p]\ncommand = \"true\"\ntimeout_s = 60\n{variants}");
     parse_profiles(&text).unwrap().remove(0)
 }
 
@@ -30,7 +28,9 @@ fn a_variant_hidden_behind_an_earlier_wider_one_is_reported() {
     );
     let found = variant_warnings(&p, &[linux_runner()]);
     assert!(
-        found.iter().any(|w| w.contains("variant linux is never used") && w.contains("any")),
+        found
+            .iter()
+            .any(|w| w.contains("variant linux is never used") && w.contains("any")),
         "{found:?}"
     );
 }
@@ -43,22 +43,27 @@ fn variants_that_can_match_the_same_runner_are_reported_as_overlapping() {
     );
     let found = variant_warnings(&p, &[linux_runner()]);
     assert!(
-        found.iter().any(|w| w.contains("variants a-linux and b-cargo can match the same runner")),
+        found
+            .iter()
+            .any(|w| w.contains("variants a-linux and b-cargo can match the same runner")),
         "{found:?}"
     );
 }
 
 #[test]
 fn a_variant_no_runner_of_this_installation_matches_is_reported() {
-    let p = profile(
-        "[profile.p.variant.mac]\ncommand = \"a\"\nwhen = { os = [\"macos\"] }\n",
-    );
+    let p = profile("[profile.p.variant.mac]\ncommand = \"a\"\nwhen = { os = [\"macos\"] }\n");
     let found = variant_warnings(&p, &[linux_runner()]);
     assert!(
-        found.iter().any(|w| w.contains("variant mac: no runner of this installation matches")),
+        found
+            .iter()
+            .any(|w| w.contains("variant mac: no runner of this installation matches")),
         "{found:?}"
     );
-    assert!(variant_warnings(&p, &[]).is_empty(), "no runner known: nothing to compare with");
+    assert!(
+        variant_warnings(&p, &[]).is_empty(),
+        "no runner known: nothing to compare with"
+    );
 }
 
 #[test]

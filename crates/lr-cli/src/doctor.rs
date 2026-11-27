@@ -585,7 +585,11 @@ async fn reach(name: String, key: &Path, address: &str, fingerprint: &str) -> Ch
                 format!("{address} reachable, certificate fingerprint matches, key accepted"),
             )
         }
-        Ok(Err(e)) => check(name, Status::Fail, dial_failure_text(address, &e.to_string())),
+        Ok(Err(e)) => check(
+            name,
+            Status::Fail,
+            dial_failure_text(address, &e.to_string()),
+        ),
         Err(_) => check(name, Status::Fail, format!("{address}: no answer in 5 s")),
     }
 }

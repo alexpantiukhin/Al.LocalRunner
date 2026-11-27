@@ -71,7 +71,10 @@ pub fn variant_warnings(profile: &Profile, runners: &[RunnerFacts]) -> Vec<Strin
     }
     for v in variants {
         let reachable_here = v.when.zones.is_empty()
-            || v.when.zones.iter().any(|z| matches!(z, Zone::Local | Zone::Shared));
+            || v.when
+                .zones
+                .iter()
+                .any(|z| matches!(z, Zone::Local | Zone::Shared));
         if !reachable_here {
             continue;
         }

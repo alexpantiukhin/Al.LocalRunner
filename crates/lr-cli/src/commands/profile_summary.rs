@@ -195,20 +195,18 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
         variants: p
             .variants
             .iter()
-            .map(|v| {
-                VariantSummary {
-                    name: v.name.clone(),
-                    when: when_text(&v.when),
-                    command: v
-                        .from_command
-                        .then(|| v.steps.first().map(|s| s.command.clone()))
-                        .flatten(),
-                    steps: if v.from_command {
-                        Vec::new()
-                    } else {
-                        v.steps.iter().map(step).collect()
-                    },
-                }
+            .map(|v| VariantSummary {
+                name: v.name.clone(),
+                when: when_text(&v.when),
+                command: v
+                    .from_command
+                    .then(|| v.steps.first().map(|s| s.command.clone()))
+                    .flatten(),
+                steps: if v.from_command {
+                    Vec::new()
+                } else {
+                    v.steps.iter().map(step).collect()
+                },
             })
             .collect(),
         tags: p.tags.clone(),

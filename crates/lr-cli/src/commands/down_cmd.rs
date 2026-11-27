@@ -525,7 +525,10 @@ pub async fn down_cli(
     }
     let hub_named = names.is_empty() || normalized(names.clone()).iter().any(|n| n == "hub");
     if let (Some(within), false, true) = (wait, cancel, hub_named) {
-        eprintln!("waiting for the hub to finish its orders (up to {} s)", within.as_secs());
+        eprintln!(
+            "waiting for the hub to finish its orders (up to {} s)",
+            within.as_secs()
+        );
         let left = wait_for_hub_orders(&roles, within).await;
         if left > 0 {
             eprintln!(

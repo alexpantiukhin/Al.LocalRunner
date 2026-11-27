@@ -133,7 +133,9 @@ pub fn ask_for_rights_as(
         );
         return Ok(Outcome::Declined);
     }
-    Ok(Outcome::Elevated(rerun_elevated_as(elevator, os, exe, args, user, err)))
+    Ok(Outcome::Elevated(rerun_elevated_as(
+        elevator, os, exe, args, user, err,
+    )))
 }
 
 /// A command that failed because the OS refused it the admin channel of the broker: with a

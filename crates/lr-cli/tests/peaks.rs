@@ -72,7 +72,15 @@ fn history_has_peak_columns_with_dashes_for_unknown_values() {
     assert!(
         has_run(
             &lines[0],
-            &["RUNNER", "ZONE", "PRIORITY", "PEAK_MEM_MB", "PEAK_DISK_MB", "BROKER", "REASON"]
+            &[
+                "RUNNER",
+                "ZONE",
+                "PRIORITY",
+                "PEAK_MEM_MB",
+                "PEAK_DISK_MB",
+                "BROKER",
+                "REASON"
+            ]
         ),
         "{}",
         lines[0]

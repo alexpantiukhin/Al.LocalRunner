@@ -172,6 +172,17 @@ fn secret_has_set_list_and_remove() {
     for sub in ["set", "list", "remove"] {
         find(&root, &["secret", sub]);
     }
-    assert!(Cli::try_parse_from(["localrunner", "secret", "set", "r1", "TOKEN", "--value-file", "f"]).is_ok());
-    assert!(Cli::try_parse_from(["localrunner", "secret", "set", "r1", "TOKEN", "s3cret"]).is_err());
+    assert!(Cli::try_parse_from([
+        "localrunner",
+        "secret",
+        "set",
+        "r1",
+        "TOKEN",
+        "--value-file",
+        "f"
+    ])
+    .is_ok());
+    assert!(
+        Cli::try_parse_from(["localrunner", "secret", "set", "r1", "TOKEN", "s3cret"]).is_err()
+    );
 }

@@ -1,8 +1,8 @@
 use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
     outlives_cancel, Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord,
-    JobSpecRow, JoinCodeRow, LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport, RunnerRow,
-    StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
+    JobSpecRow, JoinCodeRow, LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport,
+    RunnerRow, StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use std::collections::BTreeMap;

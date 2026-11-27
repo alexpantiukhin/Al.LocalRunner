@@ -355,7 +355,8 @@ fn has_details(r: &RunnerInfo) -> bool {
 pub fn runner_table(runners: &[&RunnerInfo], wide: bool) -> Table {
     let mine = env!("CARGO_PKG_VERSION");
     let mut headers = vec![
-        "NAME", "STATE", "KIND", "ZONE", "VERSION", "PLATFORM", "MEMORY", "CPU", "DISK", "TAGS", "READY",
+        "NAME", "STATE", "KIND", "ZONE", "VERSION", "PLATFORM", "MEMORY", "CPU", "DISK", "TAGS",
+        "READY",
     ];
     if wide {
         headers.extend(["PROGRAMS", "ENFORCEMENT", "CACHE"]);
@@ -376,7 +377,8 @@ pub fn runner_table(runners: &[&RunnerInfo], wide: bool) -> Table {
             Cell::plain(r.name.clone()),
             state_cell(r),
             kind_text(r).map_or_else(|| Cell::dim("-"), Cell::plain),
-            r.zone.map_or_else(|| Cell::dim("-"), |z| Cell::plain(z.as_str())),
+            r.zone
+                .map_or_else(|| Cell::dim("-"), |z| Cell::plain(z.as_str())),
             version_cell(r, mine),
             Cell::plain(listed(c.platforms.iter())),
             Cell::plain(memory_pair(r.free_mem_mb, c.mem_mb)),

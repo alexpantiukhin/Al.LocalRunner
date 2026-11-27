@@ -344,9 +344,8 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
                 name.to_string(),
             ])
             .is_some_and(|unit| {
-                crate::os_service::home_dir().is_ok_and(|h| {
-                    h.join(".config/systemd/user").join(unit).is_file()
-                })
+                crate::os_service::home_dir()
+                    .is_ok_and(|h| h.join(".config/systemd/user").join(unit).is_file())
             })
         },
         |var| std::env::var(var).ok(),

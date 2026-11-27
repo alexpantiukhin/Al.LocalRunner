@@ -437,7 +437,10 @@ impl Engine {
                 if refused.is_empty() {
                     text
                 } else {
-                    format!("{text}; runners that do not suit it: {}", refused.join("; "))
+                    format!(
+                        "{text}; runners that do not suit it: {}",
+                        refused.join("; ")
+                    )
                 }
             }
             _ => text,

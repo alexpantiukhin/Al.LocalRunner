@@ -1,7 +1,7 @@
 use super::broker_rows::{
     Admission, Applied, Inbound, Intake, JobKey, JobRecord, JobSpecRow, Join, JoinCodeRow,
-    LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState,
-    StepUpdate, Transition,
+    LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport, Revoked, RunnerRow,
+    RunnerState, StepUpdate, Transition,
 };
 use super::query::{JobFilter, Stats, StatsQuery};
 use super::{OutboxBacklog, OutboxEntry, OutboxKind, StoreError};

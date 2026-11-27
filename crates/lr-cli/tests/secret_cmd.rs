@@ -32,14 +32,7 @@ async fn set(layout: &Layout, a: SetArgs, input: &str) -> (Result<i32, String>, 
     let elevator = FakeElevator::new(Ok(0));
     let mut stdin = Cursor::new(input.as_bytes().to_vec());
     let code = set_with(
-        layout,
-        a,
-        false,
-        &elevator,
-        &roles,
-        &mut stdin,
-        &mut out,
-        &mut err,
+        layout, a, false, &elevator, &roles, &mut stdin, &mut out, &mut err,
     )
     .await;
     (code, String::from_utf8(out).unwrap())
@@ -106,7 +99,10 @@ async fn an_empty_value_and_a_bad_name_are_refused_before_anything_is_written() 
 async fn list_shows_sources_and_whether_they_give_a_value_never_the_value() {
     let dir = TempDir::new("secret-list");
     let layout = layout(&dir);
-    set(&layout, args("TOKEN", ValueSource::Stdin), "s3cret").await.0.unwrap();
+    set(&layout, args("TOKEN", ValueSource::Stdin), "s3cret")
+        .await
+        .0
+        .unwrap();
     let mut text = std::fs::read_to_string(layout.runner_dir("r1").join("runner.toml")).unwrap();
     text.push_str("\n[secret.GONE]\nfrom = \"env:LR_SURELY_UNSET_VARIABLE\"\n");
     std::fs::write(layout.runner_dir("r1").join("runner.toml"), text).unwrap();
@@ -114,7 +110,10 @@ async fn list_shows_sources_and_whether_they_give_a_value_never_the_value() {
     assert!(lines.contains("TOKEN"), "{lines}");
     assert!(lines.contains("GONE"), "{lines}");
     assert!(lines.contains("env:LR_SURELY_UNSET_VARIABLE"), "{lines}");
-    assert!(lines.contains("variable LR_SURELY_UNSET_VARIABLE is not set"), "{lines}");
+    assert!(
+        lines.contains("variable LR_SURELY_UNSET_VARIABLE is not set"),
+        "{lines}"
+    );
     assert!(!lines.contains("s3cret"), "{lines}");
 }
 
@@ -122,7 +121,10 @@ async fn list_shows_sources_and_whether_they_give_a_value_never_the_value() {
 async fn remove_takes_the_entry_out_and_deletes_its_file() {
     let dir = TempDir::new("secret-remove");
     let layout = layout(&dir);
-    set(&layout, args("TOKEN", ValueSource::Stdin), "s3cret").await.0.unwrap();
+    set(&layout, args("TOKEN", ValueSource::Stdin), "s3cret")
+        .await
+        .0
+        .unwrap();
     let file = layout.root.join("secrets").join("r1").join("TOKEN");
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = remove_with(

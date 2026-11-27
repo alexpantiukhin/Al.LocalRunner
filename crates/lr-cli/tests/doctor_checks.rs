@@ -554,7 +554,14 @@ fn the_files_of_an_old_user_broker_are_listed_for_removal() {
     use lr_cli::doctor::stale_broker_files;
     let dir = TempDir::new("stale-files");
     assert!(stale_broker_files(dir.path()).is_empty());
-    for name in ["broker.db", "broker.db-wal", "broker.db-shm", "broker-cert.pem", "broker-key.pem", "hub.db"] {
+    for name in [
+        "broker.db",
+        "broker.db-wal",
+        "broker.db-shm",
+        "broker-cert.pem",
+        "broker-key.pem",
+        "hub.db",
+    ] {
         std::fs::write(dir.path().join(name), "x").unwrap();
     }
     let names: Vec<String> = stale_broker_files(dir.path())
@@ -563,7 +570,13 @@ fn the_files_of_an_old_user_broker_are_listed_for_removal() {
         .collect();
     assert_eq!(
         names,
-        ["broker.db", "broker.db-wal", "broker.db-shm", "broker-cert.pem", "broker-key.pem"]
+        [
+            "broker.db",
+            "broker.db-wal",
+            "broker.db-shm",
+            "broker-cert.pem",
+            "broker-key.pem"
+        ]
     );
 }
 
@@ -572,7 +585,9 @@ fn a_second_broker_of_the_user_is_refused_while_the_service_is_installed() {
     use lr_cli::commands::roles_cmd::second_broker_refusal;
     assert!(second_broker_refusal(false, false).is_none());
     assert!(second_broker_refusal(true, true).is_none());
-    assert!(second_broker_refusal(false, true).unwrap().contains("--state-dir"));
+    assert!(second_broker_refusal(false, true)
+        .unwrap()
+        .contains("--state-dir"));
 }
 
 #[test]
@@ -591,9 +606,19 @@ fn doctor_warns_about_a_secret_whose_source_gives_nothing_without_its_value() {
     let found = secret_checks("r1", &sources);
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found.iter().all(|c| c.status == Status::Warn));
-    let text: String = found.iter().map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n");
-    assert!(text.contains("secret TOKEN: the variable LR_SURELY_UNSET_VARIABLE is not set"), "{text}");
-    assert!(text.contains("secret FILE: the file /definitely/not/here does not exist"), "{text}");
+    let text: String = found
+        .iter()
+        .map(|c| c.detail.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("secret TOKEN: the variable LR_SURELY_UNSET_VARIABLE is not set"),
+        "{text}"
+    );
+    assert!(
+        text.contains("secret FILE: the file /definitely/not/here does not exist"),
+        "{text}"
+    );
     assert!(text.contains("localrunner secret set r1 TOKEN"), "{text}");
     assert!(secret_checks("r1", &Default::default()).is_empty());
 }
@@ -606,8 +631,14 @@ fn a_refused_connection_says_nothing_listens_and_how_a_service_is_started() {
         "No connection could be made (os error 10061)",
     ] {
         let text = dial_failure_text("vps.example:7443", raw);
-        assert!(text.starts_with("vps.example:7443: nothing listens there"), "{text}");
-        assert!(text.contains("systemctl start al-localrunner-broker"), "{text}");
+        assert!(
+            text.starts_with("vps.example:7443: nothing listens there"),
+            "{text}"
+        );
+        assert!(
+            text.contains("systemctl start al-localrunner-broker"),
+            "{text}"
+        );
         assert!(text.contains("Start-Service AlLocalRunnerBroker"), "{text}");
         assert!(!text.contains("os error"), "{text}");
     }
