@@ -117,6 +117,8 @@ async fn an_order_placed_again_after_it_was_returned_runs_here_with_a_stream_of_
     hub.send(&withdraw("j2")).await;
     returned(&mut hub).await;
     r.send(&started("j1", 1)).await;
+    let first = hub.started_notice().await;
+    assert_eq!(first.job.0, "j1");
     r.send(&result("j1", 2, lr_core::JobState::Passed, 0)).await;
     hub.send(&order("j2", req(512, 1, 60))).await;
     hub.accepted().await;
@@ -125,7 +127,7 @@ async fn an_order_placed_again_after_it_was_returned_runs_here_with_a_stream_of_
     loop {
         let s = hub.started_notice().await;
         if s.job.0 == "j2" {
-            assert_eq!(s.seq, 1);
+            assert_eq!(s.seq, first.seq);
             break;
         }
     }
