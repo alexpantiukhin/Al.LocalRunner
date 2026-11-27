@@ -597,3 +597,22 @@ fn doctor_warns_about_a_secret_whose_source_gives_nothing_without_its_value() {
     assert!(text.contains("localrunner secret set r1 TOKEN"), "{text}");
     assert!(secret_checks("r1", &Default::default()).is_empty());
 }
+
+#[test]
+fn a_refused_connection_says_nothing_listens_and_how_a_service_is_started() {
+    use lr_cli::doctor::dial_failure_text;
+    for raw in [
+        "Connection refused (os error 111)",
+        "No connection could be made (os error 10061)",
+    ] {
+        let text = dial_failure_text("vps.example:7443", raw);
+        assert!(text.starts_with("vps.example:7443: nothing listens there"), "{text}");
+        assert!(text.contains("systemctl start al-localrunner-broker"), "{text}");
+        assert!(text.contains("Start-Service AlLocalRunnerBroker"), "{text}");
+        assert!(!text.contains("os error"), "{text}");
+    }
+    assert_eq!(
+        dial_failure_text("h:1", "certificate mismatch"),
+        "h:1: certificate mismatch"
+    );
+}

@@ -552,6 +552,24 @@ fn autostart(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// The text of a failed dial of `address`: a refused connection (`raw` is the OS error) says
+/// that nothing listens there and how a broker service is started, instead of the OS number.
+pub fn dial_failure_text(address: &str, raw: &str) -> String {
+    let refused = ["os error 111", "os error 10061", "onnection refused"]
+        .iter()
+        .any(|m| raw.contains(m));
+    if refused {
+        format!(
+            "{address}: nothing listens there (the broker is stopped, or the address is wrong); on a machine where the broker is a service start it with `systemctl start {}` (Linux), `Start-Service {}` (Windows, administrator) or `launchctl kickstart system/{}` (macOS)",
+            crate::os_service::service_name(crate::os_service::Os::Linux),
+            crate::os_service::service_name(crate::os_service::Os::Windows),
+            crate::os_service::service_name(crate::os_service::Os::MacOs),
+        )
+    } else {
+        format!("{address}: {raw}")
+    }
+}
+
 async fn reach(name: String, key: &Path, address: &str, fingerprint: &str) -> Check {
     let key = match lr_net::ClientKey::load(key) {
         Ok(k) => std::sync::Arc::new(k),
@@ -567,7 +585,7 @@ async fn reach(name: String, key: &Path, address: &str, fingerprint: &str) -> Ch
                 format!("{address} reachable, certificate fingerprint matches, key accepted"),
             )
         }
-        Ok(Err(e)) => check(name, Status::Fail, format!("{address}: {e}")),
+        Ok(Err(e)) => check(name, Status::Fail, dial_failure_text(address, &e.to_string())),
         Err(_) => check(name, Status::Fail, format!("{address}: no answer in 5 s")),
     }
 }

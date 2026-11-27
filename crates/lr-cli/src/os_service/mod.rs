@@ -113,6 +113,10 @@ pub fn broker_servers() -> Result<ServerIdentity, String> {
 /// is dropped, and the process gets a hidden console its steps share (spec 10); elsewhere
 /// nothing.
 pub fn background_console() {
+    #[cfg(unix)]
+    if releases_standard_streams(|n| std::env::var(n).ok()) {
+        detach_standard_streams();
+    }
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
@@ -124,6 +128,26 @@ pub fn background_console() {
             }
         }
         let _ = lr_exec::ensure_console();
+    }
+}
+
+/// Whether a role started with `--background` lets go of its standard streams: they would keep
+/// the pipe of whoever started it (an `ssh host cmd` that never returns). Not when a service
+/// manager owns them (systemd's journal, a launchd job), which collects the output.
+pub fn releases_standard_streams(env: impl Fn(&str) -> Option<String>) -> bool {
+    env("JOURNAL_STREAM").is_none()
+        && env("XPC_SERVICE_NAME").is_none_or(|v| v.is_empty() || v == "0")
+}
+
+#[cfg(unix)]
+fn detach_standard_streams() {
+    use std::os::fd::AsRawFd;
+    if let Ok(null) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null") {
+        for fd in 0..=2 {
+            unsafe {
+                libc::dup2(null.as_raw_fd(), fd);
+            }
+        }
     }
 }
 

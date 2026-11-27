@@ -2252,3 +2252,13 @@ fn a_role_command_line_names_its_systemd_user_unit() {
     assert_eq!(unit_for_argv(&v("broker run --background")), None);
     assert_eq!(unit_for_argv(&[]), None);
 }
+
+#[test]
+fn a_background_role_lets_go_of_its_standard_streams_unless_a_service_manager_owns_them() {
+    use lr_cli::os_service::releases_standard_streams;
+    let none = |_: &str| None::<String>;
+    assert!(releases_standard_streams(none));
+    assert!(!releases_standard_streams(|n| (n == "JOURNAL_STREAM").then(|| "8:1".to_string())));
+    assert!(!releases_standard_streams(|n| (n == "XPC_SERVICE_NAME").then(|| "com.al-localrunner.hub".to_string())));
+    assert!(releases_standard_streams(|n| (n == "XPC_SERVICE_NAME").then(|| "0".to_string())));
+}

@@ -11,7 +11,7 @@ Only `[profile.<name>]` and `[needs.<name>]` are read at the top level; any othe
 - `timeout_s`: required, no default.
 - `mem_mb`, `cpu`, `disk_mb`: what the job holds while it runs.
 - `platforms`: a list of platform names; `platform.<P>` tables override `command`, `steps`, `timeout_s`, `mem_mb`, `cpu`, `disk_mb` for one platform.
-- `programs`: names, or `{ name = "...", check = "..." }`.
+- `programs`: names, or `{ name = "...", check = "..." }`. List every program the command or a step runs (`python`, `git`, `node`): nothing reads the command text, so a profile without `programs` can land on a runner that does not have the program and fails there in milliseconds.
 - `tags`: resources held for the run; `exclusive`: tags nobody else may hold meanwhile.
 - `labels`: free-form names the broker policy can match (a rule with `label`); not requirements, so no runner has to declare them. Only the machine owner gives priority by a label, in `policy.toml`.
 - `cache`: named caches kept on the runner between runs.

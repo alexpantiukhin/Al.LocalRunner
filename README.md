@@ -522,7 +522,7 @@ A profile has either `command` or `steps`. A failed step stops the job; `continu
 | `command` or `steps` | one of the two, never both | none | one command, or an ordered list of steps; a zone variant `[profile.X.zone.<zone>]` may replace them |
 | `timeout_s` | yes | none, no unlimited run | job timeout in seconds, above zero; the policy ceiling rejects an order that exceeds it, the runner ceiling makes a runner unsuitable |
 | `mem_mb`, `cpu`, `disk_mb` | no | `0`: nothing is reserved | memory, cores and disk the job holds while it runs |
-| `programs` | no | empty | names, or `{ name = "...", check = "..." }`; the runner must have each (a `check` command must also exit with 0) |
+| `programs` | no | empty | names, or `{ name = "...", check = "..." }`; the runner must have each (a `check` command must also exit with 0). List every program the commands run: the command text is not read, so a profile without `programs` can reach a runner that lacks the program |
 | `platforms` | no | empty: any platform | platform names the profile runs on; `[profile.X.platform.<P>]` overrides `command`, `steps`, `timeout_s`, `mem_mb`, `cpu`, `disk_mb` for one platform |
 | `tags` | no | empty | resources the job holds for the run |
 | `exclusive` | no | empty | tags that no other running job may hold meanwhile |
