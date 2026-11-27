@@ -177,6 +177,14 @@ pub fn controls() -> Vec<RunnerControl> {
         RunnerControl::LoggingReload,
         RunnerControl::Reload,
         RunnerControl::DropOutbox { job: "j1".into() },
+        RunnerControl::CleanCache {
+            older_than_days: Some(7),
+            dry_run: true,
+        },
+        RunnerControl::CleanCache {
+            older_than_days: None,
+            dry_run: false,
+        },
         RunnerControl::Status,
     ]
 }
@@ -191,6 +199,10 @@ pub fn control_replies() -> Vec<ControlReply> {
             restart_required: vec!["allow_elevated".into()],
         },
         ControlReply::Dropped { closed: 3 },
+        ControlReply::Cleaned {
+            entries: 2,
+            bytes: 1024,
+        },
         ControlReply::Link {
             connected: false,
             since: Some(lr_core::Timestamp(7)),

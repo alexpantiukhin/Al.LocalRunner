@@ -120,9 +120,16 @@ pub fn parse_claude_list(json: &str) -> Vec<Installed> {
             id.starts_with("localrunner@").then(|| Installed {
                 agent: Agent::Claude,
                 id: id.to_string(),
-                version: p.get("version").and_then(|v| v.as_str()).unwrap_or("").into(),
+                version: p
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .into(),
                 scope: p.get("scope").and_then(|v| v.as_str()).map(String::from),
-                project: p.get("projectPath").and_then(|v| v.as_str()).map(PathBuf::from),
+                project: p
+                    .get("projectPath")
+                    .and_then(|v| v.as_str())
+                    .map(PathBuf::from),
             })
         })
         .collect()
@@ -133,7 +140,11 @@ pub fn parse_codex_list(text: &str) -> Vec<Installed> {
     text.lines()
         .filter(|l| l.starts_with("localrunner@"))
         .filter_map(|l| {
-            let cols: Vec<&str> = l.split("  ").map(str::trim).filter(|c| !c.is_empty()).collect();
+            let cols: Vec<&str> = l
+                .split("  ")
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect();
             let (id, status, version) = (cols.first()?, cols.get(1)?, cols.get(2)?);
             status.starts_with("installed").then(|| Installed {
                 agent: Agent::Codex,
@@ -168,7 +179,11 @@ pub fn update_steps(plugin: &Installed) -> Vec<Step> {
         Agent::Claude => {
             let scope = plugin.scope.as_deref().unwrap_or("user");
             vec![
-                Step::new("claude", &["plugin", "marketplace", "update", market], plugin.project.clone()),
+                Step::new(
+                    "claude",
+                    &["plugin", "marketplace", "update", market],
+                    plugin.project.clone(),
+                ),
                 Step::new(
                     "claude",
                     &["plugin", "update", &plugin.id, "--scope", scope, "--yes"],

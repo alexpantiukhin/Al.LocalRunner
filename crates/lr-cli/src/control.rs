@@ -69,6 +69,13 @@ async fn connection(
                     Err(message) => ControlReply::Failed { message },
                 }
             }
+            Ok(Received::Message(RunnerControl::CleanCache {
+                older_than_days,
+                dry_run,
+            })) => match control.clean_cache(older_than_days, dry_run).await {
+                Ok((entries, bytes)) => ControlReply::Cleaned { entries, bytes },
+                Err(message) => ControlReply::Failed { message },
+            },
             Ok(Received::Message(RunnerControl::Status)) => {
                 let (connected, since) = control.link();
                 ControlReply::Link {

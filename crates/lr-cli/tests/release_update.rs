@@ -344,10 +344,18 @@ fn only_the_process_that_replaced_the_binaries_offers_the_service_update() {
 #[test]
 fn a_service_older_than_the_binary_ends_the_upgrade_with_a_warning_that_names_the_command() {
     use lr_cli::commands::upgrade_cmd::service_warning;
-    let text = service_warning(Some("0.11.0"), "0.12.0", "sudo localrunner broker update-service").unwrap();
+    let text = service_warning(
+        Some("0.11.0"),
+        "0.12.0",
+        "sudo localrunner broker update-service",
+    )
+    .unwrap();
     assert!(text.starts_with("warn  broker service: 0.11.0"), "{text}");
     assert!(text.contains("the binary is 0.12.0"), "{text}");
-    assert!(text.contains("sudo localrunner broker update-service"), "{text}");
+    assert!(
+        text.contains("sudo localrunner broker update-service"),
+        "{text}"
+    );
     let unknown = service_warning(None, "0.12.0", "cmd").unwrap();
     assert!(unknown.contains("version unknown"), "{unknown}");
     assert!(service_warning(Some("0.12.0"), "0.12.0", "cmd").is_none());

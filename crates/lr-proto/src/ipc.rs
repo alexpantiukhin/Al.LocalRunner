@@ -461,6 +461,17 @@ pub enum RunnerControl {
         /// The job whose entries are closed.
         job: String,
     },
+    /// `runner cache clean`: remove the named caches unused for longer than `older_than_days`
+    /// (all of them when absent) that no job uses; with `dry_run` only count them. Answered
+    /// with [`ControlReply::Cleaned`].
+    CleanCache {
+        /// Age in days.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        older_than_days: Option<u64>,
+        /// Count, do not remove.
+        #[serde(default)]
+        dry_run: bool,
+    },
     /// Ask whether the runner is connected to its broker.
     Status,
 }
@@ -486,6 +497,13 @@ pub enum ControlReply {
     Dropped {
         /// How many pending entries were closed.
         closed: u64,
+    },
+    /// The caches removed, or with `dry_run` found, by [`RunnerControl::CleanCache`].
+    Cleaned {
+        /// How many cache entries.
+        entries: u64,
+        /// Their size in bytes.
+        bytes: u64,
     },
     /// The state of the link to the broker.
     Link {
@@ -560,9 +578,9 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "status"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "clean_cache", "status"]);
 message!(DashboardRequest, local: true, ["link", "stop"]);
 message!(DashboardReply, local: true, ["link", "stopping", "failed"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "link"]);
+message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "cleaned", "link"]);

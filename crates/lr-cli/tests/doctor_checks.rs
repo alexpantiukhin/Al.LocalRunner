@@ -668,10 +668,7 @@ fn a_secret_the_runner_unit_sets_is_not_reported_even_when_this_shell_lacks_it()
     assert_eq!(found.len(), 1, "{found:?}");
     let text = &found[0].detail;
     assert!(text.contains("secret OTHER"), "{text}");
-    assert!(
-        text.contains("not set by the unit of the runner"),
-        "{text}"
-    );
+    assert!(text.contains("not set by the unit of the runner"), "{text}");
     assert!(!text.contains("runner process"), "{text}");
     assert!(!text.contains("value"), "{text}");
 }

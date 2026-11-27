@@ -53,13 +53,21 @@ fn a_role_started_through_systemd_gets_the_owner_of_the_lock_and_the_variable_is
     assert_eq!(set.0, "systemctl");
     assert_eq!(
         set.1,
-        ["--user", "set-environment", "LOCALRUNNER_UPGRADE_LOCK_PID=4321"]
+        [
+            "--user",
+            "set-environment",
+            "LOCALRUNNER_UPGRADE_LOCK_PID=4321"
+        ]
     );
     let unset = unset.unwrap();
     assert_eq!(unset.0, "systemctl");
     assert_eq!(
         unset.1,
-        ["--user", "unset-environment", "LOCALRUNNER_UPGRADE_LOCK_PID"]
+        [
+            "--user",
+            "unset-environment",
+            "LOCALRUNNER_UPGRADE_LOCK_PID"
+        ]
     );
 }
 

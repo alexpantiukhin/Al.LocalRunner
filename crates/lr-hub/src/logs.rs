@@ -150,13 +150,21 @@ mod tests {
 
     #[test]
     fn exit_127_names_the_program_the_shell_did_not_find_and_how_to_declare_it() {
-        let hint = not_found_hint("linux-heavy", Some(127), "/bin/sh: 1: git: not found\n").unwrap();
-        assert!(hint.contains("`git` was not found on runner linux-heavy"), "{hint}");
+        let hint =
+            not_found_hint("linux-heavy", Some(127), "/bin/sh: 1: git: not found\n").unwrap();
+        assert!(
+            hint.contains("`git` was not found on runner linux-heavy"),
+            "{hint}"
+        );
         assert!(hint.contains("list `git` in `programs`"), "{hint}");
-        let bash = not_found_hint("r", Some(127), "bash: line 1: cargo: command not found").unwrap();
+        let bash =
+            not_found_hint("r", Some(127), "bash: line 1: cargo: command not found").unwrap();
         assert!(bash.contains("`cargo`"), "{bash}");
         let unnamed = not_found_hint("r", Some(127), "something else\n").unwrap();
-        assert!(unnamed.contains("a program was not found on runner r"), "{unnamed}");
+        assert!(
+            unnamed.contains("a program was not found on runner r"),
+            "{unnamed}"
+        );
     }
 
     #[test]

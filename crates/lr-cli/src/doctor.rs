@@ -385,13 +385,15 @@ pub fn env_lookup<'a>(
 pub fn env_missing<'a>(
     unit: Option<&'a std::collections::BTreeMap<String, String>>,
 ) -> impl Fn(&str) -> String + 'a {
-    move |var| match unit {
+    move |var| {
+        match unit {
         Some(_) => format!(
             "the variable {var} is not set by the unit of the runner (its Environment and EnvironmentFile lines)"
         ),
         None => format!(
             "the variable {var} is not set in this shell, and the runner has no unit that sets it"
         ),
+    }
     }
 }
 

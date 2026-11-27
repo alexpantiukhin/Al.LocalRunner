@@ -389,6 +389,12 @@ pub enum RunnerAction {
         #[command(subcommand)]
         action: OutboxAction,
     },
+    /// The named caches of a runner.
+    Cache {
+        /// What to do with them.
+        #[command(subcommand)]
+        action: CacheAction,
+    },
     /// Runners of the pool (on the broker).
     List,
     /// Remove a runner and revoke its key (on the broker; asks for confirmation).
@@ -398,6 +404,23 @@ pub enum RunnerAction {
         /// Confirm without asking.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+/// `runner cache ...`.
+#[derive(Subcommand, Debug)]
+pub enum CacheAction {
+    /// Remove the named caches that no running job uses, to free the disk of a runner; without
+    /// `--older-than` all of them.
+    Clean {
+        /// Runner name; default: the only runner of this installation.
+        name: Option<String>,
+        /// Only the caches unused for more than this many days.
+        #[arg(long, value_name = "DAYS")]
+        older_than: Option<u64>,
+        /// Show what would be removed, remove nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 

@@ -296,7 +296,9 @@ impl Engine {
                 let mut line = crate::logs::step_line(&r);
                 if let Some(t) = self.tracks.get_mut(job) {
                     let runner = t.runner.clone().unwrap_or_default();
-                    if let Some(hint) = crate::logs::not_found_hint(&runner, r.exit_code, &t.last_output) {
+                    if let Some(hint) =
+                        crate::logs::not_found_hint(&runner, r.exit_code, &t.last_output)
+                    {
                         line.push_str(&hint);
                     }
                     t.last_output.clear();

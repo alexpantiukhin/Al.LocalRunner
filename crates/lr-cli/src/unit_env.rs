@@ -22,7 +22,11 @@ pub fn systemd_environment(home: &Path, unit: &str) -> Option<BTreeMap<String, S
         .filter(|p| p.extension().is_some_and(|x| x == "conf"))
         .collect();
     drop_ins.sort();
-    texts.extend(drop_ins.iter().filter_map(|p| std::fs::read_to_string(p).ok()));
+    texts.extend(
+        drop_ins
+            .iter()
+            .filter_map(|p| std::fs::read_to_string(p).ok()),
+    );
     let mut env = BTreeMap::new();
     for text in texts {
         for line in text.lines().map(str::trim) {
@@ -33,7 +37,10 @@ pub fn systemd_environment(home: &Path, unit: &str) -> Option<BTreeMap<String, S
                     }
                 }
             } else if let Some(rest) = line.strip_prefix("EnvironmentFile=") {
-                let path = rest.trim().trim_start_matches('-').replace("%h", &home.to_string_lossy());
+                let path = rest
+                    .trim()
+                    .trim_start_matches('-')
+                    .replace("%h", &home.to_string_lossy());
                 if let Ok(file) = std::fs::read_to_string(path) {
                     env.extend(file.lines().filter_map(assignment));
                 }
@@ -63,7 +70,10 @@ fn assignment(line: &str) -> Option<(String, String)> {
     if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
         return None;
     }
-    let (k, v) = line.strip_prefix("export ").unwrap_or(line).split_once('=')?;
+    let (k, v) = line
+        .strip_prefix("export ")
+        .unwrap_or(line)
+        .split_once('=')?;
     Some((k.trim().to_string(), unquote(v.trim()).to_string()))
 }
 

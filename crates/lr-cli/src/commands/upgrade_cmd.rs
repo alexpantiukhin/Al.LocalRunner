@@ -266,7 +266,10 @@ pub fn owner_env_commands(os: &str, pid: u32) -> Option<(Command, Option<Command
             )),
         )),
         "macos" => Some((
-            ("launchctl".into(), words(&["setenv", key, &pid.to_string()])),
+            (
+                "launchctl".into(),
+                words(&["setenv", key, &pid.to_string()]),
+            ),
             None,
         )),
         _ => None,

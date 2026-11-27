@@ -18,24 +18,51 @@ fn step(name: &str, state: StepState) -> StepView {
 fn the_events_of_the_job_become_one_line_each_and_other_jobs_say_nothing() {
     let job = JobId("j1".into());
     let other = JobId("j2".into());
-    let started = QueueEvent::JobStarted { job: job.clone(), runner: "r1".into() };
+    let started = QueueEvent::JobStarted {
+        job: job.clone(),
+        runner: "r1".into(),
+    };
     assert_eq!(event_line(&started, &job).unwrap(), "running on runner r1");
     assert!(event_line(&started, &other).is_none());
-    let running = QueueEvent::StepChanged { job: job.clone(), step: step("build", StepState::Running) };
+    let running = QueueEvent::StepChanged {
+        job: job.clone(),
+        step: step("build", StepState::Running),
+    };
     assert_eq!(event_line(&running, &job).unwrap(), "step build");
-    let passed = QueueEvent::StepChanged { job: job.clone(), step: step("build", StepState::Passed) };
-    assert!(event_line(&passed, &job).is_none(), "a step is reported once, when it starts");
-    let finished = QueueEvent::JobFinished { job: job.clone(), state: JobState::Failed, reason: None };
+    let passed = QueueEvent::StepChanged {
+        job: job.clone(),
+        step: step("build", StepState::Passed),
+    };
+    assert!(
+        event_line(&passed, &job).is_none(),
+        "a step is reported once, when it starts"
+    );
+    let finished = QueueEvent::JobFinished {
+        job: job.clone(),
+        state: JobState::Failed,
+        reason: None,
+    };
     assert_eq!(event_line(&finished, &job).unwrap(), "finished: failed");
 }
 
 #[test]
 fn the_queue_text_is_asked_again_when_the_queue_or_the_runners_changed() {
-    let finished = QueueEvent::JobFinished { job: JobId("j2".into()), state: JobState::Passed, reason: None };
+    let finished = QueueEvent::JobFinished {
+        job: JobId("j2".into()),
+        state: JobState::Passed,
+        reason: None,
+    };
     assert!(needs_reexplain(&finished));
-    assert!(needs_reexplain(&QueueEvent::RunnerOnline { name: "r".into() }));
-    assert!(needs_reexplain(&QueueEvent::RunnerOffline { name: "r".into() }));
-    let step = QueueEvent::StepChanged { job: JobId("j2".into()), step: step("x", StepState::Running) };
+    assert!(needs_reexplain(&QueueEvent::RunnerOnline {
+        name: "r".into()
+    }));
+    assert!(needs_reexplain(&QueueEvent::RunnerOffline {
+        name: "r".into()
+    }));
+    let step = QueueEvent::StepChanged {
+        job: JobId("j2".into()),
+        step: step("x", StepState::Running),
+    };
     assert!(!needs_reexplain(&step));
 }
 

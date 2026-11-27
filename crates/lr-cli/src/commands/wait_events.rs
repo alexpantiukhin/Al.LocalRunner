@@ -15,7 +15,9 @@ pub fn event_line(event: &QueueEvent, job: &JobId) -> Option<String> {
         QueueEvent::JobStarted { job: j, runner } if j == job => {
             Some(format!("running on runner {runner}"))
         }
-        QueueEvent::StepChanged { job: j, step } if j == job && step.state == StepState::Running => {
+        QueueEvent::StepChanged { job: j, step }
+            if j == job && step.state == StepState::Running =>
+        {
             Some(format!("step {}", step.name))
         }
         QueueEvent::JobFinished { job: j, state, .. } if j == job => {

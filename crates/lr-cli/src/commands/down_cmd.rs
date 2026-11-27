@@ -141,7 +141,8 @@ async fn runner(
         ControlReply::Failed { message } => Err(message),
         ControlReply::Link { .. }
         | ControlReply::Reloaded { .. }
-        | ControlReply::Dropped { .. } => Err("unexpected answer to down".into()),
+        | ControlReply::Dropped { .. }
+        | ControlReply::Cleaned { .. } => Err("unexpected answer to down".into()),
     }
 }
 
