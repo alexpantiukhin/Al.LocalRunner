@@ -399,15 +399,17 @@ pub async fn wait(layout: &Layout, job: &str, json: bool, full: bool) -> Result<
     let mut tail = Tail::new(WAIT_TAIL_LINES);
     let watch = super::wait_events::watch(layout, job.clone(), json);
     let ended = if full {
+        let mut sink = |text: &str| {
+            let _ = stderr.write_all(text.as_bytes());
+        };
         tokio::select! {
-            e = follow_to_end(&client, &job, &redactor, &mut |text| {
-                let _ = stderr.write_all(text.as_bytes());
-            }) => e,
+            e = follow_to_end(&client, &job, &redactor, &mut sink) => e,
             () = watch => unreachable!("the watch never ends"),
         }
     } else {
+        let mut sink = |text: &str| tail.push(text);
         tokio::select! {
-            e = follow_to_end(&client, &job, &redactor, &mut |text| tail.push(text)) => e,
+            e = follow_to_end(&client, &job, &redactor, &mut sink) => e,
             () = watch => unreachable!("the watch never ends"),
         }
     };

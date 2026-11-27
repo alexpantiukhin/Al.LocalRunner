@@ -66,7 +66,7 @@ pub async fn watch(layout: &Layout, job: JobId, json: bool) {
         return std::future::pending().await;
     }
     let mut last = String::new();
-    let mut ask = |state: &mut String, text: String| {
+    let ask = |state: &mut String, text: String| {
         if *state != text {
             print(&job, &text, json);
             *state = text;
