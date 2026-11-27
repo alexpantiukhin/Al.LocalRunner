@@ -62,7 +62,7 @@ Each is one command, run first with `--dry-run` (step 7 of the skill).
 Runner keys, `localrunner config set runner:<name> <key> <value>` (the value is TOML; other text is a string):
 - `platforms`, `tags`: a list such as `'["a", "b"]'`; it replaces the whole list, so read it first with `localrunner config get runner:<name> tags`.
 - `programs.<name>`: `{}` or `'{ check = "..." }'`.
-- `secret.<name>.from`: `env:VAR`, or `file:/absolute/path` (a file with the value, one trailing line break dropped); a runner that becomes an OS service does not see your environment, so give it `file:`.
+- `secret.<name>.from`: `env:VAR`, or `file:/absolute/path` (a file with the value, one trailing line break dropped); a runner that becomes an OS service does not see your environment, so give it `file:`. An `env:` variable that only your shell has is lost when the runner is restarted from another shell (`upgrade` restarts a runner through its systemd user unit when `autostart on` made one, so an `EnvironmentFile` of the unit applies); the runner warns at start about a secret whose variable is unset or whose file is missing.
 - `job_env.<NAME>`: a value; `job_env.inherit`: a list of exact names copied from the runner process at the start of each job (`'["ProgramFiles(x86)"]'`).
 - `service.<name>.<key>` with the keys `start`, `ready_check`, `stop`, `ready_timeout_s`, `memory_mb`, `lifetime`, `idle_timeout_s`, `max_lifetime_s`, `reuse`.
 
