@@ -194,6 +194,11 @@ impl BrokerStore for SqliteBrokerStore {
         self.db.run(move |c| prune::prune(c, &dir, limits)).await
     }
 
+    async fn forget_run(&self, key: &JobKey) -> Result<bool, StoreError> {
+        let (key, dir) = (key.clone(), self.db.dir());
+        self.db.run(move |c| prune::forget(c, &dir, &key)).await
+    }
+
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {
         self.db.run(move |c| registry::issue_code(c, code)).await
     }

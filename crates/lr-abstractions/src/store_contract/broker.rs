@@ -2,8 +2,8 @@
 
 use super::fixtures::{at, intake, T0};
 use crate::store::{
-    Admission, Applied, BrokerStore, JobKey, JobSpecRow, LogAppend, Placement, StepUpdate,
-    StoreError, Transition, LOG_TRUNCATED_MARK,
+    Admission, Applied, BrokerStore, JobKey, JobSpecRow, LogAppend, OutboxKind, Placement,
+    StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState};
 
@@ -462,6 +462,32 @@ pub async fn requeue_starts_a_new_stream_for_the_next_runner(store: &dyn BrokerS
     assert!(store.accept_seq(&key, Inbound::Runner, 1).await.unwrap());
     assert_eq!(store.next_seq_to_runner(&key).await.unwrap(), 1);
     assert_eq!(store.last_seq(&key, Inbound::Hub).await.unwrap(), 1);
+}
+
+/// A forgotten final run takes its pending results with it, so the same job can be accepted
+/// again and its streams start from 1; a run that is not final stays.
+pub async fn forgotten_final_run_can_be_accepted_again_with_streams_from_one(
+    store: &dyn BrokerStore,
+) {
+    use crate::store::Inbound;
+    let key = queued(store, "c1", "j1").await;
+    assert!(!store.forget_run(&key).await.unwrap());
+    store
+        .transition(&key, Transition::to(JobState::Cancelled, at(10)))
+        .await
+        .unwrap();
+    let job = key.job.clone();
+    store.accept_seq(&key, Inbound::Hub, 1).await.unwrap();
+    let pushed = |n| store.push_result("c1", &job, OutboxKind::JobResult, "x".into(), at(n), 1 << 20);
+    assert_eq!(pushed(11).await.unwrap(), Some(1));
+    assert_eq!(pushed(12).await.unwrap(), Some(2));
+    assert!(store.forget_run(&key).await.unwrap());
+    assert!(store.job(&key).await.unwrap().is_none());
+    assert!(!store.forget_run(&key).await.unwrap());
+    let again = queued(store, "c1", "j1").await;
+    assert_eq!(again, key);
+    assert_eq!(store.last_seq(&key, Inbound::Hub).await.unwrap(), 0);
+    assert_eq!(pushed(13).await.unwrap(), Some(1));
 }
 
 /// A tail read returns only the last bytes of the log, and the whole log when it is shorter.

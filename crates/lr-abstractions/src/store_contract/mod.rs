@@ -79,6 +79,7 @@ macro_rules! broker_store_contract {
             broker::unstarted_granted_run_can_be_requeued,
             broker::started_run_cannot_be_requeued,
             broker::requeue_starts_a_new_stream_for_the_next_runner,
+            broker::forgotten_final_run_can_be_accepted_again_with_streams_from_one,
             broker::step_updates_stop_at_step_end_and_run_end,
             seq::broker_seq_counted_per_run_and_direction,
             seq::broker_seq_gap_is_refused,
