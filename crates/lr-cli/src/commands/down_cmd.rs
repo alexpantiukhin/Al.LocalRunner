@@ -318,6 +318,10 @@ pub trait Roles: Send + Sync {
     async fn running_jobs(&self) -> Option<Vec<String>> {
         None
     }
+    /// How many orders the hub holds (running and waiting), or `None` when that is not known.
+    async fn hub_orders(&self) -> Option<usize> {
+        self.running_jobs().await.map(|l| l.len())
+    }
     /// The running jobs with their runners and run times, or `None` when they are not known.
     async fn running_job_list(&self) -> Option<Vec<super::upgrade_jobs::RunningJob>> {
         None
@@ -440,6 +444,13 @@ impl Roles for IpcRoles<'_> {
         seen.note.is_none().then_some(seen.running_jobs)
     }
 
+    async fn hub_orders(&self) -> Option<usize> {
+        let seen = super::upgrade_jobs::activity(self.layout).await;
+        seen.note
+            .is_none()
+            .then_some(seen.running.len() + seen.queued.len())
+    }
+
     async fn runner_answers(&self, name: &str) -> bool {
         let address = self.layout.runner_ipc(&self.principal, name);
         answers(&address, IpcChannel::RunnerControl).await
@@ -512,6 +523,18 @@ pub async fn down_cli(
     if !cancel_confirmed(cancel, yes, &mut console)? {
         return Ok(1);
     }
+    let hub_named = names.is_empty() || normalized(names.clone()).iter().any(|n| n == "hub");
+    if let (Some(within), false, true) = (wait, cancel, hub_named) {
+        eprintln!("waiting for the hub to finish its orders (up to {} s)", within.as_secs());
+        let left = wait_for_hub_orders(&roles, within).await;
+        if left > 0 {
+            eprintln!(
+                "{left} order(s) still on the hub after {} s; nothing was stopped (raise --wait-timeout or use --cancel)",
+                within.as_secs()
+            );
+            return Ok(1);
+        }
+    }
     let code = down_with(layout, names.clone(), cancel, &roles, ctrl_c()).await?;
     match wait {
         Some(within) => Ok(wait_for_exit(layout, names, code, within, &roles).await),
@@ -579,6 +602,19 @@ fn normalized(names: Vec<String>) -> Vec<String> {
 
 /// How long `down --wait` waits for the stopped runners to exit when `--wait-timeout` is not given.
 pub const DEFAULT_EXIT_WAIT: Duration = Duration::from_secs(60);
+
+/// `down hub --drain --wait`: polls until the hub holds no order, at most `within`; the number
+/// of orders left (0 when none, or when they are not known).
+pub async fn wait_for_hub_orders(roles: &dyn Roles, within: Duration) -> usize {
+    let start = tokio::time::Instant::now();
+    loop {
+        let left = roles.hub_orders().await.unwrap_or(0);
+        if left == 0 || start.elapsed() >= within {
+            return left;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+}
 
 /// Polls until none of the runners `names` answers on its control channel any more; the runners
 /// that still answered when `within` had passed (empty when all have exited).

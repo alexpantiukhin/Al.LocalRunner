@@ -295,7 +295,8 @@ pub enum Command {
         /// Confirm `--cancel` without asking.
         #[arg(long)]
         yes: bool,
-        /// Return only when the stopped runners have exited; name the ones that did not.
+        /// Return only when the stopped runners have exited (name the ones that did not); without
+        /// `--cancel` first wait until the hub holds no order.
         #[arg(long)]
         wait: bool,
         /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
