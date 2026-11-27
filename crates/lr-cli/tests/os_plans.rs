@@ -2262,3 +2262,19 @@ fn a_background_role_lets_go_of_its_standard_streams_unless_a_service_manager_ow
     assert!(!releases_standard_streams(|n| (n == "XPC_SERVICE_NAME").then(|| "com.al-localrunner.hub".to_string())));
     assert!(releases_standard_streams(|n| (n == "XPC_SERVICE_NAME").then(|| "0".to_string())));
 }
+
+#[test]
+fn the_launchd_agent_of_a_role_is_found_by_its_command_line() {
+    use lr_cli::os_service::autostart::agent_for_argv;
+    let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let home = std::path::Path::new("/Users/me");
+    let (label, plist) = agent_for_argv(&argv(&["hub", "run", "--background"]), home).unwrap();
+    assert_eq!(label, "com.al-localrunner.hub");
+    assert_eq!(
+        plist,
+        std::path::Path::new("/Users/me/Library/LaunchAgents/com.al-localrunner.hub.plist")
+    );
+    let (label, _) = agent_for_argv(&argv(&["runner", "run", "--name", "r1"]), home).unwrap();
+    assert_eq!(label, "com.al-localrunner.runner-r1");
+    assert!(agent_for_argv(&argv(&["broker", "run"]), home).is_none());
+}

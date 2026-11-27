@@ -185,8 +185,9 @@ pub fn installed_version(path: &Path) -> Option<Version> {
 }
 
 /// A starter of roles for `upgrade`: a role that has a systemd user unit (`autostart on`) is
-/// started through `systemctl --user start`, so it gets the unit's `EnvironmentFile` and
-/// the service manager keeps owning it; any other role is started as a detached process.
+/// started through `systemctl --user start`, and one that has a launchd agent on macOS through
+/// `launchctl start`, so it gets the environment of its unit or agent and the service manager
+/// keeps owning it; any other role is started as a detached process.
 pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
     let plain = starter(exe);
     move |argv: &[String]| {
@@ -210,6 +211,23 @@ pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> 
                         )))
                     };
                 }
+            }
+        }
+        if cfg!(target_os = "macos") {
+            let agent = crate::os_service::home_dir()
+                .ok()
+                .and_then(|h| crate::os_service::autostart::agent_for_argv(argv, &h));
+            if let Some((label, _)) = agent.filter(|(_, p)| p.is_file()) {
+                let status = std::process::Command::new("launchctl")
+                    .args(["start", &label])
+                    .status()?;
+                return if status.success() {
+                    Ok(0)
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "launchctl start {label} failed"
+                    )))
+                };
             }
         }
         plain(argv)
