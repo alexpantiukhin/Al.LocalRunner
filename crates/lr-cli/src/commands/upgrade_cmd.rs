@@ -344,6 +344,24 @@ pub fn offers_service_update(relay: bool, dry_run: bool, broker_is_service: bool
     !relay && !dry_run && broker_is_service
 }
 
+/// Whether the offer to update the broker service follows an `upgrade` that ended as
+/// `result`: after a finished run, also one that ended with a warning (a role that did not come
+/// back is no reason to leave the service old), not after a refusal.
+pub fn offers_service_update_after(result: &Result<i32, String>) -> bool {
+    result.is_ok()
+}
+
+/// The last line of `upgrade` while the broker service (`old`, the version its own copy of
+/// the binary prints) is not the version being installed (`new`); `command` updates it.
+pub fn service_warning(old: Option<&str>, new: &str, command: &str) -> Option<String> {
+    (old != Some(new)).then(|| {
+        format!(
+            "warn  broker service: {}, the binary is {new}; update it: {command}",
+            old.unwrap_or("version unknown")
+        )
+    })
+}
+
 /// `upgrade` as the command line runs it: refused as root or administrator unless
 /// `allow_elevated`.
 pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> {
