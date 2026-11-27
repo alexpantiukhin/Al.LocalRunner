@@ -2,7 +2,6 @@
 //! that are older than the binary it installs and offers to update them through the CLI of the
 //! agent (Claude Code, Codex).
 
-use std::io::Write;
 use std::path::PathBuf;
 
 /// A coding agent that has a plugin CLI.

@@ -356,7 +356,7 @@ fn a_service_older_than_the_binary_ends_the_upgrade_with_a_warning_that_names_th
 #[test]
 fn the_offer_to_update_the_service_is_made_also_when_the_upgrade_ended_with_a_warning() {
     use lr_cli::commands::upgrade_cmd::offers_service_update_after;
-    assert!(offers_service_update_after(Ok(0)));
-    assert!(offers_service_update_after(Ok(1)));
-    assert!(!offers_service_update_after(Err("refused".to_string())));
+    assert!(offers_service_update_after(&Ok(0)));
+    assert!(offers_service_update_after(&Ok(1)));
+    assert!(!offers_service_update_after(&Err("refused".to_string())));
 }
