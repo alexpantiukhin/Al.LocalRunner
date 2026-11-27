@@ -36,8 +36,8 @@ pub use policy::{
 };
 pub use predict::{earliest_start, pick_next, Plan, QueueState};
 pub use profile::{
-    resolve_for_platform, PlatformOverride, Profile, ProfileVariant, Program, StepSpec, VariantWhen,
-    ZoneSteps,
+    resolve_for_platform, PlatformOverride, Profile, ProfileVariant, Program, StepSpec,
+    VariantWhen, ZoneSteps,
 };
 pub use profile_args::ArgSpec;
 pub use profile_bind::{bind_args, preview_args};

@@ -208,8 +208,11 @@ async fn without_a_matching_variant_the_steps_of_the_zone_are_kept() {
     let h = Harness::start(POLICY);
     let mut runner = h.member_runner("other", "10.0.0.8", linux()).await;
     let mut hub = h.member_hub("hub", "dev", "10.0.0.5").await;
-    hub.send(&variant_order("a", vec![variant("mac", &["macos"], "mac-steps")]))
-        .await;
+    hub.send(&variant_order(
+        "a",
+        vec![variant("mac", &["macos"], "mac-steps")],
+    ))
+    .await;
     hub.accepted().await;
     let assign = runner.assign().await;
     assert_eq!(assign.spec.steps, vec![step("lan")]);

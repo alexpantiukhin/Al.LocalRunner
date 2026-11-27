@@ -531,6 +531,7 @@ A profile has either `command` or `steps`. A failed step stops the job; `continu
 | `services` | no | empty | runner services the job needs |
 | `secrets` | no | empty | secret names (never values); the policy decides who may request them |
 | `zone` / `zones` | no | every zone | the farthest allowed zone, or the list of allowed zones; never both |
+| `variant.<name>` | no | none | `[profile.X.variant.<name>]` with `when = { zone = [...], os = [...], tags = [...], programs = [...], runner = [...] }` and `command` or `steps`: the steps of the runners that match every key given (each key a list, any value of it); the first match in name order wins, a profile without a match keeps the steps of the runner's zone or the common steps; a variant keeps the step names of the common steps. Use it when one zone holds machines that need different commands (for example Windows and Linux runners in `remote`) |
 | `needs` | no | none | name of a `[needs.<name>]` set to inherit from; the profile's own fields win |
 | `args.<name>` | no | none | a named argument filled with `--arg name=value` |
 

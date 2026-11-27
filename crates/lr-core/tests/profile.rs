@@ -550,7 +550,10 @@ fn a_variant_matches_when_every_key_has_one_of_its_values() {
 fn the_zones_of_variants_have_steps() {
     let p = &parse_profiles(VARIANTS).unwrap()[0];
     let zones: Vec<Zone> = p.zone_steps_effective().keys().copied().collect();
-    assert!(zones.contains(&Zone::Lan) && zones.contains(&Zone::Remote), "{zones:?}");
+    assert!(
+        zones.contains(&Zone::Lan) && zones.contains(&Zone::Remote),
+        "{zones:?}"
+    );
 }
 
 #[test]
