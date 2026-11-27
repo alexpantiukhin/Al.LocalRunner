@@ -294,16 +294,27 @@ impl Engine {
             }
             BrokerToHub::StepResult(r) => {
                 let mut line = crate::logs::step_line(&r);
+                let mut hinted = None;
                 if let Some(t) = self.tracks.get_mut(job) {
                     let runner = t.runner.clone().unwrap_or_default();
                     if let Some(hint) =
                         crate::logs::not_found_hint(&runner, r.exit_code, &t.last_output)
                     {
                         line.push_str(&hint);
+                        hinted = Some(hint);
                     }
                     t.last_output.clear();
                 }
                 self.log_copy(job, &line).await;
+                if let Some(text) = hinted {
+                    self.notify(
+                        job,
+                        &CliReply::Output {
+                            job: job.clone(),
+                            text,
+                        },
+                    );
+                }
             }
             BrokerToHub::JobResult(r) => {
                 if let Some(d) = &r.detail {

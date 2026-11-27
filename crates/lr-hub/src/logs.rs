@@ -126,7 +126,7 @@ pub(crate) fn keep_tail(tail: &mut String, chunk: &str) {
 /// The line that follows a step that ended with exit code 127, the shell's "command not found":
 /// the runner did not have a program. It names the program when the output of the step says
 /// which (`sh: 1: git: not found`, `bash: git: command not found`) and says how to declare it.
-pub(crate) fn not_found_hint(runner: &str, exit_code: Option<i32>, output: &str) -> Option<String> {
+pub fn not_found_hint(runner: &str, exit_code: Option<i32>, output: &str) -> Option<String> {
     if exit_code != Some(127) {
         return None;
     }

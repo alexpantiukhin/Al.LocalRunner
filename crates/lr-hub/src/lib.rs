@@ -15,6 +15,7 @@ mod inbound;
 mod ipc_server;
 mod limits;
 mod logs;
+pub use logs::not_found_hint;
 mod metrics;
 mod orders;
 mod outbox;

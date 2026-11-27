@@ -75,7 +75,27 @@ pub fn hint_of(log: &str) -> Option<String> {
     })
 }
 
+/// The hint for a finished order one of whose steps ended with exit code 127: the program the
+/// shell named in the last lines of the log, and how to declare it. The broker's log has no
+/// hint of the hub, so it is made here from the same rule.
 async fn log_hint(layout: &Layout, client: &IpcClient, job: &JobId, broker: &str) -> Option<String> {
+    let detail = match read(
+        client,
+        broker,
+        ReadRequest::HistoryShow {
+            job: job.clone(),
+            client: None,
+        },
+    )
+    .await
+    .ok()?
+    {
+        ReadReply::Job(d) => *d,
+        _ => return None,
+    };
+    if !detail.steps.iter().any(|s| s.exit_code == Some(127)) {
+        return None;
+    }
     let q = super::log_cmd::LogQuery {
         job: job.clone(),
         step: None,
@@ -87,7 +107,8 @@ async fn log_hint(layout: &Layout, client: &IpcClient, job: &JobId, broker: &str
     super::log_cmd::find_log(client, Some(broker), &q, &redactor, &mut |t| text.push_str(t))
         .await
         .ok()?;
-    hint_of(&text)
+    let runner = detail.summary.runner.unwrap_or_default();
+    lr_hub::not_found_hint(&runner, Some(127), &text).and_then(|h| hint_of(&h))
 }
 
 /// `explain <job>`.
