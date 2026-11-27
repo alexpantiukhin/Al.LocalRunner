@@ -75,7 +75,7 @@ pub fn hint_of(log: &str) -> Option<String> {
     })
 }
 
-async fn log_hint(client: &IpcClient, job: &JobId, broker: &str) -> Option<String> {
+async fn log_hint(layout: &Layout, client: &IpcClient, job: &JobId, broker: &str) -> Option<String> {
     let q = super::log_cmd::LogQuery {
         job: job.clone(),
         step: None,
@@ -83,7 +83,7 @@ async fn log_hint(client: &IpcClient, job: &JobId, broker: &str) -> Option<Strin
         follow: false,
     };
     let mut text = String::new();
-    let redactor = std::sync::Arc::new(lr_obs::Redactor::default());
+    let redactor = super::log_cmd::cli_redactor(layout);
     super::log_cmd::find_log(client, Some(broker), &q, &redactor, &mut |t| text.push_str(t))
         .await
         .ok()?;
@@ -97,7 +97,7 @@ pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String>
     let found = explain_with_detail(&client, &job, a.broker.as_deref(), a.client).await;
     let hint = match &found {
         Ok((broker, text, _)) if text.starts_with("finished") => {
-            log_hint(&client, &job, broker).await
+            log_hint(layout, &client, &job, broker).await
         }
         _ => None,
     };
