@@ -190,7 +190,10 @@ fn describe(from: &SecretFrom) -> String {
 pub fn list_lines(layout: &Layout, runner: Option<&str>) -> Result<Vec<String>, String> {
     let runners = match runner {
         Some(r) => vec![r.to_string()],
-        None => layout.runner_names(),
+        None => match layout.runner_names() {
+            names if names.is_empty() => vec!["default".to_string()],
+            names => names,
+        },
     };
     let mut lines = Vec::new();
     for name in runners {

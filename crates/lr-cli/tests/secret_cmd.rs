@@ -145,3 +145,23 @@ async fn remove_takes_the_entry_out_and_deletes_its_file() {
     let toml = std::fs::read_to_string(layout.runner_dir("r1").join("runner.toml")).unwrap();
     assert!(!toml.contains("TOKEN"), "{toml}");
 }
+
+#[tokio::test]
+async fn list_without_runners_reads_the_template_every_runner_will_copy() {
+    let dir = TempDir::new("secret-template");
+    let root = dir.path().join("state");
+    let config = dir.path().join("config");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let layout = Layout::new(root, config.clone());
+    std::fs::write(
+        config.join("runner.toml"),
+        format!("{RUNNER}\n[secret.TOKEN]\nfrom = \"env:LR_SURELY_UNSET_VARIABLE\"\n"),
+    )
+    .unwrap();
+    let lines = list_lines(&layout, None).unwrap().join("\n");
+    assert!(
+        lines.contains("default  TOKEN  env:LR_SURELY_UNSET_VARIABLE"),
+        "{lines}"
+    );
+}
