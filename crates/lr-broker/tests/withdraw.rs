@@ -102,3 +102,31 @@ async fn a_returned_order_is_closed_as_moved_in_the_history_of_this_broker() {
     assert_eq!(j2.state, lr_core::JobState::Cancelled);
     assert_eq!(j2.cancelled_by.as_deref(), Some("broker"));
 }
+
+#[tokio::test]
+async fn an_order_placed_again_after_it_was_returned_runs_here_with_a_stream_of_its_own() {
+    let h = Harness::start("");
+    let mut r = h.local_runner("alex", "lr1", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    hub.until_runner("local:lr1", true).await;
+    hub.send(&order("j1", req(512, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job.0, "j1");
+    hub.send(&order("j2", req(512, 1, 60))).await;
+    hub.accepted().await;
+    hub.send(&withdraw("j2")).await;
+    returned(&mut hub).await;
+    r.send(&started("j1", 1)).await;
+    r.send(&result("j1", 2, lr_core::JobState::Passed, 0)).await;
+    hub.send(&order("j2", req(512, 1, 60))).await;
+    hub.accepted().await;
+    assert_eq!(r.assign().await.job.0, "j2");
+    r.send(&started("j2", 1)).await;
+    loop {
+        let s = hub.started_notice().await;
+        if s.job.0 == "j2" {
+            assert_eq!(s.seq, 1);
+            break;
+        }
+    }
+}
