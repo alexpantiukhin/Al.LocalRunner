@@ -151,12 +151,36 @@ pub fn parse_profiles(text: &str) -> Result<Vec<Profile>, ProfileError> {
     file.profile
         .into_iter()
         .map(|(name, value)| {
+            check_zone_variant_keys(&name, &value)?;
             let raw: RawProfile = value
                 .try_into()
                 .map_err(|e: toml::de::Error| ProfileError::invalid(&name, "", e.to_string()))?;
             build(name, raw, &sets)
         })
         .collect()
+}
+
+/// A zone variant takes only `command` or `steps`: names the other key instead of the
+/// internal "did not match any variant" of the untagged `zone` value.
+fn check_zone_variant_keys(name: &str, profile: &toml::Value) -> Result<(), ProfileError> {
+    let Some(zones) = profile.get("zone").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for (zone, variant) in zones {
+        let Some(table) = variant.as_table() else {
+            continue;
+        };
+        if let Some(key) = table.keys().find(|k| !matches!(k.as_str(), "command" | "steps")) {
+            return Err(ProfileError::invalid(
+                name,
+                &format!("zone.{zone}"),
+                format!(
+                    "unknown key `{key}` (a zone variant takes only `command` or `steps`; the rest comes from the profile)"
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn build(

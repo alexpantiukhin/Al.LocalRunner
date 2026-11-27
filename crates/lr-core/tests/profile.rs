@@ -145,6 +145,22 @@ zone = \"moon\"
 }
 
 #[test]
+fn a_zone_variant_with_another_key_names_the_key_and_what_a_variant_takes() {
+    let text = "[profile.p]
+timeout_s = 9
+command = \"a\"
+[profile.p.zone.remote]
+command = \"b\"
+timeout_s = 5
+";
+    let err = parse_profiles(text).unwrap_err().to_string();
+    assert!(err.contains("zone.remote"), "{err}");
+    assert!(err.contains("unknown key `timeout_s`"), "{err}");
+    assert!(err.contains("takes only `command` or `steps`"), "{err}");
+    assert!(!err.contains("RawZone"), "{err}");
+}
+
+#[test]
 fn unknown_key_rejected_with_profile_name() {
     let text = "[profile.p]
 timeout_s = 9
