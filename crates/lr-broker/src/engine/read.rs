@@ -423,6 +423,26 @@ impl Engine {
             None => finished_text(&rec.job, a.sees_fields()),
         };
         let text = match self.find(key) {
+            Some(j) if j.runner.is_none() && a.sees_fields() => {
+                let mut refused: Vec<String> = self
+                    .runner_views()
+                    .iter()
+                    .filter_map(|view| {
+                        lr_core::routing::suitable(&j.entry, view, &self.site)
+                            .err()
+                            .map(|m| format!("{}: {m}", view.name))
+                    })
+                    .collect();
+                refused.sort();
+                if refused.is_empty() {
+                    text
+                } else {
+                    format!("{text}; runners that do not suit it: {}", refused.join("; "))
+                }
+            }
+            _ => text,
+        };
+        let text = match self.find(key) {
             Some(j) if a.sees_fields() && !j.spec.labels.is_empty() => {
                 format!("{text}; profile labels: {}", j.spec.labels.join(", "))
             }
