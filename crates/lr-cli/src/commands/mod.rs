@@ -472,7 +472,7 @@ async fn secret(
     );
     match action {
         SecretAction::List { runner } => {
-            for line in list_lines(layout, runner.as_deref())? {
+            for line in list_lines(layout, runner.as_deref()).await? {
                 println!("{line}");
             }
             Ok(0)

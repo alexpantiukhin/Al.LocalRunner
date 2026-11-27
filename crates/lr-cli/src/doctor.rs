@@ -349,15 +349,28 @@ pub fn secret_checks(
 }
 
 /// [`secret_checks`] against the environment of the unit that starts the runner (`unit`, see
-/// [`crate::unit_env`]) when there is one, which is what the runner gets; without a unit
-/// against the environment of this shell, and the text says so.
+/// [`crate::unit_env`]) when there is one; without a unit against the environment of this shell,
+/// and the text says so.
 pub fn secret_checks_in(
     name: &str,
     sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
     unit: Option<&std::collections::BTreeMap<String, String>>,
 ) -> Vec<Check> {
+    let env = match unit {
+        Some(map) => crate::unit_env::RunnerEnv::Unit(map.clone()),
+        None => crate::unit_env::RunnerEnv::Shell,
+    };
+    secret_checks_for(name, sources, &env)
+}
+
+/// [`secret_checks`] against `env`, the environment the runner has.
+pub fn secret_checks_for(
+    name: &str,
+    sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
+    env: &crate::unit_env::RunnerEnv,
+) -> Vec<Check> {
     crate::secrets::ConfigSecrets::new(sources.clone())
-        .unavailable_in(&env_lookup(unit), &env_missing(unit))
+        .unavailable_in(&|v| env.lookup(v), &|v| env.missing(v))
         .into_iter()
         .map(|(secret, why)| {
             check(
@@ -371,33 +384,7 @@ pub fn secret_checks_in(
         .collect()
 }
 
-/// The lookup of an `env:` variable for a runner: its unit's variables, else this shell's.
-pub fn env_lookup<'a>(
-    unit: Option<&'a std::collections::BTreeMap<String, String>>,
-) -> impl Fn(&str) -> Option<String> + 'a {
-    move |var| match unit {
-        Some(map) => map.get(var).cloned(),
-        None => std::env::var(var).ok(),
-    }
-}
-
-/// The reason text for an unset variable, naming the environment that was looked at.
-pub fn env_missing<'a>(
-    unit: Option<&'a std::collections::BTreeMap<String, String>>,
-) -> impl Fn(&str) -> String + 'a {
-    move |var| {
-        match unit {
-        Some(_) => format!(
-            "the variable {var} is not set by the unit of the runner (its Environment and EnvironmentFile lines)"
-        ),
-        None => format!(
-            "the variable {var} is not set in this shell, and the runner has no unit that sets it"
-        ),
-    }
-    }
-}
-
-fn runners(layout: &Layout, out: &mut Vec<Check>) {
+async fn runners(layout: &Layout, out: &mut Vec<Check>) {
     let host = crate::host::resources();
     for name in layout.runner_names() {
         let dir = layout.runner_dir(&name);
@@ -410,8 +397,8 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
                 let env_notes = cfg.env_notes(cfg!(windows), |n| std::env::var(n).ok());
-                let unit = crate::unit_env::runner_unit_environment(&name);
-                let secrets = secret_checks_in(&name, &cfg.secrets, unit.as_ref());
+                let env = crate::unit_env::runner_env(layout, &name).await;
+                let secrets = secret_checks_for(&name, &cfg.secrets, &env);
                 if problems.is_empty()
                     && cfg.warnings.is_empty()
                     && env_notes.is_empty()
@@ -803,7 +790,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     let mut out = Vec::new();
     basics(layout, elevated, &mut out);
     policy(layout, &mut out).await;
-    runners(layout, &mut out);
+    runners(layout, &mut out).await;
     same_user(layout, &mut out);
     autostart(layout, &mut out);
     brokers(layout, &mut out).await;

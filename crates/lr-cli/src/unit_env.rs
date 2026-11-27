@@ -2,7 +2,9 @@
 //! compare an `env:` secret with for a runner that a unit starts, since the shell that runs
 //! them is not the environment of the runner.
 
-use std::collections::BTreeMap;
+use crate::paths::Layout;
+use lr_proto::{ControlReply, IpcChannel, RunnerControl};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// The variables set by the unit `unit` under `home/.config/systemd/user`: its
@@ -112,4 +114,71 @@ fn words(text: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// The environment an `env:` secret of a runner is checked against, the first of these that can
+/// be read: the running process itself (names only, asked over its control channel), the
+/// variables its systemd unit sets, this shell.
+pub enum RunnerEnv {
+    /// Names of the non-empty variables of the running runner process.
+    Process(BTreeSet<String>),
+    /// What the unit of the runner sets.
+    Unit(BTreeMap<String, String>),
+    /// The shell that runs the command: the runner is not running and has no unit.
+    Shell,
+}
+
+impl RunnerEnv {
+    /// A value (a placeholder for a process, which gives names only) of `var`, when it is set.
+    pub fn lookup(&self, var: &str) -> Option<String> {
+        match self {
+            RunnerEnv::Process(names) => names.contains(var).then(|| "set".to_string()),
+            RunnerEnv::Unit(map) => map.get(var).cloned(),
+            RunnerEnv::Shell => std::env::var(var).ok(),
+        }
+    }
+
+    /// The reason text for `var` unset or empty, naming the environment that was looked at.
+    pub fn missing(&self, var: &str) -> String {
+        match self {
+            RunnerEnv::Process(_) => {
+                format!("the variable {var} is not set in the runner process")
+            }
+            RunnerEnv::Unit(_) => format!(
+                "the variable {var} is not set by the unit of the runner (its Environment and EnvironmentFile lines), and the runner is not running"
+            ),
+            RunnerEnv::Shell => format!(
+                "the variable {var} is not set in this shell (the runner is not running, its unit does not set it)"
+            ),
+        }
+    }
+}
+
+/// The names of the variables of the running runner `name`; `None` when it does not run, is
+/// of another user or is too old to answer.
+pub async fn process_variables(layout: &Layout, name: &str) -> Option<BTreeSet<String>> {
+    let principal = lr_net::current_os_principal().ok()?;
+    let address = layout.runner_ipc(&principal, name);
+    let c = crate::ipc_client::IpcClient::connect(&address, IpcChannel::RunnerControl)
+        .await
+        .ok()?;
+    let reply = c
+        .call::<_, ControlReply>(&RunnerControl::Environment)
+        .await;
+    c.close().await;
+    match reply {
+        Ok(ControlReply::Variables { names }) => Some(names.into_iter().collect()),
+        _ => None,
+    }
+}
+
+/// The [`RunnerEnv`] of runner `name`.
+pub async fn runner_env(layout: &Layout, name: &str) -> RunnerEnv {
+    if let Some(names) = process_variables(layout, name).await {
+        return RunnerEnv::Process(names);
+    }
+    match runner_unit_environment(name) {
+        Some(map) => RunnerEnv::Unit(map),
+        None => RunnerEnv::Shell,
+    }
 }

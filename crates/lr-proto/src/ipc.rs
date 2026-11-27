@@ -472,6 +472,9 @@ pub enum RunnerControl {
         #[serde(default)]
         dry_run: bool,
     },
+    /// Ask for the names of the environment variables of the runner process that have a value
+    /// (never the values); answered with [`ControlReply::Variables`].
+    Environment,
     /// Ask whether the runner is connected to its broker.
     Status,
 }
@@ -504,6 +507,12 @@ pub enum ControlReply {
         entries: u64,
         /// Their size in bytes.
         bytes: u64,
+    },
+    /// The names of the non-empty environment variables of the runner process (answer to
+    /// [`RunnerControl::Environment`]).
+    Variables {
+        /// Names, sorted.
+        names: Vec<String>,
     },
     /// The state of the link to the broker.
     Link {
@@ -578,9 +587,9 @@ message!(
     local: true,
     ["ok", "policy", "join_code", "names", "failed"]
 );
-message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "clean_cache", "status"]);
+message!(RunnerControl, local: true, ["down", "logging_reload", "reload", "drop_outbox", "clean_cache", "environment", "status"]);
 message!(DashboardRequest, local: true, ["link", "stop"]);
 message!(DashboardReply, local: true, ["link", "stopping", "failed"]);
 message!(IpcOpen, local: true, ["hello"]);
 message!(IpcOpenReply, local: true, ["ready", "refused"]);
-message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "cleaned", "link"]);
+message!(ControlReply, local: true, ["ok", "failed", "reloaded", "dropped", "cleaned", "variables", "link"]);

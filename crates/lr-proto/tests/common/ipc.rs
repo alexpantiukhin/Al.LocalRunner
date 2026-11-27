@@ -185,6 +185,7 @@ pub fn controls() -> Vec<RunnerControl> {
             older_than_days: None,
             dry_run: false,
         },
+        RunnerControl::Environment,
         RunnerControl::Status,
     ]
 }
@@ -199,6 +200,9 @@ pub fn control_replies() -> Vec<ControlReply> {
             restart_required: vec!["allow_elevated".into()],
         },
         ControlReply::Dropped { closed: 3 },
+        ControlReply::Variables {
+            names: vec!["PATH".into()],
+        },
         ControlReply::Cleaned {
             entries: 2,
             bytes: 1024,

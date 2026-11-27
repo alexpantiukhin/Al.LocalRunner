@@ -47,3 +47,20 @@ fn a_unit_that_does_not_exist_has_no_environment_and_a_missing_optional_file_is_
     let home = unit(&dir);
     assert!(systemd_environment(&home, "u.service").is_some());
 }
+
+#[test]
+fn a_running_process_is_checked_by_names_and_the_text_names_the_runner_process() {
+    use lr_cli::unit_env::RunnerEnv;
+    let env = RunnerEnv::Process(["TOKEN".to_string()].into_iter().collect());
+    assert!(env.lookup("TOKEN").is_some());
+    assert!(env.lookup("OTHER").is_none());
+    assert!(env.missing("OTHER").contains("in the runner process"));
+}
+
+#[test]
+fn the_shell_text_says_it_is_the_shell_and_not_the_runner() {
+    use lr_cli::unit_env::RunnerEnv;
+    let text = RunnerEnv::Shell.missing("X");
+    assert!(text.contains("in this shell"), "{text}");
+    assert!(!text.contains("in the runner process"), "{text}");
+}
