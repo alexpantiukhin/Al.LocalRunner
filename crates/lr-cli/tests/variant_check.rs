@@ -38,12 +38,12 @@ fn a_variant_hidden_behind_an_earlier_wider_one_is_reported() {
 #[test]
 fn variants_that_can_match_the_same_runner_are_reported_as_overlapping() {
     let p = profile(
-        "[profile.p.variant.linux]\ncommand = \"a\"\nwhen = { os = [\"linux\"] }\n\
-         [profile.p.variant.cargo]\ncommand = \"b\"\nwhen = { tags = [\"cargo\"] }\n",
+        "[profile.p.variant.a-linux]\ncommand = \"a\"\nwhen = { os = [\"linux\"] }\n\
+         [profile.p.variant.b-cargo]\ncommand = \"b\"\nwhen = { tags = [\"cargo\"] }\n",
     );
     let found = variant_warnings(&p, &[linux_runner()]);
     assert!(
-        found.iter().any(|w| w.contains("variants linux and cargo can match the same runner")),
+        found.iter().any(|w| w.contains("variants a-linux and b-cargo can match the same runner")),
         "{found:?}"
     );
 }

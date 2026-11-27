@@ -223,3 +223,15 @@ fn history_shows_the_zone_and_priority_of_a_run_and_whose_local_runner_it_was() 
         lines[2]
     );
 }
+
+#[test]
+fn the_json_of_a_history_row_carries_zone_priority_and_rule() {
+    let mut row = summary(None);
+    row.zone = Some(lr_core::Zone::Remote);
+    row.priority = Some(-3);
+    row.rule = Some("label ci".into());
+    let value = serde_json::to_value(&row).unwrap();
+    assert_eq!(value["zone"], "remote");
+    assert_eq!(value["priority"], -3);
+    assert_eq!(value["rule"], "label ci");
+}
