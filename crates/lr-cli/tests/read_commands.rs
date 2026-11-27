@@ -617,6 +617,7 @@ fn stats_and_runners_print_per_broker() {
         assert!(text.contains(needed), "{needed}:\n{text}");
     }
     let runner = RunnerInfo {
+        zone: None,
         name: "r1".into(),
         online: true,
         caps: WireCapabilities {
@@ -898,6 +899,7 @@ fn runner_outbox_drop_takes_a_job_and_an_optional_runner() {
 
 fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo {
     RunnerInfo {
+        zone: None,
         name: name.into(),
         online: liveness != RunnerLiveness::Offline,
         caps: WireCapabilities {

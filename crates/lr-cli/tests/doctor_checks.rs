@@ -436,6 +436,7 @@ fn runners_on_another_version_are_named_per_broker() {
     use lr_core::Timestamp;
     use lr_proto::{RunnerInfo, WireCapabilities};
     let runner = |name: &str, version: Option<&str>| RunnerInfo {
+        zone: None,
         name: name.into(),
         online: true,
         caps: WireCapabilities {
@@ -496,6 +497,7 @@ fn doctor_warns_about_runners_of_a_broker_that_miss_programs_but_not_about_its_o
     use lr_core::Timestamp;
     use lr_proto::{RunnerInfo, WireCapabilities};
     let runner = |name: &str, missing: &[&str]| RunnerInfo {
+        zone: None,
         name: name.into(),
         online: true,
         caps: WireCapabilities {

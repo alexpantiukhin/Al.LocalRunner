@@ -604,6 +604,9 @@ pub struct RunnerInfo {
     /// Whether a job of the pool runs on this runner now; absent from an older broker.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub busy: Option<bool>,
+    /// Zone of the runner relative to the client that asked; absent from an older broker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<lr_core::Zone>,
 }
 
 /// A pool: the budget its runners share.

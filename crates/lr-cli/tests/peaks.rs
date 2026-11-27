@@ -158,6 +158,7 @@ fn runners_list_shows_enforcement() {
         programs_missing: Default::default(),
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
+        zone: None,
         name: name.into(),
         online: true,
         caps: caps(enforcement),

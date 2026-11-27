@@ -101,3 +101,18 @@ async fn runners_marks_local_and_joined() {
     assert_eq!(kind("local:r1"), Some(RunnerKind::Local));
     assert_eq!(kind("r2"), Some(RunnerKind::Joined));
 }
+
+#[tokio::test]
+async fn runners_name_the_zone_of_each_runner_relative_to_the_asking_hub() {
+    let h = Harness::start("");
+    let _local = h.local_runner("alex", "r1", linux()).await;
+    let _joined = h.member_runner("r2", "10.0.0.7", linux()).await;
+    let mut hub = h.local_hub("alex").await;
+    let ReadReply::Runners { runners, .. } = hub.read(ReadRequest::Runners).await else {
+        panic!("runners");
+    };
+    let zone = |name: &str| runners.iter().find(|r| r.name == name).unwrap().zone;
+    assert_eq!(zone("local:r1"), Some(lr_core::Zone::Local));
+    assert_ne!(zone("r2"), Some(lr_core::Zone::Local));
+    assert!(zone("r2").is_some());
+}

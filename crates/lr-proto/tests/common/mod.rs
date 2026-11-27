@@ -185,6 +185,7 @@ pub fn step_view() -> StepView {
 
 pub fn runner_info() -> RunnerInfo {
     RunnerInfo {
+        zone: None,
         name: "r-1".into(),
         online: true,
         caps: caps(),
