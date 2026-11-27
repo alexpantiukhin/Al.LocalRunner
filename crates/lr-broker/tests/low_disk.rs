@@ -102,3 +102,34 @@ async fn status_shows_the_free_disk_of_each_runner() {
     };
     assert_eq!(runners[0].caps.disk_mb, 12_288);
 }
+
+#[tokio::test]
+async fn runners_names_the_low_disk_and_says_the_runner_cannot_start_an_order() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", guarded(40_960)).await;
+    let mut alex = h.local_hub("alex").await;
+    r.send(&disk(Some(12_288))).await;
+    r.quiet().await;
+    let runners = match alex.read(ReadRequest::Runners).await {
+        ReadReply::Runners { runners, .. } => runners,
+        other => panic!("expected runners, got {other:?}"),
+    };
+    let info = runners
+        .iter()
+        .find(|i| i.name == "r1")
+        .expect("r1 is listed");
+    assert_eq!(info.can_start_now, Some(false));
+    assert_eq!(
+        info.unmet,
+        ["not taking orders: 12288 MB free of 40960 MB needed"]
+    );
+    r.send(&disk(Some(50_000))).await;
+    r.quiet().await;
+    let runners = match alex.read(ReadRequest::Runners).await {
+        ReadReply::Runners { runners, .. } => runners,
+        other => panic!("expected runners, got {other:?}"),
+    };
+    let info = runners.iter().find(|i| i.name == "r1").unwrap();
+    assert!(info.unmet.is_empty());
+    assert_eq!(info.can_start_now, Some(true));
+}

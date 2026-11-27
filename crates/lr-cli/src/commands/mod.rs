@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod plugin_update;
 pub mod policy_edit_cmd;
 pub mod profile_cmd;
 pub mod profile_summary;
@@ -18,6 +19,7 @@ pub mod read_cmd;
 pub mod reload_cmd;
 pub mod rights;
 pub mod roles_cmd;
+pub mod runner_cache_cmd;
 pub mod runner_config_cmd;
 pub mod runner_outbox_cmd;
 pub mod secret_cmd;
@@ -32,6 +34,7 @@ pub mod upgrade_jobs;
 pub mod upgrade_pool;
 pub mod variant_check;
 pub mod view;
+pub mod wait_events;
 
 pub use args::*;
 pub use read_args::*;
@@ -469,7 +472,7 @@ async fn secret(
     );
     match action {
         SecretAction::List { runner } => {
-            for line in list_lines(layout, runner.as_deref())? {
+            for line in list_lines(layout, runner.as_deref()).await? {
                 println!("{line}");
             }
             Ok(0)
@@ -944,6 +947,14 @@ pub async fn run(cli: Cli) -> i32 {
             RunnerAction::Outbox {
                 action: OutboxAction::Drop { runner, job },
             } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
+            RunnerAction::Cache {
+                action:
+                    CacheAction::Clean {
+                        name,
+                        older_than,
+                        dry_run,
+                    },
+            } => runner_cache_cmd::clean(&layout, name, older_than, dry_run).await,
             RunnerAction::List => {
                 let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await;
                 let tail: Vec<String> = vec!["runner".into(), "list".into()];
@@ -1015,26 +1026,53 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
         Command::Upgrade(a) => {
-            let (dry_run, relay) = (a.dry_run, upgrade_cmd::is_relay(&a));
+            let (dry_run, relay, yes) = (a.dry_run, upgrade_cmd::is_relay(&a), a.yes);
             let code = upgrade_cmd::upgrade(&layout, a).await;
-            match code {
-                Ok(0)
-                    if upgrade_cmd::offers_service_update(
-                        relay,
-                        dry_run,
-                        layout.broker_is_service(),
-                    ) =>
-                {
-                    let need = rights::Need {
-                        what: "broker update-service",
-                        why: "replace the broker service's copy of the binary and restart the service",
-                    };
-                    let mut args = rights::layout_args(&layout);
-                    args.extend(["broker".into(), "update-service".into()]);
-                    let session = rights::session(false, no_elevate, elevated_child);
-                    Ok(rights::offer(&need, &session, &args).unwrap_or(0))
+            if code.is_ok() && !relay {
+                let mut stdio = confirm::Stdio::new();
+                let mut console = stdio.console();
+                for line in plugin_update::offer_updates(
+                    &plugin_update::OsAgents,
+                    env!("CARGO_PKG_VERSION"),
+                    yes,
+                    dry_run,
+                    &mut console,
+                ) {
+                    println!("{line}");
                 }
-                other => other,
+            }
+            let offered =
+                upgrade_cmd::offers_service_update(relay, dry_run, layout.broker_is_service())
+                    && upgrade_cmd::offers_service_update_after(&code);
+            if !offered {
+                code
+            } else {
+                let need = rights::Need {
+                    what: "broker update-service",
+                    why: "replace the broker service's copy of the binary and restart the service",
+                };
+                let mut args = rights::layout_args(&layout);
+                args.extend(["broker".into(), "update-service".into()]);
+                let session = rights::session(false, no_elevate, elevated_child);
+                let upgraded = code.unwrap_or(0);
+                let updated = rights::offer(&need, &session, &args);
+                let os = crate::os_service::Os::current();
+                let read = upgrade_cmd::installed_version(&crate::os_service::service_binary(os))
+                    .map(|v| v.text);
+                let command =
+                    service_cmd::elevated_command(os, &std::env::current_exe().unwrap_or_default());
+                if let Some(line) = upgrade_cmd::service_warning(
+                    read.as_deref(),
+                    env!("CARGO_PKG_VERSION"),
+                    &command,
+                ) {
+                    println!("{line}");
+                }
+                Ok(if upgraded != 0 {
+                    upgraded
+                } else {
+                    updated.unwrap_or(0)
+                })
             }
         }
         Command::Uninstall {

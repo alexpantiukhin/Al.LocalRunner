@@ -190,6 +190,7 @@ pub fn installed_version(path: &Path) -> Option<Version> {
 /// keeps owning it; any other role is started as a detached process.
 pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
     let plain = starter(exe);
+    let owner = std::process::id();
     move |argv: &[String]| {
         if cfg!(target_os = "linux") {
             let unit = crate::os_service::autostart::unit_for_argv(argv);
@@ -200,9 +201,11 @@ pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> 
             });
             if let (Some(unit), Some(file)) = (unit, file) {
                 if file.is_file() {
-                    let status = std::process::Command::new("systemctl")
-                        .args(["--user", "start", &unit])
-                        .status()?;
+                    let status = with_owner_env("linux", owner, || {
+                        std::process::Command::new("systemctl")
+                            .args(["--user", "start", &unit])
+                            .status()
+                    })?;
                     return if status.success() {
                         Ok(0)
                     } else {
@@ -218,9 +221,11 @@ pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> 
                 .ok()
                 .and_then(|h| crate::os_service::autostart::agent_for_argv(argv, &h));
             if let Some((label, _)) = agent.filter(|(_, p)| p.is_file()) {
-                let status = std::process::Command::new("launchctl")
-                    .args(["start", &label])
-                    .status()?;
+                let status = with_owner_env("macos", owner, || {
+                    std::process::Command::new("launchctl")
+                        .args(["start", &label])
+                        .status()
+                })?;
                 return if status.success() {
                     Ok(0)
                 } else {
@@ -232,6 +237,64 @@ pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> 
         }
         plain(argv)
     }
+}
+
+/// One program and its arguments.
+pub type Command = (String, Vec<String>);
+
+/// The commands that set (and, where it is safe, clear) `LOCALRUNNER_UPGRADE_LOCK_PID`, the pid
+/// of the upgrade that owns the lock, in the environment of the service manager of `os`
+/// (`linux`: the systemd user manager, `macos`: launchd). A unit or an agent does not inherit
+/// the environment of the process that starts it, and a role without this variable takes the
+/// lock of its own upgrade for a foreign one, starts in drain and leaves. systemd reads the
+/// environment when it spawns the unit, which is done when `systemctl start` returns, so the
+/// variable is cleared right after; `launchctl start` returns before the spawn, so the agent
+/// keeps the variable, a pid that matters only for the lock of that one upgrade. `None` for
+/// another OS.
+pub fn owner_env_commands(os: &str, pid: u32) -> Option<(Command, Option<Command>)> {
+    let key = crate::upgrade_lock::OWNER_ENV;
+    let words = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    match os {
+        "linux" => Some((
+            (
+                "systemctl".into(),
+                words(&["--user", "set-environment", &format!("{key}={pid}")]),
+            ),
+            Some((
+                "systemctl".into(),
+                words(&["--user", "unset-environment", key]),
+            )),
+        )),
+        "macos" => Some((
+            (
+                "launchctl".into(),
+                words(&["setenv", key, &pid.to_string()]),
+            ),
+            None,
+        )),
+        _ => None,
+    }
+}
+
+/// Runs `start` with the owner variable set in the service manager (see
+/// [`owner_env_commands`]) and clears it afterwards, also when `start` fails.
+fn with_owner_env<T>(
+    os: &str,
+    pid: u32,
+    start: impl FnOnce() -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let Some((set, unset)) = owner_env_commands(os, pid) else {
+        return start();
+    };
+    let run = |(program, args): &Command| {
+        let _ = std::process::Command::new(program).args(args).status();
+    };
+    run(&set);
+    let result = start();
+    if let Some(unset) = unset {
+        run(&unset);
+    }
+    result
 }
 
 /// The warnings about the `env:` secrets of the running runners `names` that `upgrade` would
@@ -282,6 +345,24 @@ pub fn is_relay(args: &UpgradeArgs) -> bool {
 /// replaced the binaries, after a real run, on a machine whose broker is a service.
 pub fn offers_service_update(relay: bool, dry_run: bool, broker_is_service: bool) -> bool {
     !relay && !dry_run && broker_is_service
+}
+
+/// Whether the offer to update the broker service follows an `upgrade` that ended as
+/// `result`: after a finished run, also one that ended with a warning (a role that did not come
+/// back is no reason to leave the service old), not after a refusal.
+pub fn offers_service_update_after(result: &Result<i32, String>) -> bool {
+    result.is_ok()
+}
+
+/// The last line of `upgrade` while the broker service (`old`, the version its own copy of
+/// the binary prints) is not the version being installed (`new`); `command` updates it.
+pub fn service_warning(old: Option<&str>, new: &str, command: &str) -> Option<String> {
+    (old != Some(new)).then(|| {
+        format!(
+            "warn  broker service: {}, the binary is {new}; update it: {command}",
+            old.unwrap_or("version unknown")
+        )
+    })
 }
 
 /// `upgrade` as the command line runs it: refused as root or administrator unless

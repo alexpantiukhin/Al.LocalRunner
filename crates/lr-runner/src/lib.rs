@@ -30,7 +30,7 @@ mod source;
 pub use agent::{
     AgentControl, AgentExit, BrokerAddress, RunnerAgent, RunnerDeps, SettingsCell, UpgradeLive,
 };
-pub use cache::{plan_sweep, CacheLayout};
+pub use cache::{plan_clean, plan_sweep, CacheLayout};
 pub use connect::STOP_BOUND;
 pub use hooks_config::{
     apply_owner_env, CleanupHook, CleanupOn, DEFAULT_CLEANUP_TIMEOUT_S, DEFAULT_HEADROOM_PCT,

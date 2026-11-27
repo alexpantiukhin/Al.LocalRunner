@@ -179,6 +179,21 @@ impl AgentControl {
         Ok(closed as u64)
     }
 
+    /// `runner cache clean`: removes the named caches unused for longer than `older_than_days`
+    /// (all of them without it) that no running job uses; with `dry_run` only counts them.
+    /// Gives how many entries and bytes.
+    pub async fn clean_cache(
+        &self,
+        older_than_days: Option<u64>,
+        dry_run: bool,
+    ) -> Result<(u64, u64), String> {
+        let in_use = self.shared.state().in_use.clone();
+        self.shared
+            .caches()
+            .clean(self.shared.now(), older_than_days, dry_run, &in_use)
+            .await
+    }
+
     /// Whether the runner has a welcomed session and, when not, since when it has had none
     /// (its start while it never had one).
     pub fn link(&self) -> (bool, Option<Timestamp>) {

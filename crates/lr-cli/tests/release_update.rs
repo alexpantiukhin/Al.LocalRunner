@@ -340,3 +340,31 @@ fn only_the_process_that_replaced_the_binaries_offers_the_service_update() {
     assert!(!offers_service_update(false, true, true));
     assert!(!offers_service_update(false, false, false));
 }
+
+#[test]
+fn a_service_older_than_the_binary_ends_the_upgrade_with_a_warning_that_names_the_command() {
+    use lr_cli::commands::upgrade_cmd::service_warning;
+    let text = service_warning(
+        Some("0.11.0"),
+        "0.12.0",
+        "sudo localrunner broker update-service",
+    )
+    .unwrap();
+    assert!(text.starts_with("warn  broker service: 0.11.0"), "{text}");
+    assert!(text.contains("the binary is 0.12.0"), "{text}");
+    assert!(
+        text.contains("sudo localrunner broker update-service"),
+        "{text}"
+    );
+    let unknown = service_warning(None, "0.12.0", "cmd").unwrap();
+    assert!(unknown.contains("version unknown"), "{unknown}");
+    assert!(service_warning(Some("0.12.0"), "0.12.0", "cmd").is_none());
+}
+
+#[test]
+fn the_offer_to_update_the_service_is_made_also_when_the_upgrade_ended_with_a_warning() {
+    use lr_cli::commands::upgrade_cmd::offers_service_update_after;
+    assert!(offers_service_update_after(&Ok(0)));
+    assert!(offers_service_update_after(&Ok(1)));
+    assert!(!offers_service_update_after(&Err("refused".to_string())));
+}

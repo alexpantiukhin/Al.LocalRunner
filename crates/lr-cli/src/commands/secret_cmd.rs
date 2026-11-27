@@ -187,7 +187,7 @@ fn describe(from: &SecretFrom) -> String {
 
 /// `secret list`: one line per secret of the runner (all runners of the installation without a
 /// name) with its source and whether the source gives a value now; never a value.
-pub fn list_lines(layout: &Layout, runner: Option<&str>) -> Result<Vec<String>, String> {
+pub async fn list_lines(layout: &Layout, runner: Option<&str>) -> Result<Vec<String>, String> {
     let runners = match runner {
         Some(r) => vec![r.to_string()],
         None => match layout.runner_names() {
@@ -207,7 +207,9 @@ pub fn list_lines(layout: &Layout, runner: Option<&str>) -> Result<Vec<String>, 
             .parse()
             .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
         let sources = secret_sources(&table);
-        let unavailable = ConfigSecrets::new(sources.clone()).unavailable();
+        let env = crate::unit_env::runner_env(layout, &name).await;
+        let unavailable = ConfigSecrets::new(sources.clone())
+            .unavailable_in(&|v| env.lookup(v), &|v| env.missing(v));
         for (secret, from) in &sources {
             let state = unavailable
                 .iter()

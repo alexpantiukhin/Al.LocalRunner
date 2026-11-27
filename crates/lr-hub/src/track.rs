@@ -44,6 +44,8 @@ pub(crate) struct Track {
     pub(crate) next_select: Option<Timestamp>,
     /// Until when the order is left alone by the check that moves waiting orders.
     pub(crate) moved_until: Option<Timestamp>,
+    /// The tail of the output of the running step, to name what a failed step did not find.
+    pub(crate) last_output: String,
 }
 
 impl Track {
@@ -98,6 +100,7 @@ impl Track {
             finished_at: None,
             next_select: None,
             moved_until: None,
+            last_output: String::new(),
         }
     }
 

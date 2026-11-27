@@ -108,7 +108,7 @@ async fn list_shows_sources_and_whether_they_give_a_value_never_the_value() {
     let mut text = std::fs::read_to_string(layout.runner_dir("r1").join("runner.toml")).unwrap();
     text.push_str("\n[secret.GONE]\nfrom = \"env:LR_SURELY_UNSET_VARIABLE\"\n");
     std::fs::write(layout.runner_dir("r1").join("runner.toml"), text).unwrap();
-    let lines = list_lines(&layout, None).unwrap().join("\n");
+    let lines = list_lines(&layout, None).await.unwrap().join("\n");
     assert!(lines.contains("TOKEN"), "{lines}");
     assert!(lines.contains("GONE"), "{lines}");
     assert!(lines.contains("env:LR_SURELY_UNSET_VARIABLE"), "{lines}");
@@ -161,7 +161,7 @@ async fn list_without_runners_reads_the_template_every_runner_will_copy() {
         format!("{RUNNER}\n[secret.TOKEN]\nfrom = \"env:LR_SURELY_UNSET_VARIABLE\"\n"),
     )
     .unwrap();
-    let lines = list_lines(&layout, None).unwrap().join("\n");
+    let lines = list_lines(&layout, None).await.unwrap().join("\n");
     assert!(
         lines.contains("default  TOKEN  env:LR_SURELY_UNSET_VARIABLE"),
         "{lines}"

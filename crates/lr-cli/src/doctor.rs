@@ -345,8 +345,32 @@ pub fn secret_checks(
     name: &str,
     sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
 ) -> Vec<Check> {
+    secret_checks_in(name, sources, None)
+}
+
+/// [`secret_checks`] against the environment of the unit that starts the runner (`unit`, see
+/// [`crate::unit_env`]) when there is one; without a unit against the environment of this shell,
+/// and the text says so.
+pub fn secret_checks_in(
+    name: &str,
+    sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
+    unit: Option<&std::collections::BTreeMap<String, String>>,
+) -> Vec<Check> {
+    let env = match unit {
+        Some(map) => crate::unit_env::RunnerEnv::Unit(map.clone()),
+        None => crate::unit_env::RunnerEnv::Shell,
+    };
+    secret_checks_for(name, sources, &env)
+}
+
+/// [`secret_checks`] against `env`, the environment the runner has.
+pub fn secret_checks_for(
+    name: &str,
+    sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
+    env: &crate::unit_env::RunnerEnv,
+) -> Vec<Check> {
     crate::secrets::ConfigSecrets::new(sources.clone())
-        .unavailable()
+        .unavailable_in(&|v| env.lookup(v), &|v| env.missing(v))
         .into_iter()
         .map(|(secret, why)| {
             check(
@@ -360,7 +384,7 @@ pub fn secret_checks(
         .collect()
 }
 
-fn runners(layout: &Layout, out: &mut Vec<Check>) {
+async fn runners(layout: &Layout, out: &mut Vec<Check>) {
     let host = crate::host::resources();
     for name in layout.runner_names() {
         let dir = layout.runner_dir(&name);
@@ -373,7 +397,8 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
                 let env_notes = cfg.env_notes(cfg!(windows), |n| std::env::var(n).ok());
-                let secrets = secret_checks(&name, &cfg.secrets);
+                let env = crate::unit_env::runner_env(layout, &name).await;
+                let secrets = secret_checks_for(&name, &cfg.secrets, &env);
                 if problems.is_empty()
                     && cfg.warnings.is_empty()
                     && env_notes.is_empty()
@@ -708,6 +733,41 @@ pub fn runner_program_checks(
         .collect()
 }
 
+/// What `doctor` says about the free disk of a runner: it takes no orders below its `[accept]
+/// min_free_disk_mb`, and a warning comes before that, at twice the floor (at 2 GB when none
+/// is set).
+pub fn disk_note(free_mb: u64, floor_mb: Option<u64>) -> Option<String> {
+    match floor_mb {
+        Some(floor) if free_mb < floor => Some(format!(
+            "{free_mb} MB free, below min_free_disk_mb {floor}: takes no orders; clear it with: localrunner runner cache clean"
+        )),
+        Some(floor) if free_mb < floor.saturating_mul(2) => Some(format!(
+            "{free_mb} MB free, close to min_free_disk_mb {floor}: clear it with: localrunner runner cache clean"
+        )),
+        None if free_mb < 2048 => Some(format!(
+            "{free_mb} MB free and no [accept] min_free_disk_mb: jobs fail when the disk is full; set it and clear the cache with: localrunner runner cache clean"
+        )),
+        _ => None,
+    }
+}
+
+/// The disk warnings of the runners in `per`.
+pub fn runner_disk_checks(per: &[(String, Vec<lr_proto::RunnerInfo>)]) -> Vec<Check> {
+    per.iter()
+        .flat_map(|(broker, runners)| {
+            runners.iter().filter(|r| r.online).filter_map(move |r| {
+                disk_note(r.caps.disk_mb, r.caps.accept_min_free_disk_mb).map(|note| {
+                    check(
+                        format!("broker {broker} runner {} disk", r.name),
+                        Status::Warn,
+                        note,
+                    )
+                })
+            })
+        })
+        .collect()
+}
+
 async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     let Ok(client) = crate::commands::jobs::hub(layout).await else {
         return;
@@ -715,6 +775,7 @@ async fn runner_versions(layout: &Layout, out: &mut Vec<Check>) {
     if let Ok((per, _)) = crate::commands::read_cmd::fetch_runners(&client, None).await {
         out.extend(runner_version_checks(&per, env!("CARGO_PKG_VERSION")));
         out.extend(runner_program_checks(&per, &layout.runner_names()));
+        out.extend(runner_disk_checks(&per));
     }
     client.close().await;
 }
@@ -729,7 +790,7 @@ pub async fn checks_with(layout: &Layout, elevated: bool) -> Vec<Check> {
     let mut out = Vec::new();
     basics(layout, elevated, &mut out);
     policy(layout, &mut out).await;
-    runners(layout, &mut out);
+    runners(layout, &mut out).await;
     same_user(layout, &mut out);
     autostart(layout, &mut out);
     brokers(layout, &mut out).await;

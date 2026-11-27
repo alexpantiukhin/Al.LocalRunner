@@ -2,7 +2,7 @@ mod common;
 
 use common::fake_roles::with_runner;
 use common::TempDir;
-use lr_cli::commands::upgrade_cmd::restart_env_warnings;
+use lr_cli::commands::upgrade_cmd::{owner_env_commands, restart_env_warnings};
 use std::collections::BTreeSet;
 
 fn names() -> BTreeSet<String> {
@@ -45,4 +45,41 @@ fn a_set_variable_a_unit_and_a_file_source_need_no_warning() {
 
 fn layout_file(dir: &TempDir) -> lr_cli::paths::Layout {
     layout(dir, "[secret.TOKEN]\nfrom = \"file:/abs/token\"\n")
+}
+
+#[test]
+fn a_role_started_through_systemd_gets_the_owner_of_the_lock_and_the_variable_is_cleared_after() {
+    let (set, unset) = owner_env_commands("linux", 4321).unwrap();
+    assert_eq!(set.0, "systemctl");
+    assert_eq!(
+        set.1,
+        [
+            "--user",
+            "set-environment",
+            "LOCALRUNNER_UPGRADE_LOCK_PID=4321"
+        ]
+    );
+    let unset = unset.unwrap();
+    assert_eq!(unset.0, "systemctl");
+    assert_eq!(
+        unset.1,
+        [
+            "--user",
+            "unset-environment",
+            "LOCALRUNNER_UPGRADE_LOCK_PID"
+        ]
+    );
+}
+
+#[test]
+fn a_launchd_agent_gets_the_owner_and_keeps_it_because_launchctl_start_returns_before_the_spawn() {
+    let (set, unset) = owner_env_commands("macos", 4321).unwrap();
+    assert_eq!(set.0, "launchctl");
+    assert_eq!(set.1, ["setenv", "LOCALRUNNER_UPGRADE_LOCK_PID", "4321"]);
+    assert!(unset.is_none());
+}
+
+#[test]
+fn other_systems_have_no_service_manager_environment_to_set() {
+    assert!(owner_env_commands("windows", 1).is_none());
 }

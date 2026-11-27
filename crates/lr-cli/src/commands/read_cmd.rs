@@ -65,15 +65,77 @@ pub async fn explain_with_detail(
     Err(missing_job_error(job, ambiguous, problems))
 }
 
+/// The line `=== hint: exit 127: ... ===` the hub wrote into a log, without the markers.
+pub fn hint_of(log: &str) -> Option<String> {
+    log.lines().rev().find_map(|l| {
+        l.trim()
+            .strip_prefix("=== hint: ")
+            .and_then(|h| h.strip_suffix(" ==="))
+            .map(str::to_string)
+    })
+}
+
+/// The hint for a finished order one of whose steps ended with exit code 127: the program the
+/// shell named in the last lines of the log, and how to declare it. The broker's log has no
+/// hint of the hub, so it is made here from the same rule.
+async fn log_hint(
+    layout: &Layout,
+    client: &IpcClient,
+    job: &JobId,
+    broker: &str,
+) -> Option<String> {
+    let detail = match read(
+        client,
+        broker,
+        ReadRequest::HistoryShow {
+            job: job.clone(),
+            client: None,
+        },
+    )
+    .await
+    .ok()?
+    {
+        ReadReply::Job(d) => *d,
+        _ => return None,
+    };
+    if !detail.steps.iter().any(|s| s.exit_code == Some(127)) {
+        return None;
+    }
+    let q = super::log_cmd::LogQuery {
+        job: job.clone(),
+        step: None,
+        tail: Some(8),
+        follow: false,
+    };
+    let mut text = String::new();
+    let redactor = super::log_cmd::cli_redactor(layout);
+    super::log_cmd::find_log(client, Some(broker), &q, &redactor, &mut |t| {
+        text.push_str(t)
+    })
+    .await
+    .ok()?;
+    let runner = detail.summary.runner.unwrap_or_default();
+    lr_hub::not_found_hint(&runner, Some(127), &text).and_then(|h| hint_of(&h))
+}
+
 /// `explain <job>`.
 pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String> {
     let client = hub(layout).await?;
     let job = JobId(a.job);
     let found = explain_with_detail(&client, &job, a.broker.as_deref(), a.client).await;
+    let hint = match &found {
+        Ok((broker, text, _)) if text.starts_with("finished") => {
+            log_hint(layout, &client, &job, broker).await
+        }
+        _ => None,
+    };
     client.close().await;
     let (broker, text, detail) = found?;
     if a.json {
         let mut doc = json!({ "broker": broker, "job": job, "text": text });
+        if let Some(h) = &hint {
+            doc["hint"] = json!(h);
+        }
         if let Some(detail) = detail {
             doc["detail"] = json!(detail);
         }
@@ -83,6 +145,9 @@ pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String>
         card.row("job", job.to_string());
         card.row("broker", broker);
         card.row("waits", text);
+        if let Some(h) = hint {
+            card.row("hint", h);
+        }
         for line in card.lines(&Out::detect()) {
             println!("{line}");
         }

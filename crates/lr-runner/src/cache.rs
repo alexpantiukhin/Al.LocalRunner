@@ -98,6 +98,24 @@ fn plan_evictions(
     doomed
 }
 
+/// The entries `runner cache clean` removes: those unused for longer than `older_than_days`
+/// (all of them without it), except the ones in `in_use`.
+pub fn plan_clean(
+    entries: &[CacheEntry],
+    now: Timestamp,
+    older_than_days: Option<u64>,
+    in_use: &[CacheKey],
+) -> Vec<CacheEntry> {
+    entries
+        .iter()
+        .filter(|e| !in_use.contains(&e.key))
+        .filter(|e| {
+            older_than_days.is_none_or(|d| now.millis_since(e.last_used) > d.saturating_mul(DAY_MS))
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) struct Caches<'a> {
     pub(crate) store: &'a dyn RunnerStore,
     pub(crate) files: &'a dyn Files,
@@ -141,6 +159,43 @@ impl Caches<'_> {
             self.meter.add(CACHE_EVICTED_TOTAL, &labels, 1);
         }
         self.used_mb().await;
+    }
+
+    /// Removes (or, with `dry_run`, only counts) the entries of [`plan_clean`]; gives how many
+    /// entries and bytes.
+    pub(crate) async fn clean(
+        &self,
+        now: Timestamp,
+        older_than_days: Option<u64>,
+        dry_run: bool,
+        in_use: &[CacheKey],
+    ) -> Result<(u64, u64), String> {
+        let entries = self
+            .store
+            .cache_entries()
+            .await
+            .map_err(|e| e.to_string())?;
+        let (mut count, mut bytes) = (0u64, 0u64);
+        for e in plan_clean(&entries, now, older_than_days, in_use) {
+            if !dry_run {
+                self.files
+                    .remove_dir_all(Path::new(&e.path))
+                    .await
+                    .map_err(|err| format!("{} not removed: {err}", e.path))?;
+                self.store
+                    .remove_cache(&e.key)
+                    .await
+                    .map_err(|err| err.to_string())?;
+                let labels = [(RUNNER, self.runner), (REASON, "clean")];
+                self.meter.add(CACHE_EVICTED_TOTAL, &labels, 1);
+            }
+            count += 1;
+            bytes = bytes.saturating_add(e.bytes);
+        }
+        if !dry_run {
+            self.used_mb().await;
+        }
+        Ok((count, bytes))
     }
 
     pub(crate) async fn touch(&self, key: CacheKey, path: &Path, now: Timestamp) {

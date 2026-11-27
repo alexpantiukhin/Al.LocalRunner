@@ -69,6 +69,21 @@ async fn connection(
                     Err(message) => ControlReply::Failed { message },
                 }
             }
+            Ok(Received::Message(RunnerControl::CleanCache {
+                older_than_days,
+                dry_run,
+            })) => match control.clean_cache(older_than_days, dry_run).await {
+                Ok((entries, bytes)) => ControlReply::Cleaned { entries, bytes },
+                Err(message) => ControlReply::Failed { message },
+            },
+            Ok(Received::Message(RunnerControl::Environment)) => {
+                let mut names: Vec<String> = std::env::vars_os()
+                    .filter(|(_, v)| !v.is_empty())
+                    .filter_map(|(k, _)| k.into_string().ok())
+                    .collect();
+                names.sort();
+                ControlReply::Variables { names }
+            }
             Ok(Received::Message(RunnerControl::Status)) => {
                 let (connected, since) = control.link();
                 ControlReply::Link {

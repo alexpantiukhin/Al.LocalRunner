@@ -18,6 +18,17 @@ fn caps_for(viewer: &Viewer, slot: &RunnerSlot) -> WireCapabilities {
     caps
 }
 
+/// Why a runner takes no orders for lack of disk: its free disk is below its `[accept]
+/// min_free_disk_mb`.
+pub(crate) fn low_disk_note(free_mb: Option<u64>, floor_mb: Option<u64>) -> Option<String> {
+    match (free_mb, floor_mb) {
+        (Some(free), Some(floor)) if free < floor => Some(format!(
+            "not taking orders: {free} MB free of {floor} MB needed"
+        )),
+        _ => None,
+    }
+}
+
 fn least_order() -> Requirements {
     Requirements {
         platform: None,
@@ -101,6 +112,10 @@ impl Engine {
                     .active
                     .iter()
                     .any(|j| j.runner.as_deref() == Some(name.as_str()));
+                let low_disk = low_disk_note(
+                    slot.load.and_then(|l| l.free_disk_mb),
+                    slot.wire.accept_min_free_disk_mb,
+                );
                 RunnerInfo {
                     name: name.clone(),
                     online: liveness != RunnerLiveness::Offline,
@@ -116,7 +131,7 @@ impl Engine {
                     free_cpu,
                     held_tags: self.held_tags(viewer, Some(name)),
                     services: slot.services.clone(),
-                    unmet: Vec::new(),
+                    unmet: low_disk.iter().cloned().collect(),
                     liveness: Some(liveness),
                     silent_for_s: Some(now.millis_since(slot.last_heard) / 1000),
                     kind: Some(if slot.persisted {
@@ -126,7 +141,11 @@ impl Engine {
                     }),
                     pool: Some(pool_name.clone()),
                     can_start_now: Some(
-                        slot.takes_work() && liveness == RunnerLiveness::Online && !busy && room,
+                        slot.takes_work()
+                            && liveness == RunnerLiveness::Online
+                            && !busy
+                            && room
+                            && low_disk.is_none(),
                     ),
                     busy: Some(busy),
                     zone: Some(self.site.zone_between(

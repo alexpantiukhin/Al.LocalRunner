@@ -4,7 +4,7 @@ use crate::ipc_client::IpcClient;
 use crate::paths::Layout;
 use lr_proto::{ControlReply, IpcChannel, RunnerControl};
 
-fn pick(names: Vec<String>, runner: Option<String>) -> Result<String, String> {
+pub(super) fn pick(names: Vec<String>, runner: Option<String>) -> Result<String, String> {
     match (runner, names.as_slice()) {
         (Some(name), _) => Ok(name),
         (None, [only]) => Ok(only.clone()),

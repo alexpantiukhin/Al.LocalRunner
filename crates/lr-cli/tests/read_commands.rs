@@ -1554,3 +1554,14 @@ fn a_runner_on_an_older_version_is_marked_in_runners_and_status() {
         .iter()
         .any(|n| n["name"] == "unknown" && n["version_behind"] == "unknown"));
 }
+
+#[test]
+fn the_exit_127_hint_of_a_log_is_taken_out_of_its_markers() {
+    use lr_cli::commands::read_cmd::hint_of;
+    let log = "git: not found\n=== hint: exit 127: `git` was not found on runner r1; list `git` in `programs` ===\n=== result: failed ===\n";
+    assert_eq!(
+        hint_of(log).unwrap(),
+        "exit 127: `git` was not found on runner r1; list `git` in `programs`"
+    );
+    assert!(hint_of("all good\n").is_none());
+}

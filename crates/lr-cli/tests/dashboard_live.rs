@@ -1,6 +1,6 @@
 mod common;
 
-use common::loopback::{layout, place, repo, until_ready};
+use common::loopback::{layout, place, repo, until_ready, until_state};
 use common::TempDir;
 use lr_cli::commands::jobs::hub;
 use lr_cli::dashboard::HubSource;
@@ -95,6 +95,7 @@ async fn the_live_dashboard_streams_events_to_a_session_and_refuses_one_without_
         common::session("agent", Some("live"), &repo).unwrap(),
     )
     .await;
+    until_state(&layout, &job, lr_core::JobState::Running).await;
     let snapshot = request(addr, "/api/snapshot", Some(&cookie), None).await;
     assert_eq!(status(&snapshot), 200, "{snapshot}");
     assert!(
