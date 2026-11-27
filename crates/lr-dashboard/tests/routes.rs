@@ -230,7 +230,7 @@ async fn queue_row_shows_place_wait_reason_and_where_the_job_runs() {
          <td data-col=\"project\">alpha</td><td data-col=\"source\">github</td>\
          <td data-col=\"client_label\">agent-1</td><td data-col=\"labels\">release, night</td>\
          <td data-col=\"profile\">unit</td><td data-col=\"cwd\">D:/work/alpha</td>\
-         <td data-col=\"runner\"></td><td data-col=\"broker\">home</td>\
+         <td data-col=\"runner\"></td><td data-col=\"zone\"></td><td data-col=\"broker\">home</td>\
          <td data-col=\"wait\">runner busy</td></tr>"
     );
     let start = page.find("<tr data-job=\"j-run\">").expect("running row");
