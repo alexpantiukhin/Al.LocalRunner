@@ -647,3 +647,45 @@ fn a_refused_connection_says_nothing_listens_and_how_a_service_is_started() {
         "h:1: certificate mismatch"
     );
 }
+
+#[test]
+fn a_secret_the_runner_unit_sets_is_not_reported_even_when_this_shell_lacks_it() {
+    use lr_cli::doctor::secret_checks_in;
+    use lr_cli::runner_config::SecretFrom;
+    let mut sources = std::collections::BTreeMap::new();
+    sources.insert(
+        "TOKEN".to_string(),
+        SecretFrom::Env("LR_SURELY_UNSET_VARIABLE".into()),
+    );
+    sources.insert(
+        "OTHER".to_string(),
+        SecretFrom::Env("LR_SURELY_UNSET_OTHER".into()),
+    );
+    let mut unit = std::collections::BTreeMap::new();
+    unit.insert("LR_SURELY_UNSET_VARIABLE".to_string(), "value".to_string());
+    unit.insert("LR_SURELY_UNSET_OTHER".to_string(), String::new());
+    let found = secret_checks_in("r1", &sources, Some(&unit));
+    assert_eq!(found.len(), 1, "{found:?}");
+    let text = &found[0].detail;
+    assert!(text.contains("secret OTHER"), "{text}");
+    assert!(
+        text.contains("not set by the unit of the runner"),
+        "{text}"
+    );
+    assert!(!text.contains("runner process"), "{text}");
+    assert!(!text.contains("value"), "{text}");
+}
+
+#[test]
+fn without_a_unit_the_text_names_this_shell_not_the_runner_process() {
+    use lr_cli::doctor::secret_checks;
+    use lr_cli::runner_config::SecretFrom;
+    let mut sources = std::collections::BTreeMap::new();
+    sources.insert(
+        "TOKEN".to_string(),
+        SecretFrom::Env("LR_SURELY_UNSET_VARIABLE".into()),
+    );
+    let text = secret_checks("r1", &sources)[0].detail.clone();
+    assert!(text.contains("not set in this shell"), "{text}");
+    assert!(!text.contains("runner process"), "{text}");
+}

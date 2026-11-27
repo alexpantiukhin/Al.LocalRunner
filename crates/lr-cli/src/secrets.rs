@@ -25,19 +25,26 @@ impl ConfigSecrets {
     /// The secrets whose source cannot give a value now, each with the reason, names only:
     /// an `env:` variable that is unset or empty in this process, a `file:` that is missing.
     pub fn unavailable(&self) -> Vec<(String, String)> {
+        self.unavailable_in(&|var| std::env::var(var).ok(), &|var| {
+            format!("the variable {var} is not set in the runner process")
+        })
+    }
+
+    /// [`unavailable`](Self::unavailable) for an environment that is not this process's:
+    /// `lookup` gives the value of a variable there and `missing` the reason text for one that
+    /// is unset or empty.
+    pub fn unavailable_in(
+        &self,
+        lookup: &dyn Fn(&str) -> Option<String>,
+        missing: &dyn Fn(&str) -> String,
+    ) -> Vec<(String, String)> {
         self.sources
             .iter()
             .filter_map(|(name, from)| match from {
-                SecretFrom::Env(var) => std::env::var(var)
-                    .ok()
+                SecretFrom::Env(var) => lookup(var)
                     .filter(|v| !v.is_empty())
                     .is_none()
-                    .then(|| {
-                        (
-                            name.clone(),
-                            format!("the variable {var} is not set in the runner process"),
-                        )
-                    }),
+                    .then(|| (name.clone(), missing(var))),
                 SecretFrom::File(path) => (!path.is_file()).then(|| {
                     (
                         name.clone(),

@@ -207,7 +207,11 @@ pub fn list_lines(layout: &Layout, runner: Option<&str>) -> Result<Vec<String>, 
             .parse()
             .map_err(|e| format!("invalid TOML in {}: {e}", path.display()))?;
         let sources = secret_sources(&table);
-        let unavailable = ConfigSecrets::new(sources.clone()).unavailable();
+        let unit = crate::unit_env::runner_unit_environment(&name);
+        let unavailable = ConfigSecrets::new(sources.clone()).unavailable_in(
+            &crate::doctor::env_lookup(unit.as_ref()),
+            &crate::doctor::env_missing(unit.as_ref()),
+        );
         for (secret, from) in &sources {
             let state = unavailable
                 .iter()

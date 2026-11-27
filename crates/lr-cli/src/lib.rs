@@ -34,4 +34,5 @@ pub mod runner_keys;
 pub mod runner_reload;
 pub mod secrets;
 pub mod state_dir;
+pub mod unit_env;
 pub mod upgrade_lock;
