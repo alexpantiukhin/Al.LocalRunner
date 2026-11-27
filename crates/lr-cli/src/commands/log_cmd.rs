@@ -129,6 +129,7 @@ pub async fn find_log_with(
     out: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let (names, mut problems) = reachable(client, broker).await?;
+    let mut found: Vec<(String, String)> = Vec::new();
     for b in names {
         let req = CliRequest::Read(CliRead {
             broker: Some(b.clone()),
@@ -142,13 +143,25 @@ pub async fn find_log_with(
         });
         client.send(&req).await?;
         let mut printer = printer.fresh();
+        let mut held = String::new();
         loop {
             match client.recv::<CliReply>().await? {
                 CliReply::LogChunk { text, end, .. } => {
-                    out(&printer.push(&text));
+                    let shown = printer.push(&text);
+                    if q.follow {
+                        out(&shown);
+                    } else {
+                        held.push_str(&shown);
+                    }
                     if end {
-                        out(&printer.finish());
-                        return Ok(b);
+                        let rest = printer.finish();
+                        if q.follow {
+                            out(&rest);
+                            return Ok(b);
+                        }
+                        held.push_str(&rest);
+                        found.push((b, held));
+                        break;
                     }
                 }
                 CliReply::Read {
@@ -164,11 +177,23 @@ pub async fn find_log_with(
             }
         }
     }
+    if let Some((b, text)) = choose_log(found) {
+        out(&text);
+        return Ok(b);
+    }
     problems.insert(
         0,
         format!("job {} is not found on the brokers of this hub", q.job),
     );
     Err(problems.join("\n"))
+}
+
+/// The log to show when several brokers know the job: a moved order is known to the broker
+/// that gave it back (an empty log) and to the one that ran it, so the first non-empty log
+/// wins, and when every log is empty the first broker.
+pub fn choose_log(found: Vec<(String, String)>) -> Option<(String, String)> {
+    let first = found.first().cloned();
+    found.into_iter().find(|(_, text)| !text.is_empty()).or(first)
 }
 
 /// `log <job>`.

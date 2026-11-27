@@ -192,3 +192,24 @@ async fn read_commands_and_full_down_on_loopback() {
     );
     assert!(words.iter().all(|w| w.contains("--state-dir")), "{words:?}");
 }
+
+#[test]
+fn a_moved_order_shows_the_log_of_the_broker_that_ran_it() {
+    use lr_cli::commands::log_cmd::choose_log;
+    let moved = vec![
+        ("local".to_string(), String::new()),
+        ("vps".to_string(), "ran here\n".to_string()),
+    ];
+    assert_eq!(choose_log(moved).unwrap().0, "vps");
+    let empty = vec![("local".to_string(), String::new()), ("vps".to_string(), String::new())];
+    assert_eq!(choose_log(empty).unwrap().0, "local");
+    assert!(choose_log(Vec::new()).is_none());
+}
+
+#[test]
+fn status_of_a_moved_order_shows_the_broker_that_holds_it() {
+    use lr_cli::commands::view::choose_job;
+    assert!(choose_job(Vec::new()).is_none());
+    let one = choose_job(vec![("local".into(), "passed".into(), None)]).unwrap();
+    assert_eq!((one.0.as_str(), one.1.as_str()), ("local", "passed"));
+}
