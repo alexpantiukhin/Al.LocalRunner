@@ -33,6 +33,7 @@ fn least_order() -> Requirements {
         cache: Vec::new(),
         zones: None,
         commands: BTreeSet::new(),
+        variant_gate: Default::default(),
     }
 }
 

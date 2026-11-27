@@ -54,6 +54,7 @@ pub fn requirements() -> Requirements {
         cache: vec!["gradle".into()],
         zones: Some(Zone::up_to(Zone::Lan)),
         commands: Default::default(),
+        variant_gate: Default::default(),
     }
 }
 

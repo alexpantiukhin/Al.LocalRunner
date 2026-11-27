@@ -28,6 +28,7 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         cache: Vec::new(),
         zones: None,
         commands: BTreeSet::new(),
+        variant_gate: Default::default(),
     }
 }
 
