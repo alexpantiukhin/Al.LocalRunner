@@ -82,7 +82,9 @@ pub fn variant_warnings(profile: &Profile, runners: &[RunnerFacts]) -> Vec<Strin
         if !any {
             out.push(format!(
                 "profile {}: variant {}: no runner of this installation matches ({}); it helps only when a joined runner of another machine does",
-                profile.name, v.name, v.when
+                profile.name,
+                v.name,
+                super::profile_summary::when_text(&v.when)
             ));
         }
     }

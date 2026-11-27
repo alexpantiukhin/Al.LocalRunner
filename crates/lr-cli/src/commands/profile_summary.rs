@@ -119,6 +119,23 @@ fn expansions(p: &Profile) -> Vec<Expansion> {
     ]
 }
 
+/// A variant filter as `key a, b; key c`; empty for a filter that matches every runner.
+pub fn when_text(w: &lr_core::VariantWhen) -> String {
+    let zones: Vec<String> = w.zones.iter().map(ToString::to_string).collect();
+    [
+        ("zone", &zones),
+        ("os", &w.os),
+        ("tags", &w.tags),
+        ("programs", &w.programs),
+        ("runner", &w.runners),
+    ]
+    .iter()
+    .filter(|(_, items)| !items.is_empty())
+    .map(|(key, items)| format!("{key} {}", items.join(", ")))
+    .collect::<Vec<_>>()
+    .join("; ")
+}
+
 fn step(s: &StepSpec) -> StepSummary {
     StepSummary {
         name: s.name.clone(),
@@ -179,23 +196,9 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
             .variants
             .iter()
             .map(|v| {
-                let w = &v.when;
-                let zones: Vec<String> = w.zones.iter().map(ToString::to_string).collect();
-                let when = [
-                    ("zone", &zones),
-                    ("os", &w.os),
-                    ("tags", &w.tags),
-                    ("programs", &w.programs),
-                    ("runner", &w.runners),
-                ]
-                .iter()
-                .filter(|(_, items)| !items.is_empty())
-                .map(|(key, items)| format!("{key} {}", items.join(", ")))
-                .collect::<Vec<_>>()
-                .join("; ");
                 VariantSummary {
                     name: v.name.clone(),
-                    when,
+                    when: when_text(&v.when),
                     command: v
                         .from_command
                         .then(|| v.steps.first().map(|s| s.command.clone()))
