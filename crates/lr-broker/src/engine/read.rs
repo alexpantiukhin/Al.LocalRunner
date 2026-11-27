@@ -405,10 +405,21 @@ impl Engine {
                 _ => "waits in the queue".to_string(),
             },
             Some(j) if j.started_at.is_none() => self.granted_text(j),
-            Some(j) => format!(
-                "running on runner {}",
-                j.runner.as_deref().unwrap_or_default()
-            ),
+            Some(j) => {
+                let name = j.runner.as_deref().unwrap_or_default();
+                let zone = self.runners.get(name).map(|slot| {
+                    self.site.zone_between(
+                        &j.entry.client.endpoint,
+                        &j.entry.client.label,
+                        &slot.endpoint,
+                        name,
+                    )
+                });
+                match zone {
+                    Some(z) => format!("running on runner {name} (zone {z})"),
+                    None => format!("running on runner {name}"),
+                }
+            }
             None => finished_text(&rec.job, a.sees_fields()),
         };
         let text = match self.find(key) {
