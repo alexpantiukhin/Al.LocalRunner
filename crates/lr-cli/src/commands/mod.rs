@@ -33,6 +33,7 @@ pub mod upgrade_jobs;
 pub mod upgrade_pool;
 pub mod variant_check;
 pub mod view;
+pub mod wait_events;
 
 pub use args::*;
 pub use read_args::*;

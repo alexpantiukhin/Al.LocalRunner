@@ -397,13 +397,19 @@ pub async fn wait(layout: &Layout, job: &str, json: bool, full: bool) -> Result<
     let redactor = cli_redactor(layout);
     let mut stderr = std::io::stderr();
     let mut tail = Tail::new(WAIT_TAIL_LINES);
+    let watch = super::wait_events::watch(layout, job.clone(), json);
     let ended = if full {
-        follow_to_end(&client, &job, &redactor, &mut |text| {
-            let _ = stderr.write_all(text.as_bytes());
-        })
-        .await
+        tokio::select! {
+            e = follow_to_end(&client, &job, &redactor, &mut |text| {
+                let _ = stderr.write_all(text.as_bytes());
+            }) => e,
+            () = watch => unreachable!("the watch never ends"),
+        }
     } else {
-        follow_to_end(&client, &job, &redactor, &mut |text| tail.push(text)).await
+        tokio::select! {
+            e = follow_to_end(&client, &job, &redactor, &mut |text| tail.push(text)) => e,
+            () = watch => unreachable!("the watch never ends"),
+        }
     };
     if !full {
         let (body, hint) = tail.finish(&job);
