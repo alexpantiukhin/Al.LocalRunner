@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod join_cmd;
 pub mod log_cmd;
 pub mod logging_cmd;
+pub mod plugin_update;
 pub mod policy_edit_cmd;
 pub mod profile_cmd;
 pub mod profile_summary;
@@ -1015,8 +1016,21 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
         Command::Upgrade(a) => {
-            let (dry_run, relay) = (a.dry_run, upgrade_cmd::is_relay(&a));
+            let (dry_run, relay, yes) = (a.dry_run, upgrade_cmd::is_relay(&a), a.yes);
             let code = upgrade_cmd::upgrade(&layout, a).await;
+            if code.is_ok() && !relay {
+                let mut stdio = confirm::Stdio::new();
+                let mut console = stdio.console();
+                for line in plugin_update::offer_updates(
+                    &plugin_update::OsAgents,
+                    env!("CARGO_PKG_VERSION"),
+                    yes,
+                    dry_run,
+                    &mut console,
+                ) {
+                    println!("{line}");
+                }
+            }
             let offered = upgrade_cmd::offers_service_update(
                 relay,
                 dry_run,
