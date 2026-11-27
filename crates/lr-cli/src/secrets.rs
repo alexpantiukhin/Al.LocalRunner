@@ -21,6 +21,26 @@ impl ConfigSecrets {
     }
 }
 
+impl ConfigSecrets {
+    /// The secrets whose source cannot give a value now, each with the reason, names only:
+    /// an `env:` variable that is unset or empty in this process, a `file:` that is missing.
+    pub fn unavailable(&self) -> Vec<(String, String)> {
+        self.sources
+            .iter()
+            .filter_map(|(name, from)| match from {
+                SecretFrom::Env(var) => std::env::var(var)
+                    .ok()
+                    .filter(|v| !v.is_empty())
+                    .is_none()
+                    .then(|| (name.clone(), format!("the variable {var} is not set in the runner process"))),
+                SecretFrom::File(path) => (!path.is_file())
+                    .then(|| (name.clone(), format!("the file {} does not exist", path.display()))),
+                SecretFrom::Keychain(_) => None,
+            })
+            .collect()
+    }
+}
+
 #[async_trait]
 impl SecretSource for ConfigSecrets {
     async fn get(&self, name: &str) -> Result<SecretValue, SecretError> {
