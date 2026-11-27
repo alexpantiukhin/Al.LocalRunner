@@ -115,6 +115,32 @@ impl VariantWhen {
             && any(&self.programs, programs)
     }
 
+    /// Whether every runner this filter matches is matched by `other` too; a key left out
+    /// matches everything.
+    pub fn is_within(&self, other: &VariantWhen) -> bool {
+        fn within<T: PartialEq>(mine: &[T], theirs: &[T]) -> bool {
+            theirs.is_empty() || (!mine.is_empty() && mine.iter().all(|m| theirs.contains(m)))
+        }
+        within(&self.zones, &other.zones)
+            && within(&self.os, &other.os)
+            && within(&self.tags, &other.tags)
+            && within(&self.programs, &other.programs)
+            && within(&self.runners, &other.runners)
+    }
+
+    /// Whether a runner can exist that both filters match (for each key both give, they share
+    /// a value).
+    pub fn overlaps(&self, other: &VariantWhen) -> bool {
+        fn meet<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+            a.is_empty() || b.is_empty() || a.iter().any(|x| b.contains(x))
+        }
+        meet(&self.zones, &other.zones)
+            && meet(&self.os, &other.os)
+            && meet(&self.tags, &other.tags)
+            && meet(&self.programs, &other.programs)
+            && meet(&self.runners, &other.runners)
+    }
+
     /// Whether a runner with these properties matches the filter.
     pub fn matches(
         &self,

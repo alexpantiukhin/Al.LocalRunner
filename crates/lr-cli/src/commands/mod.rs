@@ -19,6 +19,7 @@ pub mod reload_cmd;
 pub mod rights;
 pub mod roles_cmd;
 pub mod secret_cmd;
+pub mod variant_check;
 pub mod runner_config_cmd;
 pub mod runner_outbox_cmd;
 pub mod service_cmd;
