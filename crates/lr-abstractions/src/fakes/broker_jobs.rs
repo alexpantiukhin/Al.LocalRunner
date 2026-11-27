@@ -321,8 +321,7 @@ impl BrokerState {
             return false;
         }
         self.runs.remove(key);
-        self.results
-            .remove(|recipient, e| recipient == key.client && e.job == key.job);
+        self.results.restart(&key.client, &key.job);
         true
     }
 
