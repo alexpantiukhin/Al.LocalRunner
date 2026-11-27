@@ -75,6 +75,61 @@ pub struct ZoneSteps {
     pub from_command: bool,
 }
 
+/// The filter of a profile variant: a runner matches when, for every key that is given, it has
+/// one of the values; a key left out matches every runner.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct VariantWhen {
+    /// Zones of the runner relative to the client.
+    #[serde(default)]
+    pub zones: Vec<Zone>,
+    /// Platform labels of the runner (`linux`, `windows`, `macos`, ...).
+    #[serde(default)]
+    pub os: Vec<String>,
+    /// Tags the runner declares.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Programs the runner declares.
+    #[serde(default)]
+    pub programs: Vec<String>,
+    /// Names of the runner.
+    #[serde(default)]
+    pub runners: Vec<String>,
+}
+
+impl VariantWhen {
+    /// Whether a runner with these properties matches the filter.
+    pub fn matches(
+        &self,
+        zone: Zone,
+        platforms: &BTreeSet<String>,
+        tags: &BTreeSet<String>,
+        programs: &BTreeSet<String>,
+        runner: &str,
+    ) -> bool {
+        let any = |wanted: &[String], have: &BTreeSet<String>| {
+            wanted.is_empty() || wanted.iter().any(|w| have.contains(w))
+        };
+        (self.zones.is_empty() || self.zones.contains(&zone))
+            && any(&self.os, platforms)
+            && any(&self.tags, tags)
+            && any(&self.programs, programs)
+            && (self.runners.is_empty() || self.runners.iter().any(|r| r == runner))
+    }
+}
+
+/// `[profile.X.variant.NAME]`: the steps of the runners its filter matches.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileVariant {
+    /// The name of the variant.
+    pub name: String,
+    /// Which runners take these steps.
+    pub when: VariantWhen,
+    /// Ordered steps.
+    pub steps: Vec<StepSpec>,
+    /// Whether they came from a single `command`.
+    pub from_command: bool,
+}
+
 /// A validated profile: the requirements and steps of a job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -120,6 +175,10 @@ pub struct Profile {
     /// `[profile.X.zone.<zone>]`: the steps of a zone, replacing the common ones there.
     #[serde(default)]
     pub zone_steps: BTreeMap<Zone, ZoneSteps>,
+    /// `[profile.X.variant.NAME]`: steps chosen by a filter over the runner; the first match
+    /// in name order wins.
+    #[serde(default)]
+    pub variants: Vec<ProfileVariant>,
     /// Per-platform overrides.
     pub platform_overrides: BTreeMap<String, PlatformOverride>,
     /// Named arguments the submitter fills into the commands.
@@ -138,6 +197,11 @@ impl Profile {
                 out.insert(zone, v.steps.clone());
             } else if self.common && matches!(zone, Zone::Local | Zone::Shared) {
                 out.insert(zone, self.steps.clone());
+            }
+        }
+        for v in &self.variants {
+            for zone in &v.when.zones {
+                out.entry(*zone).or_insert_with(|| v.steps.clone());
             }
         }
         out

@@ -35,7 +35,10 @@ pub use policy::{
     GroupBy, Policy, PriorityOrigin, PriorityRule, Quota, Reserve, Rule, RulePolicy, Strategy,
 };
 pub use predict::{earliest_start, pick_next, Plan, QueueState};
-pub use profile::{resolve_for_platform, PlatformOverride, Profile, Program, StepSpec, ZoneSteps};
+pub use profile::{
+    resolve_for_platform, PlatformOverride, Profile, ProfileVariant, Program, StepSpec, VariantWhen,
+    ZoneSteps,
+};
 pub use profile_args::ArgSpec;
 pub use profile_bind::{bind_args, preview_args};
 pub use profile_parse::{ignored_sections, parse_profiles};
