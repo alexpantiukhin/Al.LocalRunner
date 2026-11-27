@@ -527,6 +527,57 @@ async fn policy(
     policy_edit_cmd::edit(layout, args, elevated_child).await
 }
 
+/// What a command of the broker's admin channel does when the OS refused it the channel: with a
+/// terminal it asks, then runs the same command as the broker's account (a broker service on
+/// Unix) or with administrator rights; without one it prints the exact line to run.
+fn broker_admin_retry(
+    result: Result<i32, String>,
+    what: &str,
+    layout: &Layout,
+    tail: &[String],
+    no_elevate: bool,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    let need = rights::Need {
+        what,
+        why: "open the admin channel of the broker",
+    };
+    let session = rights::session(false, no_elevate, elevated_child);
+    rights::retry_as_broker(result, &need, &session, layout, tail)
+}
+
+/// The arguments of `broker add` that repeat the request, for the re-run as the broker's account.
+fn broker_add_flags(
+    req: &lr_proto::AdminRequest,
+    code_file: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut flags = Vec::new();
+    if let lr_proto::AdminRequest::BrokerAdd {
+        name,
+        label,
+        runners,
+        address,
+    } = req
+    {
+        let named = [("--name", name.clone()), ("--label", label.clone())]
+            .into_iter()
+            .chain([("--runners", runners.map(|n| n.to_string()))])
+            .chain([("--address", address.clone())]);
+        for (flag, value) in named {
+            if let Some(v) = value {
+                flags.push(flag.to_string());
+                flags.push(v);
+            }
+        }
+    }
+    flags.extend(
+        code_file
+            .iter()
+            .flat_map(|f| ["--code-file".to_string(), f.display().to_string()]),
+    );
+    flags
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let elevated_child = cli.is_elevated_child();
@@ -636,6 +687,21 @@ pub async fn run(cli: Cli) -> i32 {
             let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
             down_cmd::down_cli(&layout, names, cancel, yes, wait).await
         }
+        Command::Policy {
+            action: PolicyAction::Check { file },
+        } => {
+            let result = admin_cmd::policy_check(&layout, file.clone()).await;
+            let mut tail: Vec<String> = vec!["policy".into(), "check".into()];
+            tail.extend(file.map(|f| f.display().to_string()));
+            broker_admin_retry(result, "policy check", &layout, &tail, no_elevate, elevated_child)
+        }
+        Command::Policy {
+            action: PolicyAction::Reload,
+        } => {
+            let result = admin_cmd::policy_reload(&layout).await;
+            let tail: Vec<String> = vec!["policy".into(), "reload".into()];
+            broker_admin_retry(result, "policy reload", &layout, &tail, no_elevate, elevated_child)
+        }
         Command::Policy { action } => policy(&layout, action, elevated_child, expect_before).await,
         Command::Config { action } => config(&layout, action, elevated_child, expect_before).await,
         Command::Logging {
@@ -695,7 +761,10 @@ pub async fn run(cli: Cli) -> i32 {
                     runners,
                     address,
                 };
-                admin_cmd::broker_add(&layout, req, code_file).await
+                let mut tail: Vec<String> = vec!["broker".into(), "add".into()];
+                tail.extend(broker_add_flags(&req, code_file.as_deref()));
+                let result = admin_cmd::broker_add(&layout, req, code_file).await;
+                broker_admin_retry(result, "broker add", &layout, &tail, no_elevate, elevated_child)
             }
         },
         Command::Runner { action } => match action {
@@ -766,35 +835,37 @@ pub async fn run(cli: Cli) -> i32 {
             } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
             RunnerAction::List => {
                 let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await;
-                let need = rights::Need {
-                    what: "runner list",
-                    why: "open the admin channel of the broker",
-                };
-                let mut args = rights::layout_args(&layout);
-                args.extend(["runner".into(), "list".into()]);
-                let session = rights::session(false, no_elevate, elevated_child);
-                rights::retry_if_denied(result, &need, &session, &args)
+                let tail: Vec<String> = vec!["runner".into(), "list".into()];
+                broker_admin_retry(result, "runner list", &layout, &tail, no_elevate, elevated_child)
             }
             RunnerAction::Remove { name, yes } => {
+                let tail: Vec<String> = vec![
+                    "runner".into(),
+                    "remove".into(),
+                    name.clone(),
+                    "--yes".into(),
+                ];
                 let req = lr_proto::AdminRequest::RunnerRemove { name };
-                admin_cmd::remove_cli(&layout, req, yes).await
+                let result = admin_cmd::remove_cli(&layout, req, yes).await;
+                broker_admin_retry(result, "runner remove", &layout, &tail, no_elevate, elevated_child)
             }
         },
         Command::Client { action } => match action {
             ClientAction::List => {
                 let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientList).await;
-                let need = rights::Need {
-                    what: "client list",
-                    why: "open the admin channel of the broker",
-                };
-                let mut args = rights::layout_args(&layout);
-                args.extend(["client".into(), "list".into()]);
-                let session = rights::session(false, no_elevate, elevated_child);
-                rights::retry_if_denied(result, &need, &session, &args)
+                let tail: Vec<String> = vec!["client".into(), "list".into()];
+                broker_admin_retry(result, "client list", &layout, &tail, no_elevate, elevated_child)
             }
             ClientAction::Remove { name, yes } => {
+                let tail: Vec<String> = vec![
+                    "client".into(),
+                    "remove".into(),
+                    name.clone(),
+                    "--yes".into(),
+                ];
                 let req = lr_proto::AdminRequest::ClientRemove { name };
-                admin_cmd::remove_cli(&layout, req, yes).await
+                let result = admin_cmd::remove_cli(&layout, req, yes).await;
+                broker_admin_retry(result, "client remove", &layout, &tail, no_elevate, elevated_child)
             }
         },
         Command::Init { role } => setup::init(&layout, role),
