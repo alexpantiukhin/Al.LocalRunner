@@ -18,6 +18,7 @@ pub mod read_cmd;
 pub mod reload_cmd;
 pub mod rights;
 pub mod roles_cmd;
+pub mod secret_cmd;
 pub mod runner_config_cmd;
 pub mod runner_outbox_cmd;
 pub mod service_cmd;
@@ -316,6 +317,13 @@ pub enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// Secrets of a runner: the value goes into a private file, `[secret.NAME]` of its
+    /// `runner.toml` points at it.
+    Secret {
+        /// What to do.
+        #[command(subcommand)]
+        action: SecretAction,
+    },
     /// Diagnostics configuration.
     Logging {
         /// What to do.
@@ -440,6 +448,78 @@ impl Cli {
     /// not elevate again nor show the diff the parent already showed.
     pub fn is_elevated_child(&self) -> bool {
         self.elevated_child.is_some()
+    }
+}
+
+async fn secret(
+    layout: &Layout,
+    action: SecretAction,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    use secret_cmd::{list_lines, remove_with, set_with, SetArgs, ValueSource};
+    let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
+    let (elevator, roles) = (crate::config_edit::OsElevator, crate::config_edit::LiveRoles);
+    match action {
+        SecretAction::List { runner } => {
+            for line in list_lines(layout, runner.as_deref())? {
+                println!("{line}");
+            }
+            Ok(0)
+        }
+        SecretAction::Remove {
+            runner,
+            name,
+            dry_run,
+            restart,
+        } => {
+            remove_with(
+                layout,
+                &runner,
+                &name,
+                dry_run,
+                restart,
+                elevated_child,
+                &elevator,
+                &roles,
+                &mut out,
+                &mut err,
+            )
+            .await
+        }
+        SecretAction::Set {
+            runner,
+            name,
+            value_file,
+            dry_run,
+            restart,
+        } => {
+            use std::io::IsTerminal;
+            let source = match value_file {
+                Some(path) => ValueSource::File(path),
+                None if std::io::stdin().is_terminal() => {
+                    return Err("give the value on standard input (pipe it: `... | localrunner secret set <runner> <NAME>`) or with --value-file <file>; it is never taken from the command line".into())
+                }
+                None => ValueSource::Stdin,
+            };
+            let args = SetArgs {
+                runner,
+                name,
+                source,
+                dry_run,
+                restart,
+            };
+            set_with(
+                layout,
+                args,
+                elevated_child,
+                &elevator,
+                &roles,
+                &mut std::io::stdin(),
+                &mut out,
+                &mut err,
+            )
+            .await
+        }
     }
 }
 
@@ -704,6 +784,7 @@ pub async fn run(cli: Cli) -> i32 {
         }
         Command::Policy { action } => policy(&layout, action, elevated_child, expect_before).await,
         Command::Config { action } => config(&layout, action, elevated_child, expect_before).await,
+        Command::Secret { action } => secret(&layout, action, elevated_child).await,
         Command::Logging {
             action: LoggingAction::Reload,
         } => logging_cmd::logging_reload(&layout).await,
