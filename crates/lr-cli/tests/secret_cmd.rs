@@ -63,8 +63,10 @@ async fn set_stores_the_value_in_a_private_file_and_points_the_runner_at_it() {
         assert_eq!(mode, 0o600);
     }
     let toml = std::fs::read_to_string(layout.runner_dir("r1").join("runner.toml")).unwrap();
-    assert!(
-        toml.contains(&format!("from = \"file:{}\"", file.display())),
+    let parsed: toml::Value = toml::from_str(&toml).unwrap();
+    assert_eq!(
+        parsed["secret"]["TOKEN"]["from"].as_str().unwrap(),
+        format!("file:{}", file.display()),
         "{toml}"
     );
     assert!(!out.contains("s3cret"), "the value is never printed: {out}");
