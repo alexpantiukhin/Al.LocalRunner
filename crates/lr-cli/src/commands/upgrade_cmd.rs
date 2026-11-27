@@ -216,6 +216,39 @@ pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> 
     }
 }
 
+/// The warnings about the `env:` secrets of the running runners `names` that `upgrade` would
+/// start without their variable: a runner restarted by `upgrade` gets the environment of the
+/// shell that runs it, so a variable unset there (`env` gives its value) is lost unless the
+/// runner has a service-manager unit (`has_unit`) that sets it. Names only, never values.
+pub fn restart_env_warnings(
+    layout: &Layout,
+    names: &std::collections::BTreeSet<String>,
+    has_unit: impl Fn(&str) -> bool,
+    env: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names.iter().filter(|n| !has_unit(n)) {
+        let Some(text) = crate::build::runner_config_path(layout, name, None)
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        else {
+            continue;
+        };
+        let Ok(table) = text.parse::<toml::Table>() else {
+            continue;
+        };
+        for (secret, from) in crate::runner_config::secret_sources(&table) {
+            if let crate::runner_config::SecretFrom::Env(var) = from {
+                if env(&var).is_none_or(|v| v.is_empty()) {
+                    out.push(format!(
+                        "runner {name}: secret {secret} comes from the variable {var}, which is not set here; the restarted runner will not have it (store it with `localrunner secret set {name} {secret}` or start the runner through its unit)"
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Whether this process only fetches the release and hands over to the downloaded binary (it
 /// is the installed one). The downloaded binary does the replacing and asks for the service
 /// update itself, so the installed one must not ask again.
@@ -282,6 +315,26 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let start = unit_starter(installed.clone());
+    for line in restart_env_warnings(
+        layout,
+        &running.runners,
+        |name| {
+            crate::os_service::autostart::unit_for_argv(&[
+                "runner".into(),
+                "run".into(),
+                "--name".into(),
+                name.to_string(),
+            ])
+            .is_some_and(|unit| {
+                crate::os_service::home_dir().is_ok_and(|h| {
+                    h.join(".config/systemd/user").join(unit).is_file()
+                })
+            })
+        },
+        |var| std::env::var(var).ok(),
+    ) {
+        eprintln!("warning: {line}");
+    }
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();

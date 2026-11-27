@@ -165,6 +165,10 @@ pub enum Command {
         /// One job: print the whole log, not its last 50 lines and a hint.
         #[arg(long)]
         full: bool,
+        /// Only this broker: refused at once when this hub does not know it or cannot reach it.
+        /// A moved order is still followed to the broker that holds it.
+        #[arg(long)]
+        broker: Option<String>,
     },
     /// Own jobs (label `--as` and OS user).
     Jobs {
@@ -700,7 +704,8 @@ pub async fn run(cli: Cli) -> i32 {
             label,
             json,
             full,
-        } => jobs::wait_jobs(&layout, jobs, label, json, full).await,
+            broker,
+        } => jobs::wait_jobs(&layout, jobs, label, json, full, broker).await,
         Command::Jobs {
             label,
             active,

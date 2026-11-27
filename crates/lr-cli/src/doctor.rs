@@ -338,6 +338,28 @@ fn same_user(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// One `warn` per secret of runner `name` whose source gives no value now (an `env:` variable
+/// unset in this process, a missing `file:`), naming the secret and the way to store it that
+/// survives restarts; never a value.
+pub fn secret_checks(
+    name: &str,
+    sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
+) -> Vec<Check> {
+    crate::secrets::ConfigSecrets::new(sources.clone())
+        .unavailable()
+        .into_iter()
+        .map(|(secret, why)| {
+            check(
+                format!("runner {name}"),
+                Status::Warn,
+                format!(
+                    "secret {secret}: {why}; `localrunner secret set {name} {secret}` keeps it in a file that survives restarts"
+                ),
+            )
+        })
+        .collect()
+}
+
 fn runners(layout: &Layout, out: &mut Vec<Check>) {
     let host = crate::host::resources();
     for name in layout.runner_names() {
@@ -351,7 +373,12 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
                 let env_notes = cfg.env_notes(cfg!(windows), |n| std::env::var(n).ok());
-                if problems.is_empty() && cfg.warnings.is_empty() && env_notes.is_empty() {
+                let secrets = secret_checks(&name, &cfg.secrets);
+                if problems.is_empty()
+                    && cfg.warnings.is_empty()
+                    && env_notes.is_empty()
+                    && secrets.is_empty()
+                {
                     out.push(check(label.clone(), Status::Ok, "runner.toml and programs"));
                 }
                 for w in &cfg.warnings {
@@ -367,6 +394,7 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
                 for p in problems {
                     out.push(check(label.clone(), Status::Warn, p));
                 }
+                out.extend(secrets);
             }
         }
     }

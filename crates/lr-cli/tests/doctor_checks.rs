@@ -574,3 +574,26 @@ fn a_second_broker_of_the_user_is_refused_while_the_service_is_installed() {
     assert!(second_broker_refusal(true, true).is_none());
     assert!(second_broker_refusal(false, true).unwrap().contains("--state-dir"));
 }
+
+#[test]
+fn doctor_warns_about_a_secret_whose_source_gives_nothing_without_its_value() {
+    use lr_cli::doctor::{secret_checks, Status};
+    use lr_cli::runner_config::SecretFrom;
+    let mut sources = std::collections::BTreeMap::new();
+    sources.insert(
+        "TOKEN".to_string(),
+        SecretFrom::Env("LR_SURELY_UNSET_VARIABLE".into()),
+    );
+    sources.insert(
+        "FILE".to_string(),
+        SecretFrom::File(std::path::PathBuf::from("/definitely/not/here")),
+    );
+    let found = secret_checks("r1", &sources);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found.iter().all(|c| c.status == Status::Warn));
+    let text: String = found.iter().map(|c| c.detail.clone()).collect::<Vec<_>>().join("\n");
+    assert!(text.contains("secret TOKEN: the variable LR_SURELY_UNSET_VARIABLE is not set"), "{text}");
+    assert!(text.contains("secret FILE: the file /definitely/not/here does not exist"), "{text}");
+    assert!(text.contains("localrunner secret set r1 TOKEN"), "{text}");
+    assert!(secret_checks("r1", &Default::default()).is_empty());
+}

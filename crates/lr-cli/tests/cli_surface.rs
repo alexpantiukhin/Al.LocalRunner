@@ -156,3 +156,22 @@ fn cli_surface_lists_config() {
     assert!(Cli::try_parse_from(["localrunner", "config", "show", "nobody"]).is_err());
     assert!(Cli::try_parse_from(["localrunner", "config", "show", "runner:"]).is_err());
 }
+
+#[test]
+fn wait_takes_a_broker_like_log_history_and_status() {
+    let root = command();
+    for path in [&["wait"][..], &["log"], &["history"], &["status"]] {
+        assert!(has_long(find(&root, path), "broker"), "{path:?}");
+    }
+    assert!(Cli::try_parse_from(["localrunner", "wait", "j1", "--broker", "vps"]).is_ok());
+}
+
+#[test]
+fn secret_has_set_list_and_remove() {
+    let root = command();
+    for sub in ["set", "list", "remove"] {
+        find(&root, &["secret", sub]);
+    }
+    assert!(Cli::try_parse_from(["localrunner", "secret", "set", "r1", "TOKEN", "--value-file", "f"]).is_ok());
+    assert!(Cli::try_parse_from(["localrunner", "secret", "set", "r1", "TOKEN", "s3cret"]).is_err());
+}
