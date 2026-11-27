@@ -184,3 +184,21 @@ steps = [{ name = \"a\", command = \"y\", timeout_s = 5 }]
         "{l:?}"
     );
 }
+
+#[test]
+fn variants_are_shown_with_their_filter() {
+    let text = "[profile.t]
+timeout_s = 60
+command = \"echo common\"
+[profile.t.variant.linux-remote]
+when = { zone = [\"lan\", \"remote\"], os = [\"linux\"] }
+command = \"sh run.sh\"
+";
+    let l = lines(text);
+    assert!(
+        l.contains(&"  variant linux-remote (zone lan, remote; os linux): sh run.sh".to_string()),
+        "{l:?}"
+    );
+    let v = serde_json::to_value(summarize(&parse_profiles(text).unwrap()[0])).unwrap();
+    assert_eq!(v["variants"][0]["name"], "linux-remote");
+}

@@ -26,6 +26,19 @@ pub struct ZoneSummary {
     pub steps: Vec<StepSummary>,
 }
 
+/// A variant of a profile selected by a filter over the runner.
+#[derive(Debug, Clone, Serialize)]
+pub struct VariantSummary {
+    /// The name of the variant.
+    pub name: String,
+    /// The filter as `key a, b; key c`, empty for a variant that matches every runner.
+    pub when: String,
+    /// The single command of the variant.
+    pub command: Option<String>,
+    /// The steps of the variant; empty when it has a single command.
+    pub steps: Vec<StepSummary>,
+}
+
 /// One profile as shown by `profile check`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProfileSummary {
@@ -49,6 +62,8 @@ pub struct ProfileSummary {
     pub platforms: Vec<String>,
     /// The zone variants, nearest zone first.
     pub zones: Vec<ZoneSummary>,
+    /// The variants selected by a filter, in the order they are tried.
+    pub variants: Vec<VariantSummary>,
     /// Tags held for the run.
     pub tags: Vec<String>,
     /// Tags nobody else may hold meanwhile.
@@ -160,6 +175,39 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
                 },
             })
             .collect(),
+        variants: p
+            .variants
+            .iter()
+            .map(|v| {
+                let w = &v.when;
+                let zones: Vec<String> = w.zones.iter().map(ToString::to_string).collect();
+                let when = [
+                    ("zone", &zones),
+                    ("os", &w.os),
+                    ("tags", &w.tags),
+                    ("programs", &w.programs),
+                    ("runner", &w.runners),
+                ]
+                .iter()
+                .filter(|(_, items)| !items.is_empty())
+                .map(|(key, items)| format!("{key} {}", items.join(", ")))
+                .collect::<Vec<_>>()
+                .join("; ");
+                VariantSummary {
+                    name: v.name.clone(),
+                    when,
+                    command: v
+                        .from_command
+                        .then(|| v.steps.first().map(|s| s.command.clone()))
+                        .flatten(),
+                    steps: if v.from_command {
+                        Vec::new()
+                    } else {
+                        v.steps.iter().map(step).collect()
+                    },
+                }
+            })
+            .collect(),
         tags: p.tags.clone(),
         exclusive: p.exclusive.clone(),
         programs: p.programs.iter().map(|x| x.name.clone()).collect(),
@@ -204,6 +252,22 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
                 out.push(format!(
                     "  zone {}, step {}: {} (timeout {} s)",
                     z.zone, s.name, s.command, s.timeout_s
+                ));
+            }
+        }
+        for v in &p.variants {
+            let filter = if v.when.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", v.when)
+            };
+            if let Some(c) = &v.command {
+                out.push(format!("  variant {}{filter}: {c}", v.name));
+            }
+            for s in &v.steps {
+                out.push(format!(
+                    "  variant {}{filter}, step {}: {} (timeout {} s)",
+                    v.name, s.name, s.command, s.timeout_s
                 ));
             }
         }
