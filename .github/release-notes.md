@@ -1,9 +1,11 @@
-**Added:** profile variants: `[profile.X.variant.NAME]` with `when = { zone, os, tags, programs, runner }`. The runner takes the first variant (in name order) that fits it, and a zone opened only by variants takes only runners a variant fits. `profile check` warns about a variant that an earlier one hides, variants that can match the same runner and a variant no runner of this machine matches. A profiles file with `variant` is refused by 0.11.0 and older.
+**Added:** `localrunner runner cache clean [NAME] [--older-than DAYS] [--dry-run]` frees the named caches of a running runner; `runners` shows why a runner below its `[accept] min_free_disk_mb` takes no orders and `doctor` warns before the disk is full.
 
-**Added:** `localrunner secret set|list|remove`: the value comes from stdin or `--value-file`, never from the command line, is stored in a private file and `[secret.NAME]` points at it. `doctor` checks the sources of the secrets, `upgrade` warns before the restart about `env:` secrets whose variable is missing.
+**Added:** `upgrade` finds outdated `localrunner` plugins in Claude Code and Codex and offers to update them through the agent CLI, each in its own scope; it warns about the service update and its exit code reflects a failed update.
 
-**Added:** `wait --broker`; `autostart status [--json]`; `down --wait`; a ZONE column in `runners`; zone, priority and rule of a run are stored (broker.db v6) and shown by `history`, `explain` and the dashboard; `explain` of a waiting order lists why the other runners do not suit it; refusals name the client label and the reasons of every broker.
+**Added:** `wait` prints the reason an order waits and one line per change to standard error; a step that exits with code 127 gets a hint (list the program in `programs` of the profile) in the output of `wait` and `run` and in `explain`.
 
-**Changed:** `upgrade` asks for one administrator request, never downgrades the service, restarts after a failed copy and restarts roles through their systemd or launchd unit. Administrator commands of a broker service run as `sudo -u al-localrunner <service binary>`; a second user broker beside the service is refused and the old broker files are listed. `--background` releases the standard streams; a refused connection to the broker names the command that starts it.
+**Fixed:** roles that `upgrade` starts again through a systemd unit or a launchd agent no longer stay in drain (a runner on a VPS did not come back after `upgrade`).
 
-**Changed:** the skills and both READMEs describe the above; the dashboard history grid has the columns zone, priority and broker.
+**Fixed:** `doctor` and `secret list` check `env:` secrets against the environment of the running runner process (names only), else its unit, else the shell, and the text says which; the false `not set in the runner process` warning is gone.
+
+**Changed:** the skills and both READMEs describe the above. Flaky `dashboard_live` test waits for the running state.
