@@ -701,7 +701,7 @@ All commands:
 
 Flags of `submit` and `run`: `--note`, `--platform`, `--timeout <s>` (only lowers the profile timeout), `--mem 6144|512m|6g`, `--cpu <cores>` (replace the profile values for one run), `--arg name=value` (fills an argument the profile declares; repeatable), `--detach` (explicit; `submit` already detaches by default), `--no-detach` (`submit` only: the order is cancelled when the sending process exits, as `submit --wait` and `run` always do), `--quiet` (`submit` only: no hint block). A detached `submit` prints only the job id to stdout and a hint block to stderr with ready-to-copy commands (`queued <job-id> (profile ..., label ...)`, `follow: localrunner wait <job-id>`, `result: localrunner log <job-id> --tail 50`, `cancel: localrunner cancel <job-id> --as <label>`); `--quiet`, `--json` and `run` print no block. `--as` is required; inside GitHub Actions it defaults to `github:<workflow>/<job>`. Read commands accept `--json`.
 
-`wait` prints to standard error the reason the order waits and one line per change (`running on runner X`, `step NAME`, `finished: STATE`); with `--json` each line is a JSON object with `job` and `event`. A step that exits with code 127 gets the line `command not found: ...` in the log of the order, naming the program that the PATH of the runner does not contain.
+`wait` prints to standard error the reason the order waits and one line per change (`running on runner X`, `step NAME`, `finished: STATE`); with `--json` each line is a JSON object with `job` and `event`. A step that exits with code 127 gets the line `=== hint: exit 127: `PROGRAM` was not found on runner NAME; ... ===` in the log of the order: list the program in `programs` of the profile so the order goes to a runner that has it.
 
 ## Releasing
 
