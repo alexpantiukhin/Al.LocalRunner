@@ -1,7 +1,7 @@
 use super::outbox::{accept_next, MemoryOutbox};
 use crate::store::{
     outlives_cancel, Admission, Applied, Inbound, Intake, JobFilter, JobKey, JobLogRow, JobRecord,
-    JobSpecRow, JoinCodeRow, LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, RunnerRow,
+    JobSpecRow, JoinCodeRow, LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport, RunnerRow,
     StepUpdate, StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState, Timestamp};
@@ -77,13 +77,26 @@ impl BrokerState {
     }
 
     pub(crate) fn grant(&mut self, key: &JobKey, runner: &str) -> Result<(), StoreError> {
+        self.grant_with(key, runner, Placement::default())
+    }
+
+    pub(crate) fn grant_with(
+        &mut self,
+        key: &JobKey,
+        runner: &str,
+        placement: Placement,
+    ) -> Result<(), StoreError> {
         if !self.orders.contains_key(key) {
             return Err(StoreError::NotFound(format!(
                 "order {}/{}",
                 key.client, key.job
             )));
         }
-        self.run(key)?.record.job.runner = Some(runner.to_string());
+        let job = &mut self.run(key)?.record.job;
+        job.runner = Some(runner.to_string());
+        job.zone = placement.zone;
+        job.priority = placement.priority;
+        job.rule = placement.rule;
         self.orders.remove(key);
         Ok(())
     }
@@ -106,6 +119,9 @@ impl BrokerState {
             )));
         }
         job.runner = None;
+        job.zone = None;
+        job.priority = None;
+        job.rule = None;
         run.received.remove(&Inbound::Runner);
         run.to_runner = 0;
         self.orders.insert(key, order);

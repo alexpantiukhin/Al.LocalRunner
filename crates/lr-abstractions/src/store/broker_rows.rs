@@ -92,6 +92,24 @@ pub struct JobRow {
     pub peak_mem_mb: Option<u64>,
     /// Peak size of the run's working and temporary directories in MB.
     pub peak_disk_mb: Option<u64>,
+    /// Zone of the runner it was granted to, relative to the client; `None` for a run granted
+    /// before the broker kept it and while it waits.
+    pub zone: Option<String>,
+    /// Priority the order had when it was granted.
+    pub priority: Option<i64>,
+    /// Name of the rule the priority came from; `None` when no rule set it.
+    pub rule: Option<String>,
+}
+
+/// Where and why a run was granted, stored with the run by [`crate::BrokerStore::grant_with`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Placement {
+    /// Zone of the runner relative to the client.
+    pub zone: Option<String>,
+    /// Priority of the order.
+    pub priority: Option<i64>,
+    /// The rule the priority came from.
+    pub rule: Option<String>,
 }
 
 /// Row of `step`.

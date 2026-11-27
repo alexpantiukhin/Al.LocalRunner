@@ -16,7 +16,7 @@ use rusqlite::{params_from_iter, Connection, OptionalExtension, Row};
 const JOB_COLUMNS: &str = "client_key, id, project, source, label, note, branch, cwd, profile, \
     platform, runner_name, client_machine, client_label, os_user, secrets, \
     queued_at, started_at, finished_at, state, exit_code, cancelled_by, \
-    cancel_reason, peak_mem_mb, peak_disk_mb";
+    cancel_reason, peak_mem_mb, peak_disk_mb, zone, priority, rule";
 
 fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
     Ok(JobRow {
@@ -46,6 +46,9 @@ fn job_row(r: &Row<'_>) -> rusqlite::Result<JobRow> {
         cancel_reason: r.get(21)?,
         peak_mem_mb: col_opt_u64(r, 22)?,
         peak_disk_mb: col_opt_u64(r, 23)?,
+        zone: r.get(24)?,
+        priority: r.get(25)?,
+        rule: r.get(26)?,
     })
 }
 

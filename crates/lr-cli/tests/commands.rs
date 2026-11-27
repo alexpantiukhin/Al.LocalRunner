@@ -153,6 +153,9 @@ fn version_prints_binary_and_protocol_version() {
 
 fn summary(job: &str, state: JobState) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId(job.into()),
         client_label: "dev".into(),
         state,

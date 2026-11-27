@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use lr_abstractions::{
     Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord, JobSpecRow,
     Join, JoinCodeRow, LogAppend, MachineRow, OrderRow, OutboxBacklog, OutboxEntry, OutboxKind,
-    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
+    Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats, StatsQuery, StepUpdate,
     StoreError, Transition,
 };
 use lr_core::{JobId, Timestamp};
@@ -67,9 +67,18 @@ impl BrokerStore for SqliteBrokerStore {
     }
 
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError> {
+        self.grant_with(key, runner, Placement::default()).await
+    }
+
+    async fn grant_with(
+        &self,
+        key: &JobKey,
+        runner: &str,
+        placement: Placement,
+    ) -> Result<(), StoreError> {
         let (key, runner) = (key.clone(), runner.to_string());
         self.db
-            .run(move |c| job_write::grant(c, &key, &runner))
+            .run(move |c| job_write::grant(c, &key, &runner, &placement))
             .await
     }
 

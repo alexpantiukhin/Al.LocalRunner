@@ -218,6 +218,9 @@ impl Engine {
             gone_since: None,
             lost_floor: rec.job.started_at.map(|_| now),
             last_output_at: None,
+            zone: rec.job.zone.as_deref().and_then(|z| z.parse().ok()),
+            priority: rec.job.priority,
+            rule: rec.job.rule.clone(),
         })
     }
 

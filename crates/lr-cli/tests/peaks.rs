@@ -12,6 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn summary(peaks: Option<(u64, u64)>) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId("j1".into()),
         client_label: "dev".into(),
         state: JobState::Failed,

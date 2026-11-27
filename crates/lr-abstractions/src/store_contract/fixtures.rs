@@ -54,6 +54,9 @@ pub fn intake(client: &str, job: &str, profile: &str, queued_at: Timestamp) -> I
             cancel_reason: None,
             peak_mem_mb: None,
             peak_disk_mb: None,
+            zone: None,
+            priority: None,
+            rule: None,
         },
         steps: vec![step(0, "build"), step(1, "test")],
         spec: JobSpecRow {

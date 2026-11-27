@@ -2,8 +2,8 @@
 
 use super::fixtures::{at, intake, T0};
 use crate::store::{
-    Admission, Applied, BrokerStore, JobKey, JobSpecRow, LogAppend, StepUpdate, StoreError,
-    Transition, LOG_TRUNCATED_MARK,
+    Admission, Applied, BrokerStore, JobKey, JobSpecRow, LogAppend, Placement, StepUpdate,
+    StoreError, Transition, LOG_TRUNCATED_MARK,
 };
 use lr_core::{JobState, StepState};
 
@@ -314,6 +314,28 @@ pub async fn peaks_are_stored_with_the_final_state(store: &dyn BrokerStore) {
         .cancel_reason
         .as_deref()
         .is_some_and(|r| r.starts_with("resource_exceeded: ")));
+}
+
+/// A grant with a placement stores where the run went (zone of the runner, the priority and the
+/// rule it came from); a plain grant stores none, and a requeue forgets it.
+pub async fn grant_with_a_placement_is_stored_with_the_run(store: &dyn BrokerStore) {
+    let plain = running(store, "c1", "j1").await;
+    let row = store.job(&plain).await.unwrap().unwrap().job;
+    assert_eq!((row.zone, row.priority, row.rule), (None, None, None));
+    let key = queued(store, "c1", "j2").await;
+    let placement = Placement {
+        zone: Some("remote".into()),
+        priority: Some(7),
+        rule: Some("ci-first".into()),
+    };
+    store.grant_with(&key, "r1", placement).await.unwrap();
+    let row = store.job(&key).await.unwrap().unwrap().job;
+    assert_eq!(row.zone.as_deref(), Some("remote"));
+    assert_eq!(row.priority, Some(7));
+    assert_eq!(row.rule.as_deref(), Some("ci-first"));
+    store.requeue(&key).await.unwrap();
+    let row = store.job(&key).await.unwrap().unwrap().job;
+    assert_eq!((row.zone, row.priority, row.rule), (None, None, None));
 }
 
 /// A granted run that never started goes back to the queue with its runner cleared; the store

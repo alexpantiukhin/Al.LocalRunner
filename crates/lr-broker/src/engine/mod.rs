@@ -340,6 +340,9 @@ pub(crate) struct Job {
     pub(crate) gone_since: Option<Timestamp>,
     pub(crate) lost_floor: Option<Timestamp>,
     pub(crate) last_output_at: Option<Timestamp>,
+    pub(crate) zone: Option<lr_core::Zone>,
+    pub(crate) priority: Option<i64>,
+    pub(crate) rule: Option<String>,
 }
 
 pub(crate) struct Engine {

@@ -50,6 +50,9 @@ async fn fake_hub(answer: Answer) -> (IpcClient, Arc<Mutex<Vec<CliRequest>>>) {
 
 fn summary(job: &str, state: JobState) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId(job.into()),
         client_label: "laptop".into(),
         state,
@@ -190,6 +193,9 @@ fn hub(
                 ReadRequest::History(_) => ReadReply::History {
                     jobs: vec![
                         JobSummary {
+                            zone: None,
+                            priority: None,
+                            rule: None,
                             reason: Some(ReasonCode::SenderGone),
                             ..summary(&format!("done-{name}"), JobState::Cancelled)
                         },

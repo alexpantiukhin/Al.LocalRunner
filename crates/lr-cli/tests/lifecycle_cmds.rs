@@ -113,6 +113,9 @@ fn status_masks_the_last_lines_of_running_jobs() {
     use lr_obs::Redactor;
     use lr_proto::{JobSummary, PoolLoad, RunningView, StatusView};
     let summary = JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId("j1".into()),
         client_label: "dev".into(),
         state: JobState::Running,

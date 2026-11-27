@@ -75,6 +75,8 @@ pub fn mask_summary(mut s: JobSummary, access: Access) -> Option<JobSummary> {
             s.peak_disk_mb = None;
             s.labels = Vec::new();
             s.cancelled_by = None;
+            s.priority = None;
+            s.rule = None;
             Some(s)
         }
         Access::Full | Access::Owner => Some(s),
@@ -191,6 +193,9 @@ pub fn summary_of(row: &JobRow) -> JobSummary {
         peak_disk_mb: row.peak_disk_mb,
         labels: Vec::new(),
         cancelled_by: row.cancelled_by.clone().filter(|b| !b.is_empty()),
+        zone: row.zone.as_deref().and_then(|z| z.parse().ok()),
+        priority: row.priority,
+        rule: row.rule.clone(),
     }
 }
 
@@ -320,6 +325,9 @@ pub(crate) fn summary_of_job(job: &Job) -> JobSummary {
         peak_disk_mb: None,
         labels: job.spec.labels.clone(),
         cancelled_by: job.cancel.as_ref().and_then(|c| c.actor()),
+        zone: job.zone,
+        priority: job.priority,
+        rule: job.rule.clone(),
     }
 }
 

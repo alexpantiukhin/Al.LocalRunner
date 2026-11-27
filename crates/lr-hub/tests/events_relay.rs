@@ -11,6 +11,9 @@ use lr_proto::{
 fn queued(job: &str) -> QueueEvent {
     QueueEvent::JobQueued {
         job: Box::new(JobSummary {
+            zone: None,
+            priority: None,
+            rule: None,
             job: JobId(job.into()),
             client_label: "bob".into(),
             state: JobState::Queued,

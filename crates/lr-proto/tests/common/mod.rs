@@ -145,6 +145,9 @@ pub fn service_report() -> ServiceReport {
 
 pub fn summary() -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: job(1),
         client_label: "ci".into(),
         state: JobState::Running,

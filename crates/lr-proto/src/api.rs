@@ -294,6 +294,17 @@ pub struct JobSummary {
     /// absent when not known (never empty), hidden at `summary`, absent from older peers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cancelled_by: Option<String>,
+    /// Zone of the runner the run was granted to, relative to its client; absent while it waits,
+    /// for a run granted before the broker kept it, and from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<lr_core::Zone>,
+    /// Priority of the order when it was granted; hidden at `summary`, absent from older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i64>,
+    /// The rule the priority came from; hidden at `summary`, absent when no rule set it and from
+    /// older peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 /// A step of a run.

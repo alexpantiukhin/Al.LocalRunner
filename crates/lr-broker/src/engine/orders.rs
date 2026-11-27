@@ -130,6 +130,9 @@ fn intake(key: &JobKey, client: &Client, spec: &OrderSpec, entry: &QueueEntry) -
             cancel_reason: None,
             peak_mem_mb: None,
             peak_disk_mb: None,
+            zone: None,
+            priority: None,
+            rule: None,
         },
         steps: spec
             .steps
@@ -355,6 +358,9 @@ impl Engine {
             gone_since: None,
             lost_floor: None,
             last_output_at: None,
+            zone: None,
+            priority: None,
+            rule: None,
         }
     }
 

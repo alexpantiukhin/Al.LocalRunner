@@ -14,7 +14,7 @@ pub use broker::BrokerStore;
 pub use broker_rows::{
     outlives_cancel, Admission, Applied, GithubRunRow, Inbound, Intake, JobKey, JobLogRow,
     JobRecord, JobRow, JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow,
-    PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, SourceKind, StepRow, StepUpdate,
+    Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, SourceKind, StepRow, StepUpdate,
     Transition, LOG_TRUNCATED_MARK,
 };
 pub use hub::{ActiveOrder, BrokerLink, HubStore};

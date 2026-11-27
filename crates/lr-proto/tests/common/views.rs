@@ -83,6 +83,9 @@ pub fn read_replies() -> Vec<ReadReply> {
                 detail: None,
             }],
             recent: vec![JobSummary {
+                zone: None,
+                priority: None,
+                rule: None,
                 state: JobState::Cancelled,
                 cancelled_by: Some("upgrade".into()),
                 ..summary()

@@ -141,6 +141,9 @@ impl Track {
     pub(crate) fn summary(&self, state: JobState) -> JobSummary {
         let spec = self.spec.as_ref();
         JobSummary {
+            zone: None,
+            priority: None,
+            rule: None,
             job: self.order.job.clone(),
             client_label: String::new(),
             state,

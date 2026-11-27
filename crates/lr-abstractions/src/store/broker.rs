@@ -31,6 +31,18 @@ pub trait BrokerStore: Send + Sync {
     /// runner. Fails with `NotFound` when no order row exists.
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError>;
 
+    /// [`BrokerStore::grant`] that also stores where and why the run was granted. A store that
+    /// keeps no placement grants as `grant` does.
+    async fn grant_with(
+        &self,
+        key: &JobKey,
+        runner: &str,
+        placement: Placement,
+    ) -> Result<(), StoreError> {
+        let _ = placement;
+        self.grant(key, runner).await
+    }
+
     /// Puts a granted but not started run back into the queue (its runner vanished before
     /// start, or broker restart): the order row is rebuilt from what `accept` stored (client
     /// machine, spec JSON, platform, priority hint, `enqueued_at`, queue state)

@@ -2,7 +2,7 @@ use super::broker_jobs::BrokerState;
 use crate::store::{
     compute_stats, Admission, Applied, BrokerStore, Inbound, Intake, JobFilter, JobKey, JobRecord,
     JobSpecRow, Join, JoinCodeRow, LogAppend, MachineKind, MachineRow, OrderRow, OutboxBacklog,
-    OutboxEntry, OutboxKind, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats,
+    OutboxEntry, OutboxKind, Placement, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState, Stats,
     StatsQuery, StepUpdate, StoreError, Transition,
 };
 use async_trait::async_trait;
@@ -135,6 +135,15 @@ impl BrokerStore for MemoryBrokerStore {
 
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError> {
         self.lock().grant(key, runner)
+    }
+
+    async fn grant_with(
+        &self,
+        key: &JobKey,
+        runner: &str,
+        placement: Placement,
+    ) -> Result<(), StoreError> {
+        self.lock().grant_with(key, runner, placement)
     }
 
     async fn requeue(&self, key: &JobKey) -> Result<(), StoreError> {
