@@ -65,15 +65,49 @@ pub async fn explain_with_detail(
     Err(missing_job_error(job, ambiguous, problems))
 }
 
+/// The line `=== hint: exit 127: ... ===` the hub wrote into a log, without the markers.
+pub fn hint_of(log: &str) -> Option<String> {
+    log.lines().rev().find_map(|l| {
+        l.trim()
+            .strip_prefix("=== hint: ")
+            .and_then(|h| h.strip_suffix(" ==="))
+            .map(str::to_string)
+    })
+}
+
+async fn log_hint(client: &IpcClient, job: &JobId, broker: &str) -> Option<String> {
+    let q = super::log_cmd::LogQuery {
+        job: job.clone(),
+        step: None,
+        tail: Some(8),
+        follow: false,
+    };
+    let mut text = String::new();
+    let redactor = std::sync::Arc::new(lr_obs::Redactor::default());
+    super::log_cmd::find_log(client, Some(broker), &q, &redactor, &mut |t| text.push_str(t))
+        .await
+        .ok()?;
+    hint_of(&text)
+}
+
 /// `explain <job>`.
 pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String> {
     let client = hub(layout).await?;
     let job = JobId(a.job);
     let found = explain_with_detail(&client, &job, a.broker.as_deref(), a.client).await;
+    let hint = match &found {
+        Ok((broker, text, _)) if text.starts_with("finished") => {
+            log_hint(&client, &job, broker).await
+        }
+        _ => None,
+    };
     client.close().await;
     let (broker, text, detail) = found?;
     if a.json {
         let mut doc = json!({ "broker": broker, "job": job, "text": text });
+        if let Some(h) = &hint {
+            doc["hint"] = json!(h);
+        }
         if let Some(detail) = detail {
             doc["detail"] = json!(detail);
         }
@@ -83,6 +117,9 @@ pub async fn explain_cmd(layout: &Layout, a: ExplainArgs) -> Result<i32, String>
         card.row("job", job.to_string());
         card.row("broker", broker);
         card.row("waits", text);
+        if let Some(h) = hint {
+            card.row("hint", h);
+        }
         for line in card.lines(&Out::detect()) {
             println!("{line}");
         }
