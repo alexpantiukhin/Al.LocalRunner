@@ -52,8 +52,22 @@ pub async fn hub_run(layout: &Layout, background: bool) -> Result<i32, String> {
     until_interrupted(running).await
 }
 
+/// The refusal to start a broker of the user's own state directory (`service_layout` is false)
+/// while the broker service is installed (`broker_is_service`): it would be a second broker
+/// with its own database, key and certificate that nothing uses.
+pub fn second_broker_refusal(service_layout: bool, broker_is_service: bool) -> Option<String> {
+    (!service_layout && broker_is_service).then(|| {
+        "the broker runs as an OS service on this machine; start it with the service manager. A separate broker needs its own directory: add --state-dir <dir> (and --config-dir <dir>)".to_string()
+    })
+}
+
 /// `broker run`; `service` under the OS service manager (Windows: the service host).
 pub async fn broker_run(layout: &Layout, background: bool, service: bool) -> Result<i32, String> {
+    if !service {
+        if let Some(why) = second_broker_refusal(layout.is_service(), layout.broker_is_service()) {
+            return Err(why);
+        }
+    }
     #[cfg(windows)]
     if service {
         let layout = layout.clone();

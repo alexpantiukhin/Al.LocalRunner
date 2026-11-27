@@ -105,6 +105,22 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     });
 }
 
+/// The files of a broker that ran in the state directory `root`: its database with the journal
+/// files, certificate and key; only those that exist.
+pub fn stale_broker_files(root: &Path) -> Vec<std::path::PathBuf> {
+    [
+        "broker.db",
+        "broker.db-wal",
+        "broker.db-shm",
+        "broker-cert.pem",
+        "broker-key.pem",
+    ]
+    .iter()
+    .map(|n| root.join(n))
+    .filter(|p| p.exists())
+    .collect()
+}
+
 /// The warning for a broker database left in the state directory of a user while the broker
 /// runs as the OS service: nothing uses it, and `up broker --state-dir` would start a second
 /// broker on it.

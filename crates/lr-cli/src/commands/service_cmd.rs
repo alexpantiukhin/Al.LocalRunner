@@ -115,6 +115,13 @@ pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> R
         if Os::current() == Os::Linux {
             println!("log in again so that your user's new group membership applies");
         }
+        let old = crate::doctor::stale_broker_files(&layout.root);
+        if !old.is_empty() {
+            println!("left over from a broker of your own user (nothing uses them now; remove them once you do not need the old history):");
+            for p in old {
+                println!("  {}", p.display());
+            }
+        }
     }
     Ok(0)
 }
