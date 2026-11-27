@@ -517,7 +517,16 @@ pub async fn wait_jobs(
     label: Option<String>,
     json: bool,
     full: bool,
+    broker: Option<String>,
 ) -> Result<i32, String> {
+    if let Some(b) = broker.as_deref() {
+        let client = hub(layout).await?;
+        let (names, problems) = super::view::reachable(&client, Some(b)).await?;
+        client.close().await;
+        if names.is_empty() {
+            return Err(problems.join("; "));
+        }
+    }
     let (active, recent) = match &label {
         Some(l) => (
             own_jobs(layout, l, true).await?,

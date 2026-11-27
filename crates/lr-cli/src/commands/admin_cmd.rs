@@ -244,7 +244,7 @@ pub fn unreachable_message(cause: &str) -> String {
     if denied {
         format!(
             "{base}\nthe admin channel is open only to an administrator (Windows) or to the OS user of the broker (Unix): \
-             run this command from an elevated shell or as that user. To hand a join code to another user, \
+             run this command from an elevated shell or as that user (a broker service on Unix: sudo -u al-localrunner /usr/local/libexec/al-localrunner/localrunner <command>). To hand a join code to another user, \
              add --code-file <file> to `broker add` and give the file to `runner join --code-file`"
         )
     } else {

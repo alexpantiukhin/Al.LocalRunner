@@ -115,6 +115,13 @@ pub fn install_service_with(layout: &Layout, dry_run: bool, elevated: bool) -> R
         if Os::current() == Os::Linux {
             println!("log in again so that your user's new group membership applies");
         }
+        let old = crate::doctor::stale_broker_files(&layout.root);
+        if !old.is_empty() {
+            println!("left over from a broker of your own user (nothing uses them now; remove them once you do not need the old history):");
+            for p in old {
+                println!("  {}", p.display());
+            }
+        }
     }
     Ok(0)
 }
@@ -171,6 +178,8 @@ pub struct UpdateReport {
     pub down: Duration,
     /// Whether the service binary reports the new version after the start.
     pub running_new: bool,
+    /// The service already had this version: nothing was stopped or replaced.
+    pub unchanged: bool,
 }
 
 /// `service: <old> -> <new>`.
@@ -180,6 +189,12 @@ pub fn version_line(old: Option<&str>, new: &str) -> String {
 
 /// The lines printed after an update.
 pub fn report_lines(report: &UpdateReport) -> Vec<String> {
+    if report.unchanged {
+        return vec![format!(
+            "service: {} is already current, nothing to do",
+            report.new
+        )];
+    }
     let mut out = vec![
         version_line(report.old.as_deref(), &report.new),
         format!(
@@ -207,10 +222,38 @@ pub fn update_service_on(
     new: &str,
 ) -> Result<UpdateReport, String> {
     let old = read(binary);
+    if let Some(old_text) = old.as_deref() {
+        let number = |t: &str| super::upgrade_cmd::parse_version(t).map(|v| v.number);
+        if old_text == new {
+            return Ok(UpdateReport {
+                old,
+                new: new.to_string(),
+                down: Duration::ZERO,
+                running_new: true,
+                unchanged: true,
+            });
+        }
+        if matches!((number(old_text), number(new)), (Some(o), Some(n)) if o > n) {
+            return Err(format!(
+                "the service runs {old_text}, which is newer than this binary ({new}); \
+                 run `localrunner upgrade` from the newer binary instead"
+            ));
+        }
+    }
     let plan = plans::update_service(os, exe, binary);
     let (mut stopped, mut down) = (None, Duration::ZERO);
     for (i, action) in plan.iter().enumerate() {
-        system.apply(action).map_err(|e| format!("{action}: {e}"))?;
+        if let Err(e) = system.apply(action) {
+            let mut message = format!("{action}: {e}");
+            if i > 0 && i + 1 < plan.len() {
+                let restart = &plan[plan.len() - 1];
+                message.push_str(&match system.apply(restart) {
+                    Ok(()) => "; the service was started again with its old binary".to_string(),
+                    Err(e2) => format!("; starting the service again failed too: {e2}"),
+                });
+            }
+            return Err(message);
+        }
         if i == 0 {
             stopped = Some(Instant::now());
         }
@@ -224,6 +267,7 @@ pub fn update_service_on(
         new: new.to_string(),
         down,
         running_new,
+        unchanged: false,
     })
 }
 
@@ -387,8 +431,13 @@ pub fn autostart_with(
         return Ok(0);
     }
     let mut left_for_admin = false;
+    let mut broker_skipped = false;
     for role in chosen_roles(layout, role)? {
         if role == NodeRole::Broker {
+            if !broker_in_scope(requested, on) {
+                broker_skipped = true;
+                continue;
+            }
             if broker_left_for_admin(requested, dry_run, elevated) {
                 left_for_admin = true;
                 continue;
@@ -429,6 +478,11 @@ pub fn autostart_with(
     }
     if left_for_admin {
         println!("{}", admin_left(on));
+    }
+    if broker_skipped {
+        println!(
+            "broker: not touched; `localrunner autostart on broker` installs it as an OS service (administrator rights)"
+        );
     }
     Ok(0)
 }
@@ -832,10 +886,138 @@ pub fn broker_left_for_admin(requested: Option<RoleArg>, dry_run: bool, elevated
     !dry_run && !elevated && requested != Some(RoleArg::Broker)
 }
 
+/// One line of `autostart status`: a role or runner and how the OS starts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutostartRow {
+    /// `hub`, `runner` or `broker`.
+    pub role: String,
+    /// The runner's name, else the role's.
+    pub name: String,
+    /// `login`, `service` or `none`.
+    pub kind: String,
+    /// For a service: whether it runs now, when the manager said.
+    pub running: Option<bool>,
+}
+
+impl AutostartRow {
+    /// A row.
+    pub fn new(role: &str, name: &str, kind: &str, running: Option<bool>) -> AutostartRow {
+        AutostartRow {
+            role: role.into(),
+            name: name.into(),
+            kind: kind.into(),
+            running,
+        }
+    }
+}
+
+/// The lines `autostart status` prints, one per row.
+pub fn autostart_status_lines(rows: &[AutostartRow]) -> Vec<String> {
+    rows.iter()
+        .map(|r| {
+            let who = if r.role == "runner" {
+                format!("runner {}", r.name)
+            } else {
+                r.role.clone()
+            };
+            match r.kind.as_str() {
+                "login" => format!("{who}: on (starts at user login)"),
+                "service" => {
+                    let state = match r.running {
+                        Some(true) => ", running",
+                        Some(false) => ", stopped",
+                        None => "",
+                    };
+                    format!("{who}: on (OS service{state})")
+                }
+                _ => format!("{who}: off"),
+            }
+        })
+        .collect()
+}
+
+/// The rows of `autostart status --json`.
+pub fn autostart_status_json(rows: &[AutostartRow]) -> serde_json::Value {
+    rows.iter()
+        .map(|r| {
+            serde_json::json!({
+                "role": r.role,
+                "name": r.name,
+                "kind": r.kind,
+                "on": r.kind != "none",
+                "running": r.running,
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// `autostart status [role] [--json]`: reads the OS and changes nothing, no rights needed.
+pub fn autostart_status(layout: &Layout, role: Option<RoleArg>, json: bool) -> Result<i32, String> {
+    let os = Os::current();
+    let user = lr_net::current_os_user().map_err(|e| e.to_string())?;
+    let mut rows = Vec::new();
+    for role in chosen_roles(layout, role)? {
+        if role == NodeRole::Broker {
+            let installed = service_installed(os);
+            rows.push(AutostartRow::new(
+                "broker",
+                "broker",
+                if installed { "service" } else { "none" },
+                None,
+            ));
+            continue;
+        }
+        for entry in entries(layout, role) {
+            let (role_name, name) = match &entry {
+                Entry::Hub => ("hub", "hub".to_string()),
+                Entry::Runner(n) => (
+                    "runner",
+                    n.clone()
+                        .unwrap_or_else(|| crate::roles::runner_base_name(layout, None, None)),
+                ),
+            };
+            let service = matches!(entry, Entry::Runner(_))
+                .then(|| {
+                    runner_service::installed(os, &name).then(|| runner_service::running(os, &name))
+                })
+                .flatten();
+            let login = crate::os_service::runner_service::login_entry_of(os, &user, &entry);
+            let (kind, running) = match (service, login) {
+                (Some(running), _) => ("service", running),
+                (None, true) => ("login", None),
+                _ => ("none", None),
+            };
+            rows.push(AutostartRow::new(role_name, &name, kind, running));
+        }
+    }
+    if json {
+        println!("{}", autostart_status_json(&rows));
+    } else {
+        for line in autostart_status_lines(&rows) {
+            println!("{line}");
+        }
+    }
+    Ok(0)
+}
+
+/// Whether `autostart on|off` with this `role` touches the broker service: `autostart on` without
+/// a role enables only the hub and the runners, the broker needs `autostart on broker` (or
+/// `all`) because it installs a system service under an account of its own.
+pub fn broker_in_scope(role: Option<RoleArg>, on: bool) -> bool {
+    !(on && role.is_none())
+}
+
 /// Whether `autostart` leaves the broker service step for an administrator in this session.
-pub fn broker_step_pending(layout: &Layout, role: Option<RoleArg>, dry_run: bool) -> bool {
+pub fn broker_step_pending(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    on: bool,
+    dry_run: bool,
+) -> bool {
     let elevated = crate::host::is_elevated();
-    chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))
+    broker_in_scope(role, on)
+        && chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))
         && broker_left_for_admin(role, dry_run, elevated)
 }
 

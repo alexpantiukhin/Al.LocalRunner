@@ -62,6 +62,9 @@ async fn fake_hub(answer: Answer) -> IpcClient {
 
 fn summary(job: &str, state: JobState, mine: bool) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId(job.into()),
         client_label: "laptop".into(),
         state,

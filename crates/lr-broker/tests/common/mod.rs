@@ -31,6 +31,7 @@ pub fn req(mem_mb: u64, cpu: u32) -> Requirements {
         cache: Vec::new(),
         zones: None,
         commands: Default::default(),
+        variant_gate: Default::default(),
     }
 }
 

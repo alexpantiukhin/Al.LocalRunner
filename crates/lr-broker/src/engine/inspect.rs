@@ -33,6 +33,7 @@ fn least_order() -> Requirements {
         cache: Vec::new(),
         zones: None,
         commands: BTreeSet::new(),
+        variant_gate: Default::default(),
     }
 }
 
@@ -87,7 +88,7 @@ impl Engine {
         held
     }
 
-    pub(crate) fn runner_infos(&self, viewer: &Viewer) -> Vec<RunnerInfo> {
+    pub(crate) fn runner_infos(&self, viewer: &Viewer, client: &Client) -> Vec<RunnerInfo> {
         let now = self.now();
         let (free_mem, free_cpu) = self.pool_free();
         let pool_name = self.policy.file().pool.display_name().to_string();
@@ -128,6 +129,12 @@ impl Engine {
                         slot.takes_work() && liveness == RunnerLiveness::Online && !busy && room,
                     ),
                     busy: Some(busy),
+                    zone: Some(self.site.zone_between(
+                        &client.endpoint,
+                        &client.label,
+                        &slot.endpoint,
+                        name,
+                    )),
                 }
             })
             .collect()

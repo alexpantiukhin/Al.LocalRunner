@@ -207,6 +207,11 @@ pub fn check(
         env_set: var_set,
     };
     let (secret_lines, secrets_ok) = report(&profiles, &machine);
+    let facts = super::variant_check::local_facts(layout);
+    let variant_lines: Vec<String> = profiles
+        .iter()
+        .flat_map(|p| super::variant_check::variant_warnings(p, &facts))
+        .collect();
     let ok = verdict(&profiles, secrets_ok);
     let summaries: Vec<ProfileSummary> = profiles.iter().map(summarize).collect();
     if json {
@@ -215,6 +220,7 @@ pub fn check(
             "ok": ok,
             "profiles": summaries,
             "ignored_sections": ignored,
+            "variant_warnings": variant_lines,
             "secrets": { "ok": secrets_ok, "lines": secret_lines },
         });
         println!("{doc}");
@@ -228,7 +234,11 @@ pub fn check(
     if profiles.is_empty() {
         println!("no profiles in {}", path.display());
     }
-    for l in summary_lines(&summaries).into_iter().chain(secret_lines) {
+    for l in summary_lines(&summaries)
+        .into_iter()
+        .chain(variant_lines.into_iter().map(|w| format!("warning: {w}")))
+        .chain(secret_lines)
+    {
         println!("{l}");
     }
     Ok(i32::from(!ok))

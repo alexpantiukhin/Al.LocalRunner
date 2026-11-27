@@ -1155,3 +1155,50 @@ async fn an_unknown_canceller_is_absent_not_empty() {
     let text = explain_text(alex.read(explain_of("j2")).await);
     assert!(!text.contains("by:"), "{text}");
 }
+
+#[tokio::test]
+async fn explain_of_a_running_job_names_the_zone_of_its_runner() {
+    let h = Harness::start("");
+    let mut r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r.assign().await;
+    r.send(&started("j1", 1)).await;
+    alex.sync().await;
+    let ReadReply::Explain { text, .. } = alex
+        .read(ReadRequest::Explain {
+            job: JobId("j1".into()),
+            client: None,
+        })
+        .await
+    else {
+        panic!("explain")
+    };
+    assert!(
+        text.starts_with("running on runner r1 (zone ") && text.ends_with(')'),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn explain_of_a_waiting_order_says_why_the_other_runners_do_not_take_it() {
+    let h = Harness::start("");
+    let mut r1 = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let _r2 = h
+        .member_runner("r2", "10.0.0.8", caps(&["linux"], 256, 2))
+        .await;
+    let mut alex = h.local_hub("alex").await;
+    alex.send(&order("j1", req(512, 1, 60))).await;
+    alex.accepted().await;
+    r1.assign().await;
+    r1.send(&started("j1", 1)).await;
+    alex.send(&order("j2", req(512, 1, 60))).await;
+    alex.accepted().await;
+    let text = explain_text(alex.read(explain_of("j2")).await);
+    assert!(
+        text.contains("r2: needs 512 MB, the runner has 256"),
+        "{text}"
+    );
+    assert!(!text.contains("r1: needs"), "{text}");
+}

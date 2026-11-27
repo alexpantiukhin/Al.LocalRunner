@@ -493,6 +493,7 @@ pub async fn find_job(
 ) -> Result<(String, String, Option<JobDetail>), String> {
     let (names, mut problems) = reachable(client, broker).await?;
     let mut ambiguous = Vec::new();
+    let mut found: Vec<(String, String, Option<JobDetail>)> = Vec::new();
     for b in names {
         let ask = ReadRequest::Explain {
             job: job.clone(),
@@ -508,7 +509,7 @@ pub async fn find_job(
                     Ok(ReadReply::Job(d)) => Some(*d),
                     _ => None,
                 };
-                return Ok((b, text, detail));
+                found.push((b, text, detail));
             }
             Ok(ReadReply::NotFound { what }) if is_plain_missing(&what, job) => {}
             Ok(ReadReply::NotFound { what }) => ambiguous.push(format!("broker {b}: {what}")),
@@ -516,7 +517,34 @@ pub async fn find_job(
             Err(e) => problems.push(e),
         }
     }
-    Err(missing_job_error(job, ambiguous, problems))
+    match choose_job(found) {
+        Some(answer) => Ok(answer),
+        None => Err(missing_job_error(job, ambiguous, problems)),
+    }
+}
+
+/// The answer to show when several brokers know the job: a moved order is recorded by the
+/// broker that gave it back (`cancelled, moved`) and by the one that holds it now, so the
+/// record that is not a move wins, and the text names the brokers that gave the order back.
+pub fn choose_job(
+    found: Vec<(String, String, Option<JobDetail>)>,
+) -> Option<(String, String, Option<JobDetail>)> {
+    let moved = |d: &Option<JobDetail>| {
+        d.as_ref()
+            .is_some_and(|d| d.summary.reason == Some(lr_proto::ReasonCode::Moved))
+    };
+    let gave_back: Vec<String> = found
+        .iter()
+        .filter(|(_, _, d)| moved(d))
+        .map(|(b, _, _)| b.clone())
+        .collect();
+    let first = found.first().cloned();
+    let (b, text, detail) = found.into_iter().find(|(_, _, d)| !moved(d)).or(first)?;
+    if gave_back.is_empty() || gave_back.contains(&b) {
+        return Some((b, text, detail));
+    }
+    let text = format!("{text} (moved here from {})", gave_back.join(", "));
+    Some((b, text, detail))
 }
 
 /// Whether what of a NotFound answer just says that job does not exist, as against the

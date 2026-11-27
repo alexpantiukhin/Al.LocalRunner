@@ -191,3 +191,34 @@ async fn the_suggested_fix_quotes_what_a_shell_would_expand() {
         );
     }
 }
+
+const EMPTY_LABEL: &str = "[[secrets.allow]]\nlabel = \"\"\nnames = [\"registry_auth\"]\n";
+
+#[tokio::test]
+async fn not_allowed_secret_explains_that_an_empty_label_entry_matches_only_unlabelled_clients() {
+    let h = Harness::start(EMPTY_LABEL);
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.member_hub("laptop", "dev", "10.0.0.20").await;
+    hub.send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
+    let r = hub.rejected().await;
+    assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
+    assert_eq!(
+        r.detail,
+        "secret registry_auth is not allowed for label dev (no [[secrets.allow]] entry has this label; labels with entries: (empty); an entry with an empty label matches only clients without a label); to allow it: localrunner policy allow-secret registry_auth --label dev"
+    );
+}
+
+#[tokio::test]
+async fn not_allowed_secret_lists_the_labels_that_have_entries() {
+    let h = Harness::start(ALLOW);
+    let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
+    let mut hub = h.member_hub("laptop", "ops", "10.0.0.20").await;
+    hub.send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
+    let r = hub.rejected().await;
+    assert_eq!(
+        r.detail,
+        "secret registry_auth is not allowed for label ops (no [[secrets.allow]] entry has this label; labels with entries: ci, agent); to allow it: localrunner policy allow-secret registry_auth --label ops"
+    );
+}

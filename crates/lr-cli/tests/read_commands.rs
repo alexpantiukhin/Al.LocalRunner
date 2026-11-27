@@ -24,6 +24,9 @@ const H: u64 = 3_600_000;
 
 fn summary(job: &str, queued: u64) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId(job.into()),
         client_label: "dev".into(),
         state: JobState::Passed,
@@ -52,6 +55,9 @@ fn summary(job: &str, queued: u64) -> JobSummary {
 
 fn masked(job: &str, queued: u64) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         project: None,
         label: None,
         profile: None,
@@ -251,6 +257,9 @@ fn history_window_flags_are_their_own_pair_and_since_keeps_meaning_queued() {
 #[test]
 fn a_run_overlaps_the_window_when_it_started_before_its_end_and_did_not_end_before_its_start() {
     let run = |started: Option<u64>, finished: Option<u64>| JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         started_at: started.map(Timestamp),
         finished_at: finished.map(Timestamp),
         ..summary("j", 0)
@@ -323,6 +332,9 @@ fn the_card_names_the_client_label_and_lists_the_profile_labels() {
 #[test]
 fn history_shows_when_each_run_started_and_finished() {
     let never = JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         started_at: None,
         finished_at: None,
         ..summary("waiting", 5 * H)
@@ -402,6 +414,9 @@ fn history_lists_newest_first_across_brokers_and_hidden_fields_stay_hidden() {
 
 fn ended_at(job: &str, queued: u64, finished: Option<u64>) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         finished_at: finished.map(Timestamp),
         ..summary(job, queued)
     }
@@ -617,6 +632,7 @@ fn stats_and_runners_print_per_broker() {
         assert!(text.contains(needed), "{needed}:\n{text}");
     }
     let runner = RunnerInfo {
+        zone: None,
         name: "r1".into(),
         online: true,
         caps: WireCapabilities {
@@ -843,6 +859,9 @@ fn history_prints_a_dash_for_an_empty_client_label() {
     let rows = vec![(
         "local".to_string(),
         JobSummary {
+            zone: None,
+            priority: None,
+            rule: None,
             client_label: String::new(),
             ..summary("j1", H)
         },
@@ -898,6 +917,7 @@ fn runner_outbox_drop_takes_a_job_and_an_optional_runner() {
 
 fn runner_info(name: &str, liveness: RunnerLiveness, silent: u64) -> RunnerInfo {
     RunnerInfo {
+        zone: None,
         name: name.into(),
         online: liveness != RunnerLiveness::Offline,
         caps: WireCapabilities {
@@ -1123,6 +1143,9 @@ fn status_recent_parses_a_count_and_a_duration() {
 
 fn ended(job: &str, reason: Option<lr_proto::ReasonCode>, by: Option<&str>) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         state: JobState::Cancelled,
         started_at: None,
         reason,
@@ -1182,6 +1205,9 @@ fn recent_rows_of_a_broker_that_ignores_the_filter_are_cut_on_this_side() {
     use lr_cli::commands::view::clip_recent;
     use lr_proto::{PoolLoad, RecentFilter, StatusView};
     let at = |job: &str, end: Option<u64>| JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         finished_at: end.map(Timestamp),
         ..summary(job, 0)
     };

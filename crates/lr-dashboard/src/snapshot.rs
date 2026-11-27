@@ -112,7 +112,10 @@ fn queue_row(out: &mut String, job: &DashboardJob) {
     cell(
         out,
         "priority",
-        &job.priority.map(|p| p.to_string()).unwrap_or_default(),
+        &job.priority
+            .or(s.priority)
+            .map(|p| p.to_string())
+            .unwrap_or_default(),
     );
     cell(out, "project", &opt(&s.project));
     cell(out, "source", source_name(d.source));
@@ -120,8 +123,14 @@ fn queue_row(out: &mut String, job: &DashboardJob) {
     cell(out, "labels", &s.labels.join(", "));
     cell(out, "profile", &opt(&s.profile));
     cell(out, "cwd", &opt(&d.cwd));
-    cell(out, "runner", &opt(&s.runner));
-    cell(out, "broker", &opt(&job.broker));
+    let broker = opt(&job.broker);
+    let runner = match opt(&s.runner).strip_prefix("local:") {
+        Some(rest) if !broker.is_empty() && broker != "local" => format!("{broker}:{rest}"),
+        _ => opt(&s.runner),
+    };
+    cell(out, "runner", &runner);
+    cell(out, "zone", s.zone.map(|z| z.as_str()).unwrap_or_default());
+    cell(out, "broker", &broker);
     cell(out, "wait", &opt(&d.wait_reason));
     out.push_str("</tr>");
 }

@@ -1,7 +1,7 @@
 use super::broker_rows::{
     Admission, Applied, Inbound, Intake, JobKey, JobRecord, JobSpecRow, Join, JoinCodeRow,
-    LogAppend, MachineRow, OrderRow, PruneLimits, PruneReport, Revoked, RunnerRow, RunnerState,
-    StepUpdate, Transition,
+    LogAppend, MachineRow, OrderRow, Placement, PruneLimits, PruneReport, Revoked, RunnerRow,
+    RunnerState, StepUpdate, Transition,
 };
 use super::query::{JobFilter, Stats, StatsQuery};
 use super::{OutboxBacklog, OutboxEntry, OutboxKind, StoreError};
@@ -30,6 +30,18 @@ pub trait BrokerStore: Send + Sync {
     /// Grants a waiting order to `runner`: the `order` row is removed and the run records the
     /// runner. Fails with `NotFound` when no order row exists.
     async fn grant(&self, key: &JobKey, runner: &str) -> Result<(), StoreError>;
+
+    /// [`BrokerStore::grant`] that also stores where and why the run was granted. A store that
+    /// keeps no placement grants as `grant` does.
+    async fn grant_with(
+        &self,
+        key: &JobKey,
+        runner: &str,
+        placement: Placement,
+    ) -> Result<(), StoreError> {
+        let _ = placement;
+        self.grant(key, runner).await
+    }
 
     /// Puts a granted but not started run back into the queue (its runner vanished before
     /// start, or broker restart): the order row is rebuilt from what `accept` stored (client

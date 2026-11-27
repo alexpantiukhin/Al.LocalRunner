@@ -79,6 +79,7 @@ pub fn req(mem_mb: u64, cpu: u32, timeout_s: u64) -> Requirements {
         cache: Vec::new(),
         zones: None,
         commands: Default::default(),
+        variant_gate: Default::default(),
     }
 }
 
@@ -133,6 +134,7 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             args: Vec::new(),
             labels: Vec::new(),
             zone_steps: Default::default(),
+            variants: Default::default(),
         }),
     })
 }

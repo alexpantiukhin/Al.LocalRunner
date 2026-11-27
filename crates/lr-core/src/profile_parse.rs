@@ -1,6 +1,9 @@
 use crate::error::ProfileError;
 use crate::model::Zone;
-use crate::profile::{single_step, PlatformOverride, Profile, Program, StepSpec, ZoneSteps};
+use crate::profile::{
+    single_step, PlatformOverride, Profile, ProfileVariant, Program, StepSpec, VariantWhen,
+    ZoneSteps,
+};
 use crate::profile_args::{build_args, RawArg};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -38,6 +41,24 @@ struct RawStep {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawVariant {
+    command: Option<String>,
+    steps: Option<Vec<RawStep>>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawWhen {
+    zone: Option<Vec<String>>,
+    os: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
+    programs: Option<Vec<String>>,
+    runner: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProfileVariant {
+    when: Option<RawWhen>,
     command: Option<String>,
     steps: Option<Vec<RawStep>>,
 }
@@ -101,6 +122,8 @@ struct RawProfile {
     #[serde(default)]
     platform: BTreeMap<String, RawOverride>,
     #[serde(default)]
+    variant: BTreeMap<String, RawProfileVariant>,
+    #[serde(default)]
     args: BTreeMap<String, RawArg>,
 }
 
@@ -151,12 +174,137 @@ pub fn parse_profiles(text: &str) -> Result<Vec<Profile>, ProfileError> {
     file.profile
         .into_iter()
         .map(|(name, value)| {
+            check_zone_variant_keys(&name, &value)?;
+            check_variant_keys(&name, &value)?;
             let raw: RawProfile = value
                 .try_into()
                 .map_err(|e: toml::de::Error| ProfileError::invalid(&name, "", e.to_string()))?;
             build(name, raw, &sets)
         })
         .collect()
+}
+
+/// A zone variant takes only `command` or `steps`: names the other key instead of the
+/// internal "did not match any variant" of the untagged `zone` value.
+fn check_zone_variant_keys(name: &str, profile: &toml::Value) -> Result<(), ProfileError> {
+    let Some(zones) = profile.get("zone").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for (zone, variant) in zones {
+        let Some(table) = variant.as_table() else {
+            continue;
+        };
+        if let Some(key) = table
+            .keys()
+            .find(|k| !matches!(k.as_str(), "command" | "steps"))
+        {
+            return Err(ProfileError::invalid(
+                name,
+                &format!("zone.{zone}"),
+                format!(
+                    "unknown key `{key}` (a zone variant takes only `command` or `steps`; the rest comes from the profile)"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A variant takes `when`, `command` or `steps`, and `when` takes `zone`, `os`, `tags`,
+/// `programs` and `runner`: names the other key.
+fn check_variant_keys(name: &str, profile: &toml::Value) -> Result<(), ProfileError> {
+    let Some(variants) = profile.get("variant").and_then(toml::Value::as_table) else {
+        return Ok(());
+    };
+    for (variant, def) in variants {
+        let Some(table) = def.as_table() else {
+            continue;
+        };
+        let field = format!("variant.{variant}");
+        if let Some(key) = table
+            .keys()
+            .find(|k| !matches!(k.as_str(), "when" | "command" | "steps"))
+        {
+            return Err(ProfileError::invalid(
+                name,
+                &field,
+                format!("unknown key `{key}` (a variant takes `when`, `command` or `steps`)"),
+            ));
+        }
+        let Some(when) = table.get("when").and_then(toml::Value::as_table) else {
+            continue;
+        };
+        if let Some(key) = when
+            .keys()
+            .find(|k| !matches!(k.as_str(), "zone" | "os" | "tags" | "programs" | "runner"))
+        {
+            return Err(ProfileError::invalid(
+                name,
+                &format!("{field}.when"),
+                format!(
+                    "unknown key `{key}` (`when` takes `zone`, `os`, `tags`, `programs` and `runner`, each a list)"
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn build_profile_variants(
+    profile: &str,
+    timeout_s: u64,
+    raw: BTreeMap<String, RawProfileVariant>,
+) -> Result<Vec<ProfileVariant>, ProfileError> {
+    let mut out = Vec::new();
+    for (key, v) in raw {
+        let field = format!("variant.{key}");
+        let w = v.when.unwrap_or_default();
+        let zones = w
+            .zone
+            .unwrap_or_default()
+            .iter()
+            .map(|z| z.parse::<Zone>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|r| ProfileError::invalid(profile, &format!("{field}.when.zone"), r))?;
+        let when = VariantWhen {
+            zones,
+            os: w.os.unwrap_or_default(),
+            tags: w.tags.unwrap_or_default(),
+            programs: w.programs.unwrap_or_default(),
+            runners: w.runner.unwrap_or_default(),
+        };
+        let (steps, from_command) = match (v.command, v.steps) {
+            (Some(_), Some(_)) => {
+                return Err(ProfileError::invalid(
+                    profile,
+                    &format!("{field}.command"),
+                    "`command` and `steps` are mutually exclusive",
+                ))
+            }
+            (None, None) => {
+                return Err(ProfileError::invalid(
+                    profile,
+                    &field,
+                    "either `command` or `steps` is required",
+                ))
+            }
+            (Some(c), None) => (
+                vec![single_step(
+                    non_empty(profile, &format!("{field}.command"), c)?,
+                    timeout_s,
+                )],
+                true,
+            ),
+            (None, Some(s)) => (build_steps(profile, &format!("{field}.steps"), s)?, false),
+        };
+        out.push(ProfileVariant {
+            name: key,
+            when,
+            steps,
+            from_command,
+        });
+    }
+    Ok(out)
 }
 
 fn build(
@@ -196,6 +344,7 @@ fn build(
     let timeout_s = positive(&name, "timeout_s", needs.timeout_s)?
         .ok_or_else(|| ProfileError::invalid(&name, "timeout_s", "required"))?;
     let zone_steps = build_variants(&name, timeout_s, variants)?;
+    let profile_variants = build_profile_variants(&name, timeout_s, raw.variant)?;
     let common = raw.command.is_some() || raw.steps.is_some();
     let (steps, from_command) = match (raw.command, raw.steps) {
         (Some(_), Some(_)) => {
@@ -205,8 +354,16 @@ fn build(
                 "`command` and `steps` are mutually exclusive",
             ))
         }
-        (None, None) => match zone_steps.values().next() {
-            Some(first) => (first.steps.clone(), first.from_command),
+        (None, None) => match zone_steps
+            .values()
+            .next()
+            .map(|f| (f.steps.clone(), f.from_command))
+            .or_else(|| {
+                profile_variants
+                    .first()
+                    .map(|f| (f.steps.clone(), f.from_command))
+            }) {
+            Some(first) => first,
             None => {
                 return Err(ProfileError::invalid(
                     &name,
@@ -222,6 +379,16 @@ fn build(
         (None, Some(s)) => (build_steps(&name, "steps", s)?, false),
     };
     check_variant_names(&name, common.then_some(&steps), &zone_steps)?;
+    let reference: Vec<String> = steps.iter().map(|s| s.name.clone()).collect();
+    for v in &profile_variants {
+        if v.steps.iter().map(|s| s.name.clone()).collect::<Vec<_>>() != reference {
+            return Err(ProfileError::invalid(
+                &name,
+                &format!("variant.{}", v.name),
+                "the steps of every variant must have the same names, in the same order, as the common steps",
+            ));
+        }
+    }
     let zones = match (needs.zone, needs.zones) {
         (Some(_), Some(_)) => {
             return Err(ProfileError::invalid(
@@ -272,6 +439,7 @@ fn build(
         from_command,
         common,
         zone_steps,
+        variants: profile_variants,
         platform_overrides: overrides,
         args,
         name,

@@ -200,6 +200,47 @@ pub enum ConfigAction {
     },
 }
 
+/// `secret ...`.
+#[derive(Subcommand, Debug)]
+pub enum SecretAction {
+    /// Store a secret of a runner: the value is read from standard input or a file (never from
+    /// the command line) into a private file, and `secret.NAME.from` points at it.
+    Set {
+        /// The runner whose `runner.toml` gets the secret.
+        runner: String,
+        /// The secret name (letters, digits, `-` and `_`).
+        name: String,
+        /// Read the value from this file instead of standard input.
+        #[arg(long)]
+        value_file: Option<PathBuf>,
+        /// Show the change and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Restart the runner when the change applies only at its next start.
+        #[arg(long)]
+        restart: bool,
+    },
+    /// List the secrets of a runner (all runners without a name) with their sources and whether
+    /// they give a value now; values are never printed.
+    List {
+        /// The runner; every runner of the installation when omitted.
+        runner: Option<String>,
+    },
+    /// Remove a secret from a runner and delete the value file `secret set` made for it.
+    Remove {
+        /// The runner.
+        runner: String,
+        /// The secret name.
+        name: String,
+        /// Show the change and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Restart the runner when the change applies only at its next start.
+        #[arg(long)]
+        restart: bool,
+    },
+}
+
 /// `logging ...`.
 #[derive(Subcommand, Debug)]
 pub enum LoggingAction {
@@ -432,6 +473,8 @@ pub enum Switch {
     On,
     /// Disable.
     Off,
+    /// Show what starts with the OS and how; changes nothing.
+    Status,
 }
 
 /// `upgrade [--dir] [--yes] [--allow-elevated] [--dry-run]`.

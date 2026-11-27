@@ -34,12 +34,12 @@ impl Engine {
         let allowed = allowed_zones(&spec.requirements);
         let any_allowed = candidates.iter().any(|c| allowed.contains(&c.zone));
         if !any_allowed && !track.excluded.is_empty() {
-            let (code, detail) = track.last_rejection.clone().unwrap_or((
+            let code = track.last_rejection.clone().map_or(
                 ReasonCode::Rejected(RejectReason::NoMatchingRunner),
-                "all brokers refused".into(),
-            ));
+                |(code, _)| code,
+            );
             let (tx, job) = (self.tx.clone(), job.clone());
-            let decision = Decision::Reject(code, detail);
+            let decision = Decision::Reject(code, String::new());
             tokio::spawn(async move {
                 let _ = tx.send(Event::Selected { job, gen, decision }).await;
             });
@@ -200,7 +200,13 @@ impl Engine {
                 let pause = self.policy.brokers.query_retry_s.max(1);
                 track.next_select = Some(self.s.clock.now().plus_secs(pause));
             }
-            Decision::Reject(code, detail) => self.final_reject(job, code, detail).await,
+            Decision::Reject(code, detail) => {
+                let detail = self
+                    .tracks
+                    .get(job)
+                    .map_or(detail.clone(), |t| t.rejection_detail(detail));
+                self.final_reject(job, code, detail).await
+            }
         }
     }
 
@@ -275,6 +281,7 @@ impl Engine {
         }
         if code != ReasonCode::Moved {
             track.excluded.insert(from.to_string());
+            track.rejections.push((from.to_string(), detail.clone()));
             track.last_rejection = Some((code, detail));
         }
         track.order.broker = None;

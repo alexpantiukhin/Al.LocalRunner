@@ -326,3 +326,31 @@ fn explain_rules_default_rule() {
         ["rule 1 ci-first: when client_label = \"ci\"; priority 100"]
     );
 }
+
+#[test]
+fn empty_label_of_a_secret_entry_is_warned_as_matching_only_unlabelled_clients() {
+    let ws = warnings("[[secrets.allow]]\nlabel = \"\"\nnames = [\"registry_auth\"]\n");
+    let w = ws
+        .iter()
+        .find(|w| w.message.contains("matches only clients without a label"))
+        .expect("empty label warning");
+    assert_eq!(w.table.as_deref(), Some("secrets.allow"));
+    assert!(w.message.contains("not any client"), "{w:?}");
+}
+
+#[test]
+fn empty_label_of_a_service_entry_is_warned_too() {
+    let ws = warnings("[[services.allow]]\nlabel = \"\"\nnames = [\"db\"]\n");
+    assert!(
+        ws.iter()
+            .any(|w| w.table.as_deref() == Some("services.allow")
+                && w.message.contains("matches only clients without a label")),
+        "{ws:?}"
+    );
+}
+
+#[test]
+fn a_named_label_is_not_warned_as_empty() {
+    let ws = warnings("[[secrets.allow]]\nlabel = \"dev\"\nnames = [\"registry_auth\"]\n");
+    assert!(!has(&ws, "without a label"), "{ws:?}");
+}

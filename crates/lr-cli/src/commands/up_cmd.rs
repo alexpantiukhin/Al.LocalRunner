@@ -267,7 +267,7 @@ pub fn service_broker(running: bool) -> Result<&'static str, &'static str> {
     if running {
         Ok("broker: running as an OS service")
     } else {
-        Err("broker: installed as an OS service and not running; `up` does not start it: start it with the OS service manager")
+        Err("broker: installed as an OS service and not running; `up` does not start it: start it with the OS service manager (`systemctl start al-localrunner-broker` on Linux, `Start-Service AlLocalRunnerBroker` on Windows, `launchctl kickstart system/com.al-localrunner.broker` on macOS)")
     }
 }
 

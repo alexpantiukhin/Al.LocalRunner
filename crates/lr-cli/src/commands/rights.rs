@@ -5,11 +5,11 @@
 //! without a yes at the question, or with `--no-elevate`.
 
 use super::confirm::{confirm, Console, Stdio};
-use crate::config_edit::{elevated_command_line, rerun_elevated, Elevator, OsElevator};
-use crate::os_service::Os;
+use crate::config_edit::{elevated_command_line_as, rerun_elevated_as, Elevator, OsElevator};
+use crate::os_service::{service_account, service_binary, Os};
 use crate::paths::Layout;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What is done with the rights and why they are needed, as the question says it.
 #[derive(Debug, Clone, Copy)]
@@ -80,6 +80,31 @@ pub fn ask_for_rights(
     exe: &Path,
     err: &mut dyn Write,
 ) -> Result<Outcome, String> {
+    ask_for_rights_as(need, session, args, console, elevator, os, exe, None, err)
+}
+
+/// The binary and the OS user that run an admin command of a broker that is an OS service on
+/// Unix: the service's own copy of the binary, as the service's account, because its admin
+/// channel is open only to that account and to root. `None` when the broker is no service or
+/// the OS is Windows, where an administrator opens the channel.
+pub fn broker_admin_target(os: Os, service: bool) -> Option<(PathBuf, &'static str)> {
+    (service && os != Os::Windows).then(|| (service_binary(os), service_account(os)))
+}
+
+/// [`ask_for_rights`] that runs the step as the OS user `user` (`sudo -u user`) where it is
+/// given, instead of as an administrator.
+#[allow(clippy::too_many_arguments)]
+pub fn ask_for_rights_as(
+    need: &Need<'_>,
+    session: &Session,
+    args: &[String],
+    console: &mut Console<'_>,
+    elevator: &dyn Elevator,
+    os: Os,
+    exe: &Path,
+    user: Option<&str>,
+    err: &mut dyn Write,
+) -> Result<Outcome, String> {
     if session.dry_run || session.elevated || session.child {
         return Ok(Outcome::Here);
     }
@@ -87,7 +112,7 @@ pub fn ask_for_rights(
         return Err(format!(
             "{} needs administrator rights; run: {}",
             need.what,
-            elevated_command_line(os, exe, args)
+            elevated_command_line_as(os, exe, args, user)
         ));
     }
     let _ = writeln!(
@@ -108,8 +133,8 @@ pub fn ask_for_rights(
         );
         return Ok(Outcome::Declined);
     }
-    Ok(Outcome::Elevated(rerun_elevated(
-        elevator, os, exe, args, err,
+    Ok(Outcome::Elevated(rerun_elevated_as(
+        elevator, os, exe, args, user, err,
     )))
 }
 
@@ -130,6 +155,49 @@ pub fn retry_if_denied(
     match offer(need, session, args) {
         Some(code) => Ok(code),
         None => result,
+    }
+}
+
+/// [`retry_if_denied`] for a command of the broker's admin channel; `tail` is the command line
+/// after the program, without the flags that point at an installation. A broker that is an OS
+/// service on Unix is reached as its own account with its own binary
+/// (`sudo -u al-localrunner /usr/local/libexec/al-localrunner/localrunner ...`), which is also
+/// the line printed when there is no terminal or with `--no-elevate`; any other broker is
+/// reached by the administrator rights of [`retry_if_denied`].
+pub fn retry_as_broker(
+    result: Result<i32, String>,
+    need: &Need<'_>,
+    session: &Session,
+    layout: &Layout,
+    tail: &[String],
+) -> Result<i32, String> {
+    let denied = matches!(&result, Err(e)
+        if e.starts_with("the broker admin channel is not reachable") && super::admin_cmd::access_denied(e));
+    if !denied {
+        return result;
+    }
+    let Some((exe, user)) = broker_admin_target(Os::current(), layout.broker_is_service()) else {
+        let mut args = layout_args(layout);
+        args.extend(tail.iter().cloned());
+        return retry_if_denied(result, need, session, &args);
+    };
+    let mut stdio = Stdio::new();
+    let mut console = stdio.console();
+    let mut err = std::io::stderr();
+    match ask_for_rights_as(
+        need,
+        session,
+        tail,
+        &mut console,
+        &OsElevator,
+        Os::current(),
+        &exe,
+        Some(user),
+        &mut err,
+    ) {
+        Ok(Outcome::Elevated(code)) => Ok(code),
+        Ok(_) => result,
+        Err(line) => result.map_err(|e| format!("{e}\n{line}")),
     }
 }
 

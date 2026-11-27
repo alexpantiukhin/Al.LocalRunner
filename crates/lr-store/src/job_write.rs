@@ -4,8 +4,8 @@ use crate::codec::{col_enum, col_opt_time, int, json, opt_int, opt_time, time, T
 use crate::db::{not_found, write, Fail, R};
 use crate::seq::decide;
 use lr_abstractions::{
-    outlives_cancel, Admission, Applied, Inbound, Intake, JobKey, JobSpecRow, OrderRow, StepUpdate,
-    StoreError, Transition,
+    outlives_cancel, Admission, Applied, Inbound, Intake, JobKey, JobSpecRow, OrderRow, Placement,
+    StepUpdate, StoreError, Transition,
 };
 use lr_core::{JobState, StepState, Timestamp};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -153,7 +153,12 @@ pub(crate) fn accept(conn: &mut Connection, intake: Intake) -> R<Admission> {
     })
 }
 
-pub(crate) fn grant(conn: &mut Connection, key: &JobKey, runner: &str) -> R<()> {
+pub(crate) fn grant(
+    conn: &mut Connection,
+    key: &JobKey,
+    runner: &str,
+    placement: &Placement,
+) -> R<()> {
     write(conn, |tx| {
         let removed = tx.execute(
             "DELETE FROM \"order\" WHERE client_key = ?1 AND job_id = ?2",
@@ -163,8 +168,16 @@ pub(crate) fn grant(conn: &mut Connection, key: &JobKey, runner: &str) -> R<()> 
             return Err(not_found(format!("order {}/{}", key.client, key.job)));
         }
         tx.execute(
-            "UPDATE job SET runner_name = ?3 WHERE client_key = ?1 AND id = ?2",
-            params![key.client, key.job.0, runner],
+            "UPDATE job SET runner_name = ?3, zone = ?4, priority = ?5, rule = ?6 \
+             WHERE client_key = ?1 AND id = ?2",
+            params![
+                key.client,
+                key.job.0,
+                runner,
+                placement.zone,
+                placement.priority,
+                placement.rule
+            ],
         )?;
         Ok(())
     })
@@ -225,7 +238,8 @@ pub(crate) fn requeue(conn: &mut Connection, key: &JobKey) -> R<()> {
             state: v.state,
         };
         tx.execute(
-            "UPDATE job SET runner_name = NULL, send_seq_runner = 0, recv_seq_runner = 0              WHERE client_key = ?1 AND id = ?2",
+            "UPDATE job SET runner_name = NULL, zone = NULL, priority = NULL, rule = NULL, \
+             send_seq_runner = 0, recv_seq_runner = 0 WHERE client_key = ?1 AND id = ?2",
             [&key.client, &key.job.0],
         )?;
         insert_order(tx, &order)

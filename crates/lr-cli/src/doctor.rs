@@ -105,6 +105,22 @@ fn basics(layout: &Layout, elevated: bool, out: &mut Vec<Check>) {
     });
 }
 
+/// The files of a broker that ran in the state directory `root`: its database with the journal
+/// files, certificate and key; only those that exist.
+pub fn stale_broker_files(root: &Path) -> Vec<std::path::PathBuf> {
+    [
+        "broker.db",
+        "broker.db-wal",
+        "broker.db-shm",
+        "broker-cert.pem",
+        "broker-key.pem",
+    ]
+    .iter()
+    .map(|n| root.join(n))
+    .filter(|p| p.exists())
+    .collect()
+}
+
 /// The warning for a broker database left in the state directory of a user while the broker
 /// runs as the OS service: nothing uses it, and `up broker --state-dir` would start a second
 /// broker on it.
@@ -322,6 +338,28 @@ fn same_user(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// One `warn` per secret of runner `name` whose source gives no value now (an `env:` variable
+/// unset in this process, a missing `file:`), naming the secret and the way to store it that
+/// survives restarts; never a value.
+pub fn secret_checks(
+    name: &str,
+    sources: &std::collections::BTreeMap<String, crate::runner_config::SecretFrom>,
+) -> Vec<Check> {
+    crate::secrets::ConfigSecrets::new(sources.clone())
+        .unavailable()
+        .into_iter()
+        .map(|(secret, why)| {
+            check(
+                format!("runner {name}"),
+                Status::Warn,
+                format!(
+                    "secret {secret}: {why}; `localrunner secret set {name} {secret}` keeps it in a file that survives restarts"
+                ),
+            )
+        })
+        .collect()
+}
+
 fn runners(layout: &Layout, out: &mut Vec<Check>) {
     let host = crate::host::resources();
     for name in layout.runner_names() {
@@ -335,7 +373,12 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
             Ok(mut cfg) => {
                 let problems = cfg.check_programs();
                 let env_notes = cfg.env_notes(cfg!(windows), |n| std::env::var(n).ok());
-                if problems.is_empty() && cfg.warnings.is_empty() && env_notes.is_empty() {
+                let secrets = secret_checks(&name, &cfg.secrets);
+                if problems.is_empty()
+                    && cfg.warnings.is_empty()
+                    && env_notes.is_empty()
+                    && secrets.is_empty()
+                {
                     out.push(check(label.clone(), Status::Ok, "runner.toml and programs"));
                 }
                 for w in &cfg.warnings {
@@ -351,6 +394,7 @@ fn runners(layout: &Layout, out: &mut Vec<Check>) {
                 for p in problems {
                     out.push(check(label.clone(), Status::Warn, p));
                 }
+                out.extend(secrets);
             }
         }
     }
@@ -508,6 +552,24 @@ fn autostart(layout: &Layout, out: &mut Vec<Check>) {
     }
 }
 
+/// The text of a failed dial of `address`: a refused connection (`raw` is the OS error) says
+/// that nothing listens there and how a broker service is started, instead of the OS number.
+pub fn dial_failure_text(address: &str, raw: &str) -> String {
+    let refused = ["os error 111", "os error 10061", "onnection refused"]
+        .iter()
+        .any(|m| raw.contains(m));
+    if refused {
+        format!(
+            "{address}: nothing listens there (the broker is stopped, or the address is wrong); on a machine where the broker is a service start it with `systemctl start {}` (Linux), `Start-Service {}` (Windows, administrator) or `launchctl kickstart system/{}` (macOS)",
+            crate::os_service::service_name(crate::os_service::Os::Linux),
+            crate::os_service::service_name(crate::os_service::Os::Windows),
+            crate::os_service::service_name(crate::os_service::Os::MacOs),
+        )
+    } else {
+        format!("{address}: {raw}")
+    }
+}
+
 async fn reach(name: String, key: &Path, address: &str, fingerprint: &str) -> Check {
     let key = match lr_net::ClientKey::load(key) {
         Ok(k) => std::sync::Arc::new(k),
@@ -523,7 +585,11 @@ async fn reach(name: String, key: &Path, address: &str, fingerprint: &str) -> Ch
                 format!("{address} reachable, certificate fingerprint matches, key accepted"),
             )
         }
-        Ok(Err(e)) => check(name, Status::Fail, format!("{address}: {e}")),
+        Ok(Err(e)) => check(
+            name,
+            Status::Fail,
+            dial_failure_text(address, &e.to_string()),
+        ),
         Err(_) => check(name, Status::Fail, format!("{address}: no answer in 5 s")),
     }
 }

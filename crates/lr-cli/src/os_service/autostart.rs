@@ -123,6 +123,37 @@ pub fn task_xml(a: &AutostartInputs) -> String {
     )
 }
 
+/// The name of the systemd user unit that starts the role `argv` names (`hub run ...`,
+/// `runner run [--name N] ...`), as `autostart on` registers it.
+pub fn unit_for_argv(argv: &[String]) -> Option<String> {
+    let entry = entry_for_argv(argv)?;
+    Some(format!("al-localrunner-{}.service", entry.name()))
+}
+
+fn entry_for_argv(argv: &[String]) -> Option<Entry> {
+    Some(match (argv.first()?.as_str(), argv.get(1)?.as_str()) {
+        ("hub", "run") => Entry::Hub,
+        ("runner", "run") => Entry::Runner(
+            argv.iter()
+                .position(|a| a == "--name")
+                .and_then(|i| argv.get(i + 1))
+                .cloned(),
+        ),
+        _ => return None,
+    })
+}
+
+/// The launchd agent label and plist path (under `home`) that start the role `argv` names, as
+/// `autostart on` registers them on macOS.
+pub fn agent_for_argv(argv: &[String], home: &Path) -> Option<(String, PathBuf)> {
+    let entry = entry_for_argv(argv)?;
+    let label = format!("com.al-localrunner.{}", entry.name());
+    let plist = home
+        .join("Library/LaunchAgents")
+        .join(format!("{label}.plist"));
+    Some((label, plist))
+}
+
 fn user_unit(a: &AutostartInputs) -> (String, PathBuf) {
     let unit = format!("al-localrunner-{}.service", a.entry.name());
     let path = a.home.join(".config/systemd/user").join(&unit);

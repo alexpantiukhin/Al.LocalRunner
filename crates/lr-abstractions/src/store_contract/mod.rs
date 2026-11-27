@@ -75,6 +75,7 @@ macro_rules! broker_store_contract {
             broker::recorded_cancel_is_dropped_when_the_run_outlives_it,
             broker::cancelling_run_of_vanished_runner_ends_lost,
             broker::peaks_are_stored_with_the_final_state,
+            broker::grant_with_a_placement_is_stored_with_the_run,
             broker::unstarted_granted_run_can_be_requeued,
             broker::started_run_cannot_be_requeued,
             broker::requeue_starts_a_new_stream_for_the_next_runner,

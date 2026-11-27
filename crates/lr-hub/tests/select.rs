@@ -214,6 +214,45 @@ async fn rejected_ordinary_order_tries_next_broker() {
 }
 
 #[tokio::test]
+async fn rejection_by_two_brokers_names_the_reason_of_each() {
+    let mut rig = Rig::new();
+    rig.policy.brokers.order = vec!["lan-a".into(), "lan-b".into()];
+    rig.join("lan-a").await;
+    rig.join("lan-b").await;
+    let secret = ReasonCode::Rejected(RejectReason::SecretNotAllowed);
+    let a = rig.broker(
+        "lan-a",
+        Zone::Lan,
+        Script::linux(Zone::Lan)
+            .on_order(OnOrder::Reject(no_runner(), "no runner has tag x".into())),
+    );
+    let b = rig.broker(
+        "lan-b",
+        Zone::Lan,
+        Script::linux(Zone::Lan).on_order(OnOrder::Reject(
+            secret.clone(),
+            "secret s is not allowed for label dev".into(),
+        )),
+    );
+    rig.start();
+    wait_connected(&[&a, &b]).await;
+    let cli = rig.cli().await;
+    let mut req = submit("remote", Some("linux"));
+    req.wait = true;
+    cli.submit(req).await;
+    match cli.reply().await {
+        CliReply::Rejected { code, detail } => {
+            assert_eq!(code, secret);
+            assert_eq!(
+                detail,
+                "broker lan-a: no runner has tag x; broker lan-b: secret s is not allowed for label dev"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn rejection_by_every_broker_reaches_the_waiting_cli() {
     let mut rig = Rig::new();
     rig.join("lan-a").await;

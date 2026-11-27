@@ -184,3 +184,55 @@ fn a_refused_admin_channel_without_a_way_to_ask_keeps_its_error() {
     let result = retry_if_denied(Err(DENIED.to_string()), &NEED, &session, &args);
     assert_eq!(result, Err(DENIED.to_string()));
 }
+
+#[test]
+fn a_broker_service_command_runs_as_the_broker_user_with_the_service_binary() {
+    use lr_cli::commands::rights::broker_admin_target;
+    use lr_cli::config_edit::elevated_command_line_as;
+    let (exe, user) = broker_admin_target(Os::Linux, true).unwrap();
+    assert_eq!(user, "al-localrunner");
+    let args = vec!["policy".to_string(), "reload".to_string()];
+    assert_eq!(
+        elevated_command_line_as(Os::Linux, &exe, &args, Some(user)),
+        "sudo -u 'al-localrunner' '/usr/local/libexec/al-localrunner/localrunner' 'policy' 'reload'"
+    );
+    assert!(broker_admin_target(Os::Linux, false).is_none());
+    assert!(broker_admin_target(Os::Windows, true).is_none());
+}
+
+#[test]
+fn without_a_terminal_the_broker_user_line_is_printed() {
+    use lr_cli::commands::rights::{ask_for_rights_as, broker_admin_target};
+    let (exe, user) = broker_admin_target(Os::Linux, true).unwrap();
+    let args = vec!["policy".to_string(), "reload".to_string()];
+    let need = Need {
+        what: "policy reload",
+        why: "open the admin channel of the broker",
+    };
+    let mut input = Cursor::new(Vec::new());
+    let mut shown = Vec::new();
+    let mut err = Vec::new();
+    let mut console = Console {
+        terminal: false,
+        input: &mut input,
+        out: &mut shown,
+    };
+    let result = ask_for_rights_as(
+        &need,
+        &plain(),
+        &args,
+        &mut console,
+        &fake(Ok(0)),
+        Os::Linux,
+        &exe,
+        Some(user),
+        &mut err,
+    );
+    let message = result.unwrap_err();
+    assert!(
+        message.ends_with(
+            "run: sudo -u 'al-localrunner' '/usr/local/libexec/al-localrunner/localrunner' 'policy' 'reload'"
+        ),
+        "{message}"
+    );
+}

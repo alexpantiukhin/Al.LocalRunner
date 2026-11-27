@@ -28,6 +28,9 @@ fn job(
         position: (list == DashboardList::Queued).then_some(1),
         detail: JobDetail {
             summary: JobSummary {
+                zone: None,
+                priority: None,
+                rule: None,
                 job: JobId(id.into()),
                 client_label: "alex@laptop".into(),
                 state,

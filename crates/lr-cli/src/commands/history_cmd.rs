@@ -106,6 +106,19 @@ fn dash(v: &Option<String>) -> &str {
     v.as_deref().unwrap_or("-")
 }
 
+/// The runner of a run as the table shows it: a runner that is local to a broker other than
+/// this machine's `local` one is named after that broker (`vps:r1`), not `local:r1`, which
+/// would read as a runner of this machine.
+pub fn runner_shown(broker: &str, runner: &Option<String>) -> String {
+    match runner.as_deref() {
+        Some(r) => match r.strip_prefix("local:") {
+            Some(rest) if broker != "local" => format!("{broker}:{rest}"),
+            _ => r.to_string(),
+        },
+        None => "-".into(),
+    }
+}
+
 /// The state as the protocol names it (`passed`, `timeout`).
 pub fn state_name(s: JobState) -> String {
     serde_json::to_value(s)
@@ -141,6 +154,8 @@ pub fn history_lines_for(rows: &[(String, JobSummary)], out: &Out) -> Vec<String
         "CLIENT_LABEL",
         "CLIENT",
         "RUNNER",
+        "ZONE",
+        "PRIORITY",
         "PEAK_MEM_MB",
         "PEAK_DISK_MB",
         "BROKER",
@@ -152,8 +167,9 @@ pub fn history_lines_for(rows: &[(String, JobSummary)], out: &Out) -> Vec<String
     .fixed(3)
     .fixed(4)
     .fixed(5)
-    .right(12)
-    .right(13);
+    .right(13)
+    .right(14)
+    .right(15);
     for (b, s) in rows {
         let state = shown_state(s);
         let tone = match state.as_str() {
@@ -179,7 +195,9 @@ pub fn history_lines_for(rows: &[(String, JobSummary)], out: &Out) -> Vec<String
             Cell::plain(source_name(s.source)),
             Cell::plain(dash(&s.label)),
             Cell::plain(client),
-            Cell::plain(dash(&s.runner)),
+            Cell::plain(runner_shown(b, &s.runner)),
+            Cell::plain(s.zone.map_or("-".into(), |z| z.as_str().to_string())),
+            Cell::plain(s.priority.map_or("-".into(), |p| p.to_string())),
             Cell::plain(mb(s.peak_mem_mb)),
             Cell::plain(mb(s.peak_disk_mb)),
             Cell::plain(b.clone()),
@@ -244,7 +262,10 @@ pub fn show_lines_for(broker: &str, d: &JobDetail, out: &Out) -> Vec<String> {
     card.row("directory", dash(&d.cwd));
     card.row("os user", dash(&d.os_user));
     card.row("platform", dash(&s.platform));
-    card.row("runner", dash(&s.runner));
+    card.row("runner", runner_shown(broker, &s.runner));
+    card.row_opt("zone", s.zone.map(|z| z.as_str().to_string()));
+    card.row_opt("priority", s.priority.map(|p| p.to_string()));
+    card.row_opt("rule", s.rule.clone());
     card.row("queued", format_time(s.queued_at));
     card.row("started", when(s.started_at));
     card.row("finished", when(s.finished_at));

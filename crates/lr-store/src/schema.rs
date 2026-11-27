@@ -32,9 +32,9 @@ pub struct Schema {
 pub static BROKER: Schema = Schema {
     name: "broker.db",
     application_id: 0x4c52_4231,
-    version: 5,
+    version: 6,
     create: include_str!("sql/broker.sql"),
-    migrations: &[broker_v2, broker_v3, broker_v4, broker_v5],
+    migrations: &[broker_v2, broker_v3, broker_v4, broker_v5, broker_v6],
 };
 
 fn broker_v2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -85,6 +85,15 @@ fn broker_v5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     ] {
         if has_column(tx, table, column)? {
             tx.execute_batch(&format!("ALTER TABLE \"{table}\" DROP COLUMN {column};"))?;
+        }
+    }
+    Ok(())
+}
+
+fn broker_v6(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    for (column, kind) in [("zone", "TEXT"), ("priority", "INTEGER"), ("rule", "TEXT")] {
+        if !has_column(tx, "job", column)? {
+            tx.execute_batch(&format!("ALTER TABLE job ADD COLUMN {column} {kind};"))?;
         }
     }
     Ok(())

@@ -21,8 +21,8 @@ pub use document::ConfigDoc;
 pub use elevate::OutputChannel;
 pub use elevate::{
     attach_elevated_output, channel_pipes, child_args, command_words, elevated_command_line,
-    new_channel, rerun_elevated, sudo_probe_args, sudo_route, untrusted_text, Elevator, OsElevator,
-    SudoProbe, SudoRoute, ELEVATED_CHILD,
+    elevated_command_line_as, new_channel, rerun_elevated, rerun_elevated_as, sudo_probe_args,
+    sudo_route, untrusted_text, Elevator, OsElevator, SudoProbe, SudoRoute, ELEVATED_CHILD,
 };
 pub use records::{
     add_local_user, add_name, add_shared, remove_local_user, remove_name, remove_shared,

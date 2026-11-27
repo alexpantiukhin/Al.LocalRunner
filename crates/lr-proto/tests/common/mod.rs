@@ -54,6 +54,7 @@ pub fn requirements() -> Requirements {
         cache: vec!["gradle".into()],
         zones: Some(Zone::up_to(Zone::Lan)),
         commands: Default::default(),
+        variant_gate: Default::default(),
     }
 }
 
@@ -112,6 +113,7 @@ pub fn order_spec() -> OrderSpec {
         args: Vec::new(),
         labels: Vec::new(),
         zone_steps: Default::default(),
+        variants: Default::default(),
     }
 }
 
@@ -143,6 +145,9 @@ pub fn service_report() -> ServiceReport {
 
 pub fn summary() -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: job(1),
         client_label: "ci".into(),
         state: JobState::Running,
@@ -183,6 +188,7 @@ pub fn step_view() -> StepView {
 
 pub fn runner_info() -> RunnerInfo {
     RunnerInfo {
+        zone: None,
         name: "r-1".into(),
         online: true,
         caps: caps(),

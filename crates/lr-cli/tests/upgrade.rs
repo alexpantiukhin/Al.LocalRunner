@@ -916,6 +916,7 @@ fn the_runners_of_this_installation_are_not_part_of_the_pool() {
             programs_missing: Default::default(),
         };
         lr_proto::RunnerInfo {
+            zone: None,
             name: name.into(),
             online: true,
             caps,

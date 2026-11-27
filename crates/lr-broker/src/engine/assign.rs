@@ -80,15 +80,25 @@ impl Engine {
         let Some(conn) = self.runner_conn(&a.runner) else {
             return;
         };
+        let origin = self.policy.policy().priority_origin(&self.queue[i].entry);
+        let rule = origin.rule.map(|r| r.name);
+        let placement = lr_abstractions::Placement {
+            zone: Some(a.zone.as_str().to_string()),
+            priority: Some(origin.priority),
+            rule: rule.clone(),
+        };
         if self
             .store
-            .grant(&self.queue[i].key, &a.runner)
+            .grant_with(&self.queue[i].key, &a.runner, placement)
             .await
             .is_err()
         {
             return;
         }
         let mut job = self.queue.remove(i);
+        job.zone = Some(a.zone);
+        job.priority = Some(origin.priority);
+        job.rule = rule;
         let seq = match self.store.next_seq_to_runner(&job.key).await {
             Ok(seq) => seq,
             Err(e) => {
@@ -112,6 +122,22 @@ impl Engine {
                 lr_proto::WireCode::Own
             };
             (steps, code)
+        };
+        let steps = match self.runners.get(&a.runner) {
+            Some(slot) if !spec.variants.is_empty() => spec
+                .variants
+                .iter()
+                .find(|v| {
+                    v.when.matches(
+                        a.zone,
+                        &slot.wire.platforms,
+                        &slot.wire.tags,
+                        &slot.wire.programs,
+                        &a.runner,
+                    )
+                })
+                .map_or(steps, |v| v.steps.clone()),
+            _ => steps,
         };
         let cache_client = (self.policy.file().cache.share == CacheShare::Project)
             .then(|| SHARED_CACHE_CLIENT.to_string());

@@ -703,6 +703,7 @@ fn the_report_prints_old_new_and_downtime() {
         new: "0.1.1".into(),
         down: Duration::from_secs(3),
         running_new: true,
+        unchanged: false,
     };
     assert_eq!(
         report_lines(&up),
@@ -717,4 +718,91 @@ fn the_report_prints_old_new_and_downtime() {
     };
     let lines = report_lines(&stuck).join("\n");
     assert!(lines.contains("still runs"), "{lines}");
+}
+
+fn update_with(system: &dyn System, old: &'static str, new: &str) -> Result<UpdateReport, String> {
+    update_service_on(
+        system,
+        Os::Linux,
+        Path::new("/new/localrunner"),
+        Path::new("/svc/localrunner"),
+        &|_: &Path| Some(old.to_string()),
+        new,
+    )
+}
+
+#[test]
+fn a_service_already_on_this_version_is_left_alone() {
+    let system = Recorder::default();
+    let report = update_with(&system, "0.1.1", "0.1.1").unwrap();
+    assert!(report.unchanged && report.running_new);
+    assert!(system.0.lock().unwrap().is_empty());
+    let lines = report_lines(&report).join("\n");
+    assert!(lines.contains("already current"), "{lines}");
+}
+
+#[test]
+fn a_service_newer_than_this_binary_is_not_replaced_by_it() {
+    let system = Recorder::default();
+    let err = update_with(&system, "0.2.0", "0.1.1").unwrap_err();
+    assert!(err.contains("0.2.0") && err.contains("newer than"), "{err}");
+    assert!(system.0.lock().unwrap().is_empty());
+}
+
+struct CopyFails(Mutex<Vec<String>>);
+
+impl System for CopyFails {
+    fn apply(&self, action: &Action) -> Result<(), String> {
+        self.0.lock().unwrap().push(action.to_string());
+        if matches!(action, Action::Copy { .. }) {
+            Err("Text file busy".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn a_failed_copy_still_starts_the_stopped_service() {
+    let system = CopyFails(Mutex::new(Vec::new()));
+    let err = update_with(&system, "0.1.0", "0.1.1").unwrap_err();
+    assert!(err.contains("Text file busy"), "{err}");
+    let done = system.0.lock().unwrap().clone();
+    assert_eq!(done.len(), 3, "{done:?}");
+    assert!(done[2].contains("start"), "{done:?}");
+    assert!(err.contains("the service was started again"), "{err}");
+}
+
+#[test]
+fn autostart_on_without_a_role_leaves_the_broker_out_but_off_and_an_explicit_role_keep_it() {
+    use lr_cli::commands::service_cmd::broker_in_scope;
+    assert!(!broker_in_scope(None, true));
+    assert!(broker_in_scope(None, false));
+    assert!(broker_in_scope(Some(RoleArg::Broker), true));
+    assert!(broker_in_scope(Some(RoleArg::All), true));
+}
+
+#[test]
+fn autostart_status_lines_say_what_starts_how() {
+    use lr_cli::commands::service_cmd::{autostart_status_lines, AutostartRow};
+    let rows = vec![
+        AutostartRow::new("hub", "hub", "login", None),
+        AutostartRow::new("runner", "r1", "service", Some(true)),
+        AutostartRow::new("runner", "r2", "none", None),
+        AutostartRow::new("broker", "broker", "service", Some(false)),
+    ];
+    let lines = autostart_status_lines(&rows);
+    assert_eq!(
+        lines,
+        vec![
+            "hub: on (starts at user login)".to_string(),
+            "runner r1: on (OS service, running)".to_string(),
+            "runner r2: off".to_string(),
+            "broker: on (OS service, stopped)".to_string(),
+        ]
+    );
+    let json = lr_cli::commands::service_cmd::autostart_status_json(&rows);
+    assert_eq!(json[1]["kind"], "service");
+    assert_eq!(json[1]["running"], true);
+    assert_eq!(json[2]["on"], false);
 }

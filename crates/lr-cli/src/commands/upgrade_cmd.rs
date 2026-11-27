@@ -17,7 +17,7 @@ use crate::render::{Card, Level, Out, Report};
 use crate::upgrade_lock::{write, UpgradeLock};
 use lr_proto::DrainReason;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -184,6 +184,106 @@ pub fn installed_version(path: &Path) -> Option<Version> {
     parse_version(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// A starter of roles for `upgrade`: a role that has a systemd user unit (`autostart on`) is
+/// started through `systemctl --user start`, and one that has a launchd agent on macOS through
+/// `launchctl start`, so it gets the environment of its unit or agent and the service manager
+/// keeps owning it; any other role is started as a detached process.
+pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
+    let plain = starter(exe);
+    move |argv: &[String]| {
+        if cfg!(target_os = "linux") {
+            let unit = crate::os_service::autostart::unit_for_argv(argv);
+            let file = unit.as_ref().and_then(|u| {
+                crate::os_service::home_dir()
+                    .ok()
+                    .map(|h| h.join(".config/systemd/user").join(u))
+            });
+            if let (Some(unit), Some(file)) = (unit, file) {
+                if file.is_file() {
+                    let status = std::process::Command::new("systemctl")
+                        .args(["--user", "start", &unit])
+                        .status()?;
+                    return if status.success() {
+                        Ok(0)
+                    } else {
+                        Err(std::io::Error::other(format!(
+                            "systemctl --user start {unit} failed"
+                        )))
+                    };
+                }
+            }
+        }
+        if cfg!(target_os = "macos") {
+            let agent = crate::os_service::home_dir()
+                .ok()
+                .and_then(|h| crate::os_service::autostart::agent_for_argv(argv, &h));
+            if let Some((label, _)) = agent.filter(|(_, p)| p.is_file()) {
+                let status = std::process::Command::new("launchctl")
+                    .args(["start", &label])
+                    .status()?;
+                return if status.success() {
+                    Ok(0)
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "launchctl start {label} failed"
+                    )))
+                };
+            }
+        }
+        plain(argv)
+    }
+}
+
+/// The warnings about the `env:` secrets of the running runners `names` that `upgrade` would
+/// start without their variable: a runner restarted by `upgrade` gets the environment of the
+/// shell that runs it, so a variable unset there (`env` gives its value) is lost unless the
+/// runner has a service-manager unit (`has_unit`) that sets it. Names only, never values.
+pub fn restart_env_warnings(
+    layout: &Layout,
+    names: &std::collections::BTreeSet<String>,
+    has_unit: impl Fn(&str) -> bool,
+    env: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names.iter().filter(|n| !has_unit(n)) {
+        let Some(text) = crate::build::runner_config_path(layout, name, None)
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        else {
+            continue;
+        };
+        let Ok(table) = text.parse::<toml::Table>() else {
+            continue;
+        };
+        for (secret, from) in crate::runner_config::secret_sources(&table) {
+            if let crate::runner_config::SecretFrom::Env(var) = from {
+                if env(&var).is_none_or(|v| v.is_empty()) {
+                    out.push(format!(
+                        "runner {name}: secret {secret} comes from the variable {var}, which is not set here; the restarted runner will not have it (store it with `localrunner secret set {name} {secret}` or start the runner through its unit)"
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether this process only fetches the release and hands over to the downloaded binary (it
+/// is the installed one). The downloaded binary does the replacing and asks for the service
+/// update itself, so the installed one must not ask again.
+pub fn is_relay(args: &UpgradeArgs) -> bool {
+    let Ok(dir) = args.dir.clone().map_or_else(default_bin_dir, Ok) else {
+        return false;
+    };
+    std::env::current_exe()
+        .is_ok_and(|exe| super::upgrade_fetch::is_installed(&exe, &dir.join(binary_name())))
+}
+
+/// Whether `upgrade` ends with the offer to update the broker service: only the process that
+/// replaced the binaries, after a real run, on a machine whose broker is a service.
+pub fn offers_service_update(relay: bool, dry_run: bool, broker_is_service: bool) -> bool {
+    !relay && !dry_run && broker_is_service
+}
+
 /// `upgrade` as the command line runs it: refused as root or administrator unless
 /// `allow_elevated`.
 pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> {
@@ -232,7 +332,26 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
     let others = pool(layout).await;
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
-    let start = starter(installed.clone());
+    let start = unit_starter(installed.clone());
+    for line in restart_env_warnings(
+        layout,
+        &running.runners,
+        |name| {
+            crate::os_service::autostart::unit_for_argv(&[
+                "runner".into(),
+                "run".into(),
+                "--name".into(),
+                name.to_string(),
+            ])
+            .is_some_and(|unit| {
+                crate::os_service::home_dir()
+                    .is_ok_and(|h| h.join(".config/systemd/user").join(unit).is_file())
+            })
+        },
+        |var| std::env::var(var).ok(),
+    ) {
+        eprintln!("warning: {line}");
+    }
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();

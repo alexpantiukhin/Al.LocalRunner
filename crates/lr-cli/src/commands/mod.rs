@@ -20,6 +20,7 @@ pub mod rights;
 pub mod roles_cmd;
 pub mod runner_config_cmd;
 pub mod runner_outbox_cmd;
+pub mod secret_cmd;
 pub mod service_cmd;
 pub mod setup;
 pub mod snapshot_cmd;
@@ -29,6 +30,7 @@ pub mod upgrade_cmd;
 pub mod upgrade_fetch;
 pub mod upgrade_jobs;
 pub mod upgrade_pool;
+pub mod variant_check;
 pub mod view;
 
 pub use args::*;
@@ -164,6 +166,10 @@ pub enum Command {
         /// One job: print the whole log, not its last 50 lines and a hint.
         #[arg(long)]
         full: bool,
+        /// Only this broker: refused at once when this hub does not know it or cannot reach it.
+        /// A moved order is still followed to the broker that holds it.
+        #[arg(long)]
+        broker: Option<String>,
     },
     /// Own jobs (label `--as` and OS user).
     Jobs {
@@ -295,7 +301,8 @@ pub enum Command {
         /// Confirm `--cancel` without asking.
         #[arg(long)]
         yes: bool,
-        /// Return only when the stopped runners have exited; name the ones that did not.
+        /// Return only when the stopped runners have exited (name the ones that did not); without
+        /// `--cancel` first wait until the hub holds no order.
         #[arg(long)]
         wait: bool,
         /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
@@ -314,6 +321,13 @@ pub enum Command {
         /// What to do.
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// Secrets of a runner: the value goes into a private file, `[secret.NAME]` of its
+    /// `runner.toml` points at it.
+    Secret {
+        /// What to do.
+        #[command(subcommand)]
+        action: SecretAction,
     },
     /// Diagnostics configuration.
     Logging {
@@ -386,9 +400,12 @@ pub enum Command {
     /// Enable or disable starting roles with the OS: the hub and runners start at user login,
     /// `broker` is the broker service, `runner <name> --service` makes one runner an OS service.
     Autostart {
-        /// `on` or `off`.
+        /// `on`, `off` or `status`.
         #[arg(value_enum)]
         switch: Switch,
+        /// With `status`: print JSON.
+        #[arg(long)]
+        json: bool,
         /// The role; the roles `init` created when omitted.
         #[arg(value_enum)]
         role: Option<RoleArg>,
@@ -436,6 +453,81 @@ impl Cli {
     /// not elevate again nor show the diff the parent already showed.
     pub fn is_elevated_child(&self) -> bool {
         self.elevated_child.is_some()
+    }
+}
+
+async fn secret(
+    layout: &Layout,
+    action: SecretAction,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    use secret_cmd::{list_lines, remove_with, set_with, SetArgs, ValueSource};
+    let (mut out, mut err) = (std::io::stdout(), std::io::stderr());
+    let (elevator, roles) = (
+        crate::config_edit::OsElevator,
+        crate::config_edit::LiveRoles,
+    );
+    match action {
+        SecretAction::List { runner } => {
+            for line in list_lines(layout, runner.as_deref())? {
+                println!("{line}");
+            }
+            Ok(0)
+        }
+        SecretAction::Remove {
+            runner,
+            name,
+            dry_run,
+            restart,
+        } => {
+            remove_with(
+                layout,
+                &runner,
+                &name,
+                dry_run,
+                restart,
+                elevated_child,
+                &elevator,
+                &roles,
+                &mut out,
+                &mut err,
+            )
+            .await
+        }
+        SecretAction::Set {
+            runner,
+            name,
+            value_file,
+            dry_run,
+            restart,
+        } => {
+            use std::io::IsTerminal;
+            let source = match value_file {
+                Some(path) => ValueSource::File(path),
+                None if std::io::stdin().is_terminal() => {
+                    return Err("give the value on standard input (pipe it: `... | localrunner secret set <runner> <NAME>`) or with --value-file <file>; it is never taken from the command line".into())
+                }
+                None => ValueSource::Stdin,
+            };
+            let args = SetArgs {
+                runner,
+                name,
+                source,
+                dry_run,
+                restart,
+            };
+            set_with(
+                layout,
+                args,
+                elevated_child,
+                &elevator,
+                &roles,
+                &mut std::io::stdin(),
+                &mut out,
+                &mut err,
+            )
+            .await
+        }
     }
 }
 
@@ -523,6 +615,57 @@ async fn policy(
     policy_edit_cmd::edit(layout, args, elevated_child).await
 }
 
+/// What a command of the broker's admin channel does when the OS refused it the channel: with a
+/// terminal it asks, then runs the same command as the broker's account (a broker service on
+/// Unix) or with administrator rights; without one it prints the exact line to run.
+fn broker_admin_retry(
+    result: Result<i32, String>,
+    what: &str,
+    layout: &Layout,
+    tail: &[String],
+    no_elevate: bool,
+    elevated_child: bool,
+) -> Result<i32, String> {
+    let need = rights::Need {
+        what,
+        why: "open the admin channel of the broker",
+    };
+    let session = rights::session(false, no_elevate, elevated_child);
+    rights::retry_as_broker(result, &need, &session, layout, tail)
+}
+
+/// The arguments of `broker add` that repeat the request, for the re-run as the broker's account.
+fn broker_add_flags(
+    req: &lr_proto::AdminRequest,
+    code_file: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut flags = Vec::new();
+    if let lr_proto::AdminRequest::BrokerAdd {
+        name,
+        label,
+        runners,
+        address,
+    } = req
+    {
+        let named = [("--name", name.clone()), ("--label", label.clone())]
+            .into_iter()
+            .chain([("--runners", runners.map(|n| n.to_string()))])
+            .chain([("--address", address.clone())]);
+        for (flag, value) in named {
+            if let Some(v) = value {
+                flags.push(flag.to_string());
+                flags.push(v);
+            }
+        }
+    }
+    flags.extend(
+        code_file
+            .iter()
+            .flat_map(|f| ["--code-file".to_string(), f.display().to_string()]),
+    );
+    flags
+}
+
 /// Runs `cli`; the result is the process exit code.
 pub async fn run(cli: Cli) -> i32 {
     let elevated_child = cli.is_elevated_child();
@@ -565,7 +708,8 @@ pub async fn run(cli: Cli) -> i32 {
             label,
             json,
             full,
-        } => jobs::wait_jobs(&layout, jobs, label, json, full).await,
+            broker,
+        } => jobs::wait_jobs(&layout, jobs, label, json, full, broker).await,
         Command::Jobs {
             label,
             active,
@@ -632,8 +776,38 @@ pub async fn run(cli: Cli) -> i32 {
             let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
             down_cmd::down_cli(&layout, names, cancel, yes, wait).await
         }
+        Command::Policy {
+            action: PolicyAction::Check { file },
+        } => {
+            let result = admin_cmd::policy_check(&layout, file.clone()).await;
+            let mut tail: Vec<String> = vec!["policy".into(), "check".into()];
+            tail.extend(file.map(|f| f.display().to_string()));
+            broker_admin_retry(
+                result,
+                "policy check",
+                &layout,
+                &tail,
+                no_elevate,
+                elevated_child,
+            )
+        }
+        Command::Policy {
+            action: PolicyAction::Reload,
+        } => {
+            let result = admin_cmd::policy_reload(&layout).await;
+            let tail: Vec<String> = vec!["policy".into(), "reload".into()];
+            broker_admin_retry(
+                result,
+                "policy reload",
+                &layout,
+                &tail,
+                no_elevate,
+                elevated_child,
+            )
+        }
         Command::Policy { action } => policy(&layout, action, elevated_child, expect_before).await,
         Command::Config { action } => config(&layout, action, elevated_child, expect_before).await,
+        Command::Secret { action } => secret(&layout, action, elevated_child).await,
         Command::Logging {
             action: LoggingAction::Reload,
         } => logging_cmd::logging_reload(&layout).await,
@@ -691,7 +865,17 @@ pub async fn run(cli: Cli) -> i32 {
                     runners,
                     address,
                 };
-                admin_cmd::broker_add(&layout, req, code_file).await
+                let mut tail: Vec<String> = vec!["broker".into(), "add".into()];
+                tail.extend(broker_add_flags(&req, code_file.as_deref()));
+                let result = admin_cmd::broker_add(&layout, req, code_file).await;
+                broker_admin_retry(
+                    result,
+                    "broker add",
+                    &layout,
+                    &tail,
+                    no_elevate,
+                    elevated_child,
+                )
             }
         },
         Command::Runner { action } => match action {
@@ -762,35 +946,65 @@ pub async fn run(cli: Cli) -> i32 {
             } => runner_outbox_cmd::drop_outbox(&layout, runner, job).await,
             RunnerAction::List => {
                 let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::RunnerList).await;
-                let need = rights::Need {
-                    what: "runner list",
-                    why: "open the admin channel of the broker",
-                };
-                let mut args = rights::layout_args(&layout);
-                args.extend(["runner".into(), "list".into()]);
-                let session = rights::session(false, no_elevate, elevated_child);
-                rights::retry_if_denied(result, &need, &session, &args)
+                let tail: Vec<String> = vec!["runner".into(), "list".into()];
+                broker_admin_retry(
+                    result,
+                    "runner list",
+                    &layout,
+                    &tail,
+                    no_elevate,
+                    elevated_child,
+                )
             }
             RunnerAction::Remove { name, yes } => {
+                let tail: Vec<String> = vec![
+                    "runner".into(),
+                    "remove".into(),
+                    name.clone(),
+                    "--yes".into(),
+                ];
                 let req = lr_proto::AdminRequest::RunnerRemove { name };
-                admin_cmd::remove_cli(&layout, req, yes).await
+                let result = admin_cmd::remove_cli(&layout, req, yes).await;
+                broker_admin_retry(
+                    result,
+                    "runner remove",
+                    &layout,
+                    &tail,
+                    no_elevate,
+                    elevated_child,
+                )
             }
         },
         Command::Client { action } => match action {
             ClientAction::List => {
                 let result = admin_cmd::simple(&layout, lr_proto::AdminRequest::ClientList).await;
-                let need = rights::Need {
-                    what: "client list",
-                    why: "open the admin channel of the broker",
-                };
-                let mut args = rights::layout_args(&layout);
-                args.extend(["client".into(), "list".into()]);
-                let session = rights::session(false, no_elevate, elevated_child);
-                rights::retry_if_denied(result, &need, &session, &args)
+                let tail: Vec<String> = vec!["client".into(), "list".into()];
+                broker_admin_retry(
+                    result,
+                    "client list",
+                    &layout,
+                    &tail,
+                    no_elevate,
+                    elevated_child,
+                )
             }
             ClientAction::Remove { name, yes } => {
+                let tail: Vec<String> = vec![
+                    "client".into(),
+                    "remove".into(),
+                    name.clone(),
+                    "--yes".into(),
+                ];
                 let req = lr_proto::AdminRequest::ClientRemove { name };
-                admin_cmd::remove_cli(&layout, req, yes).await
+                let result = admin_cmd::remove_cli(&layout, req, yes).await;
+                broker_admin_retry(
+                    result,
+                    "client remove",
+                    &layout,
+                    &tail,
+                    no_elevate,
+                    elevated_child,
+                )
             }
         },
         Command::Init { role } => setup::init(&layout, role),
@@ -801,10 +1015,16 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
         Command::Upgrade(a) => {
-            let dry_run = a.dry_run;
+            let (dry_run, relay) = (a.dry_run, upgrade_cmd::is_relay(&a));
             let code = upgrade_cmd::upgrade(&layout, a).await;
             match code {
-                Ok(0) if !dry_run && layout.broker_is_service() => {
+                Ok(0)
+                    if upgrade_cmd::offers_service_update(
+                        relay,
+                        dry_run,
+                        layout.broker_is_service(),
+                    ) =>
+                {
                     let need = rights::Need {
                         what: "broker update-service",
                         why: "replace the broker service's copy of the binary and restart the service",
@@ -824,11 +1044,18 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::uninstall(&layout, purge, yes, dir, dry_run).await,
         Command::Autostart {
+            switch: Switch::Status,
+            role,
+            json,
+            ..
+        } => service_cmd::autostart_status(&layout, role, json),
+        Command::Autostart {
             switch,
             role,
             runner,
             service,
             dry_run,
+            ..
         } => {
             let word = if switch == Switch::On { "on" } else { "off" };
             let session = rights::session(dry_run, no_elevate, elevated_child);
@@ -848,7 +1075,12 @@ pub async fn run(cli: Cli) -> i32 {
                 _ => {
                     let pending = !service
                         && runner.is_none()
-                        && service_cmd::broker_step_pending(&layout, role, dry_run);
+                        && service_cmd::broker_step_pending(
+                            &layout,
+                            role,
+                            switch == Switch::On,
+                            dry_run,
+                        );
                     let code =
                         service_cmd::autostart(&layout, switch, role, runner, service, dry_run);
                     match code {

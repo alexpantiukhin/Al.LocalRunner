@@ -143,3 +143,62 @@ default = \"core\"
         .is_empty());
     assert!(!lines(text).iter().any(|x| x.contains("expanded")));
 }
+
+#[test]
+fn zone_variants_and_declared_resources_are_shown() {
+    let text = "[profile.hello]
+command = \"echo hello local\"
+timeout_s = 60
+tags = [\"vps\"]
+exclusive = [\"gpu\"]
+programs = [\"git\"]
+[profile.hello.zone.remote]
+command = \"echo hello remote\"
+";
+    let l = lines(text);
+    assert!(
+        l.contains(&"  zone remote: echo hello remote".to_string()),
+        "{l:?}"
+    );
+    assert!(
+        l.contains(&"  resources: tags vps, exclusive gpu, programs git".to_string()),
+        "{l:?}"
+    );
+    assert!(!l.iter().any(|x| x.contains("none declared")), "{l:?}");
+    let v = serde_json::to_value(summarize(&parse_profiles(text).unwrap()[0])).unwrap();
+    assert_eq!(v["tags"], serde_json::json!(["vps"]));
+    assert_eq!(v["zones"][0]["zone"], "remote");
+}
+
+#[test]
+fn zone_variant_with_steps_lists_each_step() {
+    let text = "[profile.g]
+timeout_s = 60
+steps = [{ name = \"a\", command = \"x\", timeout_s = 5 }]
+[profile.g.zone.lan]
+steps = [{ name = \"a\", command = \"y\", timeout_s = 5 }]
+";
+    let l = lines(text);
+    assert!(
+        l.contains(&"  zone lan, step a: y (timeout 5 s)".to_string()),
+        "{l:?}"
+    );
+}
+
+#[test]
+fn variants_are_shown_with_their_filter() {
+    let text = "[profile.t]
+timeout_s = 60
+command = \"echo common\"
+[profile.t.variant.linux-remote]
+when = { zone = [\"lan\", \"remote\"], os = [\"linux\"] }
+command = \"sh run.sh\"
+";
+    let l = lines(text);
+    assert!(
+        l.contains(&"  variant linux-remote (zone lan, remote; os linux): sh run.sh".to_string()),
+        "{l:?}"
+    );
+    let v = serde_json::to_value(summarize(&parse_profiles(text).unwrap()[0])).unwrap();
+    assert_eq!(v["variants"][0]["name"], "linux-remote");
+}

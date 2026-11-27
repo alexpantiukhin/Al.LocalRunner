@@ -152,7 +152,7 @@ impl Engine {
             },
             ReadRequest::Stats(f) => self.stats(&viewer, f).await,
             ReadRequest::Runners => ReadReply::Runners {
-                runners: self.runner_infos(&viewer),
+                runners: self.runner_infos(&viewer, client),
                 pools: self.pool_infos(&viewer),
             },
             ReadRequest::Subscribe { topics } => self.subscribe(conn, topics),
@@ -405,11 +405,45 @@ impl Engine {
                 _ => "waits in the queue".to_string(),
             },
             Some(j) if j.started_at.is_none() => self.granted_text(j),
-            Some(j) => format!(
-                "running on runner {}",
-                j.runner.as_deref().unwrap_or_default()
-            ),
+            Some(j) => {
+                let name = j.runner.as_deref().unwrap_or_default();
+                let zone = self.runners.get(name).map(|slot| {
+                    self.site.zone_between(
+                        &j.entry.client.endpoint,
+                        &j.entry.client.label,
+                        &slot.endpoint,
+                        name,
+                    )
+                });
+                match zone {
+                    Some(z) => format!("running on runner {name} (zone {z})"),
+                    None => format!("running on runner {name}"),
+                }
+            }
             None => finished_text(&rec.job, a.sees_fields()),
+        };
+        let text = match self.find(key) {
+            Some(j) if j.runner.is_none() && a.sees_fields() => {
+                let mut refused: Vec<String> = self
+                    .runner_views()
+                    .iter()
+                    .filter_map(|view| {
+                        lr_core::routing::suitable(&j.entry, view, &self.site)
+                            .err()
+                            .map(|m| format!("{}: {m}", view.name))
+                    })
+                    .collect();
+                refused.sort();
+                if refused.is_empty() {
+                    text
+                } else {
+                    format!(
+                        "{text}; runners that do not suit it: {}",
+                        refused.join("; ")
+                    )
+                }
+            }
+            _ => text,
         };
         let text = match self.find(key) {
             Some(j) if a.sees_fields() && !j.spec.labels.is_empty() => {

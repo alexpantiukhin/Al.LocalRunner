@@ -3,7 +3,8 @@ mod common;
 use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
 use lr_cli::commands::down_cmd::{
-    down, down_with, runners_still_answering, service_state, wait_for_exit, ServiceState,
+    down, down_with, runners_still_answering, service_state, wait_for_exit, wait_for_hub_orders,
+    ServiceState,
 };
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
@@ -470,5 +471,22 @@ async fn down_wait_returns_when_the_runners_have_exited_and_names_those_that_did
             .any(|l| l == "did not exit within 5 s: r1"),
         "{:?}",
         stuck.said_err()
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_drain_wait_holds_the_hub_while_it_has_orders() {
+    let idle = FakeRoles::new(true, 0);
+    *idle.jobs.lock().unwrap() = Some(Vec::new());
+    assert_eq!(wait_for_hub_orders(&idle, Duration::from_secs(60)).await, 0);
+    let busy = FakeRoles::new(true, 0);
+    *busy.jobs.lock().unwrap() = Some(vec!["j1 on r1 (5s)".to_string()]);
+    let start = tokio::time::Instant::now();
+    assert_eq!(wait_for_hub_orders(&busy, Duration::from_secs(5)).await, 1);
+    assert!(start.elapsed() >= Duration::from_secs(5));
+    let unknown = FakeRoles::new(true, 0);
+    assert_eq!(
+        wait_for_hub_orders(&unknown, Duration::from_secs(5)).await,
+        0
     );
 }

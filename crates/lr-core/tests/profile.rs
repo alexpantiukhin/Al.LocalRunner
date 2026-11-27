@@ -145,6 +145,22 @@ zone = \"moon\"
 }
 
 #[test]
+fn a_zone_variant_with_another_key_names_the_key_and_what_a_variant_takes() {
+    let text = "[profile.p]
+timeout_s = 9
+command = \"a\"
+[profile.p.zone.remote]
+command = \"b\"
+timeout_s = 5
+";
+    let err = parse_profiles(text).unwrap_err().to_string();
+    assert!(err.contains("zone.remote"), "{err}");
+    assert!(err.contains("unknown key `timeout_s`"), "{err}");
+    assert!(err.contains("takes only `command` or `steps`"), "{err}");
+    assert!(!err.contains("RawZone"), "{err}");
+}
+
+#[test]
 fn unknown_key_rejected_with_profile_name() {
     let text = "[profile.p]
 timeout_s = 9
@@ -487,4 +503,65 @@ steps = [
 ]
 "#;
     assert_eq!(invalid(text), ("p".into(), "steps[1].name".into()));
+}
+
+const VARIANTS: &str = r#"
+[profile.t]
+timeout_s = 60
+command = "echo common"
+[profile.t.variant.linux-remote]
+when = { zone = ["lan", "remote"], os = ["linux", "macos"] }
+command = "sh run.sh"
+[profile.t.variant.win-remote]
+when = { zone = ["remote"], os = ["windows"], runner = ["box"] }
+command = "pwsh run.ps1"
+"#;
+
+fn set(items: &[&str]) -> std::collections::BTreeSet<String> {
+    items.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn variants_parse_with_their_filters_and_steps() {
+    let p = &parse_profiles(VARIANTS).unwrap()[0];
+    assert_eq!(p.variants.len(), 2);
+    assert_eq!(p.variants[0].name, "linux-remote");
+    assert_eq!(p.variants[0].when.zones, [Zone::Lan, Zone::Remote]);
+    assert_eq!(p.variants[0].when.os, ["linux", "macos"]);
+    assert_eq!(p.variants[0].steps[0].command, "sh run.sh");
+    assert_eq!(p.variants[1].when.runners, ["box"]);
+}
+
+#[test]
+fn a_variant_matches_when_every_key_has_one_of_its_values() {
+    let p = &parse_profiles(VARIANTS).unwrap()[0];
+    let w = &p.variants[0].when;
+    let none = set(&[]);
+    assert!(w.matches(Zone::Remote, &set(&["linux"]), &none, &none, "a"));
+    assert!(w.matches(Zone::Lan, &set(&["macos"]), &none, &none, "a"));
+    assert!(!w.matches(Zone::Remote, &set(&["windows"]), &none, &none, "a"));
+    assert!(!w.matches(Zone::Local, &set(&["linux"]), &none, &none, "a"));
+    let w2 = &p.variants[1].when;
+    assert!(w2.matches(Zone::Remote, &set(&["windows"]), &none, &none, "box"));
+    assert!(!w2.matches(Zone::Remote, &set(&["windows"]), &none, &none, "other"));
+}
+
+#[test]
+fn the_zones_of_variants_have_steps() {
+    let p = &parse_profiles(VARIANTS).unwrap()[0];
+    let zones: Vec<Zone> = p.zone_steps_effective().keys().copied().collect();
+    assert!(
+        zones.contains(&Zone::Lan) && zones.contains(&Zone::Remote),
+        "{zones:?}"
+    );
+}
+
+#[test]
+fn a_variant_with_an_unknown_key_or_zone_names_it() {
+    let bad_key = "[profile.t]\ntimeout_s = 5\ncommand = \"a\"\n[profile.t.variant.v]\nwhen = { colour = [\"red\"] }\ncommand = \"b\"\n";
+    let err = parse_profiles(bad_key).unwrap_err().to_string();
+    assert!(err.contains("variant.v") && err.contains("colour"), "{err}");
+    let bad_zone = "[profile.t]\ntimeout_s = 5\ncommand = \"a\"\n[profile.t.variant.v]\nwhen = { zone = [\"moon\"] }\ncommand = \"b\"\n";
+    let err = parse_profiles(bad_zone).unwrap_err().to_string();
+    assert!(err.contains("variant.v"), "{err}");
 }

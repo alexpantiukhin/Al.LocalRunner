@@ -444,7 +444,11 @@ pub async fn runner(
     let logger = logger(layout, &dir, Role::Runner, clock.clone(), foreground)?;
     let store =
         Arc::new(SqliteRunnerStore::open(&dir.join("runner.db")).map_err(|e| e.to_string())?);
-    let secrets = RedactingSecrets::new(ConfigSecrets::new(cfg.secrets.clone()), logger.redactor());
+    let config_secrets = ConfigSecrets::new(cfg.secrets.clone());
+    for (secret, why) in config_secrets.unavailable() {
+        eprintln!("runner {name}: warning: secret {secret}: {why}; an order that needs it fails");
+    }
+    let secrets = RedactingSecrets::new(config_secrets, logger.redactor());
     let principal = current_os_principal().map_err(|e| e.to_string())?;
     let address = layout.runner_ipc(&principal, name);
     let control = Arc::new(

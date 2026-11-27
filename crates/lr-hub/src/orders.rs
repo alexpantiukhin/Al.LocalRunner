@@ -87,6 +87,7 @@ fn lower_timeout(
         .steps
         .iter_mut()
         .chain(spec.zone_steps.values_mut().flatten())
+        .chain(spec.variants.iter_mut().flat_map(|v| v.steps.iter_mut()))
     {
         step.timeout_s = step.timeout_s.min(t);
     }
@@ -175,11 +176,24 @@ pub(crate) async fn build(
     if let Some(allowed) = &requirements.zones {
         zone_steps.retain(|z, _| allowed.contains(z));
     }
+    let mut variants: Vec<lr_proto::OrderVariant> = resolved
+        .variants
+        .iter()
+        .map(|v| lr_proto::OrderVariant {
+            name: v.name.clone(),
+            when: v.when.clone(),
+            steps: v.steps.clone(),
+        })
+        .collect();
+    for v in &mut variants {
+        bind_args(&mut v.steps, &profile.args, &req.args).map_err(|e| invalid(e.to_string()))?;
+    }
     let mut spec = OrderSpec {
         profile: profile.name.clone(),
         requirements,
         steps: resolved.steps,
         zone_steps,
+        variants,
         enqueued_at: now,
         identity: id.clone(),
         code,

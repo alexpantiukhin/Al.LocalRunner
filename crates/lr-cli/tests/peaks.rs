@@ -12,6 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn summary(peaks: Option<(u64, u64)>) -> JobSummary {
     JobSummary {
+        zone: None,
+        priority: None,
+        rule: None,
         job: JobId("j1".into()),
         client_label: "dev".into(),
         state: JobState::Failed,
@@ -69,18 +72,26 @@ fn history_has_peak_columns_with_dashes_for_unknown_values() {
     assert!(
         has_run(
             &lines[0],
-            &["RUNNER", "PEAK_MEM_MB", "PEAK_DISK_MB", "BROKER", "REASON"]
+            &[
+                "RUNNER",
+                "ZONE",
+                "PRIORITY",
+                "PEAK_MEM_MB",
+                "PEAK_DISK_MB",
+                "BROKER",
+                "REASON"
+            ]
         ),
         "{}",
         lines[0]
     );
     assert!(
-        has_run(&lines[1], &["r1", "900", "40", "local"]),
+        has_run(&lines[1], &["r1", "-", "-", "900", "40", "local"]),
         "{}",
         lines[1]
     );
     assert!(
-        has_run(&lines[2], &["r1", "-", "-", "local"]),
+        has_run(&lines[2], &["r1", "-", "-", "-", "-", "local"]),
         "{}",
         lines[2]
     );
@@ -158,6 +169,7 @@ fn runners_list_shows_enforcement() {
         programs_missing: Default::default(),
     };
     let runner = |name: &str, enforcement: Option<&str>| RunnerInfo {
+        zone: None,
         name: name.into(),
         online: true,
         caps: caps(enforcement),
@@ -194,4 +206,40 @@ fn runners_list_shows_enforcement() {
         "unknown (limit mode not supported: runs as warn; an earlier version, or the runner has not reported it yet)"
     );
     assert_eq!(value(&current), "os");
+}
+
+#[test]
+fn history_shows_the_zone_and_priority_of_a_run_and_whose_local_runner_it_was() {
+    let mut own = summary(None);
+    own.runner = Some("local:r1".into());
+    own.zone = Some(lr_core::Zone::Local);
+    own.priority = Some(10);
+    let mut foreign = summary(None);
+    foreign.runner = Some("local:r1".into());
+    foreign.zone = Some(lr_core::Zone::Remote);
+    foreign.priority = Some(-3);
+    let rows = vec![("local".to_string(), own), ("vps".to_string(), foreign)];
+    let lines = history_lines(&rows);
+    assert!(
+        has_run(&lines[1], &["local:r1", "local", "10", "-", "-", "local"]),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        has_run(&lines[2], &["vps:r1", "remote", "-3", "-", "-", "vps"]),
+        "{}",
+        lines[2]
+    );
+}
+
+#[test]
+fn the_json_of_a_history_row_carries_zone_priority_and_rule() {
+    let mut row = summary(None);
+    row.zone = Some(lr_core::Zone::Remote);
+    row.priority = Some(-3);
+    row.rule = Some("label ci".into());
+    let value = serde_json::to_value(&row).unwrap();
+    assert_eq!(value["zone"], "remote");
+    assert_eq!(value["priority"], -3);
+    assert_eq!(value["rule"], "label ci");
 }

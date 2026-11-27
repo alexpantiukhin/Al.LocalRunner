@@ -16,6 +16,18 @@ pub trait Elevator {
     /// code of the child. A refused prompt, a missing elevation tool or a session that cannot
     /// ask for rights is an error that says so and names the command to run by hand.
     fn run_elevated(&self, exe: &Path, args: &[String]) -> Result<i32, String>;
+
+    /// [`Elevator::run_elevated`] as the OS user `user` (`sudo -u user`) instead of the
+    /// administrator; an elevator that cannot say who runs the command ignores `user`.
+    fn run_elevated_as(
+        &self,
+        exe: &Path,
+        args: &[String],
+        user: Option<&str>,
+    ) -> Result<i32, String> {
+        let _ = user;
+        self.run_elevated(exe, args)
+    }
 }
 
 /// The elevation of this OS: the UAC prompt on Windows, `sudo` on Unix.
@@ -23,13 +35,23 @@ pub struct OsElevator;
 
 impl Elevator for OsElevator {
     fn run_elevated(&self, exe: &Path, args: &[String]) -> Result<i32, String> {
+        self.run_elevated_as(exe, args, None)
+    }
+
+    fn run_elevated_as(
+        &self,
+        exe: &Path,
+        args: &[String],
+        user: Option<&str>,
+    ) -> Result<i32, String> {
         #[cfg(windows)]
         {
+            let _ = user;
             windows::run_elevated(exe, args)
         }
         #[cfg(not(windows))]
         {
-            unix::run_elevated(exe, args)
+            unix::run_elevated(exe, args, user)
         }
     }
 }
@@ -61,6 +83,11 @@ pub fn child_args(args: &[String], channel: Option<&str>) -> Vec<String> {
 /// The command a user runs to start `exe` with `args` elevated, printed when this session
 /// cannot elevate: a PowerShell `Start-Process -Verb RunAs` line on Windows, `sudo` on Unix.
 pub fn elevated_command_line(os: Os, exe: &Path, args: &[String]) -> String {
+    elevated_command_line_as(os, exe, args, None)
+}
+
+/// [`elevated_command_line`] that runs as the OS user `user` on Unix: `sudo -u user exe args`.
+pub fn elevated_command_line_as(os: Os, exe: &Path, args: &[String], user: Option<&str>) -> String {
     let exe = exe.display().to_string();
     match os {
         Os::Windows => {
@@ -77,7 +104,13 @@ pub fn elevated_command_line(os: Os, exe: &Path, args: &[String]) -> String {
         _ => std::iter::once(exe.as_str())
             .chain(args.iter().map(String::as_str))
             .map(shell_word)
-            .fold(String::from("sudo"), |line, word| line + " " + &word),
+            .fold(
+                match user {
+                    Some(u) => format!("sudo -u {}", shell_word(u)),
+                    None => String::from("sudo"),
+                },
+                |line, word| line + " " + &word,
+            ),
     }
 }
 
@@ -90,11 +123,23 @@ pub fn rerun_elevated(
     args: &[String],
     err: &mut dyn Write,
 ) -> i32 {
-    match elevator.run_elevated(exe, args) {
+    rerun_elevated_as(elevator, os, exe, args, None, err)
+}
+
+/// [`rerun_elevated`] as the OS user `user` where the OS has such a thing.
+pub fn rerun_elevated_as(
+    elevator: &dyn Elevator,
+    os: Os,
+    exe: &Path,
+    args: &[String],
+    user: Option<&str>,
+    err: &mut dyn Write,
+) -> i32 {
+    match elevator.run_elevated_as(exe, args, user) {
         Ok(code) => code,
         Err(why) => {
             let _ = writeln!(err, "{why}");
-            let line = elevated_command_line(os, exe, args);
+            let line = elevated_command_line_as(os, exe, args, user);
             if !why.contains(&line) {
                 let _ = writeln!(err, "run it with administrator rights: {line}");
             }
@@ -855,7 +900,7 @@ mod windows {
 
 #[cfg(not(windows))]
 mod unix {
-    use super::{child_args, elevated_command_line, sudo_route, SudoProbe, SudoRoute};
+    use super::{child_args, elevated_command_line_as, sudo_route, SudoProbe, SudoRoute};
     use crate::os_service::Os;
     use std::io::IsTerminal;
     use std::path::Path;
@@ -876,11 +921,23 @@ mod unix {
         }
     }
 
-    pub(super) fn run_elevated(exe: &Path, args: &[String]) -> Result<i32, String> {
-        let line = elevated_command_line(Os::current(), exe, args);
+    pub(super) fn run_elevated(
+        exe: &Path,
+        args: &[String],
+        user: Option<&str>,
+    ) -> Result<i32, String> {
+        let line = elevated_command_line_as(Os::current(), exe, args, user);
         let marked = child_args(args, None);
         let not_installed = || format!("sudo is not installed: run the command as root: {line}");
         let mut sudo = Command::new("sudo");
+        let probe = |probe_args: &[String]| match user {
+            Some(u) => {
+                let mut with_user = probe_args.to_vec();
+                with_user.splice(2..2, ["-u".to_string(), u.to_string()]);
+                probe(&with_user)
+            }
+            None => probe(probe_args),
+        };
         match sudo_route(std::io::stdin().is_terminal(), exe, &marked, probe) {
             SudoRoute::Missing => return Err(not_installed()),
             SudoRoute::ByHand => {
@@ -892,6 +949,9 @@ mod unix {
                 sudo.arg("-n");
             }
             SudoRoute::Prompt => {}
+        }
+        if let Some(u) = user {
+            sudo.args(["-u", u]);
         }
         match sudo.arg(exe).args(&marked).status() {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(not_installed()),
