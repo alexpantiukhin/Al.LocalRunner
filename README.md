@@ -208,6 +208,8 @@ localrunner brokers         # check: the broker is listed, its zone, availabilit
 
 The code can be passed as `--code-file file`, `--code-file -` (standard input), the variable `LOCALRUNNER_JOIN_CODE`, or a command-line argument. The last way shows the code to other users of the machine.
 
+After `hub join`, the runners of the new broker answer orders by their requirements, not by their names: address a particular machine with what it declares (`platforms`, `tags`, `programs` in the profile, a `zone`/`zones` filter, or a `[profile.X.variant.NAME]` with `when = { runner = [...] }`), and check what the hub sees with `localrunner runners` (the ZONE column) and `localrunner explain <job>`, which says for a waiting order why each other runner does not suit it.
+
 Configuration: `hub-policy.toml` in the configuration directory. It decides which broker gets an order:
 
 ```toml
