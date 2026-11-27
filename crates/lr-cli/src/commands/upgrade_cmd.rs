@@ -17,7 +17,7 @@ use crate::render::{Card, Level, Out, Report};
 use crate::upgrade_lock::{write, UpgradeLock};
 use lr_proto::DrainReason;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -184,6 +184,38 @@ pub fn installed_version(path: &Path) -> Option<Version> {
     parse_version(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// A starter of roles for `upgrade`: a role that has a systemd user unit (`autostart on`) is
+/// started through `systemctl --user start`, so it gets the unit's `EnvironmentFile` and
+/// the service manager keeps owning it; any other role is started as a detached process.
+pub fn unit_starter(exe: PathBuf) -> impl Fn(&[String]) -> std::io::Result<u32> + Sync {
+    let plain = starter(exe);
+    move |argv: &[String]| {
+        if cfg!(target_os = "linux") {
+            let unit = crate::os_service::autostart::unit_for_argv(argv);
+            let file = unit.as_ref().and_then(|u| {
+                crate::os_service::home_dir()
+                    .ok()
+                    .map(|h| h.join(".config/systemd/user").join(u))
+            });
+            if let (Some(unit), Some(file)) = (unit, file) {
+                if file.is_file() {
+                    let status = std::process::Command::new("systemctl")
+                        .args(["--user", "start", &unit])
+                        .status()?;
+                    return if status.success() {
+                        Ok(0)
+                    } else {
+                        Err(std::io::Error::other(format!(
+                            "systemctl --user start {unit} failed"
+                        )))
+                    };
+                }
+            }
+        }
+        plain(argv)
+    }
+}
+
 /// Whether this process only fetches the release and hands over to the downloaded binary (it
 /// is the installed one). The downloaded binary does the replacing and asks for the service
 /// update itself, so the installed one must not ask again.
@@ -249,7 +281,7 @@ pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> 
     let others = pool(layout).await;
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
-    let start = starter(installed.clone());
+    let start = unit_starter(installed.clone());
     let system: &dyn System = if dry_run { &DryRun } else { &OsSystem };
     let mut stdio = Stdio::new();
     let mut console = stdio.console();

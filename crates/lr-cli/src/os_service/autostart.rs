@@ -123,6 +123,22 @@ pub fn task_xml(a: &AutostartInputs) -> String {
     )
 }
 
+/// The name of the systemd user unit that starts the role `argv` names (`hub run ...`,
+/// `runner run [--name N] ...`), as `autostart on` registers it.
+pub fn unit_for_argv(argv: &[String]) -> Option<String> {
+    let entry = match (argv.first()?.as_str(), argv.get(1)?.as_str()) {
+        ("hub", "run") => Entry::Hub,
+        ("runner", "run") => Entry::Runner(
+            argv.iter()
+                .position(|a| a == "--name")
+                .and_then(|i| argv.get(i + 1))
+                .cloned(),
+        ),
+        _ => return None,
+    };
+    Some(format!("al-localrunner-{}.service", entry.name()))
+}
+
 fn user_unit(a: &AutostartInputs) -> (String, PathBuf) {
     let unit = format!("al-localrunner-{}.service", a.entry.name());
     let path = a.home.join(".config/systemd/user").join(&unit);

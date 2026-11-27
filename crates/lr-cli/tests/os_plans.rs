@@ -2232,3 +2232,23 @@ fn a_secret_file_other_users_can_read_is_reported() {
     assert!(!tight.contains("other users"), "{tight}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_role_command_line_names_its_systemd_user_unit() {
+    use lr_cli::os_service::autostart::unit_for_argv;
+    let v = |s: &str| s.split(' ').map(String::from).collect::<Vec<_>>();
+    assert_eq!(
+        unit_for_argv(&v("hub run --background")).as_deref(),
+        Some("al-localrunner-hub.service")
+    );
+    assert_eq!(
+        unit_for_argv(&v("runner run --name box --background")).as_deref(),
+        Some("al-localrunner-runner-box.service")
+    );
+    assert_eq!(
+        unit_for_argv(&v("runner run --background")).as_deref(),
+        Some("al-localrunner-runner.service")
+    );
+    assert_eq!(unit_for_argv(&v("broker run --background")), None);
+    assert_eq!(unit_for_argv(&[]), None);
+}
