@@ -168,7 +168,8 @@ command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.c
 [profile.skills-lint.zone.remote]
 command = 'umask 022 && export TMPDIR=$(mktemp -d /tmp/lr.XXXXXX) && trap "rm -rf $TMPDIR" EXIT && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && export CARGO_TARGET_DIR="$LOCALRUNNER_CACHE_TARGET" && cargo test -p lr-cli --locked --test skills_lint'
 
-[profile.ci-docs.zone.remote]
+[profile.ci-docs.variant.vps]
+when    = { zone = ["remote"], tags = ["cargo"] }
 command = 'umask 022 && git init -q . && git fetch -q --depth 1 https://github.com/alexpantiukhin/Al.LocalRunner.git {ref} && git checkout -q FETCH_HEAD && python3 .github/scripts/docs_pair.py'
 
 [profile.rust-gate.zone.remote]
