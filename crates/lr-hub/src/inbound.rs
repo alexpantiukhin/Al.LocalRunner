@@ -282,6 +282,9 @@ impl Engine {
                 self.log_copy(job, &line).await;
             }
             BrokerToHub::Chunk(c) => {
+                if let Some(t) = self.tracks.get_mut(job) {
+                    crate::logs::keep_tail(&mut t.last_output, &c.text);
+                }
                 self.log_copy(job, &c.text).await;
                 let reply = CliReply::Output {
                     job: job.clone(),
@@ -290,7 +293,14 @@ impl Engine {
                 self.notify(job, &reply);
             }
             BrokerToHub::StepResult(r) => {
-                let line = crate::logs::step_line(&r);
+                let mut line = crate::logs::step_line(&r);
+                if let Some(t) = self.tracks.get_mut(job) {
+                    let runner = t.runner.clone().unwrap_or_default();
+                    if let Some(hint) = crate::logs::not_found_hint(&runner, r.exit_code, &t.last_output) {
+                        line.push_str(&hint);
+                    }
+                    t.last_output.clear();
+                }
                 self.log_copy(job, &line).await;
             }
             BrokerToHub::JobResult(r) => {
