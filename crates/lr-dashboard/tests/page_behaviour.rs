@@ -361,7 +361,7 @@ fn the_history_grid_has_a_finished_column_sorted_by_finish_time_until_a_header_i
         serde_json::json!(["queued-first", "middle", "queued-last", "unfinished"]),
         "{out}"
     );
-    assert_eq!(out["cols"][9], "finished", "{out}");
+    assert_eq!(out["cols"][12], "finished", "{out}");
     assert_eq!(
         out["byQueued"][0], "unfinished",
         "a header click overrides the default: {out}"
@@ -617,7 +617,7 @@ fn the_own_runs_pin_does_not_override_the_history_order_and_a_zero_finish_is_kep
       location.hash = "#tab=history";
       handlers.hashchange();
       out.default = ids();
-      out.epoch = $("history-body").children[2].children[9].textContent;
+      out.epoch = $("history-body").children[2].children.filter(function (c) { return c.attrs["data-col"] === "finished"; })[0].textContent;
       location.hash = "#tab=history&sort=finished";
       handlers.hashchange();
       out.clicked = ids();
