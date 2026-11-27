@@ -114,7 +114,7 @@ impl Engine {
                 format!("an order without steps names no commands: {rule}"),
             ));
         }
-        if !spec.zone_steps.is_empty() {
+        if !spec.zone_steps.is_empty() || !spec.variants.is_empty() {
             return Err((
                 RejectReason::CommandNotAllowed,
                 format!("steps per zone are not available to a client limited to names: {rule}"),

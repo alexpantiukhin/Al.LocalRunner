@@ -133,6 +133,7 @@ pub fn order_at(job: &str, requirements: Requirements, enqueued_ms: u64) -> HubT
             args: Vec::new(),
             labels: Vec::new(),
             zone_steps: Default::default(),
+            variants: Default::default(),
         }),
     })
 }

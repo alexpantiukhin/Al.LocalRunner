@@ -113,6 +113,22 @@ impl Engine {
             };
             (steps, code)
         };
+        let steps = match self.runners.get(&a.runner) {
+            Some(slot) if !spec.variants.is_empty() => spec
+                .variants
+                .iter()
+                .find(|v| {
+                    v.when.matches(
+                        a.zone,
+                        &slot.wire.platforms,
+                        &slot.wire.tags,
+                        &slot.wire.programs,
+                        &a.runner,
+                    )
+                })
+                .map_or(steps, |v| v.steps.clone()),
+            _ => steps,
+        };
         let cache_client = (self.policy.file().cache.share == CacheShare::Project)
             .then(|| SHARED_CACHE_CLIENT.to_string());
         let enforce_limit = self

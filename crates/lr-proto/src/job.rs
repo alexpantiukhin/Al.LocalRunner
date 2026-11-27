@@ -32,6 +32,12 @@ pub struct OrderSpec {
     /// variants, which runs `steps` everywhere it is allowed; absent from older senders.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zone_steps: BTreeMap<Zone, Vec<StepSpec>>,
+    /// The variants of the profile (`[profile.X.variant.NAME]`), in the order they are tried:
+    /// the broker gives the runner the steps of the first variant whose filter the runner
+    /// matches, instead of the steps of its zone. Absent from older senders and when the
+    /// profile has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<OrderVariant>,
     /// When the hub enqueued it; kept on re-brokering.
     pub enqueued_at: Timestamp,
     /// Who submitted it.
@@ -54,10 +60,25 @@ pub struct OrderSpec {
     pub labels: Vec<String>,
 }
 
+/// One variant of the profile as the order carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrderVariant {
+    /// The name of the variant.
+    pub name: String,
+    /// Which runners take its steps.
+    pub when: lr_core::VariantWhen,
+    /// Its steps.
+    pub steps: Vec<StepSpec>,
+}
+
 impl OrderSpec {
-    /// Every step the order may run: the common ones and those of each zone variant.
+    /// Every step the order may run: the common ones and those of each zone variant and each
+    /// profile variant.
     pub fn all_steps(&self) -> impl Iterator<Item = &StepSpec> {
-        self.steps.iter().chain(self.zone_steps.values().flatten())
+        self.steps
+            .iter()
+            .chain(self.zone_steps.values().flatten())
+            .chain(self.variants.iter().flat_map(|v| &v.steps))
     }
 }
 

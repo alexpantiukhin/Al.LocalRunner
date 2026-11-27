@@ -112,6 +112,7 @@ pub fn order_spec() -> OrderSpec {
         args: Vec::new(),
         labels: Vec::new(),
         zone_steps: Default::default(),
+        variants: Default::default(),
     }
 }
 

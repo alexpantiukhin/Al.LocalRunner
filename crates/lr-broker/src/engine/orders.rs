@@ -391,6 +391,7 @@ impl Engine {
             .steps
             .iter_mut()
             .chain(spec.zone_steps.values_mut().flatten())
+            .chain(spec.variants.iter_mut().flat_map(|v| v.steps.iter_mut()))
         {
             step.timeout_s = step.timeout_s.min(max);
         }
