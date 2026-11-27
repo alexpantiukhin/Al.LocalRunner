@@ -331,3 +331,12 @@ fn running_from_another_folder_keeps_today_s_flow() {
     assert!(!is_installed(&other, &installed));
     assert!(!is_installed(&dir.path().join("missing"), &installed));
 }
+
+#[test]
+fn only_the_process_that_replaced_the_binaries_offers_the_service_update() {
+    use lr_cli::commands::upgrade_cmd::offers_service_update;
+    assert!(offers_service_update(false, false, true));
+    assert!(!offers_service_update(true, false, true));
+    assert!(!offers_service_update(false, true, true));
+    assert!(!offers_service_update(false, false, false));
+}

@@ -184,6 +184,23 @@ pub fn installed_version(path: &Path) -> Option<Version> {
     parse_version(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// Whether this process only fetches the release and hands over to the downloaded binary (it
+/// is the installed one). The downloaded binary does the replacing and asks for the service
+/// update itself, so the installed one must not ask again.
+pub fn is_relay(args: &UpgradeArgs) -> bool {
+    let Ok(dir) = args.dir.clone().map_or_else(default_bin_dir, Ok) else {
+        return false;
+    };
+    std::env::current_exe()
+        .is_ok_and(|exe| super::upgrade_fetch::is_installed(&exe, &dir.join(binary_name())))
+}
+
+/// Whether `upgrade` ends with the offer to update the broker service: only the process that
+/// replaced the binaries, after a real run, on a machine whose broker is a service.
+pub fn offers_service_update(relay: bool, dry_run: bool, broker_is_service: bool) -> bool {
+    !relay && !dry_run && broker_is_service
+}
+
 /// `upgrade` as the command line runs it: refused as root or administrator unless
 /// `allow_elevated`.
 pub async fn upgrade(layout: &Layout, args: UpgradeArgs) -> Result<i32, String> {

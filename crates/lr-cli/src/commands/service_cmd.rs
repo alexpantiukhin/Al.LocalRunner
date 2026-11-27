@@ -171,6 +171,8 @@ pub struct UpdateReport {
     pub down: Duration,
     /// Whether the service binary reports the new version after the start.
     pub running_new: bool,
+    /// The service already had this version: nothing was stopped or replaced.
+    pub unchanged: bool,
 }
 
 /// `service: <old> -> <new>`.
@@ -180,6 +182,12 @@ pub fn version_line(old: Option<&str>, new: &str) -> String {
 
 /// The lines printed after an update.
 pub fn report_lines(report: &UpdateReport) -> Vec<String> {
+    if report.unchanged {
+        return vec![format!(
+            "service: {} is already current, nothing to do",
+            report.new
+        )];
+    }
     let mut out = vec![
         version_line(report.old.as_deref(), &report.new),
         format!(
@@ -207,10 +215,38 @@ pub fn update_service_on(
     new: &str,
 ) -> Result<UpdateReport, String> {
     let old = read(binary);
+    if let Some(old_text) = old.as_deref() {
+        let number = |t: &str| super::upgrade_cmd::parse_version(t).map(|v| v.number);
+        if old_text == new {
+            return Ok(UpdateReport {
+                old,
+                new: new.to_string(),
+                down: Duration::ZERO,
+                running_new: true,
+                unchanged: true,
+            });
+        }
+        if matches!((number(old_text), number(new)), (Some(o), Some(n)) if o > n) {
+            return Err(format!(
+                "the service runs {old_text}, which is newer than this binary ({new}); \
+                 run `localrunner upgrade` from the newer binary instead"
+            ));
+        }
+    }
     let plan = plans::update_service(os, exe, binary);
     let (mut stopped, mut down) = (None, Duration::ZERO);
     for (i, action) in plan.iter().enumerate() {
-        system.apply(action).map_err(|e| format!("{action}: {e}"))?;
+        if let Err(e) = system.apply(action) {
+            let mut message = format!("{action}: {e}");
+            if i > 0 && i + 1 < plan.len() {
+                let restart = &plan[plan.len() - 1];
+                message.push_str(&match system.apply(restart) {
+                    Ok(()) => "; the service was started again with its old binary".to_string(),
+                    Err(e2) => format!("; starting the service again failed too: {e2}"),
+                });
+            }
+            return Err(message);
+        }
         if i == 0 {
             stopped = Some(Instant::now());
         }
@@ -224,6 +260,7 @@ pub fn update_service_on(
         new: new.to_string(),
         down,
         running_new,
+        unchanged: false,
     })
 }
 

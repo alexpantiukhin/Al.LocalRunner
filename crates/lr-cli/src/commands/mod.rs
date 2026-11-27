@@ -801,10 +801,16 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::install(&layout, dir, role, allow_elevated, dry_run),
         Command::Upgrade(a) => {
-            let dry_run = a.dry_run;
+            let (dry_run, relay) = (a.dry_run, upgrade_cmd::is_relay(&a));
             let code = upgrade_cmd::upgrade(&layout, a).await;
             match code {
-                Ok(0) if !dry_run && layout.broker_is_service() => {
+                Ok(0)
+                    if upgrade_cmd::offers_service_update(
+                        relay,
+                        dry_run,
+                        layout.broker_is_service(),
+                    ) =>
+                {
                     let need = rights::Need {
                         what: "broker update-service",
                         why: "replace the broker service's copy of the binary and restart the service",
