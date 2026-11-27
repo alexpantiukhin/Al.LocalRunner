@@ -879,6 +879,125 @@ pub fn broker_left_for_admin(requested: Option<RoleArg>, dry_run: bool, elevated
     !dry_run && !elevated && requested != Some(RoleArg::Broker)
 }
 
+/// One line of `autostart status`: a role or runner and how the OS starts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutostartRow {
+    /// `hub`, `runner` or `broker`.
+    pub role: String,
+    /// The runner's name, else the role's.
+    pub name: String,
+    /// `login`, `service` or `none`.
+    pub kind: String,
+    /// For a service: whether it runs now, when the manager said.
+    pub running: Option<bool>,
+}
+
+impl AutostartRow {
+    /// A row.
+    pub fn new(role: &str, name: &str, kind: &str, running: Option<bool>) -> AutostartRow {
+        AutostartRow {
+            role: role.into(),
+            name: name.into(),
+            kind: kind.into(),
+            running,
+        }
+    }
+}
+
+/// The lines `autostart status` prints, one per row.
+pub fn autostart_status_lines(rows: &[AutostartRow]) -> Vec<String> {
+    rows.iter()
+        .map(|r| {
+            let who = if r.role == "runner" {
+                format!("runner {}", r.name)
+            } else {
+                r.role.clone()
+            };
+            match r.kind.as_str() {
+                "login" => format!("{who}: on (starts at user login)"),
+                "service" => {
+                    let state = match r.running {
+                        Some(true) => ", running",
+                        Some(false) => ", stopped",
+                        None => "",
+                    };
+                    format!("{who}: on (OS service{state})")
+                }
+                _ => format!("{who}: off"),
+            }
+        })
+        .collect()
+}
+
+/// The rows of `autostart status --json`.
+pub fn autostart_status_json(rows: &[AutostartRow]) -> serde_json::Value {
+    rows.iter()
+        .map(|r| {
+            serde_json::json!({
+                "role": r.role,
+                "name": r.name,
+                "kind": r.kind,
+                "on": r.kind != "none",
+                "running": r.running,
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+/// `autostart status [role] [--json]`: reads the OS and changes nothing, no rights needed.
+pub fn autostart_status(
+    layout: &Layout,
+    role: Option<RoleArg>,
+    json: bool,
+) -> Result<i32, String> {
+    let os = Os::current();
+    let user = lr_net::current_os_user().map_err(|e| e.to_string())?;
+    let mut rows = Vec::new();
+    for role in chosen_roles(layout, role)? {
+        if role == NodeRole::Broker {
+            let installed = service_installed(os);
+            rows.push(AutostartRow::new(
+                "broker",
+                "broker",
+                if installed { "service" } else { "none" },
+                None,
+            ));
+            continue;
+        }
+        for entry in entries(layout, role) {
+            let (role_name, name) = match &entry {
+                Entry::Hub => ("hub", "hub".to_string()),
+                Entry::Runner(n) => (
+                    "runner",
+                    n.clone()
+                        .unwrap_or_else(|| crate::roles::runner_base_name(layout, None, None)),
+                ),
+            };
+            let service = matches!(entry, Entry::Runner(_))
+                .then(|| {
+                    runner_service::installed(os, &name).then(|| runner_service::running(os, &name))
+                })
+                .flatten();
+            let login = crate::os_service::runner_service::login_entry_of(os, &user, &entry);
+            let (kind, running) = match (service, login) {
+                (Some(running), _) => ("service", running),
+                (None, true) => ("login", None),
+                _ => ("none", None),
+            };
+            rows.push(AutostartRow::new(role_name, &name, kind, running));
+        }
+    }
+    if json {
+        println!("{}", autostart_status_json(&rows));
+    } else {
+        for line in autostart_status_lines(&rows) {
+            println!("{line}");
+        }
+    }
+    Ok(0)
+}
+
 /// Whether `autostart on|off` with this `role` touches the broker service: `autostart on` without
 /// a role enables only the hub and the runners, the broker needs `autostart on broker` (or
 /// `all`) because it installs a system service under an account of its own.

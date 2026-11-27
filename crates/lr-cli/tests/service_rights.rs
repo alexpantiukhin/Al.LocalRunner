@@ -781,3 +781,28 @@ fn autostart_on_without_a_role_leaves_the_broker_out_but_off_and_an_explicit_rol
     assert!(broker_in_scope(Some(RoleArg::Broker), true));
     assert!(broker_in_scope(Some(RoleArg::All), true));
 }
+
+#[test]
+fn autostart_status_lines_say_what_starts_how() {
+    use lr_cli::commands::service_cmd::{autostart_status_lines, AutostartRow};
+    let rows = vec![
+        AutostartRow::new("hub", "hub", "login", None),
+        AutostartRow::new("runner", "r1", "service", Some(true)),
+        AutostartRow::new("runner", "r2", "none", None),
+        AutostartRow::new("broker", "broker", "service", Some(false)),
+    ];
+    let lines = autostart_status_lines(&rows);
+    assert_eq!(
+        lines,
+        vec![
+            "hub: on (starts at user login)".to_string(),
+            "runner r1: on (OS service, running)".to_string(),
+            "runner r2: off".to_string(),
+            "broker: on (OS service, stopped)".to_string(),
+        ]
+    );
+    let json = lr_cli::commands::service_cmd::autostart_status_json(&rows);
+    assert_eq!(json[1]["kind"], "service");
+    assert_eq!(json[1]["running"], true);
+    assert_eq!(json[2]["on"], false);
+}

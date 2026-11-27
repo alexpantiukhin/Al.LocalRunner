@@ -953,7 +953,13 @@ pub fn key_path(i: &RunnerServiceInputs) -> PathBuf {
 /// Whether a login entry of `user` starts runner `name` (a scheduler task, a systemd user unit,
 /// a LaunchAgent); `false` when that cannot be told.
 pub fn login_entry(os: Os, user: &str, name: &str) -> bool {
-    let entry = super::autostart::Entry::Runner(Some(name.to_string())).name();
+    login_entry_of(os, user, &super::autostart::Entry::Runner(Some(name.to_string())))
+}
+
+/// Whether a login entry of `user` starts `entry` (the hub or a runner); `false` when that
+/// cannot be told.
+pub fn login_entry_of(os: Os, user: &str, entry: &super::autostart::Entry) -> bool {
+    let entry = entry.name();
     match os {
         Os::Windows => {
             let Ok(principal) = lr_net::account_principal(user) else {

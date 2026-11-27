@@ -432,6 +432,8 @@ pub enum Switch {
     On,
     /// Disable.
     Off,
+    /// Show what starts with the OS and how; changes nothing.
+    Status,
 }
 
 /// `upgrade [--dir] [--yes] [--allow-elevated] [--dry-run]`.

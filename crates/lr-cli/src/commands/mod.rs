@@ -387,9 +387,12 @@ pub enum Command {
     /// Enable or disable starting roles with the OS: the hub and runners start at user login,
     /// `broker` is the broker service, `runner <name> --service` makes one runner an OS service.
     Autostart {
-        /// `on` or `off`.
+        /// `on`, `off` or `status`.
         #[arg(value_enum)]
         switch: Switch,
+        /// With `status`: print JSON.
+        #[arg(long)]
+        json: bool,
         /// The role; the roles `init` created when omitted.
         #[arg(value_enum)]
         role: Option<RoleArg>,
@@ -831,11 +834,18 @@ pub async fn run(cli: Cli) -> i32 {
             dry_run,
         } => setup::uninstall(&layout, purge, yes, dir, dry_run).await,
         Command::Autostart {
+            switch: Switch::Status,
+            role,
+            json,
+            ..
+        } => service_cmd::autostart_status(&layout, role, json),
+        Command::Autostart {
             switch,
             role,
             runner,
             service,
             dry_run,
+            ..
         } => {
             let word = if switch == Switch::On { "on" } else { "off" };
             let session = rights::session(dry_run, no_elevate, elevated_child);
