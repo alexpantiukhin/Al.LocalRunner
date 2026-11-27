@@ -158,8 +158,8 @@ mod tests {
         );
         assert!(hint.contains("list `git` in `programs`"), "{hint}");
         let bash =
-            not_found_hint("r", Some(127), "bash: line 1: cargo: command not found").unwrap();
-        assert!(bash.contains("`cargo`"), "{bash}");
+            not_found_hint("r", Some(127), "bash: line 1: mytool: command not found").unwrap();
+        assert!(bash.contains("`mytool`"), "{bash}");
         let unnamed = not_found_hint("r", Some(127), "something else\n").unwrap();
         assert!(
             unnamed.contains("a program was not found on runner r"),
