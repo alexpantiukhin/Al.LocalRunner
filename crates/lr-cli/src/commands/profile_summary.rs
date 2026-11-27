@@ -15,6 +15,17 @@ pub struct StepSummary {
     pub timeout_s: u64,
 }
 
+/// The steps a zone runs when the profile has a variant for it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ZoneSummary {
+    /// The zone name.
+    pub zone: String,
+    /// The single command of the variant; empty when it has `steps`.
+    pub command: Option<String>,
+    /// The steps of the variant; empty when it has a single command.
+    pub steps: Vec<StepSummary>,
+}
+
 /// One profile as shown by `profile check`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProfileSummary {
@@ -36,6 +47,16 @@ pub struct ProfileSummary {
     pub platform_mode: &'static str,
     /// The platforms and the override keys, sorted.
     pub platforms: Vec<String>,
+    /// The zone variants, nearest zone first.
+    pub zones: Vec<ZoneSummary>,
+    /// Tags held for the run.
+    pub tags: Vec<String>,
+    /// Tags nobody else may hold meanwhile.
+    pub exclusive: Vec<String>,
+    /// Programs the runner must declare.
+    pub programs: Vec<String>,
+    /// Zones the profile may run in, when it limits them.
+    pub allowed_zones: Vec<String>,
     /// Names of the arguments.
     pub args: Vec<String>,
     /// Labels of the profile, sorted; the policy can match them.
@@ -123,6 +144,27 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
             "with platforms"
         },
         platforms,
+        zones: p
+            .zone_steps
+            .iter()
+            .map(|(zone, v)| ZoneSummary {
+                zone: zone.to_string(),
+                command: v.from_command.then(|| v.steps.first().map(|s| s.command.clone())).flatten(),
+                steps: if v.from_command {
+                    Vec::new()
+                } else {
+                    v.steps.iter().map(step).collect()
+                },
+            })
+            .collect(),
+        tags: p.tags.clone(),
+        exclusive: p.exclusive.clone(),
+        programs: p.programs.iter().map(|x| x.name.clone()).collect(),
+        allowed_zones: p
+            .zones
+            .as_ref()
+            .map(|z| z.iter().map(ToString::to_string).collect())
+            .unwrap_or_default(),
         args: p.args.iter().map(|a| a.name.clone()).collect(),
         labels: p.labels.clone(),
         expansions: expansions(p),
@@ -151,10 +193,26 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
                 s.name, s.command, s.timeout_s
             ));
         }
+        for z in &p.zones {
+            if let Some(c) = &z.command {
+                out.push(format!("  zone {}: {c}", z.zone));
+            }
+            for s in &z.steps {
+                out.push(format!(
+                    "  zone {}, step {}: {} (timeout {} s)",
+                    z.zone, s.name, s.command, s.timeout_s
+                ));
+            }
+        }
+        let list = |label: &str, v: &[String]| (!v.is_empty()).then(|| format!("{label} {}", v.join(", ")));
         let parts: Vec<String> = [
             p.mem_mb.map(|v| format!("mem {v} MB")),
             p.cpu.map(|v| format!("cpu {v}")),
             p.disk_mb.map(|v| format!("disk {v} MB")),
+            list("tags", &p.tags),
+            list("exclusive", &p.exclusive),
+            list("programs", &p.programs),
+            list("zones", &p.allowed_zones),
         ]
         .into_iter()
         .flatten()
