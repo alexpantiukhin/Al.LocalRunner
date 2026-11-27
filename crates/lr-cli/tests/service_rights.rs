@@ -772,3 +772,12 @@ fn a_failed_copy_still_starts_the_stopped_service() {
     assert!(done[2].contains("start"), "{done:?}");
     assert!(err.contains("the service was started again"), "{err}");
 }
+
+#[test]
+fn autostart_on_without_a_role_leaves_the_broker_out_but_off_and_an_explicit_role_keep_it() {
+    use lr_cli::commands::service_cmd::broker_in_scope;
+    assert!(!broker_in_scope(None, true));
+    assert!(broker_in_scope(None, false));
+    assert!(broker_in_scope(Some(RoleArg::Broker), true));
+    assert!(broker_in_scope(Some(RoleArg::All), true));
+}

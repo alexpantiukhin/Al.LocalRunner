@@ -854,7 +854,7 @@ pub async fn run(cli: Cli) -> i32 {
                 _ => {
                     let pending = !service
                         && runner.is_none()
-                        && service_cmd::broker_step_pending(&layout, role, dry_run);
+                        && service_cmd::broker_step_pending(&layout, role, switch == Switch::On, dry_run);
                     let code =
                         service_cmd::autostart(&layout, switch, role, runner, service, dry_run);
                     match code {

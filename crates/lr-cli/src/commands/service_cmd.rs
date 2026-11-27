@@ -424,8 +424,13 @@ pub fn autostart_with(
         return Ok(0);
     }
     let mut left_for_admin = false;
+    let mut broker_skipped = false;
     for role in chosen_roles(layout, role)? {
         if role == NodeRole::Broker {
+            if !broker_in_scope(requested, on) {
+                broker_skipped = true;
+                continue;
+            }
             if broker_left_for_admin(requested, dry_run, elevated) {
                 left_for_admin = true;
                 continue;
@@ -466,6 +471,11 @@ pub fn autostart_with(
     }
     if left_for_admin {
         println!("{}", admin_left(on));
+    }
+    if broker_skipped {
+        println!(
+            "broker: not touched; `localrunner autostart on broker` installs it as an OS service (administrator rights)"
+        );
     }
     Ok(0)
 }
@@ -869,10 +879,18 @@ pub fn broker_left_for_admin(requested: Option<RoleArg>, dry_run: bool, elevated
     !dry_run && !elevated && requested != Some(RoleArg::Broker)
 }
 
+/// Whether `autostart on|off` with this `role` touches the broker service: `autostart on` without
+/// a role enables only the hub and the runners, the broker needs `autostart on broker` (or
+/// `all`) because it installs a system service under an account of its own.
+pub fn broker_in_scope(role: Option<RoleArg>, on: bool) -> bool {
+    !(on && role.is_none())
+}
+
 /// Whether `autostart` leaves the broker service step for an administrator in this session.
-pub fn broker_step_pending(layout: &Layout, role: Option<RoleArg>, dry_run: bool) -> bool {
+pub fn broker_step_pending(layout: &Layout, role: Option<RoleArg>, on: bool, dry_run: bool) -> bool {
     let elevated = crate::host::is_elevated();
-    chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))
+    broker_in_scope(role, on)
+        && chosen_roles(layout, role).is_ok_and(|r| r.contains(&NodeRole::Broker))
         && broker_left_for_admin(role, dry_run, elevated)
 }
 
