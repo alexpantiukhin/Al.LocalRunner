@@ -32,9 +32,18 @@ impl ConfigSecrets {
                     .ok()
                     .filter(|v| !v.is_empty())
                     .is_none()
-                    .then(|| (name.clone(), format!("the variable {var} is not set in the runner process"))),
-                SecretFrom::File(path) => (!path.is_file())
-                    .then(|| (name.clone(), format!("the file {} does not exist", path.display()))),
+                    .then(|| {
+                        (
+                            name.clone(),
+                            format!("the variable {var} is not set in the runner process"),
+                        )
+                    }),
+                SecretFrom::File(path) => (!path.is_file()).then(|| {
+                    (
+                        name.clone(),
+                        format!("the file {} does not exist", path.display()),
+                    )
+                }),
                 SecretFrom::Keychain(_) => None,
             })
             .collect()

@@ -199,7 +199,8 @@ async fn not_allowed_secret_explains_that_an_empty_label_entry_matches_only_unla
     let h = Harness::start(EMPTY_LABEL);
     let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut hub = h.member_hub("laptop", "dev", "10.0.0.20").await;
-    hub.send(&order("j1", with_secrets(&["registry_auth"]))).await;
+    hub.send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
     let r = hub.rejected().await;
     assert_eq!(r.code.as_str(), "rejected_secret_not_allowed");
     assert_eq!(
@@ -213,7 +214,8 @@ async fn not_allowed_secret_lists_the_labels_that_have_entries() {
     let h = Harness::start(ALLOW);
     let _r = h.member_runner("r1", "10.0.0.7", linux()).await;
     let mut hub = h.member_hub("laptop", "ops", "10.0.0.20").await;
-    hub.send(&order("j1", with_secrets(&["registry_auth"]))).await;
+    hub.send(&order("j1", with_secrets(&["registry_auth"])))
+        .await;
     let r = hub.rejected().await;
     assert_eq!(
         r.detail,

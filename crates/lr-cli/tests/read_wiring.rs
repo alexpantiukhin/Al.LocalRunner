@@ -201,7 +201,10 @@ fn a_moved_order_shows_the_log_of_the_broker_that_ran_it() {
         ("vps".to_string(), "ran here\n".to_string()),
     ];
     assert_eq!(choose_log(moved).unwrap().0, "vps");
-    let empty = vec![("local".to_string(), String::new()), ("vps".to_string(), String::new())];
+    let empty = vec![
+        ("local".to_string(), String::new()),
+        ("vps".to_string(), String::new()),
+    ];
     assert_eq!(choose_log(empty).unwrap().0, "local");
     assert!(choose_log(Vec::new()).is_none());
 }

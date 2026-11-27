@@ -170,7 +170,10 @@ fn check_zone_variant_keys(name: &str, profile: &toml::Value) -> Result<(), Prof
         let Some(table) = variant.as_table() else {
             continue;
         };
-        if let Some(key) = table.keys().find(|k| !matches!(k.as_str(), "command" | "steps")) {
+        if let Some(key) = table
+            .keys()
+            .find(|k| !matches!(k.as_str(), "command" | "steps"))
+        {
             return Err(ProfileError::invalid(
                 name,
                 &format!("zone.{zone}"),

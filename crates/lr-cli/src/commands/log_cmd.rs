@@ -193,7 +193,10 @@ pub async fn find_log_with(
 /// wins, and when every log is empty the first broker.
 pub fn choose_log(found: Vec<(String, String)>) -> Option<(String, String)> {
     let first = found.first().cloned();
-    found.into_iter().find(|(_, text)| !text.is_empty()).or(first)
+    found
+        .into_iter()
+        .find(|(_, text)| !text.is_empty())
+        .or(first)
 }
 
 /// `log <job>`.

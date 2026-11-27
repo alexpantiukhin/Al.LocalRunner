@@ -223,7 +223,8 @@ async fn rejection_by_two_brokers_names_the_reason_of_each() {
     let a = rig.broker(
         "lan-a",
         Zone::Lan,
-        Script::linux(Zone::Lan).on_order(OnOrder::Reject(no_runner(), "no runner has tag x".into())),
+        Script::linux(Zone::Lan)
+            .on_order(OnOrder::Reject(no_runner(), "no runner has tag x".into())),
     );
     let b = rig.broker(
         "lan-b",

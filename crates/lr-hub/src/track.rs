@@ -52,7 +52,11 @@ impl Track {
     /// broker's text as it came.
     pub(crate) fn rejection_detail(&self, more: String) -> String {
         if self.rejections.is_empty() {
-            return if more.is_empty() { "all brokers refused".into() } else { more };
+            return if more.is_empty() {
+                "all brokers refused".into()
+            } else {
+                more
+            };
         }
         let alone = self.rejections.len() == 1 && more.is_empty();
         let mut parts: Vec<String> = self

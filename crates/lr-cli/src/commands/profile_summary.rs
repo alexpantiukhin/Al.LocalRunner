@@ -149,7 +149,10 @@ pub fn summarize(p: &Profile) -> ProfileSummary {
             .iter()
             .map(|(zone, v)| ZoneSummary {
                 zone: zone.to_string(),
-                command: v.from_command.then(|| v.steps.first().map(|s| s.command.clone())).flatten(),
+                command: v
+                    .from_command
+                    .then(|| v.steps.first().map(|s| s.command.clone()))
+                    .flatten(),
                 steps: if v.from_command {
                     Vec::new()
                 } else {
@@ -204,7 +207,9 @@ pub fn summary_lines(list: &[ProfileSummary]) -> Vec<String> {
                 ));
             }
         }
-        let list = |label: &str, v: &[String]| (!v.is_empty()).then(|| format!("{label} {}", v.join(", ")));
+        let list = |label: &str, v: &[String]| {
+            (!v.is_empty()).then(|| format!("{label} {}", v.join(", ")))
+        };
         let parts: Vec<String> = [
             p.mem_mb.map(|v| format!("mem {v} MB")),
             p.cpu.map(|v| format!("cpu {v}")),

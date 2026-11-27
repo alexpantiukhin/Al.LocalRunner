@@ -54,7 +54,11 @@ impl Engine {
         }
         let mut labels: Vec<&str> = Vec::new();
         for e in entries {
-            let shown = if e.label.is_empty() { "(empty)" } else { e.label.as_str() };
+            let shown = if e.label.is_empty() {
+                "(empty)"
+            } else {
+                e.label.as_str()
+            };
             if !labels.contains(&shown) {
                 labels.push(shown);
             }

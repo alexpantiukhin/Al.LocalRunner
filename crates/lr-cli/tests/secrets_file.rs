@@ -62,13 +62,24 @@ fn unavailable_lists_secrets_whose_source_gives_nothing_without_values() {
     let present = dir.path().join("present");
     std::fs::write(&present, "value\n").unwrap();
     let secrets = ConfigSecrets::new(std::collections::BTreeMap::from([
-        ("a_env".to_string(), SecretFrom::Env("LR_TEST_SURELY_UNSET_VAR_8F3A".into())),
-        ("b_file".to_string(), SecretFrom::File(dir.path().join("missing"))),
+        (
+            "a_env".to_string(),
+            SecretFrom::Env("LR_TEST_SURELY_UNSET_VAR_8F3A".into()),
+        ),
+        (
+            "b_file".to_string(),
+            SecretFrom::File(dir.path().join("missing")),
+        ),
         ("c_ok".to_string(), SecretFrom::File(present)),
     ]));
     let found = secrets.unavailable();
     let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["a_env", "b_file"]);
-    assert!(found[0].1.contains("LR_TEST_SURELY_UNSET_VAR_8F3A is not set"), "{found:?}");
+    assert!(
+        found[0]
+            .1
+            .contains("LR_TEST_SURELY_UNSET_VAR_8F3A is not set"),
+        "{found:?}"
+    );
     assert!(found[1].1.contains("does not exist"), "{found:?}");
 }

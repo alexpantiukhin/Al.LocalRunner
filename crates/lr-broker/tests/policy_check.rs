@@ -342,8 +342,9 @@ fn empty_label_of_a_secret_entry_is_warned_as_matching_only_unlabelled_clients()
 fn empty_label_of_a_service_entry_is_warned_too() {
     let ws = warnings("[[services.allow]]\nlabel = \"\"\nnames = [\"db\"]\n");
     assert!(
-        ws.iter().any(|w| w.table.as_deref() == Some("services.allow")
-            && w.message.contains("matches only clients without a label")),
+        ws.iter()
+            .any(|w| w.table.as_deref() == Some("services.allow")
+                && w.message.contains("matches only clients without a label")),
         "{ws:?}"
     );
 }

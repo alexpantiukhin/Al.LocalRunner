@@ -156,7 +156,10 @@ programs = [\"git\"]
 command = \"echo hello remote\"
 ";
     let l = lines(text);
-    assert!(l.contains(&"  zone remote: echo hello remote".to_string()), "{l:?}");
+    assert!(
+        l.contains(&"  zone remote: echo hello remote".to_string()),
+        "{l:?}"
+    );
     assert!(
         l.contains(&"  resources: tags vps, exclusive gpu, programs git".to_string()),
         "{l:?}"
@@ -176,5 +179,8 @@ steps = [{ name = \"a\", command = \"x\", timeout_s = 5 }]
 steps = [{ name = \"a\", command = \"y\", timeout_s = 5 }]
 ";
     let l = lines(text);
-    assert!(l.contains(&"  zone lan, step a: y (timeout 5 s)".to_string()), "{l:?}");
+    assert!(
+        l.contains(&"  zone lan, step a: y (timeout 5 s)".to_string()),
+        "{l:?}"
+    );
 }
