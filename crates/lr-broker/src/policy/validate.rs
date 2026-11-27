@@ -214,6 +214,18 @@ fn network_warnings(file: &PolicyFile, out: &mut Vec<PolicyWarning>) {
 
 fn allow_warnings(table: &str, entries: &[AllowEntry], out: &mut Vec<PolicyWarning>) {
     for (i, entry) in entries.iter().enumerate() {
+        if entry.label.is_empty() {
+            out.push(PolicyWarning::at(
+                table,
+                Some("label"),
+                None,
+                format!(
+                    "entry {} has an empty label: it matches only clients without a label, not any client; \
+                     give the label of the client (for example `dev`)",
+                    i + 1
+                ),
+            ));
+        }
         if entries[..i].iter().any(|e| e.label == entry.label) {
             out.push(PolicyWarning::at(
                 table,

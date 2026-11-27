@@ -6,6 +6,7 @@ See `README.md` (English, the main one) and `README.ru.md` (Russian), and `docs/
 ## Rules
 - Respond in Russian; write AGENTS.md and all AI instructions in English
 - Everything on GitHub in this repository is in English: issues, pull requests (titles, descriptions, comments, reviews), commit messages, release notes, labels. Russian and other languages are allowed only in documentation (`README.<lang>.md`, `docs/`) and in instructions for people, and only as a translation in addition to the English original, never instead of it
+- **Priorities of issues are the MoSCoW labels of GitHub.** An issue carries one of `must` (cannot ship without it), `should` (important, has a workaround), `could` (nice to have if time allows) or `wont` (deliberately not doing now). `bug` marks something that does not work as designed; it is not a priority. No other scale (`P1`, `high`, `urgent`) is used in issues, pull requests or answers. The order inside one label is not encoded: it is decided when the work is picked and is written in the issue only when it matters
 - Do not add comments to code unless requested, except doc comments on public items
 - Do not create files unless strictly necessary; read a file before modifying it
 - No limit on file length; still decompose code by responsibility

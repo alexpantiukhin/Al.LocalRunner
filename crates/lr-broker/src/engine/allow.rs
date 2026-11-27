@@ -28,7 +28,7 @@ impl Engine {
         if let Some(name) = req.secrets.iter().find(|n| !secrets.contains(n)) {
             return Err((
                 RejectReason::SecretNotAllowed,
-                self.not_allowed("secret", name, label),
+                self.not_allowed("secret", name, label, &self.secret_hint(label)),
             ));
         }
         if let Some(name) = req
@@ -38,7 +38,7 @@ impl Engine {
         {
             return Err((
                 RejectReason::ServiceNotAllowed,
-                self.not_allowed("service", name, label),
+                self.not_allowed("service", name, label, ""),
             ));
         }
         if file.command_mode(&entry.client.key, label) == CommandMode::Named {
@@ -47,7 +47,30 @@ impl Engine {
         Ok(())
     }
 
-    fn not_allowed(&self, what: &str, name: &str, label: &str) -> String {
+    fn secret_hint(&self, label: &str) -> String {
+        let entries = &self.policy.file().secrets.allow;
+        if entries.is_empty() || entries.iter().any(|e| e.label == label) {
+            return String::new();
+        }
+        let mut labels: Vec<&str> = Vec::new();
+        for e in entries {
+            let shown = if e.label.is_empty() { "(empty)" } else { e.label.as_str() };
+            if !labels.contains(&shown) {
+                labels.push(shown);
+            }
+        }
+        let mut hint = format!(
+            " (no [[secrets.allow]] entry has this label; labels with entries: {}",
+            labels.join(", ")
+        );
+        if !label.is_empty() && entries.iter().any(|e| e.label.is_empty()) {
+            hint.push_str("; an entry with an empty label matches only clients without a label");
+        }
+        hint.push(')');
+        hint
+    }
+
+    fn not_allowed(&self, what: &str, name: &str, label: &str, hint: &str) -> String {
         let shown = if label.is_empty() { "(empty)" } else { label };
         let file = if self.policy_path.is_empty() {
             String::new()
@@ -60,7 +83,7 @@ impl Engine {
             ""
         };
         format!(
-            "{what} {name} is not allowed for label {shown}{file}; to allow it{admin}: localrunner policy allow-{what} {} --label {}",
+            "{what} {name} is not allowed for label {shown}{hint}{file}; to allow it{admin}: localrunner policy allow-{what} {} --label {}",
             shell_word(name),
             shell_word(label)
         )

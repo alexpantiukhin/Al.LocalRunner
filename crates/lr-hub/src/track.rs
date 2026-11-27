@@ -32,6 +32,8 @@ pub(crate) struct Track {
     pub(crate) cancelled: bool,
     pub(crate) excluded: BTreeSet<String>,
     pub(crate) last_rejection: Option<(ReasonCode, String)>,
+    /// What each broker that refused the order said, in the order they refused.
+    pub(crate) rejections: Vec<(String, String)>,
     pub(crate) gen: u64,
     pub(crate) watchers: Vec<Watcher>,
     pub(crate) log: Option<PathBuf>,
@@ -45,6 +47,31 @@ pub(crate) struct Track {
 }
 
 impl Track {
+    /// The text of a final refusal: the reason of every broker that refused the order, each
+    /// with the broker's name, then `more`. With one refusal and nothing more it is that
+    /// broker's text as it came.
+    pub(crate) fn rejection_detail(&self, more: String) -> String {
+        if self.rejections.is_empty() {
+            return if more.is_empty() { "all brokers refused".into() } else { more };
+        }
+        let alone = self.rejections.len() == 1 && more.is_empty();
+        let mut parts: Vec<String> = self
+            .rejections
+            .iter()
+            .map(|(broker, detail)| {
+                if alone {
+                    detail.clone()
+                } else {
+                    format!("broker {broker}: {detail}")
+                }
+            })
+            .collect();
+        if !more.is_empty() {
+            parts.push(more);
+        }
+        parts.join("; ")
+    }
+
     pub(crate) fn new(order: ActiveOrder, spec: Option<OrderSpec>, stage: Stage) -> Track {
         let log = order
             .handle_path
@@ -57,6 +84,7 @@ impl Track {
             cancelled: false,
             excluded: BTreeSet::new(),
             last_rejection: None,
+            rejections: Vec::new(),
             gen: 0,
             watchers: Vec::new(),
             log,
