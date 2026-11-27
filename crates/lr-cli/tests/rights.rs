@@ -194,7 +194,7 @@ fn a_broker_service_command_runs_as_the_broker_user_with_the_service_binary() {
     let args = vec!["policy".to_string(), "reload".to_string()];
     assert_eq!(
         elevated_command_line_as(Os::Linux, &exe, &args, Some(user)),
-        "sudo -u al-localrunner /usr/local/libexec/al-localrunner/localrunner policy reload"
+        "sudo -u 'al-localrunner' '/usr/local/libexec/al-localrunner/localrunner' 'policy' 'reload'"
     );
     assert!(broker_admin_target(Os::Linux, false).is_none());
     assert!(broker_admin_target(Os::Windows, true).is_none());
@@ -231,7 +231,7 @@ fn without_a_terminal_the_broker_user_line_is_printed() {
     let message = result.unwrap_err();
     assert!(
         message.ends_with(
-            "run: sudo -u al-localrunner /usr/local/libexec/al-localrunner/localrunner policy reload"
+            "run: sudo -u 'al-localrunner' '/usr/local/libexec/al-localrunner/localrunner' 'policy' 'reload'"
         ),
         "{message}"
     );
