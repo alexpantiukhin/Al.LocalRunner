@@ -691,10 +691,14 @@ fn without_a_unit_the_text_names_this_shell_not_the_runner_process() {
 fn the_disk_warning_comes_before_the_runner_stops_taking_orders() {
     use lr_cli::doctor::disk_note;
     assert!(disk_note(50_000, Some(10_000)).is_none());
-    assert!(disk_note(15_000, Some(10_000)).unwrap().contains("close to min_free_disk_mb 10000"));
+    assert!(disk_note(15_000, Some(10_000))
+        .unwrap()
+        .contains("close to min_free_disk_mb 10000"));
     let stopped = disk_note(0, Some(10_000)).unwrap();
     assert!(stopped.contains("takes no orders"), "{stopped}");
     assert!(stopped.contains("runner cache clean"), "{stopped}");
-    assert!(disk_note(1_000, None).unwrap().contains("no [accept] min_free_disk_mb"));
+    assert!(disk_note(1_000, None)
+        .unwrap()
+        .contains("no [accept] min_free_disk_mb"));
     assert!(disk_note(100_000, None).is_none());
 }

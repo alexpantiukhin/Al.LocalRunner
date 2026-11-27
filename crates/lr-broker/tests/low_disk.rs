@@ -114,7 +114,10 @@ async fn runners_names_the_low_disk_and_says_the_runner_cannot_start_an_order() 
         ReadReply::Runners { runners, .. } => runners,
         other => panic!("expected runners, got {other:?}"),
     };
-    let info = runners.iter().find(|i| i.name == "r1").expect("r1 is listed");
+    let info = runners
+        .iter()
+        .find(|i| i.name == "r1")
+        .expect("r1 is listed");
     assert_eq!(info.can_start_now, Some(false));
     assert_eq!(
         info.unmet,
