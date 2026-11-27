@@ -115,6 +115,11 @@ pub enum MismatchReason {
         allowed: BTreeSet<Zone>,
     },
 
+    /// The zone of the runner has steps only from profile variants and none fits the runner.
+    Variant {
+        /// Zone of the runner.
+        zone: Zone,
+    },
     /// A command name of the order is not declared by the runner.
     CommandMissing {
         /// Command name.
@@ -160,6 +165,10 @@ impl fmt::Display for MismatchReason {
                     list.join(", ")
                 )
             }
+            Self::Variant { zone } => write!(
+                f,
+                "no variant of the profile fits this runner in the zone {zone}"
+            ),
             Self::CommandMissing { name } => write!(f, "command {name} is not described"),
             Self::BelowAccept { needed, min } => {
                 write!(
@@ -260,6 +269,14 @@ pub fn satisfies(caps: &Capabilities, req: &Requirements) -> Result<(), Mismatch
                 runner: caps.zone,
                 allowed: allowed.clone(),
             });
+        }
+    }
+    if let Some(filters) = req.variant_gate.get(&caps.zone) {
+        if !filters
+            .iter()
+            .any(|w| w.fits(caps.zone, &caps.platforms, &caps.tags, &caps.programs))
+        {
+            reasons.push(MismatchReason::Variant { zone: caps.zone });
         }
     }
     if let Some(min) = caps.accept.min_mem_mb {

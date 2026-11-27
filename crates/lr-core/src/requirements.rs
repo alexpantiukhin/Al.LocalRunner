@@ -1,8 +1,8 @@
 use crate::error::ProfileError;
 use crate::model::Zone;
-use crate::profile::{resolve_for_platform, Profile, Program};
+use crate::profile::{resolve_for_platform, Profile, Program, VariantWhen};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Opaque reference to the machine of the client, assigned by the broker from
 /// the local IPC peer; a runner holding an equal reference is "the same machine".
@@ -44,6 +44,10 @@ pub struct Requirements {
     /// other client; absent from senders of an earlier minor version.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub commands: BTreeSet<String>,
+    /// For a zone whose steps come only from profile variants: the filters of those variants. A
+    /// runner in such a zone must fit one of them; absent from senders that know no variants.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub variant_gate: BTreeMap<Zone, Vec<VariantWhen>>,
 }
 
 /// [`Requirements`] as it is read: a record written before zones were a collection carries the
@@ -67,6 +71,8 @@ struct WireRequirements {
     max_zone: Option<Zone>,
     #[serde(default)]
     commands: BTreeSet<String>,
+    #[serde(default)]
+    variant_gate: BTreeMap<Zone, Vec<VariantWhen>>,
 }
 
 impl From<WireRequirements> for Requirements {
@@ -85,6 +91,7 @@ impl From<WireRequirements> for Requirements {
             cache: w.cache,
             zones: w.zones.or_else(|| w.max_zone.map(Zone::up_to)),
             commands: w.commands,
+            variant_gate: w.variant_gate,
         }
     }
 }
@@ -142,6 +149,23 @@ impl Requirements {
                 programs.push(program.clone());
             }
         }
+        let mut variant_gate = BTreeMap::new();
+        for zone in zones.iter().flatten() {
+            let covered = p.zone_steps.contains_key(zone)
+                || (p.common && matches!(zone, Zone::Local | Zone::Shared));
+            if covered {
+                continue;
+            }
+            let filters: Vec<VariantWhen> = p
+                .variants
+                .iter()
+                .filter(|v| v.when.zones.contains(zone))
+                .map(|v| v.when.clone())
+                .collect();
+            if !filters.is_empty() {
+                variant_gate.insert(*zone, filters);
+            }
+        }
         Ok(Requirements {
             platform: platform.map(str::to_string),
             timeout_s: p.timeout_s,
@@ -156,6 +180,7 @@ impl Requirements {
             cache: p.cache.clone(),
             zones,
             commands: BTreeSet::new(),
+            variant_gate,
         })
     }
 }

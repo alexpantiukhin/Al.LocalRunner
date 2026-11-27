@@ -538,3 +538,38 @@ fn a_record_with_the_old_max_zone_reads_as_the_zones_up_to_it() {
     let back: Requirements = v.try_into().unwrap();
     assert_eq!(back.zones, Some(lr_core::Zone::up_to(lr_core::Zone::Lan)));
 }
+
+const GATED: &str = r#"
+[profile.p]
+command = "cargo test"
+timeout_s = 600
+[profile.p.variant.unix-remote]
+when = { zone = ["remote"], os = ["linux", "macos"] }
+command = "sh run.sh"
+"#;
+
+#[test]
+fn a_zone_opened_only_by_variants_takes_only_runners_a_variant_matches() {
+    let r = req(GATED, None);
+    let mut remote = runner();
+    remote.zone = Zone::Remote;
+    remote.platforms = set(&["linux"]);
+    assert!(satisfies(&remote, &r).is_ok());
+    remote.platforms = set(&["windows"]);
+    let why = reasons(&remote, &r);
+    assert!(
+        why.iter()
+            .any(|x| matches!(x, MismatchReason::Variant { zone: Zone::Remote })),
+        "{why:?}"
+    );
+    assert!(why[0].to_string().contains("no variant"), "{why:?}");
+}
+
+#[test]
+fn a_zone_that_has_other_steps_needs_no_variant() {
+    let r = req(GATED, None);
+    let mut local = runner();
+    local.zone = Zone::Local;
+    local.platforms = set(&["windows"]);
+    assert!(satisfies(&local, &r).is_ok());
+}

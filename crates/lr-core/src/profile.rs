@@ -97,6 +97,24 @@ pub struct VariantWhen {
 }
 
 impl VariantWhen {
+    /// Whether a runner in `zone` with these platforms, tags and programs fits the filter; the
+    /// runner name is not looked at.
+    pub fn fits(
+        &self,
+        zone: Zone,
+        platforms: &BTreeSet<String>,
+        tags: &BTreeSet<String>,
+        programs: &BTreeSet<String>,
+    ) -> bool {
+        let any = |wanted: &[String], have: &BTreeSet<String>| {
+            wanted.is_empty() || wanted.iter().any(|w| have.contains(w))
+        };
+        (self.zones.is_empty() || self.zones.contains(&zone))
+            && any(&self.os, platforms)
+            && any(&self.tags, tags)
+            && any(&self.programs, programs)
+    }
+
     /// Whether a runner with these properties matches the filter.
     pub fn matches(
         &self,
