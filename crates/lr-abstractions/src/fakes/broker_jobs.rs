@@ -317,7 +317,11 @@ impl BrokerState {
     }
 
     pub(crate) fn forget_run(&mut self, key: &JobKey) -> bool {
-        if !self.runs.get(key).is_some_and(|r| r.record.job.state.is_final()) {
+        if !self
+            .runs
+            .get(key)
+            .is_some_and(|r| r.record.job.state.is_final())
+        {
             return false;
         }
         self.runs.remove(key);

@@ -437,3 +437,30 @@ async fn repeated_cancel_of_one_job_queues_one_cancel() {
     let log = String::from_utf8(rig.store.file(&log_path(&job)).unwrap()).unwrap();
     assert_eq!(log.matches("cancel requested").count(), 1, "{log}");
 }
+
+#[tokio::test]
+async fn a_seq_gap_that_repeats_closes_the_order_as_lost_instead_of_looping() {
+    let mut rig = Rig::new();
+    let (local, job) = accepted_job(&mut rig).await;
+    let gap = || {
+        BrokerToHub::Chunk(Chunk {
+            job: job.clone(),
+            seq: 3,
+            step: Some(0),
+            text: "gap\n".into(),
+        })
+    };
+    for round in 1..=2 {
+        local.send(gap()).await;
+        settle().await;
+        rig.step(2).await;
+        until(&local, "reconnected after a seq gap", || {
+            local.hellos() == round + 1
+        })
+        .await;
+        assert!(rig.active(&job).await.is_some());
+    }
+    local.send(gap()).await;
+    settle().await;
+    assert!(rig.active(&job).await.is_none());
+}

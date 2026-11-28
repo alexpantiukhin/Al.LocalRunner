@@ -478,7 +478,16 @@ pub async fn forgotten_final_run_can_be_accepted_again_with_streams_from_one(
         .unwrap();
     let job = key.job.clone();
     store.accept_seq(&key, Inbound::Hub, 1).await.unwrap();
-    let pushed = |n| store.push_result("c1", &job, OutboxKind::JobResult, "x".into(), at(n), 1 << 20);
+    let pushed = |n| {
+        store.push_result(
+            "c1",
+            &job,
+            OutboxKind::JobResult,
+            "x".into(),
+            at(n),
+            1 << 20,
+        )
+    };
     assert_eq!(pushed(11).await.unwrap(), Some(1));
     assert_eq!(pushed(12).await.unwrap(), Some(2));
     assert!(store.forget_run(&key).await.unwrap());
