@@ -512,3 +512,23 @@ async fn down_wait_without_a_timeout_waits_as_long_as_the_runner_drains() {
     let (left, ()) = tokio::join!(wait_for_hub_orders(&*jobs, exit_limit(None)), end);
     assert_eq!(left, 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn down_wait_names_the_order_that_holds_the_runner_when_the_limit_passes() {
+    let dir = TempDir::new("down-wait-holder");
+    let layout = with_runner(&dir);
+    let stuck = FakeRoles::new(true, usize::MAX);
+    *stuck.jobs.lock().unwrap() = Some(vec!["j1 on r1 (5s)".to_string()]);
+    let code = wait_for_exit(&layout, Vec::new(), 0, Duration::from_secs(5), &stuck).await;
+    assert_eq!(code, 1);
+    let said = stuck.said_err();
+    assert!(
+        said.iter().any(|l| l == "r1 still holds j1 on r1 (5s)"),
+        "{said:?}"
+    );
+    assert!(
+        said.iter()
+            .any(|l| l.contains("--wait-timeout") && l.contains("--cancel")),
+        "{said:?}"
+    );
+}
