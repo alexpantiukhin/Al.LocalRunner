@@ -792,9 +792,7 @@ pub async fn run(cli: Cli) -> i32 {
             wait,
             wait_timeout,
             ..
-        } => {
-            down_cmd::down_cli(&layout, names, cancel, yes, wait.then_some(wait_timeout)).await
-        }
+        } => down_cmd::down_cli(&layout, names, cancel, yes, wait.then_some(wait_timeout)).await,
         Command::Policy {
             action: PolicyAction::Check { file },
         } => {

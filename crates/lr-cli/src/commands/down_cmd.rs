@@ -687,7 +687,10 @@ pub async fn wait_for_exit(
     for name in &left {
         let on = format!(" on {name} (");
         let local = format!(" on local:{name} (");
-        for line in jobs.iter().filter(|l| l.contains(&on) || l.contains(&local)) {
+        for line in jobs
+            .iter()
+            .filter(|l| l.contains(&on) || l.contains(&local))
+        {
             roles.say_err(&format!("{name} still holds {line}"));
         }
     }

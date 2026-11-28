@@ -500,7 +500,10 @@ async fn down_wait_without_a_timeout_waits_as_long_as_the_runner_drains() {
     let code = wait_for_exit(&layout, Vec::new(), 0, exit_limit(None), &draining).await;
     assert_eq!(code, 0);
     assert!(start.elapsed() > Duration::from_secs(60));
-    assert_eq!(exit_limit(Some(Duration::from_secs(90))), Duration::from_secs(90));
+    assert_eq!(
+        exit_limit(Some(Duration::from_secs(90))),
+        Duration::from_secs(90)
+    );
     let busy = FakeRoles::new(true, 0);
     *busy.jobs.lock().unwrap() = Some(vec!["j1 on r1 (5s)".to_string()]);
     let jobs = std::sync::Arc::new(busy);
