@@ -211,7 +211,7 @@ async fn drain_finishes_running_and_refuses_new() {
     let waiting = hub.accepted().await;
     assert_eq!(
         waiting.waiting.as_deref(),
-        Some("the matching runners are offline")
+        Some("the matching runners are draining")
     );
     r.send(&result("j1", 2, JobState::Passed, 0)).await;
     r.acked(2).await;
