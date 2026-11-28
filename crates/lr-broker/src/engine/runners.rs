@@ -281,6 +281,7 @@ impl Engine {
                 caps: s.caps.clone(),
                 endpoint: s.endpoint.clone(),
                 online: s.serves(now) || s.holds_orders(now),
+                draining: s.draining && s.conn.is_some(),
                 load: s.load.map(Into::into),
             })
             .collect()

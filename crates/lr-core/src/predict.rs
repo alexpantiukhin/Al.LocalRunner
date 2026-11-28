@@ -52,6 +52,7 @@ impl<'a> Planner<'a> {
     ) -> Result<Vec<(&'a RunnerView, Zone)>, Wait> {
         let mut any = false;
         let mut any_online = false;
+        let mut any_draining = false;
         let mut free = Vec::new();
         for runner in self.runners {
             let Ok(zone) = suitable(entry, runner, self.site) else {
@@ -59,6 +60,7 @@ impl<'a> Planner<'a> {
             };
             any = true;
             if !runner.online {
+                any_draining |= runner.draining;
                 continue;
             }
             any_online = true;
@@ -70,7 +72,10 @@ impl<'a> Planner<'a> {
             return Err(Wait::NoRunner);
         }
         if !any_online {
-            return Err(Wait::RunnerOffline);
+            return Err(match any_draining {
+                true => Wait::RunnerDraining,
+                false => Wait::RunnerOffline,
+            });
         }
         if free.is_empty() {
             return Err(Wait::RunnerBusy);
