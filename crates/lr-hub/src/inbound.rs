@@ -9,6 +9,7 @@ use lr_proto::{
 };
 
 const RESEND_AFTER_S: u64 = 5;
+const SEQ_GAP_LIMIT: u32 = 3;
 
 fn sequenced(m: &BrokerToHub) -> Option<(JobId, u64)> {
     match m {
@@ -241,6 +242,7 @@ impl Engine {
             Ok(true) => {
                 if let Some(t) = self.tracks.get_mut(&job) {
                     t.order.last_seq = seq;
+                    t.gap = None;
                 }
                 self.apply(name, &job, m).await;
                 self.send_now(name, &ack);
@@ -257,6 +259,27 @@ impl Engine {
                         ("got", &got.to_string()),
                     ],
                 );
+                let repeats = self.tracks.get_mut(&job).map_or(0, |t| {
+                    let n = match t.gap {
+                        Some((e, g, n)) if (e, g) == (expected, got) => n + 1,
+                        _ => 1,
+                    };
+                    t.gap = Some((expected, got, n));
+                    n
+                });
+                if repeats >= SEQ_GAP_LIMIT {
+                    self.s.diag(
+                        Level::Warn,
+                        "seq gap does not heal, the order is closed as lost",
+                        &[("broker", name), ("job", &job.0)],
+                    );
+                    let reason = Some(ReasonCode::BrokerUnavailable);
+                    self.final_result(&job, JobState::Lost, None, reason).await;
+                    if let Some(link) = self.links.get_mut(name) {
+                        link.close();
+                    }
+                    return;
+                }
                 let e = refusal(
                     ProtocolErrorCode::SeqGap,
                     format!("job {job}: expected seq {expected}, got {got}"),
