@@ -308,7 +308,7 @@ pub enum Command {
         /// `--cancel` first wait until the hub holds no order.
         #[arg(long)]
         wait: bool,
-        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
+        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`); without it the wait has no limit.
         #[arg(long, requires = "wait", value_parser = crate::commands::upgrade_cmd::parse_duration)]
         wait_timeout: Option<std::time::Duration>,
     },
@@ -776,8 +776,7 @@ pub async fn run(cli: Cli) -> i32 {
             wait_timeout,
             ..
         } => {
-            let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
-            down_cmd::down_cli(&layout, names, cancel, yes, wait).await
+            down_cmd::down_cli(&layout, names, cancel, yes, wait.then_some(wait_timeout)).await
         }
         Command::Policy {
             action: PolicyAction::Check { file },

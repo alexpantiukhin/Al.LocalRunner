@@ -3,8 +3,8 @@ mod common;
 use common::fake_roles::{with_runner, FakeRoles};
 use common::TempDir;
 use lr_cli::commands::down_cmd::{
-    down, down_with, runners_still_answering, service_state, wait_for_exit, wait_for_hub_orders,
-    ServiceState,
+    down, down_with, exit_limit, runners_still_answering, service_state, wait_for_exit,
+    wait_for_hub_orders, ServiceState,
 };
 use lr_cli::commands::up_cmd::{service_broker, startable};
 use lr_cli::init::NodeRole;
@@ -489,4 +489,26 @@ async fn down_drain_wait_holds_the_hub_while_it_has_orders() {
         wait_for_hub_orders(&unknown, Duration::from_secs(5)).await,
         0
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn down_wait_without_a_timeout_waits_as_long_as_the_runner_drains() {
+    let dir = TempDir::new("down-wait-unlimited");
+    let layout = with_runner(&dir);
+    let draining = FakeRoles::new(true, 3000);
+    let start = tokio::time::Instant::now();
+    let code = wait_for_exit(&layout, Vec::new(), 0, exit_limit(None), &draining).await;
+    assert_eq!(code, 0);
+    assert!(start.elapsed() > Duration::from_secs(60));
+    assert_eq!(exit_limit(Some(Duration::from_secs(90))), Duration::from_secs(90));
+    let busy = FakeRoles::new(true, 0);
+    *busy.jobs.lock().unwrap() = Some(vec!["j1 on r1 (5s)".to_string()]);
+    let jobs = std::sync::Arc::new(busy);
+    let ends = jobs.clone();
+    let end = async move {
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        *ends.jobs.lock().unwrap() = Some(Vec::new());
+    };
+    let (left, ()) = tokio::join!(wait_for_hub_orders(&*jobs, exit_limit(None)), end);
+    assert_eq!(left, 0);
 }
