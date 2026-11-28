@@ -127,6 +127,11 @@ pub trait BrokerStore: Send + Sync {
     /// Removes old logs and rows of final runs, oldest first.
     async fn prune(&self, limits: PruneLimits) -> Result<PruneReport, StoreError>;
 
+    /// Forgets a final run with its log and its pending results, so that the same `JobId` can
+    /// be accepted again as a new run whose message streams start from 1. `false` when there is
+    /// no such run or it is not final.
+    async fn forget_run(&self, key: &JobKey) -> Result<bool, StoreError>;
+
     /// Stores a newly issued join code and drops the codes that are used up or expired at its
     /// issue time.
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError>;

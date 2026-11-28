@@ -17,6 +17,7 @@ pub mod profile_summary;
 pub mod read_args;
 pub mod read_cmd;
 pub mod reload_cmd;
+pub mod restart_cmd;
 pub mod rights;
 pub mod roles_cmd;
 pub mod runner_cache_cmd;
@@ -264,6 +265,14 @@ pub enum Command {
         /// the roles `init` created when omitted.
         names: Vec<String>,
     },
+    /// Drain runners, wait for their jobs to end, then start the same runners again.
+    Restart {
+        /// Runner names (also `local:<name>`) or `runner` for every runner.
+        names: Vec<String>,
+        /// How long to wait for the jobs (`90s`, `15m`, `2h`); without it the wait has no limit.
+        #[arg(long, value_parser = crate::commands::upgrade_cmd::parse_duration)]
+        wait_timeout: Option<std::time::Duration>,
+    },
     /// Running roles reread their settings files without a restart: runners `runner.toml`, the
     /// hub `hub-policy.toml`, the broker `policy.toml`.
     Reload {
@@ -308,7 +317,7 @@ pub enum Command {
         /// `--cancel` first wait until the hub holds no order.
         #[arg(long)]
         wait: bool,
-        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`; default 60s).
+        /// With `--wait`: how long to wait (`90s`, `15m`, `2h`); without it the wait has no limit.
         #[arg(long, requires = "wait", value_parser = crate::commands::upgrade_cmd::parse_duration)]
         wait_timeout: Option<std::time::Duration>,
     },
@@ -690,7 +699,11 @@ pub async fn run(cli: Cli) -> i32 {
     };
     if matches!(
         cli.command,
-        Command::Status { .. } | Command::Doctor { .. } | Command::Up { .. } | Command::Down { .. }
+        Command::Status { .. }
+            | Command::Doctor { .. }
+            | Command::Up { .. }
+            | Command::Down { .. }
+            | Command::Restart { .. }
     ) {
         let env = std::env::var_os(crate::paths::STATE_DIR_ENV);
         if let Some(note) = layout.state_dir_note(state_flag.as_deref(), env.as_deref()) {
@@ -762,6 +775,10 @@ pub async fn run(cli: Cli) -> i32 {
         Command::Stats(a) => read_cmd::stats(&layout, a).await,
         Command::Runners(a) => read_cmd::runners(&layout, a).await,
         Command::Up { names } => up_cmd::up(&layout, names).await,
+        Command::Restart {
+            names,
+            wait_timeout,
+        } => restart_cmd::restart(&layout, names, wait_timeout).await,
         Command::Brokers { json } => view::brokers(&layout, json).await,
         Command::Dashboard {
             foreground,
@@ -775,10 +792,7 @@ pub async fn run(cli: Cli) -> i32 {
             wait,
             wait_timeout,
             ..
-        } => {
-            let wait = wait.then(|| wait_timeout.unwrap_or(down_cmd::DEFAULT_EXIT_WAIT));
-            down_cmd::down_cli(&layout, names, cancel, yes, wait).await
-        }
+        } => down_cmd::down_cli(&layout, names, cancel, yes, wait.then_some(wait_timeout)).await,
         Command::Policy {
             action: PolicyAction::Check { file },
         } => {

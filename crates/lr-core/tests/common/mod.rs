@@ -111,6 +111,7 @@ pub fn runner_at(name: &str, addr: &str) -> RunnerView {
         caps: caps(),
         endpoint: Endpoint::Addr(addr.parse().unwrap()),
         online: true,
+        draining: false,
         load: None,
     }
 }
@@ -130,6 +131,7 @@ pub fn ipc_runner(name: &str, os_user: &str) -> RunnerView {
             os_user: os_user.into(),
         },
         online: true,
+        draining: false,
         load: None,
     }
 }

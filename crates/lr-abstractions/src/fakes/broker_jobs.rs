@@ -316,6 +316,19 @@ impl BrokerState {
         out
     }
 
+    pub(crate) fn forget_run(&mut self, key: &JobKey) -> bool {
+        if !self
+            .runs
+            .get(key)
+            .is_some_and(|r| r.record.job.state.is_final())
+        {
+            return false;
+        }
+        self.runs.remove(key);
+        self.results.restart(&key.client, &key.job);
+        true
+    }
+
     pub(crate) fn prune(&mut self, limits: PruneLimits) -> PruneReport {
         let mut report = PruneReport::default();
         let age = |r: &Run| {

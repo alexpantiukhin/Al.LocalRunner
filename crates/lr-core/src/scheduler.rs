@@ -80,6 +80,9 @@ pub enum Wait {
     RunnerBusy,
     /// Every runner that suits the order is offline.
     RunnerOffline,
+    /// Every runner that suits the order is draining: it takes no order until it stops or is
+    /// started again.
+    RunnerDraining,
     /// No registered runner suits the order.
     NoRunner,
     /// Starting now would delay the reserved start of the head order.
@@ -154,6 +157,7 @@ impl fmt::Display for Wait {
             ),
             Self::RunnerBusy => write!(f, "the runner is busy"),
             Self::RunnerOffline => write!(f, "the matching runners are offline"),
+            Self::RunnerDraining => write!(f, "the matching runners are draining"),
             Self::NoRunner => write!(f, "no matching runner"),
             Self::HeadReserved { head, at } => {
                 write!(f, "the start is reserved for {head} at {at}")

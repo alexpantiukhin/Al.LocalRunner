@@ -516,8 +516,9 @@ pub async fn down_cli(
     names: Vec<String>,
     cancel: bool,
     yes: bool,
-    wait: Option<Duration>,
+    wait: Option<Option<Duration>>,
 ) -> Result<i32, String> {
+    let wait = wait.map(exit_limit);
     let principal = lr_net::current_os_principal().map_err(|e| e.to_string())?;
     let roles = IpcRoles { layout, principal };
     let mut stdio = Stdio::new();
@@ -527,10 +528,13 @@ pub async fn down_cli(
     }
     let hub_named = names.is_empty() || normalized(names.clone()).iter().any(|n| n == "hub");
     if let (Some(within), false, true) = (wait, cancel, hub_named) {
-        eprintln!(
-            "waiting for the hub to finish its orders (up to {} s)",
-            within.as_secs()
-        );
+        match limited(within) {
+            true => eprintln!(
+                "waiting for the hub to finish its orders (up to {} s)",
+                within.as_secs()
+            ),
+            false => eprintln!("waiting for the hub to finish its orders"),
+        }
         let left = wait_for_hub_orders(&roles, within).await;
         if left > 0 {
             eprintln!(
@@ -608,6 +612,16 @@ fn normalized(names: Vec<String>) -> Vec<String> {
 /// How long `down --wait` waits for the stopped runners to exit when `--wait-timeout` is not given.
 pub const DEFAULT_EXIT_WAIT: Duration = Duration::from_secs(60);
 
+/// How long `down --wait` waits: the `--wait-timeout` when one is given, otherwise without a
+/// limit, because a runner drains for as long as its job runs.
+pub fn exit_limit(wait_timeout: Option<Duration>) -> Duration {
+    wait_timeout.unwrap_or(Duration::from_secs(u64::MAX / 4))
+}
+
+fn limited(within: Duration) -> bool {
+    within < exit_limit(None)
+}
+
 /// `down hub --drain --wait`: polls until the hub holds no order, at most `within`; the number
 /// of orders left (0 when none, or when they are not known).
 pub async fn wait_for_hub_orders(roles: &dyn Roles, within: Duration) -> usize {
@@ -669,6 +683,20 @@ pub async fn wait_for_exit(
         within.as_secs(),
         left.join(", ")
     ));
+    let jobs = roles.running_jobs().await.unwrap_or_default();
+    for name in &left {
+        let on = format!(" on {name} (");
+        let local = format!(" on local:{name} (");
+        for line in jobs
+            .iter()
+            .filter(|l| l.contains(&on) || l.contains(&local))
+        {
+            roles.say_err(&format!("{name} still holds {line}"));
+        }
+    }
+    roles.say_err(
+        "the runners are draining their jobs: raise --wait-timeout to wait longer, or use --cancel to cancel the jobs",
+    );
     1
 }
 

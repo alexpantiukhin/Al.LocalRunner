@@ -37,6 +37,7 @@ pub(crate) fn saturation_reason(wait: &Wait) -> Option<&'static str> {
         Wait::Exclusive { .. } => Some("tag"),
         Wait::Reserved { .. } | Wait::Quota { .. } => Some("rule"),
         Wait::RunnerOffline
+        | Wait::RunnerDraining
         | Wait::NoRunner
         | Wait::HeadReserved { .. }
         | Wait::ForeignLoad { .. }
@@ -51,6 +52,7 @@ pub(crate) fn wait_code(wait: &Wait) -> &'static str {
         Wait::ForeignLoad { .. } => "foreign_load",
         Wait::LowDisk { .. } => "low_disk",
         Wait::RunnerOffline => "offline",
+        Wait::RunnerDraining => "draining",
         Wait::NoRunner => "no_runner",
         Wait::HeadReserved { .. } => "reserved",
         other => saturation_reason(other).unwrap_or("rule"),
@@ -278,6 +280,7 @@ mod tests {
                 Some("rule"),
             ),
             (Wait::RunnerOffline, None),
+            (Wait::RunnerDraining, None),
             (Wait::NoRunner, None),
             (
                 Wait::ForeignLoad {

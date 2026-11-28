@@ -214,6 +214,10 @@ impl BrokerStore for MemoryBrokerStore {
         Ok(self.lock().prune(limits))
     }
 
+    async fn forget_run(&self, key: &JobKey) -> Result<bool, StoreError> {
+        Ok(self.lock().forget_run(key))
+    }
+
     async fn issue_code(&self, code: JoinCodeRow) -> Result<(), StoreError> {
         let mut s = self.lock();
         s.codes

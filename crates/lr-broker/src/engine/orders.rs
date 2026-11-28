@@ -52,6 +52,14 @@ fn recorded_rejection(rec: &JobRecord) -> Option<(RejectReason, String)> {
     Some((reason, detail))
 }
 
+/// An order the broker gave back at the hub's request (`Moved`): the hub may place it here
+/// again later, and then it is a new run, not a repeat of the one that went back.
+fn returned_to_hub(rec: &JobRecord) -> bool {
+    rec.job.state == JobState::Cancelled
+        && rec.job.cancelled_by.as_deref() == Some("broker")
+        && crate::api::reason_of(rec.job.cancel_reason.as_deref()) == Some(ReasonCode::Moved)
+}
+
 pub(super) fn overridden(
     r: &Reject,
     over: &ResourceOverride,
@@ -446,6 +454,11 @@ impl Engine {
             job: o.job.clone(),
         };
         match self.store.job(&key).await {
+            Ok(Some(rec)) if returned_to_hub(&rec) => {
+                if let Err(e) = self.store.forget_run(&key).await {
+                    return self.unavailable(conn, &key, "forget the returned order", &e);
+                }
+            }
             Ok(Some(rec)) => {
                 return self
                     .repeated_order(conn, client, &key, rec, o, trimmed)

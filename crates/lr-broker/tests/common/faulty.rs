@@ -171,6 +171,9 @@ impl BrokerStore for FaultyStore {
     async fn stats(&self, query: &StatsQuery) -> Result<Stats, StoreError> {
         self.inner.stats(query).await
     }
+    async fn forget_run(&self, key: &JobKey) -> Result<bool, StoreError> {
+        self.inner.forget_run(key).await
+    }
     async fn prune(&self, limits: PruneLimits) -> Result<PruneReport, StoreError> {
         if self.panic_prune.swap(false, Ordering::SeqCst) {
             panic!("injected prune panic");

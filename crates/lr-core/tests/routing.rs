@@ -129,6 +129,20 @@ fn order_whose_suitable_runners_are_offline_waits() {
     assert_eq!(out.waiting[0].1, Wait::RunnerOffline);
 }
 
+#[test]
+fn order_whose_suitable_runner_is_draining_waits_for_the_drain_not_for_a_return() {
+    let e = entry("x", "agent", 0);
+    let mut draining = runner("r1");
+    draining.online = false;
+    draining.draining = true;
+    let out = plan(&policy(8192, 8), &[e], &[draining], &[]);
+    assert_eq!(out.waiting[0].1, Wait::RunnerDraining);
+    assert_eq!(
+        Wait::RunnerDraining.to_string(),
+        "the matching runners are draining"
+    );
+}
+
 fn zoned_runners() -> Vec<RunnerView> {
     vec![
         runner_at("remote", "8.8.8.8"),

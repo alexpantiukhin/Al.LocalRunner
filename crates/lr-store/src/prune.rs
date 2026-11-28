@@ -4,8 +4,8 @@
 
 use crate::codec::final_list;
 use crate::db::{write, R};
-use lr_abstractions::{PruneLimits, PruneReport};
-use rusqlite::{params_from_iter, Connection, Transaction};
+use lr_abstractions::{JobKey, PruneLimits, PruneReport};
+use rusqlite::{params_from_iter, Connection, OptionalExtension, Transaction};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -67,6 +67,43 @@ impl Work {
         }
         Ok(())
     }
+}
+
+pub(crate) fn forget(conn: &mut Connection, dir: &Path, key: &JobKey) -> R<bool> {
+    let sql = format!(
+        "SELECT j.client_machine, l.path FROM job j \
+         LEFT JOIN job_log l ON l.client_key = j.client_key AND l.job_id = j.id \
+         WHERE j.client_key = ?1 AND j.id = ?2 AND j.state IN {}",
+        final_list()
+    );
+    let gone = write(conn, |tx| {
+        let found = tx
+            .query_row(&sql, [&key.client, &key.job.0], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
+            .optional()?;
+        let Some((machine, path)) = found else {
+            return Ok(None);
+        };
+        tx.execute(
+            "DELETE FROM job WHERE client_key = ?1 AND id = ?2",
+            [&key.client, &key.job.0],
+        )?;
+        tx.execute(
+            "DELETE FROM result_outbox WHERE client_machine IN (?1, ?2) AND job_id = ?3",
+            [&machine, &key.client, &key.job.0],
+        )?;
+        Ok(Some(path))
+    })?;
+    let Some(path) = gone else {
+        return Ok(false);
+    };
+    if let Some(path) = path {
+        let path = dir.join(path);
+        let _ = std::fs::remove_file(&path);
+        remove_empty_parent(&path);
+    }
+    Ok(true)
 }
 
 pub(crate) fn prune(conn: &mut Connection, dir: &Path, limits: PruneLimits) -> R<PruneReport> {

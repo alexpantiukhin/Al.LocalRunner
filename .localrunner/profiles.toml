@@ -61,6 +61,7 @@ command   = "python .github/scripts/docs_pair.py"
 timeout_s = 60
 mem_mb    = 256
 cpu       = 1
+tags      = ["cargo"]
 
 [profile.ci-workflows]
 timeout_s = 300

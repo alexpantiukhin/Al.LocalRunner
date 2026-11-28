@@ -97,6 +97,8 @@ pub struct RunnerView {
     pub endpoint: Endpoint,
     /// Whether the runner is online.
     pub online: bool,
+    /// Whether the runner is connected and drains: it takes no new order.
+    pub draining: bool,
     /// Last load of the runner's machine; `None` from a runner that sends none.
     pub load: Option<MachineLoad>,
 }

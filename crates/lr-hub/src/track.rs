@@ -46,6 +46,8 @@ pub(crate) struct Track {
     pub(crate) moved_until: Option<Timestamp>,
     /// The tail of the output of the running step, to name what a failed step did not find.
     pub(crate) last_output: String,
+    /// The seq gap the broker repeats for this order: what was expected, what came, how often.
+    pub(crate) gap: Option<(u64, u64, u32)>,
 }
 
 impl Track {
@@ -101,6 +103,7 @@ impl Track {
             next_select: None,
             moved_until: None,
             last_output: String::new(),
+            gap: None,
         }
     }
 
