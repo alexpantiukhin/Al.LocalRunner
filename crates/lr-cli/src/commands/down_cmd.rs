@@ -683,6 +683,17 @@ pub async fn wait_for_exit(
         within.as_secs(),
         left.join(", ")
     ));
+    let jobs = roles.running_jobs().await.unwrap_or_default();
+    for name in &left {
+        let on = format!(" on {name} (");
+        let local = format!(" on local:{name} (");
+        for line in jobs.iter().filter(|l| l.contains(&on) || l.contains(&local)) {
+            roles.say_err(&format!("{name} still holds {line}"));
+        }
+    }
+    roles.say_err(
+        "the runners are draining their jobs: raise --wait-timeout to wait longer, or use --cancel to cancel the jobs",
+    );
     1
 }
 
